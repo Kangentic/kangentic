@@ -799,7 +799,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
 // (spawn-agent-isolated-auto-command.test.ts) and send_command
 // (transition-engine.test.ts).
 // =============================================================================
-describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-template-vars-parity fix)', () => {
+describe('handleTaskMove live-inject: template variable resolution ({{baseBranch}}, {{attachments}}, {{projectPath}}; task-template-vars-parity fix)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.activeRecord = null;
@@ -872,5 +872,44 @@ describe('handleTaskMove live-inject: {{baseBranch}} template resolution (task-t
     expect(getPathsForTask).toHaveBeenCalledWith('task-aaa00001');
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
     expect(planArg.autoCommand).toContain('/mock/project/screenshot.png');
+  });
+
+  // Coverage hole (see the {{projectPath}} addition to task-template-vars.ts):
+  // this call site's `projectPath: resolvedProjectPath` (task-move.ts ~line 694)
+  // had no test asserting the INTERPOLATED value. An explicit projectPath
+  // ('/mock/explicit-project') is passed as the 5th positional arg (see
+  // resolveProjectContext / `resolvedProjectPath = projectPath !== undefined
+  // ? projectPath : context.currentProjectPath`), distinct from BOTH
+  // context.currentProjectPath ('/mock/project', the ambient ipc-context ---
+  // resolving to that instead would be exactly the project-scoped-ipc.md bug:
+  // a cross-project move silently reading the wrong project's checkout) and
+  // task.worktree_path ('/mock/project/.kangentic/worktrees/my-task', the
+  // raw-read {{worktreePath}} keyword this must never fall back to). Three
+  // distinct candidate values means a regression that swapped in any one of
+  // the other two, or dropped the field (resolving ''), cannot pass this
+  // assertion vacuously.
+  it('interpolates {{projectPath}} to the resolved project path, never the ambient currentProjectPath or task.worktree_path', async () => {
+    const { swimlaneRepo } = makeLanes({
+      permission_mode: null,
+      auto_command: '/code-review {{projectPath}}',
+    });
+    setActiveRecord('acceptEdits');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    }, 'renderer', undefined, '/mock/explicit-project');
+
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    // Red: swapping `projectPath: resolvedProjectPath` for
+    // `context.currentProjectPath` makes this '/code-review /mock/project';
+    // for `task.worktree_path` it makes
+    // '/code-review /mock/project/.kangentic/worktrees/my-task'; dropping the
+    // field makes it '/code-review'.
+    expect(planArg.autoCommand).toBe('/code-review /mock/explicit-project');
   });
 });

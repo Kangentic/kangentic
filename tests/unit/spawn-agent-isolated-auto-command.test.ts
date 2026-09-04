@@ -220,6 +220,7 @@ async function runSpawn(
   skipPromptTemplate = false,
   suppressAutoCommand = false,
   projectId?: string,
+  projectPath?: string | null,
 ) {
   await spawnAgent({
     context: deps.context as never,
@@ -232,6 +233,7 @@ async function runSpawn(
     skipPromptTemplate,
     suppressAutoCommand,
     projectId,
+    projectPath,
     attachments: deps.attachments as never,
   });
 }
@@ -333,6 +335,37 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     // task-template-resolvers.ts), called with the task's own id.
     expect(getPathsForTask).toHaveBeenCalledWith(TASK_ID);
     expect(resumePromptArg(deps.engine)).toBe('/code-review \n/mock/a.png\n/mock/b.png');
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('ISOLATED + fresh: a {{projectPath}} placeholder resolves options.projectPath, distinct from task.worktree_path (regression: resolveAutoCommandVars must not drop or swap this field)', async () => {
+    // Coverage hole: task-template-vars-parity.test.ts pins the projectPath
+    // RESOLVER against a hand-built context; task-template-vars-parity-style
+    // call-site coverage exists for transition-engine.ts (transition-engine.test.ts)
+    // and for task-move.ts's live-inject branch, but agent-spawn.ts's
+    // resolveAutoCommandVars (line ~222: `projectPath: options.projectPath ?? null`)
+    // had no test asserting the INTERPOLATED value. Every prior test in this
+    // file that reaches resolveAutoCommandVars calls runSpawn without a
+    // projectPath, so options.projectPath was always undefined and this field
+    // was never exercised with a real value. The task's worktree_path is given
+    // a value DISTINCT from options.projectPath so a regression that swapped
+    // the two (or dropped the field, resolving '') could not pass vacuously.
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, {
+      session_target: 'isolated',
+      auto_command: '/code-review {{projectPath}}',
+    });
+    const deps = makeDeps({
+      manualPauseRecord: null,
+      resumeRecord: undefined,
+      taskFields: { worktree_path: '/mock/worktrees/my-task' },
+    });
+
+    await runSpawn(isolatedLane, deps, true, false, undefined, '/mock/main-project');
+
+    // Red: swapping resolveAutoCommandVars' `projectPath: options.projectPath ?? null`
+    // for `task.worktree_path`, or dropping the field entirely, makes this
+    // '/code-review /mock/worktrees/my-task' or '/code-review' instead.
+    expect(resumePromptArg(deps.engine)).toBe('/code-review /mock/main-project');
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
