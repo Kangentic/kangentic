@@ -46,7 +46,7 @@ The cross-platform skill (the full pitfall catalog) is preloaded into your conte
 Scan the changed files (or the full codebase if no specific scope is given) for each of these categories:
 
 ### 1. Unicode Em-Dashes
-- Search for `\u2014` (em-dash) and `--` double-dashes used as punctuation in source, comments, tests, docs, and scripts. See `.claude/rules/text-formatting.md`.
+- Search for `\u2014` (em-dash), `\u2013` (en-dash), and `--` double-dashes used as punctuation in source, comments, tests, docs, and scripts. See `.claude/rules/writing-style.md`.
 - Must use a single ASCII `-` instead. Em-dashes render as garbled characters on Windows console code pages.
 - **Severity: High**. Causes visible corruption in terminal output.
 

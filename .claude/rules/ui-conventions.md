@@ -43,10 +43,23 @@ chrome unless these are stated.
   (`opacity-0 group-hover:opacity-100`) get overlooked and exclude keyboard / touch users.
   Prefer a right-click context menu or an always-visible control; reserve inline visible buttons
   for the single most-used primary action. Default to visual subtraction over addition.
-- **Brief, accurate copy for labels and descriptions.** State what the control does and what
-  distinguishes it - purpose plus distinguishing behavior, the way task and PR descriptions are
-  written. Plain language, no filler. Model: existing registry entries like "Fold away large
-  unchanged spans so a big file shows only the changed hunks with a little context."
+- **Copy for labels and descriptions.** House writing style is the always-on
+  [[writing-style]]; this bullet adds only what is specific to a settings row.
+  - **One sentence, about 110 characters.** That is what fits the row's `text-xs` column without
+    wrapping past two lines. "Two sentences" is not a budget; it wrapped to four lines in practice.
+    State the effect and, if it is genuinely needed, one distinguishing clause. Drop flag names,
+    issue numbers, and "applies only to X sessions" caveats. Model: existing registry entries like
+    "Fold away large unchanged spans so a big file shows only the changed hunks with a little
+    context."
+  - **Never open with a rhetorical or leading question** ("No app yet?", "Need help?"). A question
+    presumes a state the reader may not be in, and the section is not conditioned on the answer.
+    Write the noun phrase for what is behind the control, and keep sibling labels parallel ("How
+    the relay works" / "How to install and pair").
+  - **Essential AND non-obvious.** On a panel a user opens constantly (New Task, task detail,
+    settings), that is the bar for any standing text. A label that teaches a feature is paid on
+    every open and learned once. When asked to cut text load, give a verdict per string (essential?
+    non-obvious? keep or cut), not layout variants that relocate the same sentences. A hint that
+    compensates for an unclear control means the control needs fixing, not the hint.
   - No raw hex, byte codes, control-code literals, or escape sequences in a label or description
     (not "Send Ctrl+H (0x08) instead of Delete (0x7F)"). Describe the behavior a user sees
     ("Backspace deletes the whole previous word instead of one character").

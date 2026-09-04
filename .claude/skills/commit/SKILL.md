@@ -58,7 +58,7 @@ Use conventional-commit format (`type(scope): subject`), matching `/merge-back`.
     `docs:` docs only, `test:` tests only, `style:` formatting, `perf:` performance, `ci:` CI,
     `build:` build system. Add `!` for a breaking change. Scope is optional but encouraged for
     multi-area changes.
-- No em-dashes (U+2014) or `--` as punctuation in the message (see `.claude/rules/text-formatting.md`).
+- House writing style in the message, punctuation bans included (see `.claude/rules/writing-style.md`).
 
 ## Step 3 - Stage and commit
 

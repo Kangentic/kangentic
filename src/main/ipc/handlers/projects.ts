@@ -189,7 +189,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // 5. Close the project DB connection before deleting files
   closeProjectDb(projectId);
 
-  // Steps 6–7 modify the project's .gitignore and .kangentic/ directory.
+  // Steps 6-7 modify the project's .gitignore and .kangentic/ directory.
   // Skip for worktrees -- their .gitignore is inherited from the parent branch
   // and should not be modified by ephemeral cleanup.
   const isWorktree = isInsideWorktree(projectPath);

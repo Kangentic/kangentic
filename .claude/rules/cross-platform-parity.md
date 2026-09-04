@@ -56,7 +56,7 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   drag/click, confirm the container has non-zero width, and prefer asserting the *effect* via
   state over re-measuring pixels.
 - **No machine-specific paths or personal info** in fixtures (use `C:\\Users\\dev`, `/mock/...`).
-  See [[text-formatting]] for the em-dash ban that also applies to authored test text.
+  See [[writing-style]] for the dash ban that also applies to authored test text.
 - **Test filesystem writes stay under `os.tmpdir()`.** Derive every write target from
   `fs.mkdtempSync(path.join(os.tmpdir(), ...))` or a mocked home directory. Never pass a
   hardcoded absolute root (`/projects/...`, `C:\\...`) to a write call (`mkdirSync`,
@@ -82,7 +82,8 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   Linux runner, closing the "green locally, red on CI" gap that let `main` go red by design.
 - **Review for code:** the `platform-guard` agent audits `src/main/pty`, `src/main/agent`,
   `src/main/git`, and any `path` / `fs.rm` / `child_process` usage for the code rules above
-  (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes).
+  (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes and
+  en-dashes).
   `/code-review` flags the test-fragility patterns on changes under `tests/`.
 - **Specialist:** the `test-builder` agent encodes the Windows/CI quirks (workers=1 lock,
   single-instance bypass, scrollback races) and is the right tool for de-flaking an

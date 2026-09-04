@@ -86,10 +86,14 @@ describe('committed announcements.json', () => {
   it('follows house style: no em-dash and no " -- " separator in authored copy', () => {
     // Content-only PRs (announcements.json is the one file non-engineering
     // contributors edit directly) can ship house-style violations that no
-    // lint rule catches. .claude/rules/text-formatting.md's em-dash scan only
-    // covers src/ and scripts/. The character renders as mojibake on Windows
-    // console code pages, which the team dogfoods on. The escape below keeps
-    // this authored assertion itself free of a literal em-dash character.
+    // lint rule catches. The shared writing-style-characters.test.ts scan does
+    // not reach this file at all, because announcements.json sits at the repo
+    // root and that test's root list holds only README.md and CLAUDE.md. Both
+    // assertions below are therefore the only mechanical coverage this feed
+    // has. The separator check is also one the shared scan could never take
+    // on, since docs/ legitimately carries `npm run x -- --flag`. The escape
+    // below keeps this authored assertion itself free of a literal em-dash
+    // character.
     const EM_DASH = String.fromCharCode(0x2014);
     const rawText = readRawFeedText();
     expect(rawText.includes(EM_DASH)).toBe(false);
