@@ -30,6 +30,7 @@ import {
   mockAgentPath,
   setProjectDefaultAgent,
   waitForTaskScrollback,
+  waitForTaskSession,
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
@@ -101,10 +102,10 @@ test.describe('Agent activity detection - special TUI / output modes', () => {
   });
 
   /**
-   * Spawns a task for `agent` and waits for `marker` in THAT task's own
-   * session scrollback (never any other live session's - see
-   * waitForTaskScrollback's doc comment for why that distinction matters in
-   * a file that shares one Electron app across four tests).
+   * Creates a task for `agent` and moves it into Planning, triggering a
+   * spawn. Shared setup for both {@link spawnAndWaitForMarker} and
+   * {@link spawnAndWaitForSession} - the two differ only in how they decide
+   * the spawn has landed.
    *
    * The task title includes `test.info().retry`, which is 0 on the initial
    * attempt and increments on every CI retry. Without this, a retried test
@@ -113,6 +114,24 @@ test.describe('Agent activity detection - special TUI / output modes', () => {
    * already-spawned) task instead of the freshly created one, and the retry
    * ends up observing the leftover session's now-warmed-up state rather than
    * testing a real spawn.
+   */
+  async function spawnTaskForAgent(agent: AgentName): Promise<string> {
+    await setProjectDefaultAgent(page, agent);
+
+    const taskTitle = `${agent} special ${runId}-r${test.info().retry}`;
+    await createTask(page, taskTitle, `Special-mode activity check for ${agent}`);
+    const swimlaneIds = await getSwimlaneIds(page);
+    const taskId = await getTaskIdByTitle(page, taskTitle);
+
+    await moveTaskIpc(page, taskId, swimlaneIds.planning);
+    return taskId;
+  }
+
+  /**
+   * Spawns a task for `agent` and waits for `marker` in THAT task's own
+   * session scrollback (never any other live session's - see
+   * waitForTaskScrollback's doc comment for why that distinction matters in
+   * a file that shares one Electron app across four tests).
    *
    * markerTimeoutMs defaults to 30s (double waitForTaskScrollback's own
    * 15s default): the renderer reload inside setProjectDefaultAgent plus a
@@ -134,20 +153,42 @@ test.describe('Agent activity detection - special TUI / output modes', () => {
     marker: string,
     markerTimeoutMs = 30000,
   ): Promise<TaskScrollbackResult & { taskId: string }> {
-    await setProjectDefaultAgent(page, agent);
-
-    const taskTitle = `${agent} special ${runId}-r${test.info().retry}`;
-    await createTask(page, taskTitle, `Special-mode activity check for ${agent}`);
-    const swimlaneIds = await getSwimlaneIds(page);
-    const taskId = await getTaskIdByTitle(page, taskTitle);
-
-    await moveTaskIpc(page, taskId, swimlaneIds.planning);
+    const taskId = await spawnTaskForAgent(agent);
     const result = await waitForTaskScrollback(page, taskId, marker, markerTimeoutMs);
     return { taskId, ...result };
   }
 
+  /**
+   * Same spawn sequence as {@link spawnAndWaitForMarker}, but waits for the
+   * task's session to reach status='running' via IPC instead of a scrollback
+   * marker - see {@link waitForTaskSession}'s doc comment for why.
+   *
+   * Codex and Cursor's `MOCK_*_TUI_REDRAWS` mode prints its startup marker
+   * BEFORE its first `\x1b[2J` full-screen clear (on a fixed ~500ms
+   * interval), which makes a scrollback-marker wait for those two agents
+   * racy: as soon as that clear is written into the session's PTY buffer,
+   * `getScrollback` permanently strips everything before it (an eager,
+   * write-time effect, not a read-time cache - see
+   * {@link waitForTaskSession}'s doc comment). A poll whose first successful
+   * read lands before that clear passes immediately; one whose setup pushes
+   * past it - e.g. under CI load - finds the marker already and permanently
+   * gone and spins for its full timeout (this was PR #344 CI's observed
+   * flake: full 30s timeout on attempt 1, instant pass on retry's fresh
+   * session/buffer). Copilot and Warp's TUI-redraw mocks never emit
+   * `\x1b[2J`, so their markers stay put in scrollback and those two tests
+   * keep using {@link spawnAndWaitForMarker} directly.
+   */
+  async function spawnAndWaitForSession(
+    agent: AgentName,
+    timeoutMs = 30000,
+  ): Promise<{ taskId: string; sessionId: string }> {
+    const taskId = await spawnTaskForAgent(agent);
+    const { sessionId } = await waitForTaskSession(page, taskId, timeoutMs);
+    return { taskId, sessionId };
+  }
+
   test('Codex: settles to idle despite continuous TUI redraws', async () => {
-    const { sessionId } = await spawnAndWaitForMarker('codex', 'MOCK_CODEX_SESSION:');
+    const { sessionId } = await spawnAndWaitForSession('codex');
     await expect.poll(async () => {
       const activity = await page.evaluate(() => window.electronAPI.sessions.getActivity());
       return (activity as Record<string, ActivityState>)[sessionId];
@@ -158,7 +199,7 @@ test.describe('Agent activity detection - special TUI / output modes', () => {
   });
 
   test('Cursor: settles to idle despite continuous TUI redraws', async () => {
-    const { sessionId } = await spawnAndWaitForMarker('cursor', 'MOCK_CURSOR_SESSION:');
+    const { sessionId } = await spawnAndWaitForSession('cursor');
     await expect.poll(async () => {
       const activity = await page.evaluate(() => window.electronAPI.sessions.getActivity());
       return (activity as Record<string, ActivityState>)[sessionId];
