@@ -4,6 +4,7 @@ import {
   firstAzureRemote,
   buildAzurePrWebUrl,
 } from '../../src/main/pr/adapters/azure-devops/azure-remote';
+import { azureDevOpsPRConnector } from '../../src/main/pr/adapters/azure-devops/azure-devops-connector';
 
 const my-repo = { org: 'my-org', project: 'My Project', repo: 'my-repo' };
 
@@ -48,6 +49,30 @@ describe('parseAzureRemote', () => {
 
   it('tolerates a trailing slash', () => {
     expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo/')).toEqual(my-repo);
+  });
+
+  /**
+   * `decodeSegment`'s catch branch, previously untested: a malformed percent
+   * escape (an invalid hex digit, or a `%` with fewer than two digits after
+   * it) makes `decodeURIComponent` throw a URIError. The segment pattern only
+   * excludes `/` and whitespace, so an ill-formed `%` sequence still matches
+   * the regex and reaches `decodeSegment` - it is not rejected earlier.
+   *
+   * The consequence matters beyond this one function: `matchesRemote` calls
+   * `parseAzureRemote` SYNCHRONOUSLY, and `dispatchResolve` runs
+   * `matchesRemote` inside `Array.prototype.filter`. An uncaught throw here
+   * would escape the ownership gate entirely rather than degrading one
+   * resolve, so both the parse and the connector's gate are asserted.
+   *
+   * Red-green: remove the try/catch in `decodeSegment` (let
+   * `decodeURIComponent` throw) - both assertions below go red, the second as
+   * an uncaught URIError rather than a returned `false`.
+   */
+  it('keeps the raw segment on a malformed percent escape, rather than throwing', () => {
+    const malformedUrl = 'https://dev.azure.com/my-org/My%ZZ/_git/my-repo';
+    expect(parseAzureRemote(malformedUrl)).toEqual({ org: 'my-org', project: 'My%ZZ', repo: 'my-repo' });
+    expect(() => azureDevOpsPRConnector.matchesRemote([malformedUrl])).not.toThrow();
+    expect(azureDevOpsPRConnector.matchesRemote([malformedUrl])).toBe(true);
   });
 
   describe('returns null for non-Azure remotes (this null IS the connector gate)', () => {

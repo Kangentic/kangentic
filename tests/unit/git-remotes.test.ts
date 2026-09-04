@@ -148,4 +148,51 @@ describe('readRemoteUrls', () => {
       await expect(readRemoteUrls('/repo')).resolves.toEqual([SPACEY_FETCH_URL]);
     });
   });
+
+  /**
+   * `pruneExpired`'s `while (cache.size >= MAX_CACHE_ENTRIES)` eviction loop
+   * (MAX_CACHE_ENTRIES = 64), previously untested. Worktree paths churn (a
+   * project's worktrees are created and reclaimed over its lifetime), so the
+   * map is bounded rather than unbounded-by-repo - an unbounded cache here
+   * would leak one entry per worktree path ever seen for the life of the
+   * process.
+   *
+   * Sequential `await`, not `Promise.all`: each insert must observe the cache
+   * state the previous one left behind (concurrent calls to the SAME path hit
+   * the `inFlight` dedup instead, which is covered separately above), and this
+   * loop is over 65 DISTINCT paths anyway, so concurrency would not help.
+   *
+   * Red-green: comment out the `while` loop's body in `pruneExpired` (or drop
+   * the loop entirely) - the "path-0 evicted" assertion goes red because the
+   * cache grows unbounded and the re-read is served from cache instead of
+   * spawning git again.
+   */
+  it('evicts the OLDEST entry once the cache reaches MAX_CACHE_ENTRIES (64), rather than growing unbounded', async () => {
+    state.stdout = `origin\t${AZURE} (fetch)\n`;
+
+    // Fill the cache to exactly 64 distinct repo paths.
+    for (let index = 0; index < 64; index += 1) {
+      await readRemoteUrls(`/repo-${index}`);
+    }
+    expect(state.rawCalls).toBe(64);
+
+    // A 65th DISTINCT path is a cache miss, and inserting it prunes the
+    // oldest-inserted entry (/repo-0) first, since none has expired yet.
+    await readRemoteUrls('/repo-64');
+    expect(state.rawCalls).toBe(65);
+
+    // The evicted entry (/repo-0, the oldest of the original 64) is no longer
+    // cached - re-reading it spawns git again.
+    await readRemoteUrls('/repo-0');
+    expect(state.rawCalls).toBe(66);
+
+    // A RECENT entry from the original fill (/repo-63, the newest of the
+    // original 64) survived the eviction and stays cached - no new git call.
+    // Together with the /repo-0 assertion above, this is the pair that pins
+    // OLDEST-first eviction specifically: an implementation that evicted
+    // arbitrarily (or evicted the newest) could still re-call git for /repo-0
+    // but would also re-call it for /repo-63, which this assertion catches.
+    await readRemoteUrls('/repo-63');
+    expect(state.rawCalls).toBe(66);
+  });
 });
