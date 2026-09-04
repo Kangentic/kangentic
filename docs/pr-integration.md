@@ -1,6 +1,8 @@
 # PR Integration
 
-Kangentic links each task to its pull request and keeps that link fresh: it detects a PR from terminal scrollback, authoritatively resolves the PR's state through a hosting-provider CLI, and persists `pr_url` / `pr_number` / `pr_state` on the task so the board can show it. GitHub is the only provider wired today, but every provider is wrapped behind a common `PRConnector` interface so detection and resolution logic stays isolated to a single folder per platform.
+Kangentic links each task to its pull request and keeps that link fresh: it detects a PR from terminal scrollback, authoritatively resolves the PR's state through a hosting-provider CLI, and persists `pr_url` / `pr_number` / `pr_state` on the task so the board can show it. GitHub and Azure DevOps are wired today, and every provider is wrapped behind a common `PRConnector` interface so detection and resolution logic stays isolated to a single folder per platform.
+
+Which connector answers is decided by the repository's git remote, not by array order: see [Ownership and dispatch](#ownership-and-dispatch), which is what lets a second provider exist without the first one pre-empting it.
 
 This doc covers the connector system, the confidence ladder that picks the strongest anchor, the background refresh sweep, and how to add a new hosting provider.
 
@@ -11,13 +13,20 @@ src/main/pr/
   shared/                 # PRConnector contract + platform-agnostic errors
     pr-connector.ts
     pr-errors.ts
+    pr-dispatch.ts        # ownership gate + degrade deferral (the dispatch rules)
   adapters/
     github/
       github-connector.ts # gitHubPRConnector (gh CLI)
+    azure-devops/
+      azure-devops-connector.ts # azureDevOpsPRConnector (az CLI)
+      azure-remote.ts     # org/project/repo from a git remote; the provider gate
   pr-registry.ts          # connector array + platform-agnostic dispatch API
   pr-linking.ts           # confidence ladder + persist (the backbone)
   pr-refresh.ts           # background refresh-and-discover sweep
   pr-refresh-scheduler.ts # per-project timer that arms the sweep
+
+src/main/git/git-remotes.ts  # cached `git remote -v` read (provider-agnostic)
+src/shared/pr-url.ts         # PR number from a PR URL, shared with the renderer
 ```
 
 The pattern intentionally mirrors `src/main/boards/adapters/` and `src/main/agent/adapters/` (one folder per provider, a central registry, no provider-specific branching in shared code). See [Board Integration](board-integration.md) for the analogous board-import system.
@@ -31,6 +40,7 @@ Every hosting provider implements this contract. The registry calls it without k
 | Member | Required | Purpose |
 |--------|----------|---------|
 | `name` | yes | Platform name for logging (e.g. `"GitHub"`). |
+| `matchesRemote(remoteUrls)` | yes | Whether this connector OWNS the repository behind these git remote fetch URLs (`origin` first). Pure: no subprocess, no network. Required rather than optional because a connector with no gate is eligible on every remote, and an everywhere-eligible connector that cleanly misses produces a clean `not-found` - which is exactly what makes the linker CLEAR a task's PR link. |
 | `matchesCommand(commandDetail)` | yes | Whether a Bash command detail looks like a PR command for this platform (drives activity flagging). |
 | `extract(scrollback)` | yes | Extract a PR URL + number from raw PTY scrollback text (no network). Returns the most recent match. |
 | `resolveForBranch?(repoCwd, branchName, baseBranch?)` | optional | Authoritatively resolve the PR for a branch via the platform API, run inside the repo/worktree at `repoCwd`. Returns null when no PR matches the head ref; throws `PRResolverUnavailableError` when the CLI is unavailable. |
@@ -75,19 +85,20 @@ Both errors are platform-agnostic (a leaf module with no connector imports) so `
 
 | Error | Meaning | Caller behavior |
 |-------|---------|-----------------|
-| `PRResolverUnavailableError` | The platform resolver cannot run at all (CLI missing / unauthenticated, or no connector matches the remote). | Degrade to `detectPR` scrollback scraping; preserve any existing link; log a one-time hint. |
+| `PRResolverUnavailableError` | The resolver could not CHECK. Five paths reach it: the CLI is missing or unauthenticated; no connector matches the remote; the remotes could not be read at all; an owning connector implements no resolver of that kind; or the connector could not READ the CLI's answer (malformed JSON, an unexpected field type). The last is deliberate: an unreadable answer absorbed inside a connector never escapes as an unexpected exception, so `resolveFailed` cannot catch it, and the not-found default would clear the link. | Degrade to `detectPR` scrollback scraping; preserve any existing link; log a hint (see below). |
 | `PRResolverTransientError` | Resolution failed transiently (network / 5xx / rate-limit / timeout) rather than because there is no PR. | Preserve the existing link and report `transient-error` instead of `not-found`. |
 
 ## Registry
 
 `src/main/pr/pr-registry.ts`
 
-The registry holds a plain `connectors` array populated at module import time, and exposes a platform-agnostic API that iterates connectors and returns the first match. There is no provider-name branching here (mirrors `.claude/rules/agent-adapters-boundary.md`).
+The registry holds a plain `connectors` array populated at module import time, and exposes a platform-agnostic API. There is no provider-name branching here (mirrors `.claude/rules/agent-adapters-boundary.md`).
 
 ```ts
 const connectors: PRConnector[] = [
   gitHubPRConnector,
-  // Future: gitLabMRConnector, bitbucketPRConnector, azureDevOpsPRConnector
+  azureDevOpsPRConnector,
+  // Future: gitLabMRConnector, bitbucketPRConnector
 ];
 ```
 
@@ -95,11 +106,34 @@ const connectors: PRConnector[] = [
 |----------|---------|
 | `matchesPRCommand(commandDetail)` | True if any connector recognizes the Bash command as a PR command. |
 | `detectPR(scrollback)` | Try every connector's `extract` against scrollback; return the first match. |
-| `resolvePRForBranch(repoCwd, branchName, baseBranch?)` | First connector that supports `resolveForBranch` and returns a match. |
-| `resolvePRByNumber(repoCwd, prNumber)` | First connector that supports `resolveByNumber`. |
-| `resolvePRByCommit(repoCwd, commitSha, branchHint?)` | First connector that supports `resolveByCommit`. |
+| `resolvePRForBranch(repoCwd, branchName, baseBranch?)` | Dispatch to the connectors that own this repo's remote. |
+| `resolvePRByNumber(repoCwd, prNumber)` | Same, for an explicit PR number, except that it is refused the secondary-remote fallback (see step 2 below). |
+| `resolvePRByCommit(repoCwd, commitSha, branchHint?)` | Same, for a commit SHA. |
 
 The registry also re-exports the contract types and both error classes, so consumers have a single import surface.
+
+### Ownership and dispatch
+
+`shared/pr-dispatch.ts` holds the rules. The invariant it exists to protect:
+
+> A clean `not-found` may only be reported when a connector that actually OWNS this remote ran cleanly. Any path where an unavailable connector is skipped and the surviving connectors all miss must still return a degraded status, never a clean miss.
+
+This matters because a clean miss is destructive: the linker reads `null` with no degrade as "confidently no PR" and clears `pr_url` / `pr_number` / `pr_state`. Catch-and-continue alone would therefore wipe a manually pasted PR link the moment the owning connector's CLI was missing.
+
+Each `resolvePR*` call reads the repo's remotes once (`src/main/git/git-remotes.ts`, cached, and it never rejects), then:
+
+1. Remotes unreadable, or no connector claims them, and the call **throws** `PRResolverUnavailableError`. Degraded, never a clean miss.
+2. Ownership is narrowed to the **primary** remote (`origin` first), falling back to the full list when nothing claims the primary. With an Azure `origin` and a GitHub `upstream` both connectors would otherwise claim, array order would decide, and `resolvePRByNumber(42)` could return upstream's PR 42 - a mislink, which is worse than a miss.
+
+   That fallback is itself a guess, so `resolveByNumber` is refused it entirely: if the primary remote belongs to an unregistered host, a claimed `upstream` is not evidence that THIS repo's PRs live there. The inferred tiers can take the guess because `disambiguate` guards them (branch hint, fork drop, base match); the number tier bypasses every guard by design, because an explicit number is unambiguous WITHIN one repo. So a repo whose primary remote no connector claims resolves by branch and commit, but never by number.
+3. An owner that implements no resolver of that kind **throws**: nothing ran, so "there is no PR" was never established.
+4. Owning connectors run in order. A degrade error is remembered and the next owner still gets its turn; any other exception propagates unchanged, since an unknown error is not the registry's to classify or swallow.
+5. All owners ran cleanly and matched nothing, and only then is `null` returned.
+6. Otherwise the remembered error is rethrown **unchanged**. Rethrowing the original instance is load-bearing: `pr-linking.ts` recognizes a degrade by `instanceof`, and a wrapped copy would fall into the generic error branch, leave `degradeStatus` unset, and arm the very link wipe this machinery prevents. The first *transient* outranks the first *unavailable*, because a transient proves a real owning connector reached the network.
+
+`matchesPRCommand` and `detectPR` are deliberately NOT gated: they take no cwd, `detectPR` is the degradation fallback used precisely when the remotes may be unreadable, and it only ever ADDS a link. Connectors' URL patterns are host-specific and disjoint, so first-match is unambiguous.
+
+Being required is not the same as being safe: a connector can still write `matchesRemote: () => true` and type-check. What holds the invariant is the throw in step 1 and the tier deferral in the ladder (`tests/unit/pr-dispatch.test.ts`, `tests/unit/pr-remote-gate-no-wipe.test.ts`), plus `tests/unit/pr-connector-gate.test.ts`, which asserts over the REAL `connectors` array that no connector claims another provider's remote or a foreign one. That last test is the CI backstop for exactly the `() => true` hazard: appending a third connector with a lazy gate fails there rather than in production.
 
 ## GitHub Connector
 
@@ -125,6 +159,38 @@ The registry also re-exports the contract types and both error classes, so consu
 
 **Concurrency + error translation.** All resolves run through a global `p-queue` capped at `GH_CONCURRENCY = 3`, so a multi-card drag or board-load burst cannot fan out into dozens of concurrent `gh` processes. The `viaGh` wrapper translates `GhUnavailableError` into `PRResolverUnavailableError` and `GhTransientError` into `PRResolverTransientError`, keeping the generic layer free of provider-specific error types.
 
+**Ownership.** `matchesRemote` claims any host label containing `github`, so `github.mycorp.com` (GitHub Enterprise) keeps resolving. KNOWN GAP: GHE hosted on a name with no `github` in it (`ghe.corp.example`) no longer resolves PRs. Before the ownership gate this connector ran on every remote and would at least have tried; the failure is now diagnosable, because the thrown message names the unmatched remote URL. A per-project list of extra hosts is the follow-up.
+
+**Repo mismatch is not an auth failure.** In a non-GitHub repo `gh` exits 1 with "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`". That message ends with `gh auth login`, so `classifyGhError`'s auth pattern used to match it and the UI told the user to re-login while `gh` was working perfectly. `ghErrorToThrow` now tests for the mismatch FIRST (ordering is load-bearing) and reports the real reason. It stays classified `unavailable`, not `not-found`: with the ownership gate this is only reachable when our own remote read says GitHub owns the repo and `gh` disagrees (a submodule cwd, an `insteadOf` rewrite, a host alias), and `gh` did not run cleanly there, so a clean `not-found` would let the linker clear the link.
+
+## Azure DevOps Connector
+
+`src/main/pr/adapters/azure-devops/azure-devops-connector.ts`
+
+`azureDevOpsPRConnector` resolves PRs through the `az` CLI (the `azure-devops` extension, plus one `az rest` call) and reuses the board importer's `az` client (`AzureDevOpsImporter` from `boards/adapters/azure-devops/client.ts`), exactly as the GitHub connector reuses `GitHubImporter`.
+
+**Ownership and the self-gate.** `azure-remote.ts` parses an Azure git remote into `{ org, project, repo }`, covering the SSH `v3/{org}/{project}/{repo}` form (with `%20` in the project name), `ssh://...:22/v3/...`, `https://dev.azure.com/{org}/{project}/_git/{repo}`, the `{user}@dev.azure.com` variant (the org comes from the PATH, never the userinfo), and legacy `{org}.visualstudio.com` including `DefaultCollection`. A `null` parse is the connector's own provider gate: every resolver returns `null` rather than throwing on a non-Azure remote. That is independent of the registry gate and load-bearing on its own - a throw here would set `degradeStatus` for every GitHub task on any machine without `az`, permanently disabling the confident-not-found clear and reporting a resolver failure for tasks that simply have no PR.
+
+**Detection.** `extract` matches `https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}` and the legacy `visualstudio.com` spelling, over a 4096-byte tail window. `_git` is required, so a board or `_workitems` URL never matches, and the `/pullrequestcreate` compose page does not either. It uses the shared `stripAnsiControlCodes` (`src/shared/ansi-strip.ts`), deliberately NOT `stripAnsiEscapes`, whose whitespace normalization can join two lines and fuse a URL to its neighbour.
+
+**Resolution.** All three tiers pass an explicit organization / project / repository plus `--detect false` rather than letting `az` sniff the cwd, so they work from any working directory - including after a task's worktree has been reclaimed.
+
+- `resolveForBranch` and `resolveByNumber` use `az repos pr list --source-branch` and `az repos pr show --id`.
+- `resolveByCommit` posts to `_apis/git/repositories/{repo}/pullrequestquery` via `az rest`, because no `az repos pr` verb answers "which PR contains this commit". The repository resolves by NAME; no GUID lookup is needed.
+- The browser URL is CONSTRUCTED, not read: Azure returns null for `_links.web.href`, `remoteUrl`, AND `repository.webUrl` on every tier.
+- `updatedAt` is `closedDate ?? creationDate`, because Azure exposes no `updatedAt` anywhere. This only breaks ties WITHIN a state bucket, since `disambiguate` scores state first.
+- `disambiguate` is ported from the GitHub connector unchanged, INCLUDING the rule that keeps a LONE candidate whose head ref does not match `branchHint` (see the GitHub section above). That half is what links a task whose stored branch is a worktree slug rather than the PR's real source branch, which is the common shape once a worktree has been reclaimed. A port that required a hint match would leave such a task blank forever. The only change is the score gate: Azure's `active` covers open and draft, where GitHub's `OPEN` does.
+- State maps `completed` to `merged`, `abandoned` to `closed`, and otherwise `isDraft` to `draft` or `open`.
+- Concurrency is capped at `AZ_CONCURRENCY = 2`, lower than GitHub's 3: `az` is a Python CLI with a roughly one-second cold start where `gh` is a Go binary that starts in milliseconds.
+- Two argument guards mirror `isShaContainedInRef`'s option-shaped-ref rejection: an empty or `-`-leading branch name and a non-hex SHA are both refused without running `az`. The SHA guard is also the injection guard for the JSON request body.
+
+**LIMITATION - the commit tier sees completed PRs only.** Azure records a PR's commit associations at completion, so `pullrequestquery` returns nothing for an active or abandoned PR (verified against eight real PRs). Consequences:
+
+- A task with an ACTIVE Azure PR whose worktree is gone AND whose stored branch is not the PR's source branch cannot be resolved by any tier. Tier 2 needs a live worktree branch, Tier 4 needs the stored branch to match, and Tier 3 cannot see it. This is narrow (active PRs normally still have a live worktree) but real, and it is a property of the Azure API rather than of this code.
+- It is also why the GitHub connector's two commit-tier filters have no Azure counterpart. `gh api commits/<sha>/pulls` returns every PR whose head branch CONTAINS the commit, including a sibling that merely branched off the same base tip; Azure's query matches only a PR's own source commits. Probed against a merge product and against a base tip it returns nothing, and an open sibling can never appear at all. Both filters would be dead weight, so neither is ported.
+
+**Fork guard, wired but unverified in the positive direction.** `isCrossRepository` is derived from `forkSource`, which is present on the branch and number tiers only; the commit-tier payload has no such field, so those candidates stay `undefined` and pass the falsy filter exactly as GitHub's optional field does. `forkSource: null` on non-fork PRs is confirmed; that a real fork PR populates it is not (no fork PR was available to test). If it does not, the failure mode is "no filtering", identical to having no guard, never a wrong rejection.
+
 ## PR Linking
 
 `src/main/pr/pr-linking.ts`
@@ -142,7 +208,7 @@ The registry also re-exports the contract types and both error classes, so consu
 | 3 | Commit SHA | Immutable, survives Done / worktree deletion and branch renames. Guarded twice: a cheap commits-ahead-of-base check here skips the tier outright for a fresh worktree on base's tip, and the connector then rejects any individual candidate whose own base already contains the commit. |
 | 4 | Stored slug branch | Weak last resort when there is no worktree. |
 
-A `PRResolverUnavailableError` from any tier propagates so the caller can degrade.
+A tier that could not CHECK (a `PRResolverUnavailableError` / `PRResolverTransientError`) does NOT abort the ladder: the error is remembered and the remaining tiers still run, and it is rethrown unchanged only if no tier resolved anything. That deferral is a consequence of the ownership gate, not an optimization - the registry now throws when no connector owns the repo's remote or when the owner has no resolver of that kind, and without the deferral one such throw would kill every later tier, including the slug tier that is the last chance for a task with no worktree. An UNEXPECTED exception (anything that is not a `PRResolver*` error) is different again: it sets an internal `resolveFailed` flag that suppresses the confident-not-found clear below, because "an owning connector ran cleanly" is false in that case.
 
 **A PR URL in the task description is not an anchor.** Every tier above is git state or an explicitly stored number. Scraping the description was tried and removed: a URL cited as background ("this follows on from `<url>`") is textually identical to one naming the task's own PR, so the linker stamped a sibling task's PR onto unrelated tasks - and because that tier always produced a link, the confident-not-found clear could never fire, so the wrong link was permanent. A review task names its PR through the structured `pr_url` / `pr_number` fields (the task-detail edit form, `kangentic_create_task`'s `prUrl` / `prNumber`, or `kangentic_update_task`), which lands on Tier 1. Tier 3's two guards independently cover the base-tip case the description tier was originally written for.
 
@@ -151,7 +217,9 @@ The commits-ahead-of-base guard alone is not enough for that, which is why the c
 ### Persist and degrade behavior
 
 - **Auto triggers** (non-force) skip terminal `merged` / `closed` PRs (they cannot change) and coalesce rapid re-resolves through a per-task 60s throttle (`RESOLVE_TTL_MS`, a bounded `Map` pruned on each run). Explicit user/agent actions pass `force: true` to bypass both.
-- **Degradation.** When the resolver throws `PRResolverUnavailableError` or `PRResolverTransientError`, the linker records a `resolver-unavailable` / `transient-error` status, falls back to `detectPR` on any provided scrollback (url+number only), preserves a known state when the URL is unchanged, and logs a one-time hint. A degraded resolve never clears an existing link.
+- **Degradation.** When the resolver throws `PRResolverUnavailableError` or `PRResolverTransientError`, the linker records a `resolver-unavailable` / `transient-error` status, falls back to `detectPR` on any provided scrollback (url+number only), preserves a known state when the URL is unchanged, and logs a hint. A degraded resolve never clears an existing link.
+
+  The hint is logged once per distinct REASON, not once per run: `resolverUnavailableHintsShown` is a bounded `Set` keyed on the error message, capped at 32 and cleared wholesale when it fills. A single process-lifetime boolean was wrong once a repo could be unowned - the first sweep over a project no connector claims burned the latch and permanently suppressed a genuinely different later hint, such as "gh is not installed", for every other project.
 - **Confident not-found.** When the resolver ran cleanly and matched no PR yet the task still carries a link, the linker clears `pr_url` / `pr_number` / `pr_state` atomically so a stale `merged` never lingers. A link-time resolve (`preserveLinkOnNotFound`) is the one exception: a resolve fired BY a link write must never undo that write, so a URL that matches nothing (typo, cross-repo, private) keeps its link with a null state. The non-force sweep clears it on a later pass, but only once the task leaves a To Do lane AND still carries one of the sweep's own anchors: `isEligibleForRefresh` checks the lane first, then requires a `pr_number` or a live `worktree_path`. A preserved link that has neither (a URL naming no PR number, on a task with no worktree) is never eligible, so in that shape only an explicit refresh clears it. An explicit refresh (kebab, `link_pr`) leaves the flag unset and still clears.
 - **SHA backfill.** It opportunistically persists the freshly-read worktree HEAD SHA so the commit anchor (Tier 3) is available later, after the worktree is reclaimed on Done.
 
@@ -197,6 +265,8 @@ The companion `head_sha` column stores the last-captured worktree HEAD commit as
 
 `pr_url` and `pr_number` must name the same PR, because Tier 1 treats `pr_number` as authoritative: a row whose URL was re-pointed while the old number survived resolves the old PR and silently reverts the URL. So every writer that accepts a URL derives the number from it when one is not supplied - `buildPrFields` in the renderer, `prNumberFromUrl` in the MCP handlers.
 
+Both go through one shared helper, `prNumberFromUrl` in `src/shared/pr-url.ts`, which matches `/pull/<n>` (GitHub, GitLab) and `/pullrequest/<n>` (Azure DevOps). It lives in `src/shared/` because the renderer cannot import the main-process registry without pulling `p-queue`, `which`, and `node:child_process` into its bundle, and routing a pure regex through IPC would mean a whole 7-layer endpoint for a string operation. They previously carried separate `/pull/(\d+)` regexes, which silently produced a null number for every Azure DevOps PR URL - and a null number is an anchor Tier 1 can never use, so a pasted Azure link could not be confirmed at all.
+
 ### IPC channel
 
 `task:resolvePr` (`IPC.TASK_RESOLVE_PR`) is the renderer-facing, on-demand resolver behind the task detail header's "Link / refresh PR" control. Per `.claude/rules/project-scoped-ipc.md` it forwards an explicit interaction-time `projectId`. The handler (in `src/main/ipc/handlers/sessions.ts`) calls `linkPR` with `force: true` and returns a `TaskResolvePrResult`:
@@ -214,12 +284,14 @@ The companion `head_sha` column stores the last-captured worktree HEAD commit as
 
 | Provider | Status | CLI dependency | Notes |
 |----------|--------|----------------|-------|
-| GitHub | stable | `gh` | PRs via `gh pr` / `gh api`, reusing the board importer's `gh` client. The only registered connector. |
+| GitHub | stable | `gh` | PRs via `gh pr` / `gh api`, reusing the board importer's `gh` client. |
+| Azure DevOps | stable | `az` + the `azure-devops` extension | PRs via `az repos pr` plus one `az rest` call for the commit tier, reusing the board importer's `az` client. The commit tier sees completed PRs only (see above). |
 | GitLab | planned | - | Noted in the `pr-registry.ts` connectors comment; not implemented. |
 | Bitbucket | planned | - | Noted in the `pr-registry.ts` connectors comment; not implemented. |
-| Azure DevOps | planned | - | Noted in the `pr-registry.ts` connectors comment; not implemented. |
 
-Only `gitHubPRConnector` is in the `connectors` array today. The planned providers are a source comment, not stub folders: adding one means implementing the `PRConnector` contract under `adapters/<provider>/` and appending it to the array, with no changes to the platform-agnostic registry API or its callers.
+The planned providers are a source comment, not stub folders. Adding one means implementing the `PRConnector` contract under `adapters/<provider>/` and appending it to the array.
+
+That used to come with "no changes to the platform-agnostic registry API or its callers", which the Azure DevOps connector disproved: the dispatch loops had no `try`/`catch`, so the first connector whose CLI was missing threw and aborted before any later connector ran, and registering a second adapter changed nothing until the dispatch layer grew the ownership gate. A third provider does now drop in cleanly - but implement `matchesRemote` honestly, and make the connector's own resolvers return `null` rather than throw on a remote it does not own.
 
 ## See Also
 

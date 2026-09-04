@@ -192,6 +192,20 @@ const SCAN_WINDOW = 4096;
 export const gitHubPRConnector: PRConnector = {
   name: 'GitHub',
 
+  /**
+   * Any host label containing `github`, not the literal `github.com`, so a
+   * GitHub Enterprise host such as `github.mycorp.com` keeps resolving.
+   *
+   * KNOWN GAP: GHE hosted on a name with no `github` in it (`ghe.corp.example`)
+   * no longer resolves PRs. Before the ownership gate this connector ran on
+   * every remote and would have tried; the failure is now at least diagnosable,
+   * because the thrown message names the unmatched remote URL. A per-project
+   * list of extra hosts is the follow-up.
+   */
+  matchesRemote(remoteUrls: readonly string[]): boolean {
+    return remoteUrls.some((url) => /(^|\/\/|@)[^/:@]*github[^/:@]*[:/]/i.test(url));
+  },
+
   matchesCommand(commandDetail: string): boolean {
     return /^gh\s+pr\s+(create|view|merge)/.test(commandDetail);
   },

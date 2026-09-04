@@ -16,6 +16,7 @@ import {
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
+import { prNumberFromUrl } from '../../../shared/pr-url';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -95,13 +96,14 @@ export function computeUpdatedDescription(
  * already encodes the number), which would otherwise leave the OLD number in the
  * row - the next non-force resolve then resolves that stale number and silently
  * overwrites the URL back to the previous PR. Deriving it here keeps the two in
- * agreement, and mirrors `buildPrFields` in the task-detail edit form, which has
- * always derived the number from the URL the same way.
+ * agreement, and mirrors `buildPrFields` in the task-detail edit form, which
+ * derives the number from the URL through the same shared helper.
+ *
+ * The implementation lives in `src/shared/pr-url.ts` so this and the renderer's
+ * `buildPrFields` cannot drift apart: they used to carry separate `/pull/(\d+)`
+ * regexes, which silently produced a null number for every Azure DevOps
+ * `/pullrequest/<id>` URL.
  */
-function prNumberFromUrl(prUrl: string): number | null {
-  const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
-  return prNumberMatch ? parseInt(prNumberMatch[1], 10) : null;
-}
 
 /**
  * Resolve a just-written PR link so its state lands immediately, instead of
@@ -650,9 +652,9 @@ export const handleLinkPr: CommandHandler = async (
         },
       };
     case 'resolver-unavailable':
-      return { success: false, error: result.message ?? 'GitHub CLI not available. Install gh and run: gh auth login' };
+      return { success: false, error: result.message ?? 'No PR resolver available for this repository' };
     case 'transient-error':
-      return { success: false, error: result.message ?? 'Temporary GitHub error while resolving the PR - try again.' };
+      return { success: false, error: result.message ?? 'Temporary error while resolving the PR - try again.' };
     case 'no-anchor':
       return {
         success: true,

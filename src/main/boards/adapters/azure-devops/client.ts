@@ -78,6 +78,176 @@ function execAz(
   return execFileAsync('az', args, fullOptions);
 }
 
+// --- Pull requests ---------------------------------------------------------
+// The PR resolvers live here, in the board importer, for the same reason the
+// GitHub ones live in `github-common/gh-client.ts`: `az` detection and error
+// classification are shared with the import path rather than duplicated, and
+// `src/main/pr/adapters/azure-devops/` deep-imports them.
+
+/** Azure's own PR states, before normalization to the app-wide `PRState`. */
+export type AzurePrStatus = 'active' | 'completed' | 'abandoned';
+
+/**
+ * A normalized Azure DevOps pull request, shaped to mirror `GhPrListItem` so
+ * the connector's disambiguation logic reads identically for both providers.
+ */
+export interface AzurePrItem {
+  number: number;
+  state: AzurePrStatus;
+  isDraft: boolean;
+  /** BARE branch name: Azure returns `refs/heads/x`, and the prefix is stripped here, once. */
+  headRefName: string;
+  baseRefName: string;
+  /**
+   * `closedDate ?? creationDate`, because Azure exposes no `updatedAt` on ANY
+   * tier. This is not a bug to "fix" back to `creationDate`: disambiguation
+   * scores state first, so the timestamp only breaks ties WITHIN a state
+   * bucket - where `closedDate` is the right recency key for completed and
+   * abandoned PRs, and is null (so `creationDate` applies) for active ones.
+   */
+  updatedAt: string;
+  /**
+   * `forkSource != null`. Present on the branch and number tiers only: the
+   * `pullrequestquery` payload carries no `forkSource` field at all, so this
+   * stays undefined there and those candidates pass the falsy fork filter
+   * exactly as GitHub's own optional `isCrossRepository` does.
+   */
+  isCrossRepository?: boolean;
+}
+
+/** The raw projection each resolver's `--query` produces. */
+interface AzurePrRaw {
+  id?: number;
+  status?: string;
+  draft?: boolean;
+  src?: string;
+  tgt?: string;
+  created?: string;
+  closed?: string | null;
+  fork?: unknown;
+}
+
+/** `az` is missing, unauthenticated, or lacks the azure-devops extension. */
+export class AzUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AzUnavailableError';
+  }
+}
+
+/** Network / Azure 5xx / rate-limit / timeout - preserve the link, do not report not-found. */
+export class AzTransientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AzTransientError';
+  }
+}
+
+/**
+ * Classify a failed `az` invocation, mirroring `classifyGhError`:
+ *   - 'unavailable': az missing / unauthenticated / extension absent -> degrade.
+ *   - 'transient':   network / 5xx / rate-limit / timeout -> preserve, retry later.
+ *   - 'not-found':   az ran and the thing simply is not there.
+ *
+ * TF401180 (no such PR) and TF401019 (no such repo, or no permission on it)
+ * both fall through to 'not-found' deliberately. A repo the org does not have
+ * is indistinguishable from "not our repo", and classifying it 'unavailable'
+ * would permanently suppress the confident-not-found clear for that project.
+ *
+ * ORDERING HAZARD: TF401019's text embeds "you do not have permissions", so the
+ * auth patterns below must stay specific and must never gain a bare
+ * `permission` alternative, or a missing repo reads as an auth failure.
+ */
+function classifyAzError(error: unknown): 'unavailable' | 'transient' | 'not-found' {
+  // THIS MODULE's own failure to read az's answer, not a failure az reported:
+  // empty or non-JSON stdout throws SyntaxError out of `JSON.parse`, and a
+  // projected field that is not the string this code assumes throws TypeError
+  // out of `stripRefsHeads`. Such an error carries neither `stderr` nor `code`,
+  // so every pattern below misses it and the not-found default would report
+  // that the PR simply is not there. That is a CLEAN MISS from an owning,
+  // capable connector, which is exactly what makes `pr-linking.ts` CLEAR the
+  // task's PR link - and `resolveFailed` cannot catch it, because the throw is
+  // absorbed here and never escapes the ladder. An answer we could not read is
+  // "could not check", so it degrades instead. Kept ahead of every pattern
+  // below: the message is our own text, so matching it against az's vocabulary
+  // is meaningless.
+  if (error instanceof SyntaxError || error instanceof TypeError) return 'unavailable';
+  const failure = error as { message?: string; stderr?: string; code?: string; killed?: boolean };
+  const text = `${failure.message ?? ''}\n${failure.stderr ?? ''}`;
+  // execFile kills on timeout (killed=true / ETIMEDOUT) -> transient.
+  if (failure.killed || failure.code === 'ETIMEDOUT') return 'transient';
+  if (failure.code === 'ENOENT' || /is not recognized as an internal or external command|command not found/i.test(text)) {
+    return 'unavailable';
+  }
+  if (/az extension add|azure-devops.*extension|extension.*azure-devops|is misspelled or not recognized/i.test(text)) {
+    return 'unavailable';
+  }
+  if (/az login|AADSTS\d+|refresh token|HTTP 401|Unauthorized|TF400813|VS30063|no subscription/i.test(text)) {
+    return 'unavailable';
+  }
+  if (/HTTP 4(03|29)|HTTP 5\d\d|ECONNRESET|ENOTFOUND|EAI_AGAIN|timed? ?out|network|temporar|ServiceUnavailable/i.test(text)) {
+    return 'transient';
+  }
+  return 'not-found';
+}
+
+/** Map a classified az failure to the throw the resolvers use (null = swallow as not-found). */
+function azErrorToThrow(error: unknown): AzUnavailableError | AzTransientError | null {
+  const message = error instanceof Error ? error.message : String(error);
+  // See the head of classifyAzError. This degrades exactly like an unavailable
+  // CLI, but the remedy is not `az login`, so the message must not say so.
+  if (error instanceof SyntaxError || error instanceof TypeError) {
+    return new AzUnavailableError(`Could not read the Azure DevOps CLI response for this PR lookup.\n${message}`);
+  }
+  switch (classifyAzError(error)) {
+    case 'unavailable':
+      return new AzUnavailableError(`Azure CLI unavailable for PR lookup. Check: az login, az extension add --name azure-devops\n${message}`);
+    case 'transient':
+      return new AzTransientError(`Temporary Azure DevOps error - try again.\n${message}`);
+    default:
+      return null;
+  }
+}
+
+/** `refs/heads/feature/x` -> `feature/x`. Any other ref namespace is left intact so an oddity stays visible. */
+function stripRefsHeads(ref: string): string {
+  return ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
+}
+
+function normalizeAzurePr(raw: AzurePrRaw): AzurePrItem | null {
+  if (typeof raw.id !== 'number' || !raw.status) return null;
+  return {
+    number: raw.id,
+    state: raw.status as AzurePrStatus,
+    isDraft: raw.draft === true,
+    headRefName: stripRefsHeads(raw.src ?? ''),
+    baseRefName: stripRefsHeads(raw.tgt ?? ''),
+    updatedAt: raw.closed ?? raw.created ?? '',
+    ...(raw.fork === undefined ? {} : { isCrossRepository: raw.fork != null }),
+  };
+}
+
+/** Shared field projection; `az` applies --query in-process, so stdout stays small. */
+const AZ_PR_FIELDS =
+  '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate,fork:forkSource}';
+/** The commit tier's payload has no forkSource, so its projection omits it. */
+const AZ_PR_FIELDS_NO_FORK =
+  '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate}';
+
+/** Azure PR payloads embed full descriptions; the projection shrinks stdout, this is the backstop. */
+const PR_MAX_BUFFER = 10 * 1024 * 1024;
+
+function azureOrgUrl(organization: string): string {
+  return `https://dev.azure.com/${encodeURIComponent(organization)}`;
+}
+
+/** Parse a projected PR array, tolerating the `null` / non-array shapes a --query can yield. */
+function parseAzurePrList(stdout: string): AzurePrItem[] {
+  const parsed = JSON.parse(stdout) as AzurePrRaw[] | null;
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map(normalizeAzurePr).filter((item): item is AzurePrItem => item !== null);
+}
+
 export class AzureDevOpsImporter {
   private azDetected = false;
   private detectPromise: Promise<boolean> | null = null;
@@ -252,6 +422,133 @@ export class AzureDevOpsImporter {
     };
 
     return this.tokenCache.token;
+  }
+
+  /** Throw the platform-neutral "cannot run at all" error when `az` is absent. */
+  private async requireAz(): Promise<void> {
+    if (await this.detect()) return;
+    throw new AzUnavailableError('Azure CLI not found. Install it from https://aka.ms/azure-cli');
+  }
+
+  /**
+   * Pull requests whose SOURCE branch is `sourceBranch`, in any state.
+   *
+   * Passes an explicit organization / project / repository plus `--detect
+   * false` rather than letting `az` sniff them from the cwd, so this works from
+   * ANY working directory - including after a task's worktree has been
+   * reclaimed, which is the normal shape once a task reaches Done.
+   */
+  async resolvePRByBranch(
+    organization: string,
+    project: string,
+    repository: string,
+    sourceBranch: string,
+  ): Promise<AzurePrItem[]> {
+    // `az` parses a leading dash as an option, so an option-shaped branch name
+    // would rewrite the command. Same class of guard as `isShaContainedInRef`'s
+    // option-shaped ref rejection in worktree-head.ts.
+    if (!sourceBranch || sourceBranch.startsWith('-')) return [];
+    await this.requireAz();
+    try {
+      const { stdout } = await execAz(
+        [
+          'repos', 'pr', 'list',
+          '--organization', azureOrgUrl(organization),
+          '--project', project,
+          '--repository', repository,
+          '--source-branch', sourceBranch,
+          '--status', 'all',
+          '--detect', 'false',
+          '--output', 'json',
+          '--query', `[].${AZ_PR_FIELDS}`,
+        ],
+        { timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
+      );
+      return parseAzurePrList(stdout);
+    } catch (error) {
+      const toThrow = azErrorToThrow(error);
+      if (toThrow) throw toThrow;
+      return [];
+    }
+  }
+
+  /**
+   * One pull request by its id, which is unique across the organization (so no
+   * project or repository is needed). A missing id exits 1 with TF401180, which
+   * classifies as not-found and returns null rather than throwing.
+   */
+  async resolvePRByNumber(organization: string, prNumber: number): Promise<AzurePrItem | null> {
+    await this.requireAz();
+    try {
+      const { stdout } = await execAz(
+        [
+          'repos', 'pr', 'show',
+          '--organization', azureOrgUrl(organization),
+          '--id', String(prNumber),
+          '--detect', 'false',
+          '--output', 'json',
+          '--query', AZ_PR_FIELDS,
+        ],
+        { timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
+      );
+      const parsed = JSON.parse(stdout) as AzurePrRaw | null;
+      return parsed ? normalizeAzurePr(parsed) : null;
+    } catch (error) {
+      const toThrow = azErrorToThrow(error);
+      if (toThrow) throw toThrow;
+      return null;
+    }
+  }
+
+  /**
+   * Pull requests associated with a commit, via the `pullrequestquery` API.
+   * There is no `az repos pr` verb for this, so it goes through `az rest`, and
+   * this is the only POST in this client.
+   *
+   * IMPORTANT: Azure records a PR's commit associations at COMPLETION, so this
+   * matches completed PRs only - active and abandoned ones are invisible to it
+   * (verified against 8 real PRs). It also matches only a PR's own source
+   * commits, never its merge product nor its base tip, which is why the GitHub
+   * connector's two base-history filters have no Azure counterpart.
+   */
+  async resolvePRByCommit(
+    organization: string,
+    project: string,
+    repository: string,
+    commitSha: string,
+  ): Promise<AzurePrItem[]> {
+    // Also the injection guard for the JSON body below.
+    if (!/^[0-9a-f]{7,40}$/i.test(commitSha)) return [];
+    await this.requireAz();
+    // Unlike the work-item calls above, the query string is NOT passed via
+    // --url-parameters: that workaround exists because cmd.exe treats `&` as a
+    // command separator, and this URL has a single parameter. Any `&` inside a
+    // project or repository name is encoded to %26 by encodeURIComponent.
+    const url =
+      `${azureOrgUrl(organization)}/${encodeURIComponent(project)}` +
+      `/_apis/git/repositories/${encodeURIComponent(repository)}/pullrequestquery?api-version=7.0`;
+    const body = JSON.stringify({ queries: [{ type: 'commit', items: [commitSha] }] });
+    try {
+      const { stdout } = await execAz(
+        [
+          'rest', '--method', 'post',
+          '--resource', AZURE_DEVOPS_RESOURCE_ID,
+          '--url', url,
+          '--headers', 'Content-Type=application/json',
+          '--body', body,
+          '--output', 'json',
+          // `results` is keyed by the sha itself, so the wildcard flattens the
+          // dynamic key away. A clean miss is `results: [{}]`, which projects to [].
+          '--query', `results[0].*[][].${AZ_PR_FIELDS_NO_FORK}`,
+        ],
+        { timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
+      );
+      return parseAzurePrList(stdout);
+    } catch (error) {
+      const toThrow = azErrorToThrow(error);
+      if (toThrow) throw toThrow;
+      return [];
+    }
   }
 
   /**

@@ -30,6 +30,17 @@ describe('PRCommandDetector', () => {
     expect(detector.hasPending(SID)).toBe(true);
   });
 
+  // The detector asks the real registry, so a second connector's PR commands
+  // must count as PR activity too.
+  it('flips pending on an Azure DevOps PR command', () => {
+    detector.detect(SID, event({
+      type: EventType.ToolStart,
+      tool: AgentTool.Bash,
+      detail: 'az repos pr create --title "fix"',
+    }));
+    expect(detector.hasPending(SID)).toBe(true);
+  });
+
   it('does not flip pending on a non-PR Bash command', () => {
     detector.detect(SID, event({
       type: EventType.ToolStart,
