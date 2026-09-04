@@ -53,13 +53,16 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: ()
 const recordPushSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/diagnostics/ipc-recorder', () => ({ recordPush: recordPushSpy }));
 
-vi.mock('../../src/main/pr/pr-registry', () => {
-  class PRResolverUnavailableError extends Error {
-    constructor(message: string) { super(message); this.name = 'PRResolverUnavailableError'; }
-  }
-  class PRResolverTransientError extends Error {
-    constructor(message: string) { super(message); this.name = 'PRResolverTransientError'; }
-  }
+vi.mock('../../src/main/pr/pr-registry', async () => {
+  // Re-export the REAL error classes rather than redeclaring them. The ladder
+  // now defers a degrade at one tier so later tiers still run, and that
+  // deferral (`createDeferredDegrade` in shared/pr-dispatch.ts) recognizes a
+  // degrade by `instanceof` against shared/pr-errors. Local look-alike classes
+  // would fail that check, so a deferred error would rethrow immediately and
+  // the deferral would be silently untestable here.
+  const { PRResolverUnavailableError, PRResolverTransientError } = await import(
+    '../../src/main/pr/shared/pr-errors'
+  );
   const make = (key: 'byNumber' | 'byBranch' | 'byCommit') => async (...args: unknown[]) => {
     conn.calls.push(key);
     conn.lastArgs[key] = args;
@@ -251,6 +254,56 @@ describe('linkPRForTask confidence ladder', () => {
     expect(result.status).toBe('transient-error');
     expect(updateSpy).not.toHaveBeenCalled();   // existing link preserved
     expect(result.task?.pr_url).toBe('u61');
+  });
+
+  /**
+   * A tier that cannot CHECK must not discard the tiers below it. The registry
+   * now throws when no connector owns the repo's remote, or when the owner has
+   * no resolver of that kind, so without the deferral one such throw would kill
+   * every later tier - including the slug tier, which is the last chance for a
+   * task with no worktree.
+   */
+  it('a degraded tier does not abort the ladder: a later tier still resolves', async () => {
+    conn.byNumber = new PRResolverUnavailableError('az missing');
+    conn.byCommit = resolved(70, 'merged');
+    const task = makeTask({ pr_number: 70, worktree_path: null, head_sha: 'sha-current' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(conn.calls).toContain('byCommit');
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_number).toBe(70);
+  });
+
+  it('rethrows the deferred degrade when no tier resolves, so degradeStatus is still set', async () => {
+    conn.byNumber = new PRResolverUnavailableError('az missing');
+    conn.byCommit = null;
+    const task = makeTask({ pr_number: 71, worktree_path: null, head_sha: 'sha-current' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('resolver-unavailable');
+    expect(result.message).toMatch(/az missing/);
+  });
+
+  // Both classes block the clear identically; the transient is the more
+  // informative message, so it is the one reported.
+  it('reports a transient over an unavailable when both tiers degraded', async () => {
+    conn.byNumber = new PRResolverUnavailableError('az missing');
+    conn.byCommit = new PRResolverTransientError('HTTP 503');
+    const task = makeTask({ pr_number: 72, worktree_path: null, head_sha: 'sha-current' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('transient-error');
+  });
+
+  /**
+   * RED-GREEN for the `resolveFailed` guard. An UNEXPECTED exception is not a
+   * clean "there is no PR", so it must not clear the link. Before the guard the
+   * generic catch left `degradeStatus` undefined and `prCleared` fired.
+   */
+  it('an unexpected resolver error never clears an existing link', async () => {
+    conn.byNumber = new TypeError('connector bug');
+    const updateSpy = vi.fn();
+    const task = makeTask({ pr_number: 73, pr_url: 'u73', pr_state: 'open', worktree_path: null });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_url).toBe('u73');
   });
 
   it('opportunistically persists head_sha when the worktree HEAD changes', async () => {

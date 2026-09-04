@@ -31,7 +31,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Adapter Session History](adapter-session-history.md) - Native session-history file formats Kangentic reads for real-time telemetry; the authoritative reference for the sessionHistory hook
 - [Command Injection](command-injection.md) - Per-column auto-commands and model/effort injection, verifier contract, retry semantics, and the measured per-agent support matrix (plus how to graduate an agent)
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, GitHub/Azure DevOps/Jira/Linear/etc., how to add a new provider
-- [PR Integration](pr-integration.md) - PRConnector interface, registry, GitHub connector, the confidence-ladder linker, background refresh, where PR state is stored
+- [PR Integration](pr-integration.md) - PRConnector interface, registry and its remote-ownership gate, GitHub/Azure DevOps connectors, the confidence-ladder linker, background refresh, where PR state is stored
 - [Mobile Bridge](mobile-bridge.md) - Desktop half of the mobile companion app: `@kangentic/protocol` package, pairing ceremony, signed device roster, capability verbs, relay transport
 - [Handoff](handoff.md) -- Cross-agent context transfer: extraction, packaging, markdown rendering, prompt delivery
 - [MCP Server](mcp-server.md) -- Board management tools for agents, file-based command queue, .mcp.json safety

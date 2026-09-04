@@ -3475,7 +3475,12 @@ export interface TaskResolvePrResult {
   linked: boolean;
   /** Why the resolve ended this way - lets the UI/MCP show an accurate message. */
   reason: PRLinkStatus;
-  /** Detail for `resolver-unavailable` (e.g. "gh CLI not found - run gh auth login"). */
+  /**
+   * Detail for `resolver-unavailable` / `transient-error`, written by whichever
+   * connector degraded (or by the registry when no connector owns the remote).
+   * Callers should prefer it over their own wording, which cannot know which
+   * hosting provider the repository actually uses.
+   */
   message?: string;
 }
 

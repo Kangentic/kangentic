@@ -7,6 +7,7 @@ import { useTaskDetailHost } from './task-detail-host';
 import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskRunMode } from '../../../../shared/types';
 import type { useBranchConfig } from './useBranchConfig';
 import { hasSessionLifecycle } from '../../../utils/task-progress';
+import { prNumberFromUrl } from '../../../../shared/pr-url';
 import type { useTaskProgress } from '../../../utils/task-progress';
 
 /**
@@ -279,10 +280,13 @@ export function useTaskActions(input: {
     const trimmedPrUrl = input.prUrl.trim();
     if (trimmedPrUrl === (input.task.pr_url ?? '')) return {};
     if (trimmedPrUrl) {
-      const prNumberMatch = trimmedPrUrl.match(/\/pull\/(\d+)/);
       return {
         pr_url: trimmedPrUrl,
-        pr_number: prNumberMatch ? parseInt(prNumberMatch[1], 10) : null,
+        // Shared with the agent-command path so the two cannot drift: they used
+        // to carry separate `/pull/(\d+)` regexes, which left every pasted Azure
+        // DevOps `/pullrequest/<id>` URL with a null number, and a null number
+        // is an anchor Tier 1 of the resolver ladder can never use.
+        pr_number: prNumberFromUrl(trimmedPrUrl),
         pr_state: null,
       };
     }

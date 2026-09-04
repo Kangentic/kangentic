@@ -680,13 +680,17 @@ function TaskDetailKebabItems({
     try {
       const result = await window.electronAPI.tasks.resolvePr(task.id, hostProjectId || null);
       if (result.reason === 'resolver-unavailable') {
+        // Prefer the resolver's own message: it names the actual reason (which
+        // CLI, which host, or that no connector owns this remote at all). The
+        // hardcoded gh wording told an Azure DevOps user to run `gh auth login`
+        // when gh was installed and working. Mirrors task-commands.ts.
         useToastStore.getState().addToast({
-          message: 'GitHub CLI not found - install gh and run gh auth login to link PRs',
+          message: result.message ?? 'No PR resolver available for this repository',
           variant: 'error',
         });
       } else if (result.reason === 'transient-error') {
         useToastStore.getState().addToast({
-          message: 'Could not reach GitHub - try again in a moment',
+          message: result.message ?? 'Could not reach the PR host - try again in a moment',
           variant: 'error',
         });
       } else if (result.linked && result.task?.pr_number != null) {

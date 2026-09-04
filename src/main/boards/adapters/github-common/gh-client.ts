@@ -120,9 +120,32 @@ function classifyGhError(error: unknown): 'unavailable' | 'transient' | 'not-fou
   return 'not-found';
 }
 
+/**
+ * A repository whose remotes are not GitHub. `gh` exits 1 with
+ * "none of the git remotes configured for this repository point to a known
+ * GitHub host. To tell gh about a new GitHub host, please use `gh auth login`".
+ */
+const GH_REPO_MISMATCH_PATTERN = /none of the git remotes|no git remotes (found|configured)|known GitHub host/i;
+
 /** Map a classified gh error to the throw the resolver paths use (null = swallow as not-found). */
 function ghErrorToThrow(error: unknown): GhUnavailableError | GhTransientError | null {
   const message = error instanceof Error ? error.message : String(error);
+  const text = `${message}\n${(error as { stderr?: string }).stderr ?? ''}`;
+  // Tested BEFORE the classifier, because gh's repo-mismatch message ENDS with
+  // "please use `gh auth login`" and so trips `classifyGhError`'s auth pattern -
+  // which made a permanent host mismatch report as "gh is not authenticated"
+  // and tell the user to re-login when gh was working perfectly.
+  //
+  // It stays classified 'unavailable', NOT 'not-found'. Once the registry's
+  // ownership gate is in place this branch is only reachable when our own
+  // remote read says GitHub owns the repo and gh disagrees (a submodule cwd, an
+  // `insteadOf` rewrite, a host alias). gh did not run cleanly there, so a
+  // clean 'not-found' would let pr-linking.ts CLEAR the task's link.
+  if (GH_REPO_MISMATCH_PATTERN.test(text)) {
+    return new GhUnavailableError(
+      `This repository's git remotes do not point at a GitHub host, so gh cannot resolve a PR here.\n${message}`,
+    );
+  }
   switch (classifyGhError(error)) {
     case 'unavailable':
       return new GhUnavailableError(`gh CLI not authenticated. Run: gh auth login\n${message}`);

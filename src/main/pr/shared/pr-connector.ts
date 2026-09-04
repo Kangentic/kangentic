@@ -36,6 +36,24 @@ export interface PRConnector {
   /** Platform name for logging (e.g. "GitHub", "GitLab") */
   name: string;
 
+  /**
+   * Does this connector OWN the repository behind these git remote fetch URLs?
+   * `origin` comes first. Return true when any URL is one this platform hosts.
+   * Must be pure: no subprocess, no network.
+   *
+   * REQUIRED, unlike the resolvers. A connector with no gate is eligible on
+   * every remote, and a connector that is eligible everywhere and cleanly
+   * misses produces a clean `not-found` - which is exactly what makes
+   * `pr-linking.ts` CLEAR a task's PR link. Making this optional with a
+   * `?? true` default would re-open that hole.
+   *
+   * Being required is not the same as being safe: a future connector can still
+   * write `matchesRemote: () => true` and type-check. What actually holds the
+   * invariant is `dispatchResolve`'s "no owner -> throw" branch and the tier
+   * deferral in `pr-linking.ts`; this member is what lets them do their job.
+   */
+  matchesRemote(remoteUrls: readonly string[]): boolean;
+
   /** Does this Bash command detail look like a PR command for this platform? */
   matchesCommand(commandDetail: string): boolean;
 

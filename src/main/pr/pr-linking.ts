@@ -11,6 +11,7 @@ import {
   PRResolverUnavailableError,
   PRResolverTransientError,
 } from './pr-registry';
+import { createDeferredDegrade } from './shared/pr-dispatch';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
@@ -22,8 +23,24 @@ export interface PRLinkResult {
   message?: string;
 }
 
-/** One-time-per-run guard so the "resolver unavailable" hint isn't logged on every move. */
-let resolverUnavailableHintShown = false;
+/**
+ * One-hint-per-reason guard so the "resolver unavailable" hint isn't logged on
+ * every move.
+ *
+ * Keyed by reason rather than a single boolean: a project whose remote no
+ * connector owns would otherwise burn a process-lifetime latch on the first
+ * sweep and permanently suppress a genuinely different later hint (say, "gh is
+ * not installed") for every other project. Bounded so a message that varies by
+ * path cannot grow it without limit, evicting the OLDEST entry rather than
+ * clearing the whole set: a wholesale clear discards every already-warned
+ * message at once, so the next sweep re-warns all of them and a workspace that
+ * keeps crossing the cap settles into a clear-then-restorm cycle instead of the
+ * one-hint-per-reason behaviour this guard exists to provide. `Set` preserves
+ * insertion order, so oldest-first is just its first key (same eviction shape
+ * as `git-remotes.ts`'s `pruneExpired`).
+ */
+const resolverUnavailableHintsShown = new Set<string>();
+const MAX_RESOLVER_HINTS = 32;
 
 /**
  * Per-task throttle: timestamp (ms) of the last resolve. Auto triggers within
@@ -85,7 +102,9 @@ type LinkedPR = { url: string; number: number; state: PRState | null };
  *   2. worktree HEAD branch -> the real branch while actively worked
  *   3. commit SHA -> immutable, survives Done/worktree deletion and renames
  *   4. stored slug branch -> weak last resort when there is no worktree
- * A `PRResolverUnavailableError` from any tier propagates so the caller degrades.
+ * A degrade error from any tier is REMEMBERED rather than propagated, so the
+ * tiers below it still run; it is rethrown unchanged only if none of them
+ * resolved, and the caller degrades then.
  *
  * Every anchor is git state or an explicitly stored number. A PR URL written into
  * the task DESCRIPTION is deliberately not an anchor: a URL cited as background
@@ -107,12 +126,20 @@ async function resolvePRViaLadder(args: {
 }): Promise<LinkedPR | null> {
   const { task, cwd, projectPath, branch, effectiveSha, baseBranch } = args;
 
+  // A degrade at one tier must not discard the tiers below it. The registry now
+  // throws when no connector OWNS the repo's remote, or when the owner has no
+  // resolver of that kind, so without this a Tier-3 throw would kill Tier 4 -
+  // and Tier 4 is exactly the tier that rescues a task with no worktree. Errors
+  // are remembered and rethrown UNCHANGED below if no tier resolves, so the
+  // `instanceof` test in `linkPRForTask`'s catch still sets `degradeStatus`.
+  const degrade = createDeferredDegrade();
+
   if (task.pr_number != null) {
-    const byNumber = await resolvePRByNumber(cwd, task.pr_number);
+    const byNumber = await degrade.attempt(() => resolvePRByNumber(cwd, task.pr_number as number));
     if (byNumber) return byNumber;
   }
   if (task.worktree_path && branch) {
-    const byBranch = await resolvePRForBranch(cwd, branch, task.base_branch ?? undefined);
+    const byBranch = await degrade.attempt(() => resolvePRForBranch(cwd, branch, task.base_branch ?? undefined));
     if (byBranch) return byBranch;
   }
   if (effectiveSha && (await hasCommitsAheadOfBase(projectPath ?? cwd, baseBranch, effectiveSha))) {
@@ -124,13 +151,19 @@ async function resolvePRViaLadder(args: {
     // that PR is never this task's work. This also catches the single-parent
     // commits `gh pr merge --rebase`/`--squash` produce, which a parent-count
     // merge check misses.
-    const byCommit = await resolvePRByCommit(projectPath ?? cwd, effectiveSha, branch ?? undefined);
+    const byCommit = await degrade.attempt(() =>
+      resolvePRByCommit(projectPath ?? cwd, effectiveSha, branch ?? undefined),
+    );
     if (byCommit) return byCommit;
   }
   if (!task.worktree_path && branch) {
-    const bySlug = await resolvePRForBranch(cwd, branch, task.base_branch ?? undefined);
+    const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, task.base_branch ?? undefined));
     if (bySlug) return bySlug;
   }
+  // Nothing resolved: a tier that could not CHECK outranks the tiers that
+  // merely missed, so the caller degrades instead of clearing the link.
+  const pendingDegrade = degrade.pending();
+  if (pendingDegrade) throw pendingDegrade;
   return null;
 }
 
@@ -199,6 +232,14 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     // the real reason and never overwrite an existing link with "not found".
     let degradeStatus: 'resolver-unavailable' | 'transient-error' | undefined;
     let degradeMessage: string | undefined;
+    /**
+     * An UNEXPECTED exception escaped the ladder. "An owning connector ran
+     * cleanly" is false in that case, so the confident-not-found clear below
+     * must not fire: without this flag a resolver bug silently wipes the task's
+     * PR link, and so would a future regression in `readRemoteUrls`'s
+     * never-rejects contract.
+     */
+    let resolveFailed = false;
 
     try {
       const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch });
@@ -213,11 +254,16 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         if (scraped) {
           next = { url: scraped.url, number: scraped.number, state: scraped.url === task.pr_url ? task.pr_state : null };
         }
-        if (degradeStatus === 'resolver-unavailable' && !resolverUnavailableHintShown) {
-          resolverUnavailableHintShown = true;
+        if (degradeStatus === 'resolver-unavailable' && !resolverUnavailableHintsShown.has(error.message)) {
+          if (resolverUnavailableHintsShown.size >= MAX_RESOLVER_HINTS) {
+            const oldestHint = resolverUnavailableHintsShown.keys().next();
+            if (!oldestHint.done) resolverUnavailableHintsShown.delete(oldestHint.value);
+          }
+          resolverUnavailableHintsShown.add(error.message);
           console.warn(`[pr-linking] ${error.message}\nPR auto-linking is degraded to terminal scraping until a PR resolver is available.`);
         }
       } else {
+        resolveFailed = true;
         console.error(`[pr-linking] resolve failed for task ${taskId.slice(0, 8)}:`, error);
       }
     }
@@ -239,7 +285,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     // neither does a link-time resolve (`preserveLinkOnNotFound`), which would
     // otherwise undo the very write that triggered it.
     const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null;
-    const prCleared = next == null && !degradeStatus && hadLink && !deps.preserveLinkOnNotFound;
+    const prCleared = next == null && !degradeStatus && !resolveFailed && hadLink && !deps.preserveLinkOnNotFound;
     if (prCleared) {
       patch.pr_url = null;
       patch.pr_number = null;
