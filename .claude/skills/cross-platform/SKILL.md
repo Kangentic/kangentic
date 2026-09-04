@@ -73,7 +73,7 @@ which throws EPERM on locked files.
 
 ## Em-Dash Encoding
 
-**NEVER use Unicode em-dash (U+2014) anywhere in the codebase.** Always use a single ASCII `-` instead; `--` as punctuation is equally banned (see `.claude/rules/text-formatting.md`).
+**NEVER use Unicode em-dash (U+2014) anywhere in the codebase.** Always use a single ASCII `-` instead; the en-dash (U+2013) and `--` as punctuation are equally banned (see `.claude/rules/writing-style.md`).
 
 Windows console code pages (e.g., CP437, CP1252) cannot render em-dashes, producing garbled characters like `\u0096` or mojibake. This applies to:
 - Source code and comments

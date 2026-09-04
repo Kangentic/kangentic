@@ -376,7 +376,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 
 **Always-on rules:**
 - `bash-single-command.md` - one command per Bash tool call; no `&&` `||` `|` `;` or redirects.
-- `text-formatting.md` - no em-dashes (U+2014) or `--` as punctuation in authored text.
+- `writing-style.md` - no AI tells in authored prose; no em-dashes, en-dashes, `--`, or curly quotes.
 - `typescript-style.md` - TypeScript strict mode; no `any` types; full descriptive names.
 - `no-personal-info.md` - no usernames, emails, or machine paths in committed code (repo is public).
 

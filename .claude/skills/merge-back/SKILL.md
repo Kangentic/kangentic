@@ -166,3 +166,5 @@ The remote source branch is already updated by Step 4 regardless, so a failure h
 ## Rules
 
 **CRITICAL: No chained commands.** Every Bash call must contain exactly ONE command. Never use `&&`, `||`, `|`, or `;`. For git commands in another directory, use `git -C <path>` - never `cd <path> && git ...`.
+
+Conventional commit messages, written in the house style (see `.claude/rules/writing-style.md`).
