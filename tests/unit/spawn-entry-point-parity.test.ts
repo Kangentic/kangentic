@@ -104,7 +104,7 @@ function isCommentLine(line: string): boolean {
   return trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*');
 }
 
-type SinkCall = { relativePath: string; location: string };
+type SinkCall = { relativePath: string; line: number; location: string };
 
 function collectSinkCalls(pattern: RegExp): SinkCall[] {
   const calls: SinkCall[] = [];
@@ -114,18 +114,53 @@ function collectSinkCalls(pattern: RegExp): SinkCall[] {
     lines.forEach((line, index) => {
       if (isCommentLine(line)) return;
       if (pattern.test(line)) {
-        calls.push({ relativePath, location: `${relativePath}:${index + 1}` });
+        calls.push({ relativePath, line: index + 1, location: `${relativePath}:${index + 1}` });
       }
     });
   }
   return calls;
 }
 
-function fileHasNonCommentCall(relativePath: string, callName: string): boolean {
+// Lines strictly BEFORE `beforeLine` (1-based), so a call sharing a line with the
+// site being checked does not count as preceding it.
+function fileHasNonCommentCallBefore(relativePath: string, beforeLine: number, callName: string): boolean {
   const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
   return source
     .split('\n')
+    .slice(0, beforeLine - 1)
     .some((line) => !isCommentLine(line) && line.includes(`${callName}(`));
+}
+
+function fileHasNonCommentCall(relativePath: string, callName: string): boolean {
+  return fileHasNonCommentCallBefore(relativePath, Number.POSITIVE_INFINITY, callName);
+}
+
+type ReceiverCall = SinkCall & { receiver: string };
+
+// Like collectSinkCalls, but captures the receiver identifier so a pairing check can
+// demand the SAME receiver instead of a variable literally named `adapter`. Without
+// this, a future spawn site written `claudeAdapter.buildCommand(...)` is never
+// collected at all, and the scan passes by finding nothing rather than by finding it
+// safe. A leading `.` also keeps method DECLARATIONS (`buildCommand(options) {`) out.
+function collectReceiverCalls(methodName: string): ReceiverCall[] {
+  const pattern = new RegExp(`\\b([A-Za-z_$][\\w$]*)\\.${methodName}\\s*\\(`);
+  const calls: ReceiverCall[] = [];
+  for (const filePath of collectSourceFiles(MAIN_DIR)) {
+    const relativePath = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    lines.forEach((line, index) => {
+      if (isCommentLine(line)) return;
+      const match = pattern.exec(line);
+      if (match === null) return;
+      calls.push({
+        relativePath,
+        line: index + 1,
+        location: `${relativePath}:${index + 1}`,
+        receiver: match[1],
+      });
+    });
+  }
+  return calls;
 }
 
 const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession)\s*\(/;
@@ -199,6 +234,37 @@ describe('spawn entry-point parity: chokepoints actually run the shared preamble
         + `resolveEffectivePermissionMode() (lane 'plan' always wins, else task -> lane -> global) `
         + `instead of an inline ternary. See ${RULE_FILE}.`,
     ).toBe(true);
+  });
+});
+
+describe('spawn entry-point parity: every buildCommand site runs ensureTrust first', () => {
+  // `adapter.ensureTrust` is the adapter's pre-spawn global-config step (trust
+  // entries, and for Claude the diff-panel write in diff-panel.ts). The
+  // Command Terminal (transient-sessions.ts) is allowlisted out of both
+  // chokepoints above, so nothing else guarantees it keeps calling it - and a
+  // maximized Command Terminal is exactly where Claude's diff panel would
+  // otherwise come back. Pin: every file that builds an agent command calls
+  // ensureTrust( on the SAME receiver, on an earlier non-comment line.
+  //
+  // Deliberate limits of a static scan, so nobody reads it as more than it is:
+  // it proves line ORDER within a file, not that the two calls sit on one
+  // control-flow path, and it only sees paths that build their command through
+  // an adapter (a raw passthrough spawning a caller-supplied command string is
+  // invisible to it). Runtime ordering is pinned by the handler-level tests.
+  it('every buildCommand( call site is preceded by the same receiver calling ensureTrust(', () => {
+    const buildSites = collectReceiverCalls('buildCommand');
+    expect(buildSites.length, 'expected at least one buildCommand( call site').toBeGreaterThan(0);
+    const missing = buildSites
+      .filter((site) => !fileHasNonCommentCallBefore(site.relativePath, site.line, `${site.receiver}.ensureTrust`))
+      .map((site) => `${site.location} (receiver: ${site.receiver})`);
+    expect(
+      missing,
+      `buildCommand( without an earlier ensureTrust( on the same receiver:\n`
+        + `${missing.join('\n')}\n\n`
+        + `Pre-spawn global-config state (trust entries, Claude's diff-panel write) must apply on `
+        + `every path that builds an agent command, including the Command Terminal. Call `
+        + `<receiver>.ensureTrust(cwd) before building the command. See ${RULE_FILE}.`,
+    ).toEqual([]);
   });
 });
 

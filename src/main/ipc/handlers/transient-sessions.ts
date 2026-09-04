@@ -105,6 +105,14 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       model: project.default_model ?? undefined,
       effort: project.default_effort ?? undefined,
     };
+    // The same pre-spawn global-config step the task chokepoints run: trust
+    // for the project root, kangentic pre-enabled in the agent's MCP list, and
+    // Claude's diff panel closed. A Command Terminal is the likeliest maximized
+    // pane, so it needs the diff-panel write most of all. Pinned by
+    // tests/unit/spawn-entry-point-parity.test.ts (line order) and
+    // tests/unit/transient-session-spawn-ensure-trust.test.ts (the runtime
+    // guarantee: awaited, called once, with projectRoot, before buildCommand).
+    await adapter.ensureTrust(projectRoot);
     const command = adapter.buildCommand(commandOptions);
     const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 

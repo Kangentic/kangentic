@@ -98,10 +98,14 @@ sessions bypass all of this (not task agents).
    - Resolve permission mode via `resolveEffectivePermissionMode` (lane `plan` always wins,
      else task pin -> lane -> global)
    - Determine CWD (worktree path or project path)
-   - Pre-populate agent-specific trust for the worktree path via `adapter.ensureTrust(cwd)`. The
+   - Apply agent-specific pre-spawn global-config state via `adapter.ensureTrust(cwd)`. The
      call is generic (no agent-name branching); each adapter writes its own store: Claude
      `~/.claude.json`, Codex `~/.codex/config.toml` `[projects]`, Gemini and Qwen
-     `trustedFolders.json`. Adapters with no trust system implement it as a no-op.
+     `trustedFolders.json`. Adapters with no such state implement it as a no-op. Trust
+     pre-population for the worktree path is the main job, but not the only one: Claude also
+     writes `diffSidebarOpen: false` here to keep its fullscreen diff panel closed (see
+     [Global Config Writes](agent-integration.md#global-config-writes-claudejson)). Every path
+     that builds an agent command calls this first, including the Command Terminal.
    - Check for previous suspended session (can resume?)
    - If resuming: reconcile the stored `agent_session_id` against the record's own `status.json` (see [Resume](#resume)), then use it with `--resume`, no prompt
    - If fresh: generate new UUID for `agent_session_id`, use `--session-id`, include prompt
@@ -1028,8 +1032,13 @@ Transient sessions are ephemeral Claude Code terminals spawned from the command 
 
 1. Optionally checkout a target branch (falls back to current branch on failure)
 2. Create a session directory at `.kangentic/sessions/<transientTaskId>/` for bridge files
-3. Build Claude CLI command via `CommandBuilder` (with MCP server if enabled)
-4. Call `SessionManager.spawn()` with `transient: true`
+3. `await adapter.ensureTrust(projectRoot)` - trust pre-population, `kangentic` MCP enablement,
+   and for Claude the diff-panel write (see
+   [Global Config Writes](agent-integration.md#global-config-writes-claudejson)). The Command
+   Terminal bypasses the two spawn chokepoints, but not this: every path that builds an agent
+   command applies the adapter's pre-spawn global-config state first
+4. Build Claude CLI command via `CommandBuilder` (with MCP server if enabled)
+5. Call `SessionManager.spawn()` with `transient: true`
 
 ### Kill Flow (`SESSION_KILL_TRANSIENT`)
 

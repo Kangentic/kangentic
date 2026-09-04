@@ -162,7 +162,14 @@ export interface AgentAdapter {
    */
   discoverCapabilities?(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities>;
 
-  /** Pre-approve a working directory so the agent does not prompt for trust. */
+  /**
+   * Pre-approve a working directory so the agent does not prompt for trust, and apply any other
+   * pre-spawn global-config state the adapter needs for a clean start (Claude also keeps its
+   * fullscreen diff panel closed here). Every spawn path calls this before `buildCommand`,
+   * including the Command Terminal. Pinned by `tests/unit/spawn-entry-point-parity.test.ts`
+   * (line order, every path) and `tests/unit/transient-session-spawn-ensure-trust.test.ts`
+   * (the Command Terminal's runtime ordering, which a static scan cannot see).
+   */
   ensureTrust(workingDirectory: string): Promise<void>;
 
   /**
