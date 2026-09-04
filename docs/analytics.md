@@ -27,7 +27,7 @@ Eighteen event types are tracked, all on critical-path actions only:
 | `feature_used` | Once per curated feature per UTC day | feature |
 | `board_snapshot` | Once per project per app run, on cold project open | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
-| `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, board resume, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
+| `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
 | `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit) | service (`kangentic-embeddings`, `kangentic-line-count`), exitCode (see below) |
 
 `utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
