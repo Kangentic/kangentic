@@ -43,6 +43,9 @@ import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session
 import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import type { FirstOutputTracker } from '../../src/main/pty/lifecycle/first-output-tracker';
+import type { ResizeManager } from '../../src/main/pty/lifecycle/resize-manager';
+import type { SessionFileManager } from '../../src/main/pty/lifecycle/session-file-manager';
+import type { SessionIdManager } from '../../src/main/pty/lifecycle/session-id-manager';
 
 describe('SessionManager.registerSuspendedPlaceholder emit', () => {
   let manager: SessionManager;
@@ -162,13 +165,18 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     expect(returned!.id).toBeTruthy();
   });
 
-  it('clears the evicted exited row\'s per-session caches (buffer, telemetry, first-output tracker)', () => {
+  it('clears the evicted exited row\'s per-session caches (buffer, telemetry, first-output tracker, resize manager, session files, session-id manager)', () => {
     // registerSuspendedPlaceholder replaces an exited row rather than leaving
     // it stranded (the DB record was just upgraded to suspended, so the task
     // must be resumable). The manager's eviction loop must also drop what the
     // auxiliary modules still hold for that dead id - otherwise stale
-    // scrollback/usage/first-output state from the crashed session would
-    // survive under an id nothing in the registry references anymore.
+    // scrollback/usage/first-output/resize/session-file/session-id state from
+    // the crashed session would survive under an id nothing in the registry
+    // references anymore. This exercises all six modules the eviction loop
+    // touches: three via the shared `clearSessionCaches` tail (buffer,
+    // telemetry, first-output tracker) and three the loop calls directly
+    // ahead of that tail (session-id manager, session files, and resize
+    // manager, which is also reached via `clearSessionCaches`).
     const exitedSessionId = 'sess-exited-cache-test';
     const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
     registryAccess.set(exitedSessionId, {
@@ -190,10 +198,16 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
       bufferManager: PtyBufferManager;
       telemetry: SessionTelemetry;
       firstOutputTracker: FirstOutputTracker;
+      resizeManager: ResizeManager;
+      sessionFiles: SessionFileManager;
+      sessionIdManager: SessionIdManager;
     };
     const bufferRemoveSpy = vi.spyOn(privateManager.bufferManager, 'removeSession');
     const telemetryRemoveSpy = vi.spyOn(privateManager.telemetry, 'removeSession');
     const firstOutputRemoveSpy = vi.spyOn(privateManager.firstOutputTracker, 'removeSession');
+    const resizeRemoveSpy = vi.spyOn(privateManager.resizeManager, 'removeSession');
+    const sessionFilesRemoveSpy = vi.spyOn(privateManager.sessionFiles, 'removeSession');
+    const sessionIdRemoveSpy = vi.spyOn(privateManager.sessionIdManager, 'removeSession');
 
     const placeholder = manager.registerSuspendedPlaceholder({
       taskId: 'task-exit-cache',
@@ -206,5 +220,8 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     expect(bufferRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
     expect(telemetryRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
     expect(firstOutputRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(resizeRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(sessionFilesRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(sessionIdRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
   });
 });
