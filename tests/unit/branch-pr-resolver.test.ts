@@ -54,6 +54,19 @@ vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
   isShaContainedInRef: gitRefs.isShaContainedInRef,
 }));
 
+/**
+ * The registry dispatches only to connectors that OWN the repo's remote, so a
+ * registry-level call reads `git remote -v` first. Stub it to a GitHub remote:
+ * these tests use a synthetic cwd (`/r`) that is not a repository, and without
+ * this the gate correctly refuses to name an owner and throws before any
+ * connector runs.
+ */
+const remotes = vi.hoisted(() => ({ urls: ['https://github.com/owner/repo.git'] as readonly string[] | null }));
+vi.mock('../../src/main/git/git-remotes', () => ({
+  readRemoteUrls: async () => remotes.urls,
+  invalidateRemoteUrlsCache: () => {},
+}));
+
 vi.mock('which', () => ({
   default: async () => {
     if (state.whichResult instanceof Error) throw state.whichResult;
@@ -136,6 +149,29 @@ describe('GitHubImporter.resolvePRByBranch', () => {
     state.ghError = new Error('gh auth login required (HTTP 401)');
     const importer = new GitHubImporter();
     await expect(importer.resolvePRByBranch('/repo', 'feat')).rejects.toBeInstanceOf(GhUnavailableError);
+  });
+
+  /**
+   * gh's repo-mismatch message ENDS with "please use `gh auth login`", so the
+   * auth classifier read a permanent host mismatch as "gh is not authenticated"
+   * and told the user to re-login while gh was working perfectly. The branch
+   * ordering is what this pins: the input literally contains that phrase.
+   *
+   * It stays UNAVAILABLE rather than becoming not-found. With the ownership gate
+   * this is only reachable when our remote read says GitHub owns the repo and gh
+   * disagrees, so gh did not run cleanly and a clean not-found would let the
+   * linker clear the task's link.
+   */
+  it('reports a non-GitHub remote as a repo mismatch, not an auth failure', async () => {
+    state.ghError = new Error(
+      'none of the git remotes configured for this repository point to a known GitHub host. ' +
+        'To tell gh about a new GitHub host, please use `gh auth login`',
+    );
+    const importer = new GitHubImporter();
+    const failure = await importer.resolvePRByBranch('/repo', 'feat').catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(GhUnavailableError);
+    expect((failure as Error).message).toMatch(/do not point at a GitHub host/i);
+    expect((failure as Error).message).not.toMatch(/not authenticated/i);
   });
 });
 
