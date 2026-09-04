@@ -33,6 +33,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 import type { Session } from '../../src/shared/types';
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
 
 function createMockPty() {
   let exitHandler: ((event: { exitCode: number }) => void) | null = null;
@@ -156,6 +157,48 @@ describe('SessionManager queued status', () => {
     expect(manager.queuedCount).toBe(0);
   });
 
+  it('killByTaskId() kills EVERY registry row for a task, not just the first match', async () => {
+    // Reproduces the real registry shape while a respawn is queued behind a
+    // stale suspended placeholder: the task transiently holds [suspended,
+    // queued]. A first-match kill (registry.findByTaskId) picks whichever row
+    // the Map iterates first - here the directly-seeded suspended placeholder,
+    // inserted before the queued spawn - and would never reach the queued row,
+    // leaving it to be promoted into a task the caller just tore down.
+    const firstMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(firstMock.mockPty as unknown as pty.IPty);
+    await manager.spawn({ taskId: 'task-1', projectId: 'project-1', command: '', cwd: '/tmp/test' });
+
+    const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
+    registryAccess.set('sess-dual-suspended', {
+      id: 'sess-dual-suspended',
+      taskId: 'task-dual',
+      projectId: 'project-1',
+      pty: null,
+      status: 'suspended',
+      shell: '',
+      cwd: '/tmp/test',
+      startedAt: new Date(Date.now() - 10_000).toISOString(),
+      exitCode: null,
+      resuming: false,
+      transient: false,
+      exitSequence: ['\x03'],
+    } as ManagedSession);
+
+    // Concurrency is maxed by task-1, so this lands in the real SessionQueue as
+    // 'queued' - the SECOND registry row for task-dual, inserted after the
+    // suspended placeholder above.
+    const queued = await manager.spawn({ taskId: 'task-dual', projectId: 'project-1', command: '', cwd: '/tmp/test' });
+    expect(queued.status).toBe('queued');
+
+    manager.killByTaskId('task-dual');
+
+    // The queued row can only leave 'queued' via SessionQueue.remove(), which
+    // killByTaskId must reach for BOTH rows, not only the suspended one a
+    // first-match lookup would have found first.
+    expect(manager.getSession(queued.id)?.status).toBe('exited');
+    expect(manager.queuedCount).toBe(0);
+  });
+
   it('removeByTaskId() on a queued session emits exit event', async () => {
     const firstMock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(firstMock.mockPty as unknown as pty.IPty);
@@ -179,6 +222,39 @@ describe('SessionManager queued status', () => {
     expect(exitEvent!.exitCode).toBe(-1);
     // Session should be fully removed from manager
     expect(manager.getSession(queued.id)).toBeUndefined();
+  });
+
+  it('removeByTaskId() removes EVERY registry row for a task, not just the first match', async () => {
+    // Same [suspended, queued] shape as the killByTaskId test above, but for
+    // remove(): a first-match removeByTaskId would delete only the directly-
+    // seeded suspended row and leave the queued row listed in listSessions().
+    const firstMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(firstMock.mockPty as unknown as pty.IPty);
+    await manager.spawn({ taskId: 'task-1', projectId: 'project-1', command: '', cwd: '/tmp/test' });
+
+    const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
+    registryAccess.set('sess-dual-suspended-2', {
+      id: 'sess-dual-suspended-2',
+      taskId: 'task-dual-2',
+      projectId: 'project-1',
+      pty: null,
+      status: 'suspended',
+      shell: '',
+      cwd: '/tmp/test',
+      startedAt: new Date(Date.now() - 10_000).toISOString(),
+      exitCode: null,
+      resuming: false,
+      transient: false,
+      exitSequence: ['\x03'],
+    } as ManagedSession);
+
+    const queued = await manager.spawn({ taskId: 'task-dual-2', projectId: 'project-1', command: '', cwd: '/tmp/test' });
+    expect(queued.status).toBe('queued');
+
+    manager.removeByTaskId('task-dual-2');
+
+    const remaining = manager.listSessions().filter((session) => session.taskId === 'task-dual-2');
+    expect(remaining).toEqual([]);
   });
 
   it('kill() on a running session does NOT emit exit event synchronously', async () => {
