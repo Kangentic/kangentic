@@ -185,7 +185,8 @@ that error goes depends on the entry point:
 - **Task create, unarchive, backlog promote, and MCP auto-spawn** catch it and skip worktree
   creation, keeping the task. They also emit `task:spawnBlocked`, so the failure reaches the user
   as a toast rather than only a console line (`notifySpawnBlocked` in `ipc/helpers/task-git.ts`,
-  which covers the worktree step as well as the checkout step).
+  which covers the worktree and checkout steps plus the `agent` step - the spawn itself, whose
+  most common failure is an agent CLI that is not installed or not on PATH).
 - **The `create_worktree` transition action** catches it and logs to console only, so it is the one
   path with no toast today.
 - **`TASK_SWITCH_BRANCH`** (`src/main/ipc/handlers/task-branch.ts`) calls `ensureTaskWorktree`

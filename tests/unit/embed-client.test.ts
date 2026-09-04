@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
 }));
 
 import { EmbedClient, resolveDeviceChain } from '../../src/main/retrieval/embedder/embed-client';
+import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 import type { EmbeddingModelDef } from '../../src/shared/embedding-models';
 
 // Mirrors the private IDLE_SHUTDOWN_MS in embed-client.ts.
@@ -60,6 +61,30 @@ function flush(): Promise<void> {
 
 function lastChild(): FakeChild {
   return forkedChildren[forkedChildren.length - 1];
+}
+
+/**
+ * A client whose restart policy runs on a clock the test drives.
+ *
+ * The client's real policy spaces respawns after a crash (so a crash-looping
+ * worker cannot burn its cap in one burst). Tests that want to reach the cap
+ * must therefore let time pass between crashes. Injecting the clock rather than
+ * using fake timers keeps the existing microtask-flushing helpers above working
+ * unchanged.
+ */
+function clientWithControlledClock(): { client: EmbedClient; advance: (ms: number) => void } {
+  let current = 1_000;
+  const policy = new UtilityRestartPolicy({
+    service: 'kangentic-embeddings',
+    maxCrashes: 3,
+    now: () => current,
+  });
+  return {
+    client: new EmbedClient(TEST_MODEL, 'auto', policy),
+    advance: (ms: number) => {
+      current += ms;
+    },
+  };
 }
 
 /** Bring a fresh client to the point where its worker is spawned and ready. */
@@ -150,13 +175,15 @@ describe('EmbedClient', () => {
   });
 
   it('resolves in-flight requests null on an unexpected worker exit and disables the layer after MAX_CRASHES', async () => {
-    const client = new EmbedClient(TEST_MODEL);
+    const { client, advance } = clientWithControlledClock();
 
     for (let cycle = 0; cycle < 3; cycle++) {
       const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
       child.emit('exit');
       // The pending request resolves null when its worker dies.
       await expect(promise).resolves.toBeNull();
+      // Clear the post-crash backoff so the next cycle may fork at all.
+      advance(20_000);
     }
 
     // Three crashes disable the semantic layer.
@@ -166,6 +193,54 @@ describe('EmbedClient', () => {
     // Further embeds short-circuit to null without forking again.
     await expect(client.embed(['again'])).resolves.toBeNull();
     expect(mockFork).toHaveBeenCalledTimes(3);
+  });
+
+  it('refuses to respawn immediately after a crash, so a crash loop cannot burn the cap in one burst', async () => {
+    // The regression this guards: the client re-forked on the very next embed,
+    // so a worker dying during init burned all three lives in milliseconds and
+    // disabled semantic search for the whole app run with no in-app signal.
+    // That is the three-exits-in-four-seconds signature seen in the wild.
+    const { client, advance } = clientWithControlledClock();
+
+    const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
+    child.emit('exit');
+    await expect(promise).resolves.toBeNull();
+    expect(mockFork).toHaveBeenCalledTimes(1);
+
+    // Immediately embedding again must NOT fork a replacement.
+    await expect(client.embed(['soon'])).resolves.toBeNull();
+    expect(mockFork).toHaveBeenCalledTimes(1);
+    expect(client.crashed).toBe(false);
+
+    // Once the backoff elapses the client recovers on its own.
+    advance(20_000);
+    const recovered = await embedAfterReady(client, ['later'], { timeoutMs: 5000 });
+    expect(mockFork).toHaveBeenCalledTimes(2);
+
+    client.dispose();
+    await recovered.promise;
+  });
+
+  it('recovers after the crash count decays, rather than staying dead until the app restarts', async () => {
+    const { client, advance } = clientWithControlledClock();
+
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
+      child.emit('exit');
+      await expect(promise).resolves.toBeNull();
+      advance(20_000);
+    }
+    expect(client.crashed).toBe(true);
+
+    // Past the policy's 5-minute quiet window.
+    advance(5 * 60_000);
+
+    expect(client.crashed).toBe(false);
+    const recovered = await embedAfterReady(client, ['after-decay'], { timeoutMs: 5000 });
+    expect(mockFork).toHaveBeenCalledTimes(4);
+
+    client.dispose();
+    await recovered.promise;
   });
 
   it('dispose() kills the worker, resolves pending null, and refuses further work', async () => {
@@ -257,6 +332,83 @@ describe('EmbedClient', () => {
       const vectors = [new Float32Array([0.9])];
       finalChild.emit('message', { type: 'result', id: 5, vectors });
       await expect(finalPromise).resolves.toBe(vectors);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a stale exit from a recycled worker after a replacement is already live, but still consumes intentionalShutdown so the replacement\'s own later crash is counted', async () => {
+    // Regression this pins: a killed worker's 'exit' arrives asynchronously,
+    // potentially after an idle recycle has already forked and tracked a
+    // replacement. Without the staleness guard in onWorkerExit(), that stale
+    // exit would null the live child and drain/resolve the replacement's
+    // in-flight request with null. The subtler half: intentionalShutdown is
+    // read and cleared ABOVE the guard, so the stale exit must still CONSUME
+    // the flag - otherwise it stays latched and the replacement's own later,
+    // genuine crash is misread as intentional and never counted.
+    vi.useFakeTimers();
+    try {
+      let currentTime = 1_000;
+      const policy = new UtilityRestartPolicy({
+        service: 'kangentic-embeddings',
+        maxCrashes: 3,
+        now: () => currentTime,
+      });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+      // First worker: spawn, ready, complete one request so the idle timer
+      // arms (armIdleShutdown bails out while pending.size > 0).
+      const firstPromise = client.embed(['x'], { timeoutMs: 60_000 });
+      const firstChild = lastChild();
+      firstChild.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      firstChild.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await firstPromise;
+
+      // Idle recycle fires: killChild() sets intentionalShutdown and nulls
+      // this.child synchronously, but does NOT emit 'exit' - the real
+      // utilityProcess emits it asynchronously after kill(), and the mock's
+      // kill() is a no-op, so firstChild survives as an emitter to fire later.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(firstChild.kill).toHaveBeenCalledTimes(1);
+
+      // A fresh embed forks the replacement and tracks it as the live child
+      // BEFORE the first worker's stale exit ever arrives.
+      const secondPromise = client.embed(['y'], { timeoutMs: 60_000 });
+      const secondChild = lastChild();
+      expect(secondChild).not.toBe(firstChild);
+      secondChild.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The stale exit from the recycled first worker arrives now, after the
+      // replacement is already live with a request in flight.
+      firstChild.emit('exit', 1);
+
+      // Consequence 1: the stale exit must not null the live child or drain
+      // the replacement's in-flight request - resolving it with its real
+      // result (not null) proves both.
+      const vectors = [new Float32Array([0.9])];
+      secondChild.emit('message', { type: 'result', id: 2, vectors });
+      await expect(secondPromise).resolves.toBe(vectors);
+
+      // A follow-up embed still reuses the second (live) worker rather than
+      // forking a third - further proof this.child was never nulled.
+      expect(mockFork).toHaveBeenCalledTimes(2);
+
+      // The idle recycle was already intentional before the stale exit
+      // arrived, so no crash is recorded for it either way.
+      expect(recordCrashSpy).not.toHaveBeenCalled();
+
+      // Consequence 3 (the subtle half): the stale exit must still have
+      // consumed intentionalShutdown, so the replacement's own later,
+      // GENUINE crash is counted rather than silently read as intentional.
+      secondChild.emit('exit', 1);
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      expect(recordCrashSpy).toHaveBeenCalledWith(1);
+      expect(client.crashed).toBe(false);
 
       client.dispose();
     } finally {

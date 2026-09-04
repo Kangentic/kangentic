@@ -11,6 +11,7 @@ import { refResolvesLocally } from '../../git/base-branch';
 import { runGitWithTimeout } from '../../git/git-spawn';
 import { setSpawnStaleNote, beginSpawnStaleProbe, touchSpawnStaleProbe } from '../../transition-engine/spawn-progress';
 import { isShuttingDown } from '../../shutdown-state';
+import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { DEFAULT_AGENT, type Task } from '../../../shared/types';
 import { getProjectRepos } from './project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -139,8 +140,12 @@ function assertNoOtherAgentInDirectory(
   throw new BranchCheckoutBlockedError(directory, occupant.taskId, blockingTitle);
 }
 
-/** The git step that failed before a born-into-a-column task could spawn. */
-export type SpawnFailureStep = 'worktree' | 'checkout';
+/**
+ * The step that failed before a born-into-a-column task could spawn. The first
+ * two are git; `agent` is the spawn step itself (the CLI was missing, or the
+ * engine threw), which used to only log.
+ */
+export type SpawnFailureStep = 'worktree' | 'checkout' | 'agent';
 
 /**
  * Deliberately the same wording the drag path already toasts
@@ -151,6 +156,7 @@ export type SpawnFailureStep = 'worktree' | 'checkout';
 const SPAWN_FAILURE_STEP_LABEL: Record<SpawnFailureStep, string> = {
   worktree: 'Worktree setup failed',
   checkout: 'Branch checkout failed',
+  agent: 'Agent did not start',
 };
 
 /**
@@ -195,6 +201,10 @@ function shortenForNotice(text: string, limit: number): string {
  */
 function describeSpawnFailure(step: SpawnFailureStep, error: unknown): string {
   if (error instanceof BranchCheckoutBlockedError) return error.message;
+  // Same contract: a typed spawn failure already words itself for the user and
+  // carries its own remedy (here, the pointer to the CLI path override), so the
+  // step label would only prefix a sentence that reads fine on its own.
+  if (error instanceof AgentCliNotFoundError) return error.message;
 
   const maxDetailLength = 200;
   const rawMessage = error instanceof Error ? error.message : String(error);
@@ -222,11 +232,22 @@ function describeSpawnFailure(step: SpawnFailureStep, error: unknown): string {
  * notice beats a card that lies, and raw git text reaching a user is already
  * precedent: the drag path's toast says `Worktree setup failed: <raw git error>`.
  *
- * Scope is those two git steps. A failure in the SPAWN step after them still
- * only logs (see `spawnAgent`), so that case keeps the #538 symptom.
+ * Scope is those two git steps PLUS the spawn step itself (`'agent'`). The
+ * spawn step used to only log, which kept the #538 symptom for the case that
+ * causes it most often in practice: an agent CLI that is not installed or not
+ * on PATH. It is notified unconditionally rather than only for
+ * AgentCliNotFoundError - describeSpawnFailure already words an opaque error
+ * sensibly, so narrowing would mean adding a condition whose only effect is to
+ * keep a known defect for every other spawn failure.
  *
- * A task MOVE deliberately does not call this - it rejects the in-flight invoke
- * instead, which the renderer already toasts (see handlers/task-move.ts).
+ * For the two GIT steps, a task MOVE deliberately does not call this - it
+ * rejects the in-flight invoke instead, which the renderer already toasts (see
+ * handlers/task-move.ts). The `'agent'` step is different: a move reaches the
+ * spawn through the shared `spawnAgent` helper, whose catch swallows the error
+ * and returns rather than rethrowing, so the move's invoke RESOLVES and no
+ * rejection toast fires. That notify is therefore the only user-visible notice
+ * on a drag-move spawn failure, and it is already uniform across every
+ * `spawnAgent` entry point. Do not add a second one in handlers/task-move.ts.
  */
 export function notifySpawnBlocked(
   context: IpcContext,

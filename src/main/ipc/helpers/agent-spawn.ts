@@ -458,10 +458,29 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   } catch (error) {
     if (isAbortError(error)) throw error;
     console.error('[spawnAgent] Failed to start session:', error);
-    // The deepest silent failure on the board path: nothing reaches the user,
-    // so at least the failure-rate signal must not stay blind.
+    // This used to be the deepest silent failure on the board path: nothing
+    // reached the user, so only the failure-rate signal was kept. It now
+    // notifies as well, which closes the #538 symptom for the spawn step (see
+    // notifySpawnBlocked). The counter stays unconditional; the Sentry report
+    // self-excludes for a user-configuration error such as a missing CLI (see
+    // reportHandledError), so a misconfigured machine is counted and surfaced
+    // without becoming an un-actionable issue.
+    //
+    // Both legs land here. A spawn_agent transition ACTION that throws is
+    // swallowed above and creates no session, so the `session_id` early return
+    // does not fire and this fallback runs - which is why that catch needs no
+    // counter of its own.
+    //
+    // The "same error" guarantee holds only for a CLI-DETECTION failure, which
+    // is deterministic and runs first: the fallback re-runs the same detect and
+    // re-throws the same AgentCliNotFoundError. An action that fails AFTER
+    // detection (a PTY spawn error, say) is retried from scratch by the
+    // fallback, so it may fail differently or even succeed - meaning the
+    // message the user sees describes the RETRY's outcome, not necessarily the
+    // original action's failure.
     trackEvent('spawn_failed', { agent: targetAgent, reason: 'resume' });
     reportHandledError(error, { source: 'spawn', reason: 'resume', agent: targetAgent });
+    notifySpawnBlocked(context, currentTask, 'agent', error, options.projectId);
     return;
   }
 

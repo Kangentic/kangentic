@@ -1,5 +1,7 @@
 import { app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
+import { isUserConfigurationError } from '../../shared/user-configuration-error';
+import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -71,9 +73,19 @@ export function setErrorReportingUser(clientId: string): void {
  * spawn failures, the silent agent-spawn catches) would stay invisible as
  * diagnosable issues - exactly the "hidden issue" class error reporting
  * exists for. Tags are for grouping/filtering; never put content in them.
+ *
+ * User-configuration errors are the one class deliberately excluded. A missing
+ * agent CLI (AgentCliNotFoundError) is the user's environment, not a defect we
+ * can ship a fix for, so it is un-actionable as an issue: it is surfaced in the
+ * app instead, and its Aptabase counter still fires so the volume view ("how
+ * often are users hitting this") survives. The check lives HERE rather than at
+ * each catch site because such an error must skip only the Sentry half, whereas
+ * the neighbouring isAbortError guards must skip the analytics counter too.
+ * Every current and future call site inherits the exclusion.
  */
 export function reportHandledError(error: unknown, tags: Record<string, string> = {}): void {
   if (!active) return;
+  if (isUserConfigurationError(error)) return;
   try {
     Sentry.withScope((scope) => {
       for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
@@ -89,12 +101,17 @@ export function reportHandledError(error: unknown, tags: Record<string, string> 
  * next to initAnalytics() (the SDK wires its renderer IPC/protocol transport
  * during init).
  *
- * Scrubbing is deliberately Sentry's job, not ours: the SDK's default
+ * SCRUBBING is deliberately Sentry's job, not ours: the SDK's default
  * normalizePathsIntegration rewrites stack-frame paths and URLs relative to
  * the app root (so the user's home directory never reaches Sentry for app
  * code), sendDefaultPii stays false, and Sentry's server-side data scrubbing
- * is on by default. Any further rule belongs in the Sentry UI (Advanced Data
- * Scrubbing), not in a custom beforeSend here.
+ * is on by default. Any further scrubbing rule belongs in the Sentry UI
+ * (Advanced Data Scrubbing), not in a custom beforeSend here.
+ *
+ * FILTERING is a separate concern and does live here, in `ignoreErrors`:
+ * deciding that a whole class of event is un-actionable and should never become
+ * an issue is a product judgement about our own code, not a data-privacy rule.
+ * See the annotated entries below.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -121,10 +138,37 @@ export function initErrorReporting(): void {
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
         ),
-      // The known-benign Windows `npm start` TTY write artifacts that
-      // index.ts's isSuppressibleUncaughtError filters for Aptabase. Sentry's
-      // own global handlers would otherwise report them as crashes.
-      ignoreErrors: ['write EAGAIN', 'write EPIPE'],
+      // Noise filtering, which is a different concern from the scrubbing above:
+      // these are real events we deliberately do not want as issues, not data
+      // we need removed from events we do keep.
+      ignoreErrors: [
+        // The known-benign Windows `npm start` TTY write artifacts that
+        // index.ts's isSuppressibleUncaughtError filters for Aptabase. Sentry's
+        // own global handlers would otherwise report them as crashes.
+        'write EAGAIN',
+        'write EPIPE',
+        // The SDK's own childProcessIntegration captures every utility-process
+        // exit as `'Utility' process exited with '<reason>'`, tagged only with
+        // the process TYPE - it attaches serviceName/name/exitCode to a
+        // breadcrumb AFTER the capture, so the event can never say WHICH
+        // process died and no beforeSend can recover it. Electron's own
+        // utility processes (network, audio, storage) are un-actionable for us,
+        // and our two (kangentic-embeddings, kangentic-line-count) now report
+        // themselves from their own exit handlers, where the service name,
+        // exit code, and crash count are all known. Scoped to 'Utility'
+        // deliberately: the same SDK integration reports renderer crashes as
+        // `'renderer' process exited with ...` through the same code path, and
+        // those must keep reporting. The breadcrumb survives this filter, so an
+        // Electron-internal utility crash still shows as context on later events.
+        /'Utility' process exited with/,
+        // Renderer errors that are known-benign and outside our control. Shared
+        // with the monaco error funnel (monacoConfig.ts) and the UI-test
+        // collector (tests/ui/helpers.ts) so one registry drives all three.
+        // Renderer events reach this filter: the SDK re-captures them through
+        // main's client (@sentry/electron/main/ipc.js captureEventFromRenderer),
+        // so main's event processors run on them.
+        ...BENIGN_RENDERER_ERRORS,
+      ],
     });
     active = true;
   } catch (error) {

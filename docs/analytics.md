@@ -7,7 +7,7 @@ the same kill switch (below).
 
 ## What We Collect (Aptabase)
 
-Seventeen event types are tracked, all on critical-path actions only:
+Eighteen event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -28,6 +28,14 @@ Seventeen event types are tracked, all on critical-path actions only:
 | `board_snapshot` | Once per project per app run, on cold project open | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, board resume, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
+| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit) | service (`kangentic-embeddings`, `kangentic-line-count`), exitCode (see below) |
+
+`utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
+reports, so it is NOT comparable across platforms (POSIX derives it from `waitpid`, Windows from
+`GetExitCodeProcess`). Group by `service` and platform before reading it. The value `-1` is a
+sentinel meaning "the fork itself threw, so no process ever started and there is no exit code",
+which a real exit code cannot collide with. The matching Sentry tag spells that same case
+`unknown` rather than `-1`.
 
 The curated `feature` vocabulary is `ANALYTICS_FEATURES` in `src/main/analytics/usage.ts`:
 `command_terminal`, `worktree_session`, `board_profile`, `popout_window`, `browser_pane`,
@@ -118,8 +126,24 @@ in one Sentry org, one triage surface.
 - **Scrubbing is the SDK's and Sentry's job, not custom code:** the SDK's default
   `normalizePathsIntegration` rewrites stack-frame paths and URLs relative to the app root (the
   user's home directory never reaches Sentry for app code), `sendDefaultPii` stays `false`, and
-  Sentry's server-side data scrubbing is on by default. Any further rule belongs in the Sentry
-  UI (Advanced Data Scrubbing), not in a `beforeSend` here.
+  Sentry's server-side data scrubbing is on by default. Any further scrubbing rule belongs in the
+  Sentry UI (Advanced Data Scrubbing), not in a `beforeSend` here.
+- **Filtering is a different concern and does live in code,** in `ignoreErrors`. Scrubbing removes
+  data from an event we keep; filtering decides a whole class of event is un-actionable and should
+  never become an issue. Three classes are filtered:
+  - The Windows `npm start` TTY write artifacts (`write EAGAIN`, `write EPIPE`).
+  - Utility-process exits reported by the SDK's own `childProcessIntegration`
+    (`'Utility' process exited with '<reason>'`). That event is tagged only with the process
+    TYPE - `serviceName` / `name` / `exitCode` go into a breadcrumb added AFTER the capture, so it
+    can never say which process died and no `beforeSend` could recover it. Electron's internal
+    utility processes (network, audio, storage) are not ours to fix, and Kangentic's own two
+    workers now report themselves (see `utility_process` below), where the service name and exit
+    code are known. Scoped to `'Utility'` deliberately: renderer crashes come through the same
+    integration as `'renderer' process exited with ...` and must keep reporting. The breadcrumb
+    survives the filter, so an internal utility crash still shows as context on later events.
+  - `BENIGN_RENDERER_ERRORS` (`src/shared/benign-renderer-errors.ts`) is spread in, so the one
+    registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
+    must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
 - **Errors only:** release-health session tracking (the SDK's `MainProcessSession` integration,
   on by default) is filtered out, and tracing and session replay are never enabled.
 - **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so
@@ -127,9 +151,20 @@ in one Sentry org, one triage surface.
   existing Aptabase funnel.
 - **Handled errors are forwarded too** (`reportHandledError`): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
-  spawn failures (`source: pty_spawn`), and the silent agent-spawn catches (`source: spawn`,
-  with a `reason` tag) - send the real error to Sentry so hidden issues are diagnosable, not
-  just counted.
+  spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a
+  `reason` tag), and a Kangentic utility worker that has crashed past its restart cap
+  (`source: utility_process`, with `service`, `exitCode`, and `crashCount`) - send the real error
+  to Sentry so hidden issues are diagnosable, not just counted.
+- **User-configuration errors are the one deliberate exclusion.** `reportHandledError`
+  early-returns on a `UserConfigurationError` (`src/shared/user-configuration-error.ts`). A
+  missing agent CLI (`AgentCliNotFoundError`) is the user's environment, not a defect we can ship
+  a fix for, so it is surfaced in the app instead - the spawn-blocked toast names the agent and
+  points at the CLI path override in Settings > Agent - while `spawn_failed` still counts it, so
+  "how often are users hitting a missing CLI" stays answerable. A future user-config error opts
+  itself out by extending that class rather than by adding a message pattern to a filter list.
+- **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
+  restart cap produces a Sentry issue, and only once per latch; every crash increments the
+  `utility_worker_crashed` counter. The same volume-versus-diagnostic split as `spawn_failed`.
 - **Affected-install counts:** the same anonymous, non-reversible `clientId` documented under
   "Unique Installs" is attached as the Sentry user id, so an issue's Users column means
   "installs affected." It contains no personal data and shares the same kill switches.

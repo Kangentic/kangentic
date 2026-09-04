@@ -11,6 +11,7 @@ import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { prepareWorktreeFolder } from '../git/task-worktree-folder';
 import { agentRegistry } from '../agent/agent-registry';
+import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
 import { getDevPortForTask } from '../dev-ports/dev-port-allocator';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
@@ -187,7 +188,7 @@ export class TransitionEngine {
     console.log(`[spawnAgent] Detecting ${agentName} CLI...`);
     const detection = await adapter.detect(cliPathOverride);
     if (!detection.found || !detection.path) {
-      throw new Error(`${adapter.displayName} CLI not found on PATH`);
+      throw new AgentCliNotFoundError(agentName, adapter.displayName);
     }
     console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
 

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
+import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import type { LineCountEntry } from './line-count-worker';
 
 /** Per-request timeout; generous since the worker itself bounds each file's
@@ -12,9 +13,13 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  *  closely-spaced diff refreshes, without holding a process open for no
  *  reason once the Changes panel is no longer in view. */
 const IDLE_SHUTDOWN_MS = 60_000;
-/** After this many crashes in one app run, stop trying to offload - callers
- *  fall back to inline counting (see diff-service.ts). */
+/** After this many crashes inside the policy's decay window, stop trying to
+ *  offload - callers fall back to inline counting (see diff-service.ts). The
+ *  window (rather than the whole app run) is what stops one transient burst
+ *  disabling offload until restart; this client is a module singleton nothing
+ *  ever replaces, so a permanent latch here lasted the whole session. */
 const MAX_CRASHES = 3;
+const SERVICE_NAME = 'kangentic-line-count';
 
 /** Rewrite an in-asar path to its asar.unpacked twin when packaged. */
 function unpacked(absolutePath: string): string {
@@ -38,15 +43,20 @@ export class LineCountClient {
   private child: UtilityProcess | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
-  private crashCount = 0;
+  private readonly restartPolicy: UtilityRestartPolicy;
   private disposed = false;
   private idleTimer: NodeJS.Timeout | null = null;
   /** True while an intentional teardown (idle recycle or dispose) is in
    *  flight, so the resulting 'exit' is not miscounted as a crash. */
   private intentionalShutdown = false;
 
+  constructor(restartPolicy?: UtilityRestartPolicy) {
+    this.restartPolicy = restartPolicy
+      ?? new UtilityRestartPolicy({ service: SERVICE_NAME, maxCrashes: MAX_CRASHES });
+  }
+
   get crashed(): boolean {
-    return this.crashCount >= MAX_CRASHES;
+    return this.restartPolicy.exhausted;
   }
 
   /** Count newline-derived insertions (and detect binary content) for a batch
@@ -69,20 +79,27 @@ export class LineCountClient {
 
   private ensureSpawned(): UtilityProcess | null {
     if (this.child) return this.child;
-    if (this.disposed || this.crashed) return null;
+    if (this.disposed) return null;
+    // Covers both "given up" and "still inside the post-crash backoff window".
+    // Returning null here is not a new failure mode: the caller already
+    // degrades to inline counting whenever the worker is unavailable.
+    if (!this.restartPolicy.maySpawn()) return null;
 
     const workerPath = unpacked(path.join(__dirname, 'line-count-worker.js'));
     let child: UtilityProcess;
     try {
-      child = utilityProcess.fork(workerPath, [], { serviceName: 'kangentic-line-count' });
+      child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME });
     } catch (error) {
+      // A fork that throws is a crash like any other, so it goes through the
+      // policy rather than latching the cap directly - otherwise one transient
+      // fork failure disabled offload permanently, with no decay.
       console.warn('[git] line-count worker fork failed:', error);
-      this.crashCount = MAX_CRASHES;
+      this.restartPolicy.recordCrash(null);
       return null;
     }
     this.child = child;
     child.on('message', (message: unknown) => this.onWorkerMessage(message));
-    child.on('exit', () => this.onWorkerExit(child));
+    child.on('exit', (code: number) => this.onWorkerExit(child, code));
     return child;
   }
 
@@ -111,7 +128,7 @@ export class LineCountClient {
     }
   }
 
-  private onWorkerExit(child: UtilityProcess): void {
+  private onWorkerExit(child: UtilityProcess, exitCode?: number): void {
     const intentional = this.intentionalShutdown;
     this.intentionalShutdown = false;
     // A killed worker's 'exit' arrives asynchronously, after a replacement may
@@ -125,7 +142,7 @@ export class LineCountClient {
     }
     this.pending.clear();
     // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !intentional) this.crashCount += 1;
+    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode);
   }
 
   private armIdleShutdown(): void {

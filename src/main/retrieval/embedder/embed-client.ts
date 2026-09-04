@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { PATHS } from '../../config/paths';
+import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import type { Embedder } from '../types';
 import type { EmbeddingModelDef } from './embedding-config';
 import type { MemoryAcceleration } from '../../../shared/types';
@@ -13,8 +14,12 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const INIT_TIMEOUT_MS = 120_000;
 /** Kill the worker after this long idle to reclaim its memory. */
 const IDLE_SHUTDOWN_MS = 5 * 60_000;
-/** After this many crashes in one app run, disable the semantic layer. */
+/** After this many crashes inside the restart policy's decay window, disable
+ *  the semantic layer. A window rather than the whole app run: a worker that
+ *  dies three times in a burst (a bad GPU provider on a cold start, say) used to
+ *  disable semantic search until restart, with no in-app signal. */
 const MAX_CRASHES = 3;
+const SERVICE_NAME = 'kangentic-embeddings';
 
 /** Rewrite an in-asar path to its asar.unpacked twin when packaged. */
 function unpacked(absolutePath: string): string {
@@ -57,19 +62,25 @@ export class EmbedClient implements Embedder {
   readonly noiseFloor: number;
 
   private readonly deviceChain: string[];
+  private readonly restartPolicy: UtilityRestartPolicy;
 
-  constructor(private readonly model: EmbeddingModelDef, acceleration: MemoryAcceleration = 'auto') {
+  constructor(
+    private readonly model: EmbeddingModelDef,
+    acceleration: MemoryAcceleration = 'auto',
+    restartPolicy?: UtilityRestartPolicy,
+  ) {
     this.dimensions = model.dimensions;
     this.modelTag = model.modelTag;
     this.noiseFloor = model.noiseFloor;
     this.deviceChain = resolveDeviceChain(acceleration);
+    this.restartPolicy = restartPolicy
+      ?? new UtilityRestartPolicy({ service: SERVICE_NAME, maxCrashes: MAX_CRASHES });
   }
 
   private child: UtilityProcess | null = null;
   private readyPromise: Promise<boolean> | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
-  private crashCount = 0;
   private disposed = false;
   private idleTimer: NodeJS.Timeout | null = null;
   private currentActiveDevice: string | null = null;
@@ -93,7 +104,7 @@ export class EmbedClient implements Embedder {
   private interactiveInFlightCount = 0;
 
   get crashed(): boolean {
-    return this.crashCount >= MAX_CRASHES;
+    return this.restartPolicy.exhausted;
   }
 
   /** The execution provider the worker actually initialized on this run
@@ -166,8 +177,12 @@ export class EmbedClient implements Embedder {
 
   /** Spawn + init the worker if needed. Memoized; returns false on failure. */
   private ensureReady(): Promise<boolean> {
-    if (this.disposed || this.crashed) return Promise.resolve(false);
+    if (this.disposed) return Promise.resolve(false);
     if (this.child && this.readyPromise) return this.readyPromise;
+    // Covers both "given up" and "still inside the post-crash backoff window".
+    // A false here degrades the caller to lexical-only, which is the same path
+    // an absent worker already takes.
+    if (!this.restartPolicy.maySpawn()) return Promise.resolve(false);
 
     const workerPath = unpacked(path.join(__dirname, 'embed-worker.js'));
     const modelDir = PATHS.embeddingModelsDir;
@@ -175,16 +190,19 @@ export class EmbedClient implements Embedder {
 
     let child: UtilityProcess;
     try {
-      child = utilityProcess.fork(workerPath, [], { serviceName: 'kangentic-embeddings' });
+      child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME });
     } catch (error) {
+      // A fork that throws is a crash like any other, so it goes through the
+      // policy rather than latching the cap directly - otherwise one transient
+      // fork failure disabled the semantic layer permanently, with no decay.
       console.warn('[retrieval] embed worker fork failed:', error);
-      this.crashCount = MAX_CRASHES;
+      this.restartPolicy.recordCrash(null);
       return Promise.resolve(false);
     }
     this.child = child;
 
     child.on('message', (message: unknown) => this.onWorkerMessage(message));
-    child.on('exit', () => this.onWorkerExit());
+    child.on('exit', (code: number) => this.onWorkerExit(child, code));
 
     this.readyPromise = new Promise<boolean>((resolve) => {
       const readyTimer = setTimeout(() => resolve(false), INIT_TIMEOUT_MS);
@@ -258,7 +276,21 @@ export class EmbedClient implements Embedder {
     }
   }
 
-  private onWorkerExit(): void {
+  private onWorkerExit(child: UtilityProcess, exitCode?: number): void {
+    const intentional = this.intentionalShutdown;
+    // Cleared BEFORE the staleness guard below, not after. The flag belongs to
+    // the teardown that set it, so a stale exit must still consume it -
+    // otherwise it stays latched and the NEXT worker's genuine crash reads as
+    // intentional and is never counted.
+    this.intentionalShutdown = false;
+    // A killed worker's 'exit' arrives asynchronously, after a replacement may
+    // already have been spawned and tracked. Ignore the stale exit so it never
+    // nulls the live child or resolves the replacement's in-flight requests.
+    // LineCountClient has had this guard; this client did not, so a recycle
+    // racing a respawn could tear down the new worker's state. `killChild`
+    // nulls `this.child` before killing, so an ordinary intentional exit
+    // arrives with `this.child === null` and correctly falls through.
+    if (this.child !== null && child !== this.child) return;
     this.child = null;
     this.currentActiveDevice = null;
     this.readyPromise = null;
@@ -271,8 +303,7 @@ export class EmbedClient implements Embedder {
     this.pending.clear();
     this.notifyInteractiveIdleIfClear();
     // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !this.intentionalShutdown) this.crashCount += 1;
-    this.intentionalShutdown = false;
+    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode);
   }
 
   /** Hold (or release) the worker against the idle recycle. Releasing re-arms

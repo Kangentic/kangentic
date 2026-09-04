@@ -264,7 +264,14 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     const result = await invokeSummarize({ prompt: 'description' });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('CLI not found');
+    // The reason now comes from the shared agentCliNotFoundMessage, which never
+    // appends the word "CLI" - the display name supplies it when it applies.
+    // This adapter's displayName is "Claude", so asserting on "CLI not found"
+    // here would be asserting the old doubled-"CLI" wording.
+    if (!result.ok) {
+      expect(result.reason).toContain('not found on PATH');
+      expect(result.reason).not.toMatch(/CLI CLI/i);
+    }
     expect(summarize).not.toHaveBeenCalled();
   });
 
