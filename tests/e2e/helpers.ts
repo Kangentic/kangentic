@@ -642,6 +642,57 @@ export async function waitForTaskScrollback(
   throw new Error(`Timed out waiting for task ${taskId}'s session scrollback containing: ${marker}`);
 }
 
+/**
+ * Poll for a session belonging to `taskId` to reach status='running' via IPC,
+ * without touching scrollback content. Returns its sessionId.
+ *
+ * Prefer this over {@link waitForTaskScrollback} when a test only needs proof
+ * that the task's session actually spawned (e.g. to grab its sessionId for a
+ * follow-up activity-state assertion) and does not need to observe any
+ * particular scrollback content.
+ *
+ * `PtyBufferManager` (`src/main/pty/buffer/pty-buffer-manager.ts`) detects a
+ * fresh session's TUI takeover - the first NORMAL-buffer full-screen clear
+ * (`\x1b[2J`) after any printable output - and, the moment that clear streams
+ * through `onData()`, stamps `tuiStartIndex` at that byte offset so
+ * `getScrollback()` strips everything before it. This is EAGER (fires on
+ * write, inside `onData`), not a lazily-cached read-time scan: once that
+ * clear has been written into the buffer, every `getScrollback()` call from
+ * then on - no matter when it happens - returns the stripped view. This is
+ * intentional production behavior (it hides pre-TUI shell noise from the
+ * replay), but it means an agent whose startup marker prints BEFORE its
+ * TUI's first repaint (Codex and Cursor both print `MOCK_*_SESSION:<id>`
+ * before their `MOCK_*_TUI_REDRAWS` mock's first `\x1b[2J`, on a fixed
+ * ~500ms interval) only has a marker readable in scrollback during the
+ * window between spawn and that first clear landing. A scrollback-marker
+ * poll that happens to make its first successful read inside that window
+ * passes immediately; one whose setup (or first poll tick) pushes past that
+ * window - e.g. under CI load - finds the marker already and permanently
+ * stripped, and spins for its full timeout even though the session spawned
+ * successfully. That reads exactly like a spawn-timing race (intermittent,
+ * worse under load, full-timeout failure with an instant pass on retry's
+ * fresh session/buffer) but is actually racing a fixed mock redraw timer,
+ * not spawn completion. Session existence via IPC is unaffected by that
+ * stripping, so it is the durable signal here.
+ */
+export async function waitForTaskSession(
+  page: Page,
+  taskId: string,
+  timeoutMs = 15000,
+): Promise<{ sessionId: string }> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const sessionId: string | null = await page.evaluate(async (id) => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      const session = sessions.find((candidate) => candidate.taskId === id && candidate.status === 'running');
+      return session?.id ?? null;
+    }, taskId);
+    if (sessionId) return { sessionId };
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`Timed out waiting for task ${taskId}'s session to reach status='running'`);
+}
+
 /** Wait until at least one session reports status='running' via IPC. */
 export async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
   await page.waitForFunction(async () => {
