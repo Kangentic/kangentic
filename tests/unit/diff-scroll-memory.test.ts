@@ -14,6 +14,7 @@ import {
   getSavedDiffScroll,
   saveDiffScroll,
   resolveDiffScrollAction,
+  clampDiffScrollTop,
 } from '../../src/renderer/utils/diff-scroll-memory';
 
 describe('makeDiffScrollKey', () => {
@@ -81,5 +82,40 @@ describe('resolveDiffScrollAction', () => {
 
   it('scrolls to top when the diff computed but found no changes', () => {
     expect(resolveDiffScrollAction(undefined, [])).toEqual({ kind: 'scrollToTop' });
+  });
+});
+
+describe('clampDiffScrollTop', () => {
+  it('leaves a position the layout can reach untouched', () => {
+    expect(clampDiffScrollTop(300, 2000, 500)).toBe(300);
+  });
+
+  it('saturates at the bottom when the saved position overshoots a shorter layout', () => {
+    // The layout can scroll to 2000 - 500 = 1500; a position saved against a
+    // taller layout must land there rather than past the end.
+    expect(clampDiffScrollTop(4000, 2000, 500)).toBe(1500);
+  });
+
+  it('accepts a position exactly at the bottom', () => {
+    expect(clampDiffScrollTop(1500, 2000, 500)).toBe(1500);
+  });
+
+  it('returns 0 when the content is shorter than the viewport', () => {
+    expect(clampDiffScrollTop(800, 300, 500)).toBe(0);
+  });
+
+  it('returns 0 for an unlaid-out editor reporting zero dimensions', () => {
+    expect(clampDiffScrollTop(800, 0, 0)).toBe(0);
+  });
+
+  it('floors a negative saved position at the top', () => {
+    expect(clampDiffScrollTop(-40, 2000, 500)).toBe(0);
+  });
+
+  it('degrades to the top when any dimension is not finite', () => {
+    expect(clampDiffScrollTop(Number.NaN, 2000, 500)).toBe(0);
+    expect(clampDiffScrollTop(800, Number.NaN, 500)).toBe(0);
+    expect(clampDiffScrollTop(800, 2000, Number.NaN)).toBe(0);
+    expect(clampDiffScrollTop(Number.POSITIVE_INFINITY, 2000, 500)).toBe(0);
   });
 });

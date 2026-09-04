@@ -11,6 +11,7 @@ import { formatRelativeTime } from '../../../../lib/datetime';
 import { NAMED_THEMES } from '../../../../../shared/types';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
+  clampDiffScrollTop,
   getSavedDiffScroll,
   makeDiffScrollKey,
   resolveDiffScrollAction,
@@ -393,7 +394,19 @@ export function DiffViewer({
     const modifiedEditor = diffEditor.getModifiedEditor();
     pendingRevealRef.current = null;
     if (action.kind === 'restore') {
-      modifiedEditor.setScrollTop(action.position.scrollTop);
+      // Never hand Monaco an offset the current layout cannot reach. A diff
+      // editor's height depends on the alignment view zones, so the same file
+      // is shorter before its diff is computed and shorter again once
+      // unchanged regions fold - a position saved against a taller layout
+      // saturates at the bottom instead. scrollLeft is left unclamped: it does
+      // not feed the visible-line-range computation this guards.
+      modifiedEditor.setScrollTop(
+        clampDiffScrollTop(
+          action.position.scrollTop,
+          modifiedEditor.getScrollHeight(),
+          modifiedEditor.getLayoutInfo().height,
+        ),
+      );
       modifiedEditor.setScrollLeft(action.position.scrollLeft);
     } else if (action.kind === 'revealLineInCenter') {
       modifiedEditor.revealLineInCenter(action.lineNumber, monacoRef.current?.editor.ScrollType.Immediate);
