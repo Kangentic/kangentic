@@ -1,4 +1,4 @@
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { toForwardSlash, quoteArg, isUnixLikeShell, sanitizeForPty } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { buildHooks } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
@@ -141,6 +141,19 @@ function buildMcpConfigArgs(options: CodexCommandOptions): string[] {
   ];
 }
 
+/**
+ * PowerShell expands `n before it hands an argument to an npm .CMD shim. The
+ * shim then invokes cmd.exe, which treats the resulting physical newlines as
+ * command boundaries instead of forwarding the full positional prompt.
+ */
+function usesPowerShellCmdShim(codexPath: string, shell?: string): boolean {
+  const lowerShell = shell?.toLowerCase() ?? '';
+  return (
+    (lowerShell.includes('powershell') || lowerShell.includes('pwsh'))
+    && /\.cmd$/i.test(codexPath.trim())
+  );
+}
+
 export class CodexCommandBuilder {
   buildCodexCommand(options: CodexCommandOptions): string {
     const { shell } = options;
@@ -200,13 +213,17 @@ export class CodexCommandBuilder {
     // resumed conversation already contains it, and re-sending would re-ask
     // the task prompt on every resume.
     if (!isResume && options.prompt) {
+      const preservePromptNewlines = !usesPowerShellCmdShim(options.codexPath, shell);
+      const prompt = preservePromptNewlines
+        ? options.prompt
+        : sanitizeForPty(options.prompt);
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
         : process.platform === 'win32';
       const safePrompt = needsDoubleQuoteReplacement
-        ? options.prompt.replace(/"/g, "'")
-        : options.prompt;
-      parts.push(quoteArg(safePrompt, shell, { multiline: true }));
+        ? prompt.replace(/"/g, "'")
+        : prompt;
+      parts.push(quoteArg(safePrompt, shell, { multiline: preservePromptNewlines }));
     }
 
     return parts.join(' ');

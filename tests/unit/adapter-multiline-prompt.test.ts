@@ -93,6 +93,22 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
     expect(command).toContain(EXPECTED_FRAGMENT);
   });
 
+  it('CodexCommandBuilder flattens multiline prompts for PowerShell CMD shims', () => {
+    const builder = new CodexCommandBuilder();
+    const command = builder.buildCodexCommand({
+      codexPath: 'C:/Users/dev/AppData/Roaming/npm/codex.CMD',
+      taskId: 'task-1',
+      cwd: 'C:/project',
+      permissionMode: 'default',
+      shell: 'powershell',
+      prompt: MULTILINE_XML,
+    });
+
+    expect(command).not.toContain('\n');
+    expect(command).not.toContain('`n');
+    expect(command).toContain('"<task> <title>Fix login</title> <description> Step 1. Step 2. </description> </task>"');
+  });
+
   it('AiderAdapter.buildCommand preserves newlines in prompt under bash', () => {
     const adapter = new AiderAdapter();
     const command = adapter.buildCommand({
