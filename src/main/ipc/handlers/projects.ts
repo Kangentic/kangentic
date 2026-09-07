@@ -14,6 +14,7 @@ import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCom
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
+import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { ensureGitignore } from '../helpers';
@@ -26,7 +27,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Project, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
+import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
@@ -596,7 +597,22 @@ export function getLastOpenedProject(context: IpcContext): Project | undefined {
 }
 
 export function registerProjectHandlers(context: IpcContext): void {
-  ipcMain.handle(IPC.PROJECT_LIST, () => context.projectRepo.list());
+  // The three global-database READS below are softened; every write in this
+  // file still throws. Sentry DESKTOP-A/B: these were bare one-liners, so a
+  // SQLITE_IOERR on index.db crossed IPC as
+  // "Error invoking remote method 'project:list'" and the renderer got a stack
+  // trace where a message belonged. `notify` is set on the two list reads
+  // because an app with no project list is not usable and the user has earned
+  // an explanation. See src/main/db/soft-db.ts for why it is opt-in.
+  //
+  // Writes deliberately keep throwing: .claude/rules/project-scoped-ipc.md
+  // says a failed mutation must not report success.
+  ipcMain.handle(IPC.PROJECT_LIST, () => softly(
+    'project:list',
+    [] as Project[],
+    () => context.projectRepo.list(),
+    { notify: true },
+  ));
 
   ipcMain.handle(IPC.PROJECT_CREATE, (_, input) => {
     // Explicit input wins; the inherited defaults only fill what it left unset.
@@ -722,8 +738,15 @@ export function registerProjectHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.PROJECT_GET_CURRENT, () => {
-    if (!context.currentProjectId) return null;
-    return context.projectRepo.getById(context.currentProjectId) || null;
+    const currentProjectId = context.currentProjectId;
+    if (!currentProjectId) return null;
+    // No `notify`: project:list speaks for the pair, and this one already
+    // answers null on the cold-boot path, so a second dialog would add nothing.
+    return softly<Project | null>(
+      'project:getCurrent',
+      null,
+      () => context.projectRepo.getById(currentProjectId) || null,
+    );
   });
 
   ipcMain.handle(IPC.PROJECT_REORDER, (_, ids: string[]) => {
@@ -803,7 +826,12 @@ export function registerProjectHandlers(context: IpcContext): void {
   });
 
   // Project Groups
-  ipcMain.handle(IPC.PROJECT_GROUP_LIST, () => context.projectGroupRepo.list());
+  ipcMain.handle(IPC.PROJECT_GROUP_LIST, () => softly(
+    'projectGroup:list',
+    [] as ProjectGroup[],
+    () => context.projectGroupRepo.list(),
+    { notify: true },
+  ));
 
   ipcMain.handle(IPC.PROJECT_GROUP_CREATE, (_, input: { name: string }) => {
     return context.projectGroupRepo.create(input);

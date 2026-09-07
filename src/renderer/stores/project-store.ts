@@ -1,6 +1,7 @@
 import { create, type StateCreator } from 'zustand';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX } from '../../shared/ipc-channels';
+import { describeIpcError } from '../lib/ipc-error';
 // Not `./session-store` directly: that would close an import cycle whose
 // circular-import invalidate full-reloads the dev page. See the module docblock.
 import { killTransientSessionForProject, markIdleSessionsSeen } from './session-lifecycle-hooks';
@@ -58,7 +59,17 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
 
   loadProjects: async () => {
     set({ loading: true });
-    const projects = await window.electronAPI.projects.list();
+    // The catch is what stops a rejection from stranding the whole app on its
+    // loading spinner: without it `loading` stays true and `hydrated` never
+    // flips, so App.tsx never runs hydrateView either. The main process now
+    // degrades this read rather than rejecting (see src/main/db/soft-db.ts),
+    // but a permanent spinner is the wrong answer to ANY failure here.
+    let projects: Project[] = [];
+    try {
+      projects = await window.electronAPI.projects.list();
+    } catch (error) {
+      console.error('[project-store] Failed to load projects:', describeIpcError(error));
+    }
     projectsReady = true;
     set({ projects, loading: false, hydrated: projectsReady && currentReady });
   },
@@ -212,15 +223,32 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
   },
 
   loadCurrent: async () => {
-    const project = await window.electronAPI.projects.getCurrent();
+    // The third hydration gate, and the same reasoning as loadProjects above:
+    // `currentReady` is half of what flips `hydrated`, so a rejection here
+    // strands the app on its loading spinner just as completely. App.tsx calls
+    // this as a floating promise as well, so the rejection would also have no
+    // owner. Degrading to "no current project" opens the project picker.
+    let project: Project | null = null;
+    try {
+      project = await window.electronAPI.projects.getCurrent();
+    } catch (error) {
+      console.error('[project-store] Failed to load the current project:', describeIpcError(error));
+    }
     currentReady = true;
     set({ currentProject: project, hydrated: projectsReady && currentReady });
   },
 
   // Group actions
   loadGroups: async () => {
-    const groups = await window.electronAPI.projectGroups.list();
-    set({ groups });
+    // Called as a floating promise from App.tsx, so a rejection here is an
+    // unhandled one. Groups are presentational: no groups renders a flat
+    // project list, which is a working app.
+    try {
+      const groups = await window.electronAPI.projectGroups.list();
+      set({ groups });
+    } catch (error) {
+      console.error('[project-store] Failed to load project groups:', describeIpcError(error));
+    }
   },
 
   createGroup: async (input) => {

@@ -77,13 +77,19 @@ describe('DevPortRepository with an unreachable global database', () => {
     expect(() => devPortRepository.releaseByTaskId('task-1')).not.toThrow();
   });
 
-  it('warns ONCE, not once per call', () => {
+  it('warns once per operation, not once per call', () => {
     // A standing condition, not a per-call event. One line per task
     // serialization would bury every other diagnostic in the log.
+    //
+    // The bound is per OPERATION since the combinator moved to
+    // src/main/db/soft-db.ts, shared with the project-list IPC handlers. Two
+    // distinct operations are exercised below, so two lines is the ceiling and
+    // 50 calls still produce no more than that. The flood this guards against
+    // is unchanged.
     for (let index = 0; index < 25; index += 1) {
       devPortRepository.listForTask(`task-${index}`);
       devPortRepository.getByPort(7300 + index);
     }
-    expect(warn.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(warn.mock.calls.length).toBeLessThanOrEqual(2);
   });
 });
