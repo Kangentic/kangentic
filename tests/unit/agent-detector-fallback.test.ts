@@ -4,8 +4,7 @@
  * Covers the three-stage detection pipeline when the binary is NOT on
  * PATH (which() throws). These tests exercise the macOS GUI launch fix:
  * stage 3 iterates well-known fallback paths, calls existsSync on each,
- * then attempts extractVersion. The first path that returns a non-null
- * version wins.
+ * then attempts probeVersion. The first path that returns a version wins.
  *
  * Separate from claude-detector.test.ts (which covers the happy PATH
  * path and caching/dedup) to keep concern separation clear.
@@ -82,7 +81,7 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
 
     // Only the first fallback exists and returns a version.
     // existsSync is called twice per candidate: once inside the fallback loop
-    // and once inside extractVersion. Both must return true for the same path.
+    // and once inside probeVersion. Both must return true for the same path.
     vi.mocked(fs.existsSync).mockImplementation((filePath) => filePath === fallbackPath);
     vi.mocked(execVersion).mockResolvedValue({ stdout: '2.0.1', stderr: '' });
 
@@ -121,7 +120,7 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
 
     // First path's execVersion returns empty (no version); second returns real version.
-    // extractVersion calls existsSync once then execVersion once per candidate.
+    // probeVersion calls existsSync once then execVersion once per candidate.
     vi.mocked(execVersion)
       .mockResolvedValueOnce({ stdout: '', stderr: '' })    // firstPath: no version
       .mockResolvedValueOnce({ stdout: '3.0.0', stderr: '' }); // secondPath: success
@@ -335,6 +334,83 @@ describe('AgentDetector - PATH candidate loop (binaryAliases fall-through)', () 
     // the fallback-paths stage, rather than stopping (or wrongly reporting
     // found) as soon as the last PATH candidate resolved-but-failed.
     expect(vi.mocked(execVersion)).toHaveBeenCalledWith(fallbackPath);
+  });
+
+  // ── Every which() match, not only the first ─────────────────────────────────
+  //
+  // `which` checks that a shim file exists, never that it works, and on Windows
+  // it searches the working directory before PATH. A stale npm shim in a
+  // project root therefore used to be the only value detection ever saw. The
+  // detector now asks for every match and falls through the list.
+  // agent-detector-dead-shim.test.ts covers the shim-content pre-check against
+  // a real directory; these cases pin the enumeration contract itself.
+
+  it('asks which() for every match rather than the first hit', async () => {
+    const config: AgentDetectorConfig = {
+      binaryName: 'primary',
+      parseVersion: (raw) => raw.trim() || null,
+    };
+
+    await new AgentDetector(config).detect();
+
+    expect(vi.mocked(which)).toHaveBeenCalledWith('primary', { all: true, nothrow: true });
+  });
+
+  it('falls through to the second match of the same name when the first fails its probe, before any alias', async () => {
+    const shadowPath = '/usr/local/bin/primary-shadow';
+    const realPath = '/usr/local/bin/primary';
+    const config: AgentDetectorConfig = {
+      binaryName: 'primary',
+      binaryAliases: ['alias'],
+      parseVersion: (raw) => (raw.startsWith('VALID:') ? raw.replace('VALID:', '').trim() : null),
+    };
+    const detector = new AgentDetector(config);
+
+    vi.mocked(which).mockResolvedValueOnce([shadowPath, realPath] as unknown as string);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(execVersion)
+      .mockResolvedValueOnce({ stdout: 'UNRELATED_TOOL 4.0.0', stderr: '' }) // shadowPath: wrong product
+      .mockResolvedValueOnce({ stdout: 'VALID: 9.9.9', stderr: '' }); // realPath: this agent
+
+    const result = await detector.detect();
+
+    expect(result).toEqual({ found: true, path: realPath, version: '9.9.9' });
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(2);
+    // The alias was never needed, so which() ran once.
+    expect(vi.mocked(which)).toHaveBeenCalledTimes(1);
+  });
+
+  it('still resolves when the which() double returns a single string', async () => {
+    const singlePath = '/usr/local/bin/primary';
+    const config: AgentDetectorConfig = {
+      binaryName: 'primary',
+      parseVersion: (raw) => raw.trim() || null,
+    };
+
+    vi.mocked(which).mockResolvedValueOnce(singlePath);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(execVersion).mockResolvedValueOnce({ stdout: '1.0.0', stderr: '' });
+
+    const result = await new AgentDetector(config).detect();
+
+    expect(result).toEqual({ found: true, path: singlePath, version: '1.0.0' });
+  });
+
+  it('treats a null which() result (the nothrow shape) as not on PATH and continues to the fallback stage', async () => {
+    const fallbackPath = '/opt/homebrew/bin/primary';
+    const config: AgentDetectorConfig = {
+      binaryName: 'primary',
+      fallbackPaths: [fallbackPath],
+      parseVersion: (raw) => raw.trim() || null,
+    };
+
+    vi.mocked(which).mockResolvedValueOnce(null as unknown as string);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(execVersion).mockResolvedValueOnce({ stdout: '2.0.0', stderr: '' });
+
+    const result = await new AgentDetector(config).detect();
+
+    expect(result).toEqual({ found: true, path: fallbackPath, version: '2.0.0' });
   });
 });
 

@@ -13,6 +13,7 @@
  * pattern for the sibling thin wrapper class.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { BoardEventBus, type BoardChangedEvent } from '../../../src/main/mobile-bridge/board-event-bus';
 
 describe('BoardEventBus', () => {
@@ -70,5 +71,30 @@ describe('BoardEventBus', () => {
     bus.emitBoardChanged({ projectId: 'proj-1', change: 'task-updated', ids: ['task-3'] });
 
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('carries the 1 + devices x projects fan-out of a real machine without a MaxListeners warning', () => {
+    // Node's _addListener calls process.emitWarning synchronously at the
+    // crossing, so the spy is a direct assertion. The plain emitter first
+    // proves the spy sees the warning at all; the bus then proves it does
+    // not fire for one Agent Monitor listener plus two paired phones each
+    // streaming nineteen projects.
+    const emitWarningSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    try {
+      const plainEmitter = new EventEmitter();
+      for (let listenerIndex = 0; listenerIndex < 11; listenerIndex += 1) plainEmitter.on('board-changed', vi.fn());
+      expect(emitWarningSpy).toHaveBeenCalledTimes(1);
+      emitWarningSpy.mockClear();
+
+      const bus = new BoardEventBus();
+      const teardowns = Array.from({ length: 1 + 2 * 19 }, () => bus.onBoardChanged(vi.fn()));
+      expect(emitWarningSpy).not.toHaveBeenCalled();
+      expect(bus.listenerCount('board-changed')).toBe(39);
+
+      for (const teardown of teardowns) teardown();
+      expect(bus.listenerCount('board-changed')).toBe(0);
+    } finally {
+      emitWarningSpy.mockRestore();
+    }
   });
 });

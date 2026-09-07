@@ -305,10 +305,22 @@ Import `runCliPrintSummarize` and `buildSummarizePrompt` from `../../shared/auto
 
 On first use, `ClaudeDetector` locates the Claude CLI:
 
-1. If `config.agent.cliPaths.claude` is set, use that path directly
-2. Otherwise, search `PATH` using the `which` package
-3. Run `claude --version` (5s timeout) to capture the version string
+1. If `config.agent.cliPaths.claude` is set, probe that path and use it. A probe failure is
+   reported as configured-but-broken rather than falling through, so an explicit override never
+   silently resolves to a different binary
+2. Otherwise, search `PATH` using the `which` package. Every match is walked in `which` order (on
+   Windows the working directory first, then each `PATH` entry by `PATHEXT`), spending at most
+   four version probes per name. An npm `.cmd` / `.bat` / `.ps1` shim whose target script is
+   missing is skipped without a probe (`src/main/agent/shared/npm-shim-target.ts`) and does not
+   spend the budget, so a stale shim in a project root cannot hide the real install
+3. If no `PATH` match answered, probe the well-known fallback paths (`~/.claude/local/claude`,
+   then the standard Unix install locations). This is the macOS Finder/Dock launch case, where
+   Electron did not inherit the shell `PATH`
 4. Cache the result for the app lifetime (`invalidateCache()` resets)
+
+Every probe runs `claude --version` with a 5s timeout. A candidate whose output does not parse as
+this agent's version format is passed over and the search continues, so another vendor's binary
+publishing the same name cannot be reported as Claude.
 
 Returns `{ found: boolean, path: string | null, version: string | null }`.
 
@@ -855,7 +867,7 @@ The `CopilotStatusParser` reads a `status.json` written by Copilot's `statusLine
 
 `src/main/agent/adapters/warp/version-detector.ts`
 
-Detection is custom because `oz` does not support `--version` - it uses `dump-debug-info` instead. The detector inlines the same caching and inflight-deduplication pattern as `AgentDetector` but with the alternate version command. Override path is checked first, then `which('oz')` falls back to PATH.
+Detection is custom because `oz` does not support `--version` - it uses `dump-debug-info` instead. The detector inlines the same caching and inflight-deduplication pattern as `AgentDetector` but with the alternate version command. Override path is checked first, then `which('oz')` falls back to PATH. Because it does not use the shared `AgentDetector`, `oz` resolves only `which`'s first match and gets neither the multi-match walk nor the dead-shim skip described under Claude.
 
 ### Command Building
 
