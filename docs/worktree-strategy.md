@@ -118,9 +118,31 @@ The chosen base branch is stored in the worktree's git config as `kangentic.base
 
 ### Concurrency
 
-All git-mutating operations (create, remove, branch delete, prune, checkout, rename) are serialized per project via a priority-aware queue (`WorktreeManager.withGitLock` / instance `withLock`). Exactly one operation runs at a time per project (preserving the `.git` lock-contention guarantee), but waiting operations are ordered by `GitQueuePriority` - `USER` (0, the default) runs ahead of `BACKGROUND` (10, e.g. retry cleanups and background prune), with FIFO order within a priority band. This keeps a user-initiated spawn from head-of-line-blocking behind a slow or failing background cleanup. Different projects run independently. `removeWorktree`'s `{ timeoutMs, removalProfile }` options bound how hard a removal retries so one stuck delete cannot hold the queue: `removalProfile` is one of `thorough` (full backoff; the default, used where a failure surfaces an error to the user such as worktree create or project delete), `moderate` (a pinned path fails in a few seconds; used on the user-facing Done-move and cleanup paths so a held handle never holds the queue for minutes), or `fast` (a single attempt; used by the background startup retry pass). `clearQueue` (on project close) rejects any still-waiting jobs so their callers do not hang.
+All git-mutating operations (create, remove, branch delete, prune, checkout, rename) are serialized per project via a priority-aware queue (`WorktreeManager.withGitLock` / instance `withLock`). Exactly one operation runs at a time per project (preserving the `.git` lock-contention guarantee), but waiting operations are ordered by `GitQueuePriority` - `USER` (0, the default) runs ahead of `BACKGROUND` (10, e.g. retry cleanups and background prune), with FIFO order within a priority band. This keeps a user-initiated spawn from head-of-line-blocking behind a slow or failing background cleanup. Different projects run independently. `removeWorktree`'s `{ timeoutMs, removalProfile }` options bound how hard a removal retries so one stuck delete cannot hold the queue: `removalProfile` is one of `thorough` (full backoff under a 30s wall clock; the default, used where a failure surfaces an error to the user such as worktree create or project delete), `moderate` (a pinned path fails in a few seconds; used on the user-facing Done-move and cleanup paths so a held handle never holds the queue for minutes), or `fast` (a single attempt; used by the background startup retry pass). `clearQueue` (on project close) rejects any still-waiting jobs so their callers do not hang.
 
-When a removal fails because a process still pins the worktree, `removeWorktree` reaps orphaned processes whose command line points inside that worktree path (a zombie Electron/node left by an agent's E2E run or `/preview`) and retries once. This reap is lazy by design: a clean Done-move never runs the OS process scan, so dragging a task to Done pays no added cost; the scan fires only on the rare delete a held handle actually blocks. It is skipped under `NODE_ENV=test`, where the E2E leak janitor owns process sweeps instead.
+`thorough` is the only profile with a clock, because it was the only one whose budget was otherwise unbounded. Its retry ladder looks bounded but is not: Node applies `{ maxRetries, retryDelay }` per locked path and the ladder compounds through the recursion, so the ceiling scales with the tree rather than with time. One observed create-worktree ground for 402716ms on a directory pinned by a live process, holding the queue the whole time. Measured directly against a two-directory tree pinned by a live process's cwd on Windows, the unbudgeted call took 668215ms against the budgeted call's 29832ms, so the incident's number was not an outlier. Under a budget, `removeWithRetry` turns Node's per-path retry off and drives every retry itself until the deadline, which caps the worst case at one fast tree walk past it. The budget covers a whole removal attempt (node_modules, `git worktree remove`, manual rm), and the retry that follows a successful reap gets a shorter 10s one, since a removal that is still stuck after the holder is dead will not be fixed by grinding. The node_modules step is capped again at the smaller of 10s and half the remaining budget: it runs first and `removeNodeModulesPath` swallows its own errors, so a locked node_modules would otherwise grind to the deadline, return normally, and leave the two steps that matter running on the 1s floor with git's real verdict replaced by a timeout abort. A job past 60s logs its `[GIT_QUEUE] ... still running` heartbeat at `warn` rather than `log`, so it survives into a production log tail.
+
+The bound matters beyond the wait: it is what makes the reap below reachable at all. The reap runs only on `tryGitRemoval`'s failure, and without a clock attempt 1 never returned, so the recovery code sat behind a call that never came back.
+
+### Reaping processes that pin a worktree
+
+A process still running inside a worktree blocks its removal on Windows, which will not delete a directory that is a live process's current directory. That leaves a husk with no git admin entry, and the next worktree creation on that path hangs. Two mechanisms clear it, and they cover different failure modes.
+
+**At session end (`src/main/pty/session-tree-reap.ts`).** This is the one that catches the common case: an agent backgrounds a dev server, the session ends, and the server keeps running. It reads the descendant PIDs the bg-shell watcher already published (`BgShellWatcher.getCapturedDescendants`) and kills them. It runs on terminal transitions only - move to Done, move to To Do or Backlog, and task delete - so pressing Stop or parking a task in an auto-spawn-off column leaves a dev server up for manual testing.
+
+The snapshot has to be taken BEFORE the PTY is killed: the watcher stops publishing once the session ends, and on POSIX the children are reparented to init immediately. It costs nothing, because the watcher walks that subtree every enumerating cycle anyway and previously discarded it. Nothing on this path enumerates processes: a cold `powershell` spawn measures ~670ms even for a pid-only projection, and the drag-to-Done path cannot absorb that. When no fresh snapshot exists the reap is a no-op rather than falling back to a scan.
+
+**At removal failure (`reapProcessesForWorktree`).** The backstop for a tree link that is already gone, typically because Kangentic quit or crashed with the session live. It scans every process image for the worktree path in the command line or the executable path, and retries the removal once. Lazy by design: a clean Done-move never runs the OS process scan, so the ~900ms cost lands only on a delete a held handle actually blocked. Skipped under `NODE_ENV=test`, where the E2E leak janitor owns process sweeps instead.
+
+This path keeps the orphan gate: it can reach processes Kangentic never spawned (a terminal the user left `cd`'d into the worktree, an editor), and killing a supervised process would be wrong. It can afford that caution only because the session-end reap above already ends what a session started. A supervised holder is named rather than killed: `describeWorktreeHolders` puts it in the error `createWorktree` surfaces, so the user gets `Held by node.exe (pid 12345)` instead of generic advice to close anything using the path. The holder scan reuses the reap's cached process list, so it costs nothing, and it applies the same needles as the reap so it can never see less than the reap would kill.
+
+`Win32_Process` exposes no current-directory property at all, so neither the removal-time scan nor the holder scan can see a process that references the worktree only through its cwd. Matching cwd on POSIX alone was tried and dropped: it bought little once the session-end reap covered session-spawned processes, and it made behavior diverge by platform in a subsystem whose whole problem is a Windows limitation. That is exactly the shape of the incident this was built for, and it is why the session-end reap (which finds the process by its parent chain, while the chain still exists) is the primary mechanism rather than the hardening. An empty holder list therefore means "no holder we can see", not "no holder".
+
+Four gaps are left that neither mechanism closes, so the pair narrows the problem rather than covering it. Three are false negatives, cases where something that should be killed or named is not. A WSL-hosted session runs its processes inside the VM's own pid namespace, which the watcher's `Win32_Process` walk and the removal-time scan both read as empty, so a dev server leaked from a WSL agent is invisible to both. A session whose SHELL exits while a descendant survives (a user typing `exit`, a shell crash, an OS kill) makes the watcher unregister the session and discard its snapshot, so a later move to Done captures nothing and reaps nothing. And path matching compares normalized strings, so a holder Windows reports under an 8.3 short name or a `\\?\` long-path prefix does not match the needle and is neither killed nor named.
+
+The fourth runs the other way, and is the one worth watching. The session-end reap acts on a snapshot of pids, and a pid that exits can be reassigned by the OS before the watcher's next cycle observes it dead. Skip cycles prune the set by liveness on every poll precisely to shrink that window, but they do not eliminate it: within one cycle gap (2s at base cadence, up to 6s under the adaptive backoff) a recycled pid can still be killed as though it were the leaked process. `session-tree-reap.ts` and `skipCycleSession` both name this in place. It is a residual risk, not a solved problem, and it is the reason the staleness ceiling exists rather than trusting an arbitrarily old snapshot.
+
+The move-failure stale cleanup in `handleTaskMove` runs at `moderate`, not the default `thorough`. Creation just failed on that same path, so a second full-budget grind re-proves what is already known while the user waits on a failure toast and the git queue stays held: measured in a preview, the two thorough passes put the toast about 62s out against about 34s with this profile.
 
 ### When a worktree is NOT created
 
@@ -519,14 +541,39 @@ Uses real temp files with mocked `os.homedir()`.
 - `withLock` instance method uses the project path
 
 **Fail-fast removal:**
-- `removeWorktree({ removalProfile: 'fast' })` forwards single-attempt opts to `removeWithRetry`; the default `'thorough'` profile keeps the full backoff
+- All three profiles are pinned: `fast` forwards single-attempt opts to `removeWithRetry`, `moderate` forwards its bounded budget to both removal steps, and `thorough` (the default) forwards a wall-clock `budgetMs` to both. The thorough case exists because its absence is why the budget shipped unbounded in the first place
 - Background retry cleanup runs at `BACKGROUND` priority with `{ timeoutMs: 3000, removalProfile: 'fast' }`
+- The post-reap retry gets a shorter budget than the first attempt
+- The node_modules step is capped again so it cannot spend the whole budget
+- The move-failure stale cleanup passes `removalProfile: 'moderate'`
+- A budget expiry logs `remove step=manual-rm timed out` and `removed=false timedOut=true` at `warn`
+- A hanging `worktree-removing` listener cannot stall the removal (2s cap)
+- `createWorktree` still reuses an EMPTY husk after a timed-out removal; only a non-empty or unlistable directory is fatal, and that error names the holders when the scan found any
 
 **listWorktrees:**
 - Parses `git worktree list --porcelain` output correctly
 - Returns empty array for bare output
 
 Uses vi.mock for `simple-git` and `node:fs`.
+
+### Process reaping (`zombie-reaper.test.ts`, `session-tree-reap.test.ts`, `session-reap-real-processes.test.ts`)
+
+`zombie-reaper.test.ts` drives the pure predicates through the `_internals` spy seam, so no test
+spawns PowerShell or `ps`: the self-skip and orphan gates, the trailing-separator boundary against a
+prefix-sibling worktree, the two needles (command line, executable path), the bare-worktree-root
+match (`commandLineReferencesPath`), the separation of the filtered and unfiltered scan caches, and
+the holder-reporting half (`findWorktreePathHolders`, `processImageName`, `describeHolder`). The
+Windows output shapes are parsed from fixtures so they are covered on the Linux CI runner.
+
+`session-tree-reap.test.ts` covers `reapCapturedTree` with `killProcess` and `isProcessAlive`
+mocked: dead pids cost no kill, own pid and the init/System floor are never killed, and kills are
+issued in parallel rather than serially behind a 2000ms cap each.
+
+`session-reap-real-processes.test.ts` is the discriminating one and uses REAL processes. It builds
+the incident's shape (a grandchild whose argv and executable path both fall outside the worktree and
+whose cwd is inside it), then asserts the path scan finds nothing, that `rmSync` fails while it
+lives, and that after the reap the directory removes. Relax any of those and the test starts passing
+on the path scan alone, which would green-light a fix that does not fix the bug.
 
 ### Base Branch Resolution (`worktree-base-branch.test.ts`)
 

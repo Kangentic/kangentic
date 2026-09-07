@@ -139,6 +139,16 @@ Session teardown varies by target column:
 - **Done** (role=`done`) - suspends session (preserves for resume via `SessionManager.suspend()`), archives task, and deletes the worktree to reclaim disk while preserving `branch_name` and the session records. The DB record is marked `suspended` so the session can be resumed if the task is later unarchived into an auto-spawn column. That unarchive is the ONLY route back: resuming in place is refused for a Done or archived task (see [Where resume is refused](#where-resume-is-refused)), since it would recreate the worktree this move deleted.
 - **Any column with `auto_spawn=false`** - suspends session (same as Done, but without archiving). A restore into such a column keeps the suspended session and its Resume affordance; only a `role=todo` target resets it.
 
+### Reaping what the session left running
+
+On the TERMINAL transitions above (move to To Do or Backlog, move to Done, and task delete), the teardown also kills processes the session left running inside the worktree. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
+
+The mechanism is `captureSessionLeftovers()` before the kill or suspend, then `reapSessionLeftovers()` after it and before any worktree delete (both in `src/main/ipc/helpers/task-cleanup.ts`). The capture must come first: the bg-shell watcher stops publishing once the session ends, and on POSIX the children are reparented to init at once, so there is no tree to walk afterwards.
+
+The capture reads a snapshot the watcher already computed for its own counting, so it costs nothing on the drag-to-Done path. Nothing here enumerates processes; a cold `powershell` spawn measures ~670ms even for a pid-only projection. See [worktree-strategy.md](worktree-strategy.md) for the removal-time backstop and why Windows needs the parent-chain route at all.
+
+`auto_spawn=false` columns and a user-pressed Stop are deliberately NOT terminal: the task is parked rather than finished, so its dev server stays up for manual testing.
+
 ### What is preserved on suspend (Done / auto_spawn=false)
 
 - `agent_session_id` (for `--resume` on next spawn)

@@ -23,6 +23,7 @@ const {
   mockRemoveNodeModulesPath,
   mockRemoveWithRetry,
   mockReapProcessesForWorktree,
+  mockDescribeWorktreeHolders,
   mockSpawn,
   recordedSpawnCalls,
   spawnOverrides,
@@ -49,6 +50,11 @@ const {
     mockRemoveNodeModulesPath: vi.fn(),
     mockRemoveWithRetry: vi.fn(async (_target: string, _opts?: unknown): Promise<void> => {}),
     mockReapProcessesForWorktree: vi.fn(async (): Promise<Array<{ pid: number }>> => []),
+    // Gated with the reap on NODE_ENV !== 'test', so only the lazy-reap
+    // describe (which forces a production env) actually reaches it.
+    mockDescribeWorktreeHolders: vi.fn(
+      async (): Promise<Array<{ pid: number; image: string; commandLine: string }>> => [],
+    ),
     mockSpawn: vi.fn((command: string, args: readonly string[], options: { cwd: string }) => {
       recordedSpawnCalls.push({ command, args, cwd: options.cwd });
       const override = spawnOverrides.find((entry) => entry.match(args));
@@ -130,10 +136,18 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 
 vi.mock('../../src/main/git/rm-with-retry', () => ({
   removeWithRetry: (target: string, opts?: unknown) => mockRemoveWithRetry(target, opts),
+  // Mirrors the real guard's name-based branch, so a test can signal "budget
+  // expired" by rejecting with an error carrying that name. Reimplemented
+  // rather than imported because the real module pulls in `original-fs`.
+  isRemovalTimeoutError: (error: unknown) =>
+    error instanceof Error && error.name === 'WorktreeRemovalTimeoutError',
 }));
 
 vi.mock('../../src/main/git/zombie-reaper', () => ({
   reapProcessesForWorktree: (...args: unknown[]) => mockReapProcessesForWorktree(...args),
+  describeWorktreeHolders: (...args: unknown[]) => mockDescribeWorktreeHolders(...args),
+  describeHolder: (holder: { pid: number; image: string }) =>
+    (holder.image ? `${holder.image} (pid ${holder.pid})` : `pid ${holder.pid}`),
 }));
 
 vi.mock('../../src/main/git/fetch-throttle', () => ({
@@ -221,10 +235,10 @@ describe('WorktreeManager.removeWorktree', () => {
 
     expect(result).toBe(true);
     // node_modules junction must be removed BEFORE any recursive operation.
-    // Default profile is 'thorough', whose removeOptions are undefined.
+    // Default profile is 'thorough': full backoff under a wall clock.
     expect(mockRemoveNodeModulesPath).toHaveBeenCalledWith(
       `${WORKTREE_PATH}/node_modules`,
-      { removeOptions: undefined },
+      { removeOptions: { budgetMs: expect.any(Number) } },
     );
     const worktreeRemoveCall = recordedSpawnCalls.find(
       (call) => call.args[0] === 'worktree' && call.args[1] === 'remove',
@@ -246,8 +260,11 @@ describe('WorktreeManager.removeWorktree', () => {
     const result = await manager.removeWorktree(WORKTREE_PATH);
 
     expect(result).toBe(true);
-    // No opts -> full backoff (undefined second arg).
-    expect(mockRemoveWithRetry).toHaveBeenCalledWith(WORKTREE_PATH, undefined);
+    // Default profile is thorough: full backoff, under a wall clock.
+    expect(mockRemoveWithRetry).toHaveBeenCalledWith(
+      WORKTREE_PATH,
+      { budgetMs: expect.any(Number) },
+    );
     // worktree prune should also be called after the manual rm
     const pruneCall = recordedSpawnCalls.find(
       (call) => call.args[0] === 'worktree' && call.args[1] === 'prune',
@@ -439,6 +456,76 @@ describe('WorktreeManager.removeWorktree - lazy orphan reap on pinned delete', (
       expect.objectContaining({ worktreePath: WORKTREE_PATH }),
     );
     expect(mockRemoveWithRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives the post-reap retry a shorter budget than the first attempt', async () => {
+    // Once the holder is dead the removal should be immediate. A second full
+    // budget would double the worst case for no benefit.
+    mockExistsSync.mockReturnValue(true);
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: 'fatal: unable to remove worktree' },
+    });
+    mockRemoveWithRetry
+      .mockRejectedValueOnce(new Error('EPERM: operation not permitted'))
+      .mockResolvedValueOnce(undefined);
+    mockReapProcessesForWorktree.mockResolvedValue([{ pid: 4242 }]);
+
+    await manager.removeWorktree(WORKTREE_PATH);
+
+    const budgets = mockRemoveWithRetry.mock.calls.map(
+      (call) => (call[1] as { budgetMs: number }).budgetMs,
+    );
+    expect(budgets).toHaveLength(2);
+    expect(budgets[1]).toBeLessThan(budgets[0]);
+  });
+
+  it('caps the node_modules step so it cannot spend the whole removal budget', async () => {
+    // removeNodeModulesPath swallows its own errors, so a locked node_modules
+    // grinds to its deadline and then returns NORMALLY. Uncapped it would leave
+    // `git worktree remove` and the manual rm on the 1s floor, turning git's
+    // real verdict into a timeout abort and giving the manual rm no real try.
+    mockExistsSync.mockReturnValue(true);
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: "fatal: '...' is not a working tree" },
+    });
+    mockRemoveWithRetry.mockResolvedValue(undefined);
+
+    await manager.removeWorktree(WORKTREE_PATH);
+
+    const nodeModulesOptions = mockRemoveNodeModulesPath.mock.calls[0][1] as {
+      removeOptions: { budgetMs: number };
+    };
+    const manualBudget = (mockRemoveWithRetry.mock.calls[0][1] as { budgetMs: number }).budgetMs;
+    expect(nodeModulesOptions.removeOptions.budgetMs).toBeGreaterThan(0);
+    // At most half the attempt's clock, so the later steps always keep half.
+    expect(nodeModulesOptions.removeOptions.budgetMs * 2).toBeLessThanOrEqual(manualBudget);
+  });
+
+  it('logs the timeout and the holder-free verdict at warn when the budget expires', async () => {
+    // Only warn and error survive shouldPersist on a production build, so these
+    // two lines are the entire record of the incident in a shipped install.
+    mockExistsSync.mockReturnValue(true);
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: "fatal: '...' is not a working tree" },
+    });
+    const expired = Object.assign(
+      new Error('removeWithRetry gave up on the path after 30000ms (budget 30000ms)'),
+      { name: 'WorktreeRemovalTimeoutError', budgetMs: 30_000 },
+    );
+    mockRemoveWithRetry.mockRejectedValue(expired);
+    mockReapProcessesForWorktree.mockResolvedValue([]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(false);
+    const warnings = warnSpy.mock.calls.map((call) => String(call[0]));
+    expect(warnings.some((line) => line.includes('remove step=manual-rm timed out'))).toBe(true);
+    expect(warnings.some((line) => line.includes('removed=false timedOut=true'))).toBe(true);
+    warnSpy.mockRestore();
   });
 
   it('returns false without retrying when there is no reapable orphan (husk left for retry pass)', async () => {
@@ -640,6 +727,27 @@ describe('WorktreeManager.removeWorktree - worktree-removing listener', () => {
       expect.any(Error),
     );
     warnSpy.mockRestore();
+  });
+
+  it('a listener that hangs cannot stall the removal', async () => {
+    // This await sits AHEAD of the `remove start:` log, so a listener that
+    // never resolves produces no [WORKTREE] output at all: the same silent
+    // hang the removal budget exists to end, one layer up.
+    vi.useFakeTimers();
+    mockExistsSync.mockReturnValue(true);
+    setWorktreeRemovingListener(vi.fn(() => new Promise<void>(() => {})));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const resultPromise = manager.removeWorktree(WORKTREE_PATH);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(resultPromise).resolves.toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[WORKTREE] worktree-removing listener failed (non-fatal):',
+      expect.objectContaining({ message: expect.stringContaining('timed out after 2000ms') }),
+    );
+    warnSpy.mockRestore();
+    vi.useRealTimers();
   });
 
   it('is a no-op when no listener is registered', async () => {
