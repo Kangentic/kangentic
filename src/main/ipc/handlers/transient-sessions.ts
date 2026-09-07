@@ -10,6 +10,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
+import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -41,6 +42,9 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
 
     const detection = await adapter.detect(cliPathOverride);
     if (!detection.found || !detection.path) throw new AgentCliNotFoundError(agentName, adapter.displayName);
+    // The shell the PTY types the command into: it decides the quoting style
+    // and which shim variant a `.cmd` head is swapped for (shim-launch.ts).
+    const shell = await context.sessionManager.getShell();
     const permissionMode = config.agent.permissionMode as PermissionMode;
     const transientTaskId = uuidv4();
 
@@ -88,14 +92,28 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const statusOutputPath = path.join(sessionDirectory, 'status.json');
     const eventsOutputPath = path.join(sessionDirectory, 'activity.json');
 
+    // The same pre-spawn global-config step the task chokepoints run: trust
+    // for the project root, kangentic pre-enabled in the agent's MCP list, and
+    // Claude's diff panel closed. A Command Terminal is the likeliest maximized
+    // pane, so it needs the diff-panel write most of all. Pinned by
+    // tests/unit/spawn-entry-point-parity.test.ts (line order) and
+    // tests/unit/transient-session-spawn-ensure-trust.test.ts (the runtime
+    // guarantee: awaited, called once, with projectRoot, before buildCommand).
+    await adapter.ensureTrust(projectRoot);
+    // A `.cmd` head under a PowerShell or Git Bash host launches through
+    // cmd.exe; hand the builder the sibling shim the shell can run instead
+    // (shim-launch.ts). No prompt here, but the head must match what task
+    // spawns use, so a Command Terminal never runs a different process shape.
+    const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt: undefined });
     const commandOptions = {
-      agentPath: detection.path,
+      agentPath: launch.agentPath,
       taskId: transientTaskId,
       cwd: projectRoot,
       permissionMode,
       projectRoot,
       statusOutputPath,
       eventsOutputPath,
+      shell,
       mcpServerEnabled: config.mcpServer.enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
       mcpServerToken: context.mcpServerHandle?.token,
@@ -105,14 +123,6 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       model: project.default_model ?? undefined,
       effort: project.default_effort ?? undefined,
     };
-    // The same pre-spawn global-config step the task chokepoints run: trust
-    // for the project root, kangentic pre-enabled in the agent's MCP list, and
-    // Claude's diff panel closed. A Command Terminal is the likeliest maximized
-    // pane, so it needs the diff-panel write most of all. Pinned by
-    // tests/unit/spawn-entry-point-parity.test.ts (line order) and
-    // tests/unit/transient-session-spawn-ensure-trust.test.ts (the runtime
-    // guarantee: awaited, called once, with projectRoot, before buildCommand).
-    await adapter.ensureTrust(projectRoot);
     const command = adapter.buildCommand(commandOptions);
     const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 

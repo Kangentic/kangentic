@@ -84,7 +84,14 @@ export interface CommandOptions {
   nonInteractive?: boolean;
   statusOutputPath?: string; // path where the status bridge writes JSON
   eventsOutputPath?: string; // path where the event bridge appends JSONL
-  shell?: string; // target shell name - controls quoting style (single vs double quotes)
+  /**
+   * Target shell name. Controls quoting style (single vs double quotes). The
+   * spawn chokepoints also use it to swap a `.cmd` / `.bat` head for the
+   * sibling shim that shell can run before the builder sees `agentPath`
+   * (src/main/agent/shared/shim-launch.ts); builders never inspect the
+   * extension.
+   */
+  shell?: string;
   mcpServerEnabled?: boolean; // whether to enable Kangentic MCP server (delivery is adapter-specific: --mcp-config flag, settings file, or env var)
   /** In-process MCP HTTP server URL for this project. Required when mcpServerEnabled is true. */
   mcpServerUrl?: string;

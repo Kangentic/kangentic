@@ -210,6 +210,22 @@ vi.mock('../../src/main/transition-engine/resume-cwd-migration', () => ({
   migrateResumeCwdIfRenamed: vi.fn(async () => {}),
 }));
 
+// Pass-through by default so every describe in this file runs the engine
+// unchanged (their stub adapter detects '/usr/bin/claude' under 'bash', which
+// the real helper leaves alone on any OS anyway); the shim-launch wiring
+// describe at the end of the file swaps in a result per test.
+const resolveShimLaunchMock = vi.hoisted(() =>
+  vi.fn(async (input: { agentPath: string; shell: string | undefined; prompt: string | undefined }) => ({
+    agentPath: input.agentPath,
+    prompt: input.prompt,
+    strategy: 'unchanged' as const,
+  })),
+);
+
+vi.mock('../../src/main/agent/shared/shim-launch', () => ({
+  resolveShimLaunch: resolveShimLaunchMock,
+}));
+
 vi.mock('node:fs', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs')>();
   // The source under test uses `import fs from 'node:fs'` (default import).
@@ -1462,5 +1478,103 @@ describe('TransitionEngine - executeSpawnAgent throws a typed error when the age
     await expect(
       engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing'),
     ).rejects.toThrow(agentCliNotFoundMessage(mockAdapter.displayName));
+  });
+});
+
+describe('TransitionEngine - Windows .cmd shim launch resolution wiring (executeSpawnAgent chokepoint)', () => {
+  // resolveShimLaunch (src/main/agent/shared/shim-launch.ts) must run at this
+  // chokepoint after ensureTrust, receive the detected path, the PTY shell,
+  // and the interpolated prompt, and its result (BOTH fields) must be what
+  // buildCommand sees. A chokepoint that took only agentPath from it and kept
+  // the intent's prompt would still truncate through a .cmd on the flatten
+  // fallback (#353). The session row, on the other hand, keeps the ORIGINAL
+  // prompt: flattening is a delivery detail, not what the user wrote.
+  const CMD_HEAD = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.CMD';
+  const PS1_SIBLING = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.ps1';
+  const PWSH = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.detect.mockImplementation(async () => ({ found: true, path: CMD_HEAD, version: '1.0.0' }));
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      return `claude ${options.prompt ?? ''}`;
+    });
+  });
+
+  afterEach(() => {
+    // mockAdapter is shared module state; restore the path every other
+    // describe in this file assumes.
+    mockAdapter.detect.mockImplementation(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' }));
+  });
+
+  it('hands the detected path, the session shell, and the interpolated prompt to resolveShimLaunch, after ensureTrust and before buildCommand', async () => {
+    const task = makeTask();
+    const sessionManager = makeSessionManager();
+    sessionManager.getShell.mockResolvedValue(PWSH);
+    const { engine } = makeEngine({ sessionManager });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(resolveShimLaunchMock).toHaveBeenCalledTimes(1);
+    expect(resolveShimLaunchMock).toHaveBeenCalledWith({
+      agentPath: CMD_HEAD,
+      shell: PWSH,
+      prompt: expect.stringContaining('<task>'),
+    });
+    const ensureTrustOrder = mockAdapter.ensureTrust.mock.invocationCallOrder[0];
+    const resolveOrder = resolveShimLaunchMock.mock.invocationCallOrder[0];
+    const buildOrder = mockAdapter.buildCommand.mock.invocationCallOrder[0];
+    expect(ensureTrustOrder).toBeLessThan(resolveOrder);
+    expect(resolveOrder).toBeLessThan(buildOrder);
+  });
+
+  it('builds the command from the resolved head AND the resolved prompt, while the session row keeps the original prompt', async () => {
+    resolveShimLaunchMock.mockResolvedValueOnce({
+      agentPath: PS1_SIBLING,
+      prompt: 'RESOLVED-PROMPT',
+      strategy: 'flattened-prompt',
+    });
+    const task = makeTask();
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { engine } = makeEngine({ sessionManager, sessionRepo });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    // Red: a chokepoint keeping `agentPath: detection.path` or `prompt` (the
+    // intent's) instead of the helper's fields fails one of these.
+    expect(mockAdapter.buildCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ agentPath: PS1_SIBLING, prompt: 'RESOLVED-PROMPT' }),
+    );
+    expect(sessionRepo.insertedRecords).toHaveLength(1);
+    const inserted = sessionRepo.insertedRecords[0] as { prompt: string | null };
+    expect(inserted.prompt).toContain('<task>');
+    expect(inserted.prompt).not.toBe('RESOLVED-PROMPT');
+  });
+
+  it('produces a real Codex command whose head is the .ps1 sibling', async () => {
+    const task = makeTask();
+    resolveShimLaunchMock.mockResolvedValueOnce({
+      agentPath: PS1_SIBLING,
+      prompt: buildTaskXml({ title: task.title, description: task.description }),
+      strategy: 'ps1-sibling',
+    });
+    const codexCommandBuilder = new CodexCommandBuilder();
+    mockAdapter.buildCommand.mockImplementation((options: { agentPath: string; prompt?: string }) => {
+      const { agentPath, ...rest } = options;
+      return codexCommandBuilder.buildCodexCommand({ codexPath: agentPath, ...rest } as CodexCommandOptions);
+    });
+    const sessionManager = makeSessionManager();
+    sessionManager.getShell.mockResolvedValue(PWSH);
+    const { engine } = makeEngine({ sessionManager });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(sessionManager.spawnedSessions).toHaveLength(1);
+    const command = sessionManager.spawnedSessions[0].command;
+    expect(command.startsWith(`"${PS1_SIBLING}"`)).toBe(true);
+    expect(command).not.toContain('codex.CMD');
+    // The multi-line prompt still rides the PowerShell backtick-n contract.
+    expect(command).toContain('`n');
   });
 });

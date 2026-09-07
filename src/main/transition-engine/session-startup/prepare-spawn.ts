@@ -16,6 +16,7 @@ import { isResumeConversationAbsent } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
+import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 
 /**
  * Fully-prepared agent spawn: the adapter has been resolved, the CLI
@@ -167,6 +168,16 @@ export async function prepareAgentSpawn(input: {
 
   await adapter.ensureTrust(cwd);
 
+  // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
+  // under a PowerShell or Git Bash host is swapped for the sibling shim that
+  // shell can run. This path never carries a prompt, but a crash-recovered
+  // session must launch through the same head the board spawn used.
+  const launch = await resolveShimLaunch({
+    agentPath: detection.path,
+    shell: input.resolvedShell,
+    prompt: undefined,
+  });
+
   // "Plan always wins, else task -> lane -> global" - the rule lives in
   // resolveEffectivePermissionMode (spawn-preamble.ts).
   const permissionMode = resolveEffectivePermissionMode(
@@ -219,7 +230,7 @@ export async function prepareAgentSpawn(input: {
   const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
   const commandOptions = {
-    agentPath: detection.path,
+    agentPath: launch.agentPath,
     taskId: task.id,
     prompt: undefined,
     cwd,

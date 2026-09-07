@@ -107,11 +107,7 @@ export function toWslPath(windowsPath: string): string {
  */
 export function isUnixLikeShell(shellName: string): boolean {
   const lower = shellName.toLowerCase();
-  return (
-    !lower.includes('cmd') &&
-    !lower.includes('powershell') &&
-    !lower.includes('pwsh')
-  );
+  return !lower.includes('cmd') && !isPowerShellShell(lower);
 }
 
 /**
@@ -127,6 +123,21 @@ export function isUnixLikeShell(shellName: string): boolean {
 export function isCmdShell(shellName: string): boolean {
   const basename = shellName.toLowerCase().split(/[\\/]/).pop() ?? '';
   return basename.replace(/\.exe$/, '') === 'cmd';
+}
+
+/**
+ * True for the PowerShell family: Windows PowerShell 5.1 (`powershell.exe`)
+ * and PowerShell 7 (`pwsh.exe`), whether the shell spec is a bare picker
+ * name or a full path.
+ *
+ * A substring match on purpose, not the basename anchor `isCmdShell` uses:
+ * this is the exact test `isUnixLikeShell` negates, and the two must agree
+ * on every input or a spec could be neither unix-like nor PowerShell. Keep
+ * them in step if one ever tightens.
+ */
+export function isPowerShellShell(shellName: string): boolean {
+  const lower = shellName.toLowerCase();
+  return lower.includes('powershell') || lower.includes('pwsh');
 }
 
 /**
@@ -151,8 +162,7 @@ export function isCmdShell(shellName: string): boolean {
  * WSL all ship a `clear` builtin/binary), cmd chains with `&`.
  */
 export function buildSpawnClearPrelude(shellName: string): string {
-  const lower = shellName.toLowerCase();
-  if (lower.includes('powershell') || lower.includes('pwsh')) {
+  if (isPowerShellShell(shellName)) {
     return 'Clear-Host; ';
   }
   if (isCmdShell(shellName)) {
@@ -182,7 +192,7 @@ export function adaptCommandForShell(
 
   const lower = shellName.toLowerCase();
 
-  if (lower.includes('powershell') || lower.includes('pwsh')) {
+  if (isPowerShellShell(lower)) {
     return '& ' + cmd;
   }
 
@@ -242,12 +252,28 @@ export function sanitizeForPty(text: string): string {
  *    physical line and let PowerShell's escape parser produce the newlines.
  *  - cmd.exe: no escape syntax for embedded newlines; falls back to the
  *    sanitised single-line form.
+ *
+ * The PowerShell strategy holds only while PowerShell launches the target
+ * binary itself. When the command head is a `.cmd` / `.bat` shim (an npm
+ * global install on Windows), PowerShell expands the escapes and hands the
+ * result to cmd.exe, whose command line ends at the first newline, so the
+ * agent sees the first line only (#353). The spawn chokepoints route such
+ * heads through `resolveShimLaunch` (src/main/agent/shared/shim-launch.ts)
+ * before any builder runs, so builders may keep relying on this contract.
+ *
+ * A bare `--` is quoted for PowerShell hosts. PowerShell's parameter binder
+ * consumes an unquoted `--` before a `.ps1` script (the npm shim
+ * `resolveShimLaunch` prefers) sees `$args`, while the quoted form reaches
+ * native commands and cmd.exe as a plain `--` on every route.
  */
 export function quoteArg(
   arg: string,
   shell?: string,
   options?: { multiline?: boolean },
 ): string {
+  if (arg === '--' && shell !== undefined && isPowerShellShell(shell)) {
+    return '"--"';
+  }
   if (/^[a-zA-Z0-9_./:-]+$/.test(arg)) {
     return arg;
   }

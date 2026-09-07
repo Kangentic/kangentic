@@ -107,7 +107,9 @@ export class WarpAdapter implements AgentAdapter {
 
     // --prompt with shell-safe quoting (only when prompt is provided).
     // Placed after all flags with -- end-of-options guard so prompt
-    // content starting with "-" isn't misinterpreted as a CLI flag.
+    // content starting with "-" isn't misinterpreted as a CLI flag. The
+    // guard goes through quoteArg: PowerShell's binder eats a bare --
+    // before a .ps1 shim sees $args, and the quoted form survives.
     if (options.prompt) {
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
@@ -115,7 +117,7 @@ export class WarpAdapter implements AgentAdapter {
       const safePrompt = needsDoubleQuoteReplacement
         ? options.prompt.replace(/"/g, "'")
         : options.prompt;
-      parts.push('--', '--prompt', quoteArg(safePrompt, shell, { multiline: true }));
+      parts.push(quoteArg('--', shell), '--prompt', quoteArg(safePrompt, shell, { multiline: true }));
     }
 
     return parts.join(' ');

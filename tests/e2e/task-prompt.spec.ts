@@ -197,6 +197,15 @@ async function waitForTaskPromptScrollback(taskId: string, timeoutMs = 15000): P
   throw new Error(`Timed out waiting for task ${taskId} to print ${marker}`);
 }
 
+/**
+ * The mock's own prompt output: everything from its MOCK_CLAUDE_PROMPT:
+ * marker on. Asserting the title here rather than on the whole scrollback is
+ * what makes a truncated prompt fail (see the first test's comment).
+ */
+function promptPayload(scrollback: string): string {
+  return scrollback.slice(scrollback.indexOf('MOCK_CLAUDE_PROMPT:'));
+}
+
 test.describe('Claude Agent -- Task Prompt', () => {
   test.beforeEach(async () => {
     await ensureBoard();
@@ -215,8 +224,15 @@ test.describe('Claude Agent -- Task Prompt', () => {
     // marker (mock-owned, task-scoped - see waitForTaskPromptScrollback).
     const scrollback = await waitForTaskPromptScrollback(taskId);
 
-    // Verify both title and description are in the prompt
-    expect(scrollback).toContain(title);
+    // The title is asserted on the mock's own payload (everything from its
+    // marker on), never on the whole scrollback: the shell's echo of the typed
+    // command line precedes the marker and embeds the full <task> XML, so a
+    // whole-scrollback check passed even when the mock had received only
+    // "<task>" (#353: on Windows the npm .cmd shim hands the prompt to cmd.exe,
+    // which keeps its first line). The title line is about 45 chars, far under
+    // any column count, so no wrap can split it; the 78-char description line
+    // is borderline at 80 cols and stays on the whole scrollback.
+    expect(promptPayload(scrollback)).toContain(title);
     expect(scrollback).toContain(description);
   });
 
@@ -237,7 +253,7 @@ test.describe('Claude Agent -- Task Prompt', () => {
     // already earlier in that same ordered stream.
     const scrollback = await waitForTaskPromptScrollback(taskId);
 
-    expect(scrollback).toContain(title);
+    expect(promptPayload(scrollback)).toContain(title);
     expect(scrollback).toContain(description);
     // Planning column uses --permission-mode plan. Assert on the mock's own
     // labeled marker line (MOCK_CLAUDE_PERMISSION_MODE:plan), not on the raw
@@ -265,7 +281,7 @@ test.describe('Claude Agent -- Task Prompt', () => {
     const scrollback = await waitForTaskPromptScrollback(taskId);
 
     // The full description should be in the prompt
-    expect(scrollback).toContain(title);
+    expect(promptPayload(scrollback)).toContain(title);
     expect(scrollback).toContain(description);
   });
 });

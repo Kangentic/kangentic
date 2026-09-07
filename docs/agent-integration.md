@@ -14,7 +14,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `invalidateDetectionCache()` | Reset cached detection (e.g. after user changes CLI path) |
 | `ensureTrust(workingDirectory)` | Pre-approve a directory so the agent doesn't prompt for trust, plus any other pre-spawn global-config state the adapter needs (see [Global Config Writes](#global-config-writes-claudejson)) |
 | `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented by Kimi (see [Kimi Code -> Authentication](#authentication)) and Grok (`grok models`, whose output says "not authenticated" from local state). |
-| `buildCommand(options)` | Build the shell command string to spawn the agent |
+| `buildCommand(options)` | Build the shell command string to spawn the agent. `options.agentPath` is what `detect()` returned, except that on Windows a `.cmd` / `.bat` head is swapped by the spawn chokepoint for the sibling shim the PTY shell can run before the builder sees it (`resolveShimLaunch`, see [cross-platform.md](cross-platform.md#npm-cmd-shims-under-powershell-and-git-bash)); builders never inspect the extension |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
 | `removeHooks(directory, taskId?)` | Remove the per-directory config an adapter injected, on cleanup. `taskId` lets shared-file adapters (Codex, Gemini, Droid) reference-count so concurrent sessions in the same cwd do not clobber each other. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's refcount guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
@@ -661,7 +661,7 @@ Caller-owned via `--session-id <uuid>`, mirroring Claude. `supportsCallerSession
 
 ### CLI Detection
 
-`config.agent.cliPaths.opencode` override, then `PATH` lookup for `opencode` (with the `.cmd` shim on Windows for `npm i -g opencode-ai` installs), then the standard Unix fallback paths. Distributed via Homebrew, Scoop, Chocolatey, Pacman, the curl|sh installer, and `npm i -g opencode-ai` - all install methods publish the same `opencode` binary name. The version probe runs `opencode --version` and strips an optional `opencode ` product prefix from the output.
+`config.agent.cliPaths.opencode` override, then `PATH` lookup for `opencode` (with the `.cmd` shim on Windows for `npm i -g opencode-ai` installs; under a PowerShell or Git Bash host the spawn chokepoint launches the sibling `.ps1` or sh shim instead, see [cross-platform.md](cross-platform.md#npm-cmd-shims-under-powershell-and-git-bash)), then the standard Unix fallback paths. Distributed via Homebrew, Scoop, Chocolatey, Pacman, the curl|sh installer, and `npm i -g opencode-ai` - all install methods publish the same `opencode` binary name. The version probe runs `opencode --version` and strips an optional `opencode ` product prefix from the output.
 
 ### Command Building
 

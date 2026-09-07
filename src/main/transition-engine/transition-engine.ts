@@ -9,6 +9,7 @@ import type { TerminalSubmit } from '../pty/terminal-submit';
 import { interpolateTemplate, resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
+import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
 import { prepareWorktreeFolder } from '../git/task-worktree-folder';
 import { agentRegistry } from '../agent/agent-registry';
@@ -338,12 +339,19 @@ export class TransitionEngine {
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
     const shell = await this.sessionManager.getShell();
+    // A `.cmd` head under a PowerShell or Git Bash host hands the multi-line
+    // prompt to cmd.exe, which keeps only its first line (#353). Swap in the
+    // sibling shim the host can run, else flatten the prompt. Sits after
+    // ensureTrust and before buildCommand (spawn-entry-point-parity). The
+    // session row below persists the ORIGINAL prompt: flattening is a
+    // delivery detail, not what the user wrote.
+    const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
     const executionTarget = resolveExecutionTarget(agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     const commandOptions = {
-      agentPath: detection.path,
+      agentPath: launch.agentPath,
       taskId: task.id,
-      prompt,
+      prompt: launch.prompt,
       cwd,
       permissionMode,
       projectRoot: appConfig.projectPath || undefined,
