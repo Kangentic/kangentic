@@ -17,7 +17,7 @@
  * hand-written assets/*.js files and a .vite/manifest.json, and drives one
  * branch of the function.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,6 +27,21 @@ import path from 'node:path';
 // import, mirroring tests/unit/external-scripts-parity.test.ts importing
 // scripts/copy-external-scripts.js the same way.
 import { assertVendorChunksLazy } from '../../scripts/build.js';
+
+// build.js pins process.env.NODE_ENV to 'production' at module load, and vitest
+// reuses a worker across test files, so that value would otherwise leak into
+// every later file in the same worker - remove-worktree.test.ts and
+// worktree-manager.ts both branch on NODE_ENV !== 'test'.
+//
+// vi.hoisted, not a plain top-level const: the static import above is hoisted,
+// so a plain const would capture the value build.js had ALREADY overwritten.
+// The sibling upload-native-debug-files.test.ts needs no such trick because it
+// only ever loads build.js through a dynamic import inside a test.
+const ORIGINAL_NODE_ENV = vi.hoisted(() => process.env.NODE_ENV);
+
+afterAll(() => {
+  process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+});
 
 interface ManifestEntry {
   file: string;
