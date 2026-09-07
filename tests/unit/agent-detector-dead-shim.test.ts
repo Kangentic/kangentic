@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import which from 'which';
 
 const whichState = vi.hoisted(() => ({ matches: [] as string[] }));
 
@@ -114,6 +115,12 @@ afterAll(() => {
 
 beforeEach(() => {
   whichState.matches = [];
+  // Restore the file's default which() behavior (every candidate name reads
+  // the same whichState.matches list). A test further down installs a
+  // per-candidate override to distinguish the primary name from an alias;
+  // resetting it here up front makes that ordering irrelevant instead of
+  // relying on that describe block's own cleanup.
+  vi.mocked(which).mockImplementation(async () => whichState.matches);
   execVersionMock.mockReset();
   execVersionMock.mockImplementation(async (candidatePath: string) => {
     if (candidatePath === liveShimPath) return { stdout: '0.37.0\n', stderr: '' };
@@ -305,6 +312,85 @@ describe('AgentDetector - the probe cap counts probes, not matches', () => {
 
     fs.rmSync(budgetDir, { recursive: true, force: true });
   });
+});
+
+describe('AgentDetector - a dead shim among an alias\'s matches, and the per-candidate probe budget', () => {
+  it('gives an alias its own fresh probe budget after the primary name exhausts its own, and skips a dead shim listed only under the alias', async () => {
+    // Own subdirectory, torn down here for the same reason as the sibling
+    // "own subdirectory" tests above.
+    const scenarioDir = fs.mkdtempSync(path.join(tempDir, 'alias-budget-'));
+    const primaryFailingPaths = Array.from({ length: 4 }, (_unused, index) => {
+      const failingPath = path.join(scenarioDir, `primary-fail-${index}.cmd`);
+      fs.writeFileSync(failingPath, '@echo off\r\nexit /b 1\r\n');
+      return failingPath;
+    });
+    const aliasDeadShimPath = path.join(scenarioDir, 'alias-dead.cmd');
+    fs.writeFileSync(aliasDeadShimPath, npmCmdShim(CMD_TARGET));
+    const aliasFailingPath = path.join(scenarioDir, 'alias-fail.cmd');
+    fs.writeFileSync(aliasFailingPath, '@echo off\r\nexit /b 1\r\n');
+
+    // which() must answer differently per candidate name here, unlike every
+    // other test in this file: the point is that the primary name and the
+    // alias see DIFFERENT match lists, so a dead shim reachable only via the
+    // alias, and a probe budget the alias still has after the primary spent
+    // its own, are both genuinely exercised rather than incidentally true of
+    // the primary name's matches.
+    vi.mocked(which).mockImplementation(async (candidate) => {
+      if (candidate === 'gemini') return primaryFailingPaths;
+      if (candidate === 'gemini-cli') return [aliasDeadShimPath, aliasFailingPath, liveShimPath];
+      return [];
+    });
+
+    const detector = new AgentDetector({
+      binaryName: 'gemini',
+      binaryAliases: ['gemini-cli'],
+      parseVersion: (raw) => raw.trim() || null,
+    });
+
+    const result = await detector.detect();
+
+    expect(result).toEqual({ found: true, path: liveShimPath, version: '0.37.0' });
+    // The primary name spent its entire 4-probe budget on failures. The
+    // alias then still had probes left for its own failing match and the
+    // live shim, on top of a free dead-shim skip - 6 probes total across
+    // the two candidate names. If the budget counted probes across
+    // candidate names instead of resetting for each one, the alias would
+    // have had none left and detection would have reported the agent
+    // missing despite the live shim sitting right there.
+    expect(probedPaths()).toEqual([...primaryFailingPaths, aliasFailingPath, liveShimPath]);
+    const skipLine = warnLines().find((entry) => entry.includes(aliasDeadShimPath));
+    expect(skipLine).toBeDefined();
+    expect(skipLine).toContain('"gemini-cli" matched');
+    expect(skipLine).toContain('skipping it without a version probe');
+
+    fs.rmSync(scenarioDir, { recursive: true, force: true });
+  });
+});
+
+describe('AgentDetector - PATH segment counting in the NOT FOUND line', () => {
+  // path.delimiter is ';' on win32 and ':' on POSIX, so splitting on a
+  // literal ':' only misbehaves on Windows, where a drive letter's colon
+  // (`C:\...`) is not a segment separator. On POSIX path.delimiter IS ':',
+  // so this platform is the only one that can discriminate the fix.
+  it.runIf(process.platform === 'win32')(
+    'counts PATH segments by path.delimiter, not by every colon in a drive letter',
+    async () => {
+      const originalPath = process.env.PATH;
+      process.env.PATH = 'C:\\Users\\dev\\bin;C:\\Windows\\System32';
+      try {
+        whichState.matches = [];
+
+        const result = await makeDetector().detect();
+
+        expect(result).toEqual({ found: false, path: null, version: null });
+        // A literal ':' split would see three pieces here ("C", "\Users\dev\
+        // bin;C", "\Windows\System32"); splitting on ';' sees the real two.
+        expect(notFoundLine()).toContain('PATH had 2 segments');
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+  );
 });
 
 describe('describeProbeError - the non-numeric-code branches', () => {

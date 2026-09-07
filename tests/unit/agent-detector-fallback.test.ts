@@ -204,6 +204,74 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
     expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(1);
   });
 
+  // ── Override branch: probeVersion's failure detail reaches the user ───────
+  //
+  // The override warning line used to read a bare "did not produce a
+  // version" with no detail. It now interpolates probeVersion's `detail`
+  // field, so a user who configured a bad cliPath sees WHY the probe failed
+  // rather than having to re-derive it themselves. Each test below pins one
+  // of probeVersion's three failure reasons reaching that interpolation.
+
+  it('embeds the "missing file" detail in the override failure warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const overridePath = '/custom/path/testcli';
+    const detector = makeDetector([]);
+    // existsSync already defaults to false in the outer beforeEach, so
+    // probeVersion's "missing" branch fires with no further setup.
+
+    const result = await detector.detect(overridePath);
+
+    expect(result).toEqual({ found: false, path: overridePath, version: null });
+    const warnLine = warnSpy.mock.calls
+      .map((call) => call.map(String).join(' '))
+      .find((line) => line.includes(overridePath));
+    expect(warnLine).toContain('did not produce a version (the file does not exist on disk)');
+    warnSpy.mockRestore();
+  });
+
+  it('embeds describeProbeError\'s detail in the override failure warning when the probe itself throws', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const overridePath = '/custom/path/testcli';
+    const detector = makeDetector([]);
+    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => candidatePath === overridePath);
+    vi.mocked(execVersion).mockRejectedValueOnce(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+
+    const result = await detector.detect(overridePath);
+
+    expect(result).toEqual({ found: false, path: overridePath, version: null });
+    const warnLine = warnSpy.mock.calls
+      .map((call) => call.map(String).join(' '))
+      .find((line) => line.includes(overridePath));
+    expect(warnLine).toContain('did not produce a version (ENOENT)');
+    warnSpy.mockRestore();
+  });
+
+  it('embeds the unrecognized-output line (firstLine(raw)) in the override failure warning', async () => {
+    // This is the one place firstLine(raw) reaches a user at all: the PATH
+    // stage's describeProbeFailure discards this same detail in favor of a
+    // static "likely a different tool" message (see agent-detector-dead-shim
+    // .test.ts), but the override branch has no such rewrite - it always
+    // shows probe.detail verbatim.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const overridePath = '/custom/path/testcli';
+    const config: AgentDetectorConfig = {
+      binaryName: 'testcli',
+      parseVersion: (raw) => (raw.startsWith('VALID:') ? raw.replace('VALID:', '').trim() : null),
+    };
+    const detector = new AgentDetector(config);
+    vi.mocked(fs.existsSync).mockImplementation((candidatePath) => candidatePath === overridePath);
+    vi.mocked(execVersion).mockResolvedValueOnce({ stdout: 'UNRELATED_TOOL 4.0.0', stderr: '' });
+
+    const result = await detector.detect(overridePath);
+
+    expect(result).toEqual({ found: false, path: overridePath, version: null });
+    const warnLine = warnSpy.mock.calls
+      .map((call) => call.map(String).join(' '))
+      .find((line) => line.includes(overridePath));
+    expect(warnLine).toContain('did not produce a version (UNRELATED_TOOL 4.0.0)');
+    warnSpy.mockRestore();
+  });
+
   it('parseVersion returning null causes fallback path to be skipped', async () => {
     const firstPath = '/opt/homebrew/bin/testcli';
     const secondPath = '/usr/local/bin/testcli';
@@ -394,6 +462,30 @@ describe('AgentDetector - PATH candidate loop (binaryAliases fall-through)', () 
     const result = await new AgentDetector(config).detect();
 
     expect(result).toEqual({ found: true, path: singlePath, version: '1.0.0' });
+  });
+
+  it('filters out a non-string entry from an array which() result before probing', async () => {
+    // Real `which(candidate, { all: true, nothrow: true })` resolves
+    // `string[] | null` and cannot itself hand back a non-string array
+    // element - this pins toMatchList's defensive filter, which exists to
+    // absorb a malformed double rather than a reachable production shape.
+    const validPath = '/usr/local/bin/primary';
+    const config: AgentDetectorConfig = {
+      binaryName: 'primary',
+      parseVersion: (raw) => raw.trim() || null,
+    };
+
+    vi.mocked(which).mockResolvedValueOnce([null, validPath] as unknown as string[]);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(execVersion).mockResolvedValueOnce({ stdout: '1.0.0', stderr: '' });
+
+    const result = await new AgentDetector(config).detect();
+
+    expect(result).toEqual({ found: true, path: validPath, version: '1.0.0' });
+    // Only the string entry ever reached probeVersion; the malformed null
+    // entry from a non-conforming which() double was dropped before that.
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(execVersion)).toHaveBeenCalledWith(validPath);
   });
 
   it('treats a null which() result (the nothrow shape) as not on PATH and continues to the fallback stage', async () => {
