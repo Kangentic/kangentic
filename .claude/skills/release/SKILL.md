@@ -47,6 +47,16 @@ This command does NOT use `/merge-back`. The release flow is fundamentally diffe
 3. **Fetch latest:** Run `git fetch origin main`
 4. **Verify up-to-date:** Run `git diff HEAD origin/main --stat`. Must be empty. If not, stop with: "Local main is behind origin/main. Run `git pull` first."
 5. **Install dependencies:** Run `npm ci`. This ensures `node_modules` matches the lockfile exactly, preventing typecheck/test failures from stale or missing packages. The `postinstall` script automatically rebuilds native modules for Electron. If it fails with EBUSY, stop with: "A file in node_modules is locked by a running process. Close the Kangentic dev server (`npm start`) and retry."
+6. **Verify the Sentry symbol-upload secret:** Run `gh secret list --repo Kangentic/kangentic`.
+   `KANGENTIC_SENTRY_TOKEN` must be listed. If it is not, stop with: "KANGENTIC_SENTRY_TOKEN is
+   not set on the repo, so this release would ship with no sourcemaps and no native debug files.
+   Add it as a repository secret, then re-run."
+
+   This checks the GITHUB secret on purpose, not a local environment variable. Release builds run
+   only on the CI matrix, so a local `KANGENTIC_SENTRY_TOKEN` says nothing about what the runners
+   will see. The release workflow makes the same check in its `preflight-symbols` job, but on the
+   normal tag-push path the tag already exists by the time that job runs. This step is the only
+   one that can stop the tag from being created at all.
 
 Report the current version (from package.json), the bump type, and what the new version will be before proceeding.
 
