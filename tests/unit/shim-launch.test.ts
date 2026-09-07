@@ -307,6 +307,20 @@ describe('resolveShimLaunch: warn-once and per-shell policy cache', () => {
     expect(dependencies.warn.mock.calls[1][0]).toContain(SECOND_CMD_HEAD);
   });
 
+  it('warns separately for the same agent path under two different PowerShell-family shells', async () => {
+    // The warn-once key joins the shell and the agent path (keepBatchShim). pwsh
+    // 7 and Windows PowerShell 5.1 keep separate execution policies, so a
+    // fallback flattened under one host must still warn again under the
+    // other. Narrowing the key to agentPath alone would collapse this to one
+    // warning and fail the assertion below.
+    const dependencies = makeDependencies({ fileExists: vi.fn(() => false) });
+
+    await resolveShimLaunch({ agentPath: CMD_HEAD, shell: PWSH, prompt: MULTILINE_PROMPT }, dependencies);
+    await resolveShimLaunch({ agentPath: CMD_HEAD, shell: POWERSHELL, prompt: MULTILINE_PROMPT }, dependencies);
+
+    expect(dependencies.warn).toHaveBeenCalledTimes(2);
+  });
+
   it('probes the execution policy once per shell and serves later spawns from the cache', async () => {
     const dependencies = makeDependencies({ fileExists: vi.fn((candidatePath: string) => candidatePath.endsWith('.ps1')) });
 
