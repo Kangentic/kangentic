@@ -210,9 +210,11 @@ export class CommandBuilder {
         ? options.prompt.replace(/"/g, "'")
         : options.prompt;
       // -- (end-of-options) prevents content like -> or --flag from being
-      // parsed as CLI options regardless of shell quoting behavior.
+      // parsed as CLI options regardless of shell quoting behavior. It goes
+      // through quoteArg because PowerShell's binder eats a bare -- before a
+      // .ps1 shim sees $args; the quoted form reaches every launcher intact.
       // multiline: true preserves newlines in the <task> XML envelope.
-      parts.push('--', quoteArg(safePrompt, shell, { multiline: true }));
+      parts.push(quoteArg('--', shell), quoteArg(safePrompt, shell, { multiline: true }));
     }
 
     return parts.join(' ');

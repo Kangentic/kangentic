@@ -151,7 +151,9 @@ export class GrokCommandBuilder {
     if (!isResume && options.prompt) {
       // `--` (end-of-options) prevents prompt content like `--flag` from
       // being parsed as a CLI option regardless of shell quoting behavior.
-      parts.push('--', this.quotePrompt(options.prompt, shell));
+      // quoteArg quotes it for PowerShell hosts, whose binder would otherwise
+      // consume it before a .ps1 shim sees $args.
+      parts.push(quoteArg('--', shell), this.quotePrompt(options.prompt, shell));
     }
 
     return parts.join(' ');

@@ -268,6 +268,35 @@ describe('spawn entry-point parity: every buildCommand site runs ensureTrust fir
   });
 });
 
+describe('spawn entry-point parity: every buildCommand site resolves the shim launch first', () => {
+  // On Windows an npm-installed CLI resolves to its `.cmd` shim, which a
+  // PowerShell or Git Bash host launches through cmd.exe, and cmd.exe keeps
+  // only the first line of a multi-line prompt (#353). resolveShimLaunch
+  // (src/main/agent/shared/shim-launch.ts) swaps in the sibling shim the host
+  // can run, or flattens the prompt, and it has to run on every path that
+  // builds an agent command or one launcher silently truncates while the
+  // others work. Same static-scan limits as the ensureTrust check above; the
+  // runtime wiring per chokepoint is pinned by
+  // prepare-spawn-shim-launch-wiring.test.ts, transition-engine.test.ts, and
+  // transient-session-spawn-shim-launch.test.ts.
+  it('every buildCommand( call site is preceded by a resolveShimLaunch( call in the same file', () => {
+    const buildSites = collectReceiverCalls('buildCommand');
+    expect(buildSites.length, 'expected at least one buildCommand( call site').toBeGreaterThan(0);
+    const missing = buildSites
+      .filter((site) => !fileHasNonCommentCallBefore(site.relativePath, site.line, 'resolveShimLaunch'))
+      .map((site) => site.location);
+    expect(
+      missing,
+      `buildCommand( without an earlier resolveShimLaunch( in the same file:\n`
+        + `${missing.join('\n')}\n\n`
+        + `A .cmd / .bat head must be resolved for the PTY shell before any builder sees it, or a `
+        + `multi-line prompt reaches the agent as its first line only on Windows (#353). Call `
+        + `resolveShimLaunch({ agentPath, shell, prompt }) after ensureTrust and hand the builder its `
+        + `agentPath and prompt. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+});
+
 describe('spawn entry-point parity: single lock call site', () => {
   it('lockAdvancedOverridesOnFirstSpawn is only referenced inside spawn-preamble.ts', () => {
     const outsideCalls = collectSinkCalls(/\blockAdvancedOverridesOnFirstSpawn\s*\(/)

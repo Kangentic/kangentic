@@ -47,6 +47,14 @@ contract was kept in sync across three files by prose comments alone.
   otherwise allowlisted out of both chokepoints. A path that spawns a caller-supplied command
   string without going through `buildCommand` (`SESSION_SPAWN` in `handlers/sessions.ts`) is
   outside what the scan verifies; route a new one through a chokepoint instead.
+- Every file that calls `<receiver>.buildCommand(` also calls `resolveShimLaunch(`
+  (`src/main/agent/shared/shim-launch.ts`) first, after `ensureTrust`, and hands the builder the
+  resolved `agentPath` and `prompt`. On Windows an npm-installed CLI resolves to its `.cmd` shim,
+  which a PowerShell or Git Bash host launches through cmd.exe, and cmd.exe keeps only the first
+  line of a multi-line prompt (#353); the resolver swaps in the sibling shim the host can run, or
+  flattens the prompt. The runtime wiring per chokepoint is pinned by
+  `tests/unit/prepare-spawn-shim-launch-wiring.test.ts`, `tests/unit/transition-engine.test.ts`,
+  and `tests/unit/transient-session-spawn-shim-launch.test.ts`.
 - Adding a new spawn entry point means routing it through one of the two chokepoints, or adding
   a reasoned allowlist entry in the enforcement test AND updating this rule.
 
@@ -56,9 +64,10 @@ contract was kept in sync across three files by prose comments alone.
   on (a) any `executeTransition` / `resumeSuspendedSession` call site outside the classified
   files, (b) any `sessionManager.spawn(` call site outside the classified spawn sinks, (c) a
   chokepoint that stops calling `runSpawnPreamble` / `resolveEffectivePermissionMode`, (d)
-  any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`, and (e) any
+  any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`, (e) any
   `<receiver>.buildCommand(` call site with no earlier `<receiver>.ensureTrust(` on that same
-  receiver in the same file. That scan proves line order, not control flow; the runtime ordering
+  receiver in the same file, and (f) any `<receiver>.buildCommand(` call site with no earlier
+  `resolveShimLaunch(` in the same file. That scan proves line order, not control flow; the runtime ordering
   on the Command Terminal path is pinned separately by
   `tests/unit/transient-session-spawn-ensure-trust.test.ts`, which drives the handler and fails
   if the `await` is dropped or the call is removed. An
