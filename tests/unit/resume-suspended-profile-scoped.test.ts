@@ -29,7 +29,8 @@
  * session-isolation.ts are left UNMOCKED so the real profile fold runs.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
 import type { BoardProfile, SessionRecord, Task } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -90,11 +91,13 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
   return { SessionRepository: FakeSessionRepository };
 });
 
+const taskRepoSetWorktreeSkipReasonMock = vi.fn();
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
     list = () => taskRepoList();
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
     getById = vi.fn(() => null);
+    setWorktreeSkipReason = (...args: unknown[]) => taskRepoSetWorktreeSkipReasonMock(...args);
   }
   return { TaskRepository: FakeTaskRepository };
 });
@@ -331,5 +334,81 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     // Not skipped by the auto_spawn exclusion check (same caveat re: the
     // mock's own 'unknown-agent' retire as the test above).
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The stale-`worktree_path` fallback in the preparation pass's CWD-missing
+ * branch (resume-suspended.ts, step 5): a recoverable record's `cwd` (the
+ * worktree directory it was spawned in) is gone, so the record is retired
+ * rather than resumed. If the task's own `worktree_path` matches that same
+ * missing directory, it too is cleared, and the reason is persisted via
+ * `taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing')` so the board
+ * can say the task's next spawn will run in the shared project checkout, and
+ * why. Nothing previously drove this branch at all.
+ */
+describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing branch)', () => {
+  const STALE_WORKTREE_PATH = '/project/worktrees/task-001';
+
+  beforeEach(() => {
+    markRecordSuspendedMock.mockClear();
+    markRecordSuspendedMock.mockReturnValue(true);
+    retireRecordMock.mockClear();
+    sessionRepoGetResumable.mockClear();
+    sessionRepoGetResumable.mockReturnValue([]);
+    sessionRepoGetOrphaned.mockClear();
+    sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoMarkAllRunningAsOrphaned.mockClear();
+    sessionRepoMarkRunningAsOrphanedExcluding.mockClear();
+    taskRepoList.mockClear();
+    taskRepoList.mockReturnValue([]);
+    taskRepoUpdateMock.mockClear();
+    taskRepoSetWorktreeSkipReasonMock.mockClear();
+    vi.mocked(prepareAgentSpawn).mockClear();
+    vi.mocked(prepareAgentSpawn).mockResolvedValue({ ok: false, reason: 'unknown-agent' });
+    swimlaneListMock.mockReturnValue([lane(LOUD_LANE, true)]);
+  });
+
+  afterEach(() => {
+    // Restore the file-level default so tests declared earlier in the file
+    // (and any `--repeat-each` rerun) see every path as existing again.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+  });
+
+  it('detects a stale worktree_path when the record cwd is missing, clears it, and records worktree-missing', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' }),
+    ]);
+    // Both the record's cwd and the task's worktree_path point at the same
+    // now-deleted directory.
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    await runResume();
+
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null });
+    expect(taskRepoSetWorktreeSkipReasonMock).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
+    // The record itself is still retired (unresumable cwd), regardless of
+    // the task-level fallback.
+    expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+  });
+
+  it('leaves worktree_path and the skip reason untouched when only the record cwd is stale (task worktree_path already null)', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: null, branch_name: null }),
+    ]);
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    await runResume();
+
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+    expect(taskRepoSetWorktreeSkipReasonMock).not.toHaveBeenCalled();
+    expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
   });
 });

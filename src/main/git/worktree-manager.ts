@@ -2,6 +2,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'node:path';
 import fs from 'node:fs';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
+import type { WorktreeSkipReason } from '../../shared/types';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
 import { worktreesRootFor } from './task-worktree-folder';
@@ -60,6 +61,23 @@ export interface WorktreeCreateResult {
   branchName: string;
   worktreeFolder: string;
 }
+
+/**
+ * `ensureWorktree` created nothing, and this is why. `'reused'` means the task
+ * already has a live worktree on disk and keeps it (the caller should not
+ * persist that). Every other reason means the agent will run in the shared
+ * project checkout; callers persist it via
+ * `TaskRepository.setWorktreeSkipReason` so a surface can eventually say so
+ * (nothing reads it back yet, see `WorktreeSkipReason`). This used
+ * to be a bare `null` for all of them, which is how "running unisolated in the
+ * checkout the app runs from" stayed invisible.
+ */
+export interface WorktreeSkipped {
+  skipped: true;
+  reason: WorktreeSkipReason | 'reused';
+}
+
+export type EnsureWorktreeResult = WorktreeCreateResult | WorktreeSkipped;
 
 const REMOVAL_PROFILE_OPTIONS: Record<WorktreeRemovalProfile, RemoveWithRetryOptions | undefined> = {
   thorough: undefined,
@@ -437,15 +455,26 @@ export class WorktreeManager {
   }
 
   /**
-   * Guard + create worktree in one call. Returns null if any guard fails
-   * (already has a live worktree on disk, worktrees disabled, not a git repo,
-   * is a worktree).
+   * Guard + create worktree in one call. Every guard that stops short of
+   * creating returns a `WorktreeSkipped` naming WHY, so callers can persist the
+   * reason to `task.worktree_skip_reason` instead of inferring it from a bare
+   * null (recorded for any surface that wants to say "running in the checkout
+   * the app runs from"; no renderer reads it back yet):
+   *   - 'reused': a live worktree already exists on disk and is kept as is.
+   *   - 'disabled': `use_worktree` (per task) or `worktreesEnabled` (project) is off.
+   *   - 'not-a-repo': the project path has no `.git`.
+   *   - 'nested-worktree': the project path is itself a worktree; git cannot nest them.
+   *   - 'no-commits': unborn HEAD, so there is no ref to branch from.
+   * The `shouldUseWorktree` check runs before the three structural guards, so a
+   * per-task `use_worktree: 1` can force worktrees on in a project where they
+   * are off but can never override a structural reason. An unresolvable base
+   * branch throws instead (see `resolveWorktreeBase`).
    */
   async ensureWorktree(
     task: { id: string; title: string; display_id: number; worktree_path: string | null; worktree_folder?: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
     gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[]; initScript?: string | null; linkNodeModules?: boolean },
     options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
-  ): Promise<WorktreeCreateResult | null> {
+  ): Promise<EnsureWorktreeResult> {
     // Trust worktree_path only if the worktree still genuinely exists on disk.
     // A Done cleanup that could not delete the directory (Windows pinned-CWD)
     // leaves worktree_path set pointing at an emptied husk with no `.git` file;
@@ -453,14 +482,14 @@ export class WorktreeManager {
     // A missing or husk directory falls through to createWorktree, which
     // recomputes the identical (deterministic) path and recreates the worktree.
     if (task.worktree_path && fs.existsSync(task.worktree_path) && isInsideWorktree(task.worktree_path)) {
-      return null;
+      return { skipped: true, reason: 'reused' };
     }
     const shouldUseWorktree = task.use_worktree != null
       ? Boolean(task.use_worktree)
       : gitConfig.worktreesEnabled;
-    if (!shouldUseWorktree) return null;
-    if (!isGitRepo(this.projectPath)) return null;
-    if (isInsideWorktree(this.projectPath)) return null;
+    if (!shouldUseWorktree) return { skipped: true, reason: 'disabled' };
+    if (!isGitRepo(this.projectPath)) return { skipped: true, reason: 'not-a-repo' };
+    if (isInsideWorktree(this.projectPath)) return { skipped: true, reason: 'nested-worktree' };
 
     // Resolve the base branch against the repo's ACTUAL refs before ever calling
     // `git worktree add`, instead of handing it a name that may not exist. A `master`-only
@@ -480,7 +509,7 @@ export class WorktreeManager {
       gitConfig.defaultBaseBranch || 'main',
       { signal: options?.signal },
     );
-    if (resolution.kind === 'no-commits') return null;
+    if (resolution.kind === 'no-commits') return { skipped: true, reason: 'no-commits' };
     if (resolution.kind === 'unresolvable') {
       throw new Error(describeUnresolvableBase(resolution));
     }

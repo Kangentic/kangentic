@@ -473,6 +473,13 @@ export async function handleTaskMove(
             WorktreeManager.scheduleBackgroundPrune(resolvedProjectPath);
           }
         }
+        // Done ends the spawn decision `worktree_skip_reason` describes; a task
+        // unarchived later re-decides at its next spawn, so a stale "project
+        // folder" claim must not ride along. Outside the worktree block on
+        // purpose: the task carrying a reason is the one WITHOUT a worktree.
+        if (tasks.getById(task.id)) {
+          tasks.setWorktreeSkipReason(task.id, null);
+        }
 
         // Archive already happened synchronously right after tasks.move above.
         return null;

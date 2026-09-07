@@ -12,6 +12,15 @@
  * {{projectPath}}) and is unrelated to task template interpolation.
  */
 
+/**
+ * The prompt template a fresh spawn uses when no `spawn_agent` action supplies
+ * one, and the one the seeded "Start Planning Agent" action carries. ONE
+ * declaration, so the engine's implicit default and the seed cannot drift. The
+ * legacy-rewrite migration keeps its own frozen literal on purpose: a migration
+ * must not retroactively rewrite old rows if this default ever changes.
+ */
+export const DEFAULT_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{attachments}}';
+
 export const TASK_TEMPLATE_VAR_NAMES = [
   'task_xml',
   'title',

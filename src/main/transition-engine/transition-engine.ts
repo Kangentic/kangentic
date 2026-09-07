@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Task, Action, ActionConfig, AppConfig, PermissionMode } from '../../shared/types';
+import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
 import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
@@ -99,7 +100,7 @@ export class TransitionEngine {
       projectPath: this.getConfig().projectPath,
     });
     await this.executeSpawnAgent({
-      promptTemplate: skipPromptTemplate ? undefined : '{{task_xml}}{{attachments}}',
+      promptTemplate: skipPromptTemplate ? undefined : DEFAULT_SPAWN_PROMPT_TEMPLATE,
     }, task, templateVars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides);
   }
 
@@ -544,6 +545,17 @@ export class TransitionEngine {
       { label: `transition-ensure:${task.id.slice(0, 8)}` },
     );
     if (!result) return;
+    if ('skipped' in result) {
+      // Same contract as ensureTaskWorktree: a genuine skip is recorded so the
+      // board can say the agent runs in the shared checkout; a reuse keeps the
+      // existing worktree and must not carry a stale reason.
+      const reason = result.reason === 'reused' ? null : result.reason;
+      if ((task.worktree_skip_reason ?? null) !== reason) {
+        this.taskRepo.setWorktreeSkipReason(task.id, reason);
+        task.worktree_skip_reason = reason;
+      }
+      return;
+    }
 
     this.taskRepo.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder);
     // Refresh the in-memory task, as ensureTaskWorktree does after the same

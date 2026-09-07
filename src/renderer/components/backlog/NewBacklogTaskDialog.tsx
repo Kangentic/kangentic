@@ -400,7 +400,6 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
             <DialogFooterActions
               onCancel={onClose}
               submitLabel={isEditMode ? 'Save' : 'Create'}
-              busyLabel={isEditMode ? 'Saving...' : 'Creating...'}
               busy={submitting}
               disabled={!title.trim()}
               submitTestId="create-backlog-task-btn"
