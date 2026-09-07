@@ -18,6 +18,10 @@ vi.mock('../../src/main/db/database', () => ({
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   autoSpawnForTask: vi.fn(() => Promise.resolve()),
+  // The MCP delete path reaps what the session left running before it removes
+  // the worktree. Inert here: the ordering is pinned in the reap wiring tests.
+  captureSessionLeftovers: vi.fn(() => null),
+  reapSessionLeftovers: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
