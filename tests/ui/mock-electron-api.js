@@ -603,6 +603,7 @@
           isDirectory: true,
           isGitRepo: true,
           isInsideWorktree: false,
+          hasCommits: true,
           currentBranch: 'main',
           suggestedName: name,
           alreadyRegisteredProjectId: existing ? existing.id : null,
@@ -874,6 +875,7 @@
           session_id: null,
           worktree_path: null,
           worktree_folder: null,
+          worktree_skip_reason: null,
           branch_name: input.customBranchName || null,
           pr_number: null,
           pr_url: null,
@@ -1396,6 +1398,9 @@
         if (input.enableWorktree && !task.worktree_path) {
           updates.worktree_path = '/mock/worktrees/' + task.id.slice(0, 8);
           updates.branch_name = task.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + task.id.slice(0, 8);
+          // Mirrors TaskRepository.recordWorktree: a task that gains a worktree
+          // stops claiming it runs in the shared checkout.
+          updates.worktree_skip_reason = null;
           updates.use_worktree = 1;
         }
         tasks[idx] = Object.assign({}, task, updates);
@@ -3015,6 +3020,7 @@
             session_id: null,
             worktree_path: null,
             worktree_folder: null,
+            worktree_skip_reason: null,
             branch_name: null,
             pr_number: null,
             pr_url: null,
@@ -3685,6 +3691,11 @@
             labelColors: (config.backlog && config.backlog.labelColors) || {},
             defaultBaseBranch: config.git.defaultBaseBranch,
             worktreesEnabled: config.git.worktreesEnabled,
+            // Required by TaskDetailBundle.config, and `useBranchConfig` indexes
+            // it without a guard. This file is plain .js, so tsc cannot catch a
+            // missing field here: omitting it threw on every monitor-hosted
+            // detail render and the ErrorBoundary tore down the whole app.
+            agentExecution: (config.agent && config.agent.execution) || {},
             browserEnabled: !(config.browser && config.browser.enabled === false),
           },
         });

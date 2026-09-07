@@ -844,16 +844,17 @@ describe('WorktreeManager -- ensureWorktree', () => {
     mockWorktreeGit.raw.mockResolvedValue('');
   });
 
-  it('returns null when the worktree_path still exists on disk', async () => {
+  it('reports a reuse when the worktree_path still exists on disk', async () => {
     // existsSync true (beforeEach) + statSync isFile=true => isInsideWorktree
-    // true => a genuine, present worktree, so no recreation.
+    // true => a genuine, present worktree, so no recreation. 'reused' is the
+    // one skip reason callers must NOT persist: the task keeps its worktree.
     vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as ReturnType<typeof fs.statSync>);
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
       { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: '/existing' },
       gitConfig,
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'reused' });
     expect(mockProjectGit.raw).not.toHaveBeenCalled();
   });
 
@@ -892,19 +893,31 @@ describe('WorktreeManager -- ensureWorktree', () => {
     );
 
     expect(createSpy).toHaveBeenCalled();
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
   });
 
-  it('returns null when worktreesEnabled is false', async () => {
+  // Each guard names its reason instead of returning a bare null, so the task
+  // row can record why its agent runs in the shared checkout. A per-task
+  // `use_worktree` can override 'disabled' but never the structural reasons.
+  it('reports disabled when worktreesEnabled is false', async () => {
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
       { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       { ...gitConfig, worktreesEnabled: false },
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'disabled' });
   });
 
-  it('returns null when project is not a git repo', async () => {
+  it('reports disabled when the task opts out despite worktreesEnabled', async () => {
+    const mgr = new WorktreeManager('/project');
+    const result = await mgr.ensureWorktree(
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null, use_worktree: 0 },
+      gitConfig,
+    );
+    expect(result).toEqual({ skipped: true, reason: 'disabled' });
+  });
+
+  it('reports not-a-repo when project is not a git repo', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
 
     const mgr = new WorktreeManager('/project');
@@ -912,20 +925,20 @@ describe('WorktreeManager -- ensureWorktree', () => {
       { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
       gitConfig,
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'not-a-repo' });
     expect(isGitRepo('/project')).toBe(false);
   });
 
-  it('returns null when project is inside a worktree', async () => {
+  it('reports nested-worktree when project is inside a worktree, even with use_worktree forced on', async () => {
     // existsSync true (for .git check) + statSync returns isFile=true (worktree)
     vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as ReturnType<typeof fs.statSync>);
 
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
-      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null },
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null, use_worktree: 1 },
       gitConfig,
     );
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'nested-worktree' });
     expect(isInsideWorktree('/project')).toBe(true);
   });
 
@@ -937,7 +950,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
       gitConfig,
     );
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     // Branch name encodes the non-default base as a namespace prefix so the
     // worktree's origin is visible at-a-glance in git log / GitHub branch lists.
     expect(result!.branchName).toBe('develop/test-abcd1234');

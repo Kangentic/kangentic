@@ -10,7 +10,7 @@ import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../tr
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
-import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo } from '../../git/git-checks';
+import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
@@ -769,12 +769,16 @@ export function registerProjectHandlers(context: IpcContext): void {
     const isGit = isDirectory && isGitRepo(normalized);
     const insideWorktree = isDirectory && isInsideWorktree(normalized);
     const { branch } = isGit ? await readWorktreeHeadUnqueued(normalized) : { branch: null };
+    // Same gate as the branch read: only a repo can have commits, and the
+    // check shells out, so a non-repo folder never pays for it.
+    const commits = isGit ? await hasCommits(normalized) : false;
     const existingProject = context.projectRepo.list().find((p) => path.resolve(p.path) === normalized);
     return {
       exists,
       isDirectory,
       isGitRepo: isGit,
       isInsideWorktree: insideWorktree,
+      hasCommits: commits,
       currentBranch: branch,
       suggestedName: path.basename(normalized),
       alreadyRegisteredProjectId: existingProject?.id ?? null,

@@ -20,11 +20,13 @@
  * both assertions fail (undefined instead of the repo / boolean).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
 
 const mockPrepareAgentSpawn = vi.fn(async () => ({ ok: false as const, reason: 'cli-not-found' as const }));
 const mockTaskList = vi.fn();
 const mockTaskUpdate = vi.fn();
+const mockSetWorktreeSkipReason = vi.fn();
 const mockGetLatestForTask = vi.fn();
 const mockGetUserPausedTaskIds = vi.fn(() => new Set<string>());
 const mockSwimlaneList = vi.fn();
@@ -39,6 +41,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
     list = (...args: unknown[]) => mockTaskList(...args);
     update = (...args: unknown[]) => mockTaskUpdate(...args);
+    setWorktreeSkipReason = (...args: unknown[]) => mockSetWorktreeSkipReason(...args);
   },
 }));
 
@@ -142,5 +145,65 @@ describe('autoSpawnTasks first-spawn lock wiring', () => {
     expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
     const prepareInput = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as PreparedSpawnInput;
     expect(prepareInput.hasSessionRecord).toBe(true);
+  });
+});
+
+/**
+ * The stale-`worktree_path` fallback: a task carries a `worktree_path` from a
+ * prior run, but the directory is gone (the worktree was deleted out from
+ * under it). auto-spawn.ts nulls both `worktree_path` and `branch_name`,
+ * records WHY via `taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing')`
+ * so the board can say the agent runs in the shared project checkout, and
+ * falls back to spawning at `projectPath`. Nothing previously drove this
+ * branch at all.
+ */
+describe('autoSpawnTasks: stale worktree_path fallback', () => {
+  const STALE_WORKTREE_PATH = '/mock/project/.kangentic/worktrees/task-auto-spawn-001';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSwimlaneList.mockReturnValue([
+      { id: LANE_ID, auto_spawn: true, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    ]);
+    mockGetUserPausedTaskIds.mockReturnValue(new Set());
+    mockGetLatestForTask.mockReturnValue(undefined);
+    // Only the stale worktree path is missing; the project path (the
+    // fallback cwd) still exists, so the spawn proceeds to prepareAgentSpawn
+    // rather than being skipped by the "CWD missing" guard right after it.
+    vi.mocked(fs.existsSync).mockImplementation((checkedPath) => checkedPath !== STALE_WORKTREE_PATH);
+  });
+
+  afterEach(() => {
+    // Restore the file-level default so later tests in this file (which run
+    // after this describe, but a rerun/`--repeat-each` should not depend on
+    // ordering) see every path as existing again.
+    vi.mocked(fs.existsSync).mockImplementation(() => true);
+  });
+
+  it('detects a stale worktree_path, clears it, records worktree-missing, and falls back to the project path', async () => {
+    mockTaskList.mockReturnValue([
+      { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' },
+    ]);
+
+    await runAutoSpawn();
+
+    expect(mockTaskUpdate).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null });
+    expect(mockSetWorktreeSkipReason).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+    const prepareInput = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as { cwd: string };
+    expect(prepareInput.cwd).toBe('/mock/project');
+  });
+
+  it('does not touch worktree_path or the skip reason when the worktree directory still exists', async () => {
+    mockTaskList.mockReturnValue([
+      { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: '/mock/project/.kangentic/worktrees/still-here', branch_name: 'live-branch' },
+    ]);
+
+    await runAutoSpawn();
+
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSetWorktreeSkipReason).not.toHaveBeenCalled();
+    const prepareInput = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as { cwd: string };
+    expect(prepareInput.cwd).toBe('/mock/project/.kangentic/worktrees/still-here');
   });
 });

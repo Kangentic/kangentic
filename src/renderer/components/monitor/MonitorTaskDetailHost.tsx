@@ -91,7 +91,10 @@ export function MonitorTaskDetailHost({
       defaultAgent: bundle.defaultAgent,
       swimlanes: bundle.swimlanes,
       shortcuts: bundle.shortcuts,
-      config: bundle.config,
+      // `agentExecution` is defaulted here the way the board host defaults it
+      // from its config store: `useBranchConfig` indexes it without a guard, so
+      // a bundle that arrives without it throws through the whole detail tree.
+      config: { ...bundle.config, agentExecution: bundle.config.agentExecution ?? {} },
       // The bundle carries only THIS task, not the whole board, so an append
       // position cannot be computed from a lane's length here. Position 0 is
       // deliberate and correct: the repository treats it as "top of the lane",

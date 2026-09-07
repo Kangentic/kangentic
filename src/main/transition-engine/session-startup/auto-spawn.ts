@@ -136,6 +136,9 @@ export async function autoSpawnTasks(
       if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
         console.log(`[AUTO_SPAWN] Worktree missing for task ${task.id} -- falling back to project path`);
         taskRepo.update({ id: task.id, worktree_path: null, branch_name: null });
+        // The fallback is silent otherwise: record it so the board can say the
+        // agent is now in the shared checkout, and why.
+        taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing');
         cwd = projectPath;
       }
       if (!fs.existsSync(cwd)) {

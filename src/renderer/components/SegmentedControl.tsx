@@ -10,6 +10,12 @@ export interface SegmentedControlOption<T extends string> {
   /** Per-option test hook. Not derived from `value`, so adopters keep their existing ids. */
   testId?: string;
   title?: string;
+  /**
+   * Disable this one option: it cannot be selected by click or arrow key and
+   * reads dimmed, while the rest of the group stays live. For a group that is
+   * unavailable as a whole, use the group-level `disabled` instead.
+   */
+  disabled?: boolean;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -32,6 +38,23 @@ interface SegmentedControlProps<T extends string> {
    *     theme.
    */
   ground?: 'control' | 'raised';
+  /**
+   * Soften the control for a dialog form row where it stands beside muted
+   * inputs (the New Task dialog's Branch row). The default, a bold `fg` label
+   * on the thumb, is right in the board toolbar and the Board Manager's
+   * settings grid, but beside a quiet field shell it reads as a primary
+   * button. Quiet keeps the `control` ground's fills, which are the pairing
+   * `theme-contrast.test.ts` guarantees separates in every theme (a `surface`
+   * recess under a `surface-control` thumb, the same fill as the field beside
+   * it, so the selected option sits at the field's own level), and drops the
+   * labels to the field's text scale and weight, which was the part that read
+   * as a button. A translucent `surface-hover` lift on the field fill was
+   * tried first and vanished in the default theme, where hover and control
+   * are six units apart. Height stays 34px: `py-1.5` makes up for `text-xs`,
+   * and the track takes the field shell's `rounded` so the row shares one
+   * corner radius. Overrides `ground`.
+   */
+  quiet?: boolean;
   /** Stretch to fill the container, options sharing the width equally. */
   fullWidth?: boolean;
   /** Group-level test hook. */
@@ -47,6 +70,26 @@ const GROUND_CLASSES = {
   // control reads as the same species as the fields it sits among.
   control: { track: 'bg-surface border-edge-input', thumb: 'bg-surface-control' },
   raised: { track: 'bg-surface/50 border-edge/30', thumb: 'bg-surface-raised shadow-sm' },
+  // Same fills as `control`: that pairing is the one the theme-contrast test
+  // holds apart in every theme. Quiet differs in its text, not its fills.
+  quiet: { track: 'bg-surface border-edge-input', thumb: 'bg-surface-control' },
+} as const;
+
+const OPTION_TEXT = {
+  default: {
+    size: 'px-3 py-1 text-sm font-medium',
+    selected: 'text-fg',
+    idle: 'text-fg-muted',
+    idleHover: 'hover:text-fg',
+    optionDisabled: 'text-fg-disabled',
+  },
+  quiet: {
+    size: 'px-3 py-1.5 text-xs',
+    selected: 'text-fg-secondary',
+    idle: 'text-fg-muted',
+    idleHover: 'hover:text-fg-secondary',
+    optionDisabled: 'text-fg-disabled',
+  },
 } as const;
 
 /**
@@ -77,6 +120,7 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   ground = 'control',
+  quiet = false,
   fullWidth = false,
   testId,
   ariaLabel,
@@ -135,22 +179,44 @@ export function SegmentedControl<T extends string>({
     onChange(option.value);
   };
 
+  const isOptionDisabled = (index: number) => options[index]?.disabled === true;
+
+  /** The nearest enabled option `step` away from `from`, wrapping; null when none. */
+  const nextEnabled = (from: number, step: 1 | -1): number | null => {
+    for (let hop = 1; hop < options.length; hop += 1) {
+      const candidate = (from + step * hop + options.length * hop) % options.length;
+      if (!isOptionDisabled(candidate)) return candidate;
+    }
+    return null;
+  };
+
+  const endEnabled = (from: 'first' | 'last'): number | null => {
+    const order = options.map((_option, index) => index);
+    if (from === 'last') order.reverse();
+    const found = order.find((index) => !isOptionDisabled(index));
+    return found === undefined ? null : found;
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;
-    let next: number | null = null;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (activeIndex + 1) % options.length;
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (activeIndex - 1 + options.length) % options.length;
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = options.length - 1;
-    if (next === null) return;
+    let next: number | null | undefined;
+    // Arrows and Home/End skip a disabled option, so a per-option `disabled`
+    // holds for the keyboard exactly as it does for the mouse.
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = nextEnabled(activeIndex, 1);
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = nextEnabled(activeIndex, -1);
+    else if (event.key === 'Home') next = endEnabled('first');
+    else if (event.key === 'End') next = endEnabled('last');
+    if (next === undefined) return;
     // Only swallow the keys actually handled, so nothing the surrounding toolbar
     // or dialog binds is eaten by having focus inside the control.
     event.preventDefault();
     event.stopPropagation();
+    if (next === null || next === activeIndex) return;
     focusOption(next);
   };
 
-  const tone = GROUND_CLASSES[ground];
+  const tone = GROUND_CLASSES[quiet ? 'quiet' : ground];
+  const text = OPTION_TEXT[quiet ? 'quiet' : 'default'];
 
   return (
     <div
@@ -159,7 +225,10 @@ export function SegmentedControl<T extends string>({
       aria-label={ariaLabel}
       onKeyDown={handleKeyDown}
       data-testid={testId}
-      className={`inline-flex rounded-md border p-0.5 ${tone.track} ${fullWidth ? 'flex w-full' : ''} ${
+      data-quiet={quiet || undefined}
+      // Quiet takes the field shell's `rounded` (4px) rather than `rounded-md`,
+      // so the two boxes in a form row share one corner radius.
+      className={`inline-flex ${quiet ? 'rounded' : 'rounded-md'} border p-0.5 ${tone.track} ${fullWidth ? 'flex w-full' : ''} ${
         disabled ? 'opacity-50' : ''
       } ${className}`}
     >
@@ -179,29 +248,33 @@ export function SegmentedControl<T extends string>({
         )}
         {options.map((option, index) => {
           const selected = index === activeIndex;
+          const optionDisabled = disabled || option.disabled === true;
           return (
             <button
               key={option.value}
               // Not optional: several dialogs wrap their body in a <form>, where
-              // a bare button submits it (see WorktreeChip).
+              // a bare button submits it (the New Task dialog's Branch row is
+              // one such adopter).
               type="button"
               ref={(element) => { optionRefs.current[index] = element; }}
               role="radio"
               aria-checked={selected}
               // Roving tabindex: the group is one tab stop, arrows move within it.
               tabIndex={selected ? 0 : -1}
-              disabled={disabled}
+              disabled={optionDisabled}
               title={option.title}
               onClick={() => onChange(option.value)}
               data-testid={option.testId}
               data-selected={selected}
-              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded px-3 py-1 text-sm font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
                 fullWidth ? 'flex-1' : ''
               } ${
                 selected
-                  ? 'text-fg'
-                  : `text-fg-muted ${disabled ? '' : 'hover:text-fg'}`
-              } ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  ? text.selected
+                  : option.disabled && !disabled
+                    ? text.optionDisabled
+                    : `${text.idle} ${disabled ? '' : text.idleHover}`
+              } ${optionDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
             >
               {option.icon}
               <span>{option.label}</span>

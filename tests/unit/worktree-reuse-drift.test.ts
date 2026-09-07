@@ -1,11 +1,12 @@
 /**
  * Gap-3 surfacing: when a spawn REUSES a pre-existing worktree
- * (ensureWorktree returns null because the tree is alive on disk), the spawn
- * must not silently run on a tree cut from an old base. ensureTaskWorktree
- * fires a fire-and-forget drift probe: throttled base fetch, one rev-list
- * against origin/<effective base> with the WORKTREE as cwd, and a sticky
- * spawn-progress note when behind. The probe must never block or fail the
- * spawn, and must not fire for any other ensureWorktree null reason.
+ * (ensureWorktree reports `{ skipped: true, reason: 'reused' }` because the
+ * tree is alive on disk), the spawn must not silently run on a tree cut from
+ * an old base. ensureTaskWorktree fires a fire-and-forget drift probe:
+ * throttled base fetch, one rev-list against origin/<effective base> with the
+ * WORKTREE as cwd, and a sticky spawn-progress note when behind. The probe
+ * must never block or fail the spawn, and must not fire for any other
+ * ensureWorktree skip reason (those record the reason instead).
  *
  * spawn-progress is deliberately the REAL module here so these tests pin the
  * actual decorated labels the card renders.
@@ -123,8 +124,11 @@ function makeContext(): { context: IpcContext; window: BrowserWindow; send: Retu
 
 const stubTasksRepo = {
   recordWorktree: vi.fn(),
+  setWorktreeSkipReason: vi.fn(),
   getById: vi.fn(() => makeTask()),
 } as unknown as TaskRepository;
+
+const REUSED = { skipped: true, reason: 'reused' } as const;
 
 /** fetchIfStale succeeds: reports 'fetched' and returns the origin ref. */
 function fetchSucceeds(): void {
@@ -147,7 +151,7 @@ describe('worktree reuse drift probe', () => {
     vi.clearAllMocks();
     __resetSpawnProgressForTest();
     __resetSpawnWarningCooldownsForTest();
-    mockEnsureWorktree.mockResolvedValue(null);
+    mockEnsureWorktree.mockResolvedValue(REUSED);
     mockRefResolvesLocally.mockResolvedValue(true);
     mockIsInsideWorktree.mockReturnValue(true);
     fetchSucceeds();
@@ -360,18 +364,20 @@ describe('worktree reuse drift probe', () => {
     expect(mockRunGitWithTimeout).not.toHaveBeenCalled();
   });
 
-  it('does not probe for the other ensureWorktree null reasons (tree not alive on disk)', async () => {
+  it('does not probe for the other ensureWorktree skip reasons; it records them instead', async () => {
     const { context, window } = makeContext();
-    const task = makeTask();
+    const task = makeTask({ worktree_path: null });
     emitSpawnProgress(window, task.id, 'starting-agent');
-    // ensureWorktree returned null but the worktree is a husk: the reuse gate
-    // (which restates ensureWorktree's own condition) must not fire.
-    mockIsInsideWorktree.mockReturnValue(false);
+    // A genuine skip (worktrees off, not a repo, nested, no commits) has no
+    // tree to probe. The manager names the reason; ensureTaskWorktree persists
+    // it so the board can say the agent runs in the shared checkout.
+    mockEnsureWorktree.mockResolvedValue({ skipped: true, reason: 'disabled' });
 
     await ensureTaskWorktree(context, task, stubTasksRepo, '/project');
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockFetchIfStale).not.toHaveBeenCalled();
+    expect(stubTasksRepo.setWorktreeSkipReason).toHaveBeenCalledWith(task.id, 'disabled');
   });
 
   it('a note resolving in the reuse path\'s label-less window PENDS onto the next label push', async () => {

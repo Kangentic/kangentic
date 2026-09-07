@@ -747,8 +747,8 @@ function TaskDetailKebabItems({
       {/* Open folder */}
       {(task.worktree_path || projectPath) && (
         <KebabMenuItem
-          icon={<FolderGit2 size={14} />}
-          label="Open folder"
+          icon={task.worktree_path ? <FolderGit2 size={14} /> : <FolderGit size={14} />}
+          label={task.worktree_path ? 'Open worktree' : 'Open project folder'}
           onClick={() => { closeAll(); window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!); }}
         />
       )}

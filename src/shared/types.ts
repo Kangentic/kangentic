@@ -317,6 +317,34 @@ export type PRLinkStatus = 'linked' | 'unchanged' | 'not-found' | 'no-anchor' | 
  */
 export type TaskRunMode = 'column_settings' | 'agent_override';
 
+/**
+ * Why a task's last spawn ran WITHOUT a worktree, i.e. in the shared project
+ * checkout. Recorded on the task row (`Task.worktree_skip_reason`) at spawn
+ * time as ground truth for any surface that would otherwise infer the state
+ * from a null `worktree_path`. No renderer reads it yet: the 12px card glyph
+ * that drew it was reviewed out as too small to tell apart, so the card and the
+ * detail header still read `worktree_path`.
+ *
+ *   - `disabled`: `use_worktree` (per task) or `git.worktreesEnabled` (project) is off.
+ *   - `not-a-repo`: the project folder has no `.git`.
+ *   - `nested-worktree`: the project folder is itself a git worktree; git cannot nest them.
+ *   - `no-commits`: unborn HEAD (a freshly initialised repo), so there is no ref to branch from.
+ *   - `remote-agent`: the resolved agent runs against a server-side directory, so a local
+ *     worktree would be unused. The agent is NOT in the project folder in this case.
+ *   - `worktree-missing`: the worktree directory vanished between runs; startup recovery
+ *     nulled the path and fell back to the project folder.
+ *
+ * The three structural reasons (`not-a-repo`, `nested-worktree`, `no-commits`) cannot be
+ * overridden by any setting.
+ */
+export type WorktreeSkipReason =
+  | 'disabled'
+  | 'not-a-repo'
+  | 'nested-worktree'
+  | 'no-commits'
+  | 'remote-agent'
+  | 'worktree-missing';
+
 export interface Task {
   id: string;
   display_id: number;
@@ -343,6 +371,14 @@ export interface Task {
    * `path.basename(worktree_path) === worktree_folder`.
    */
   worktree_folder: string | null;
+  /**
+   * Why the last spawn ran without a worktree (see `WorktreeSkipReason`). Null
+   * while the task has a worktree or no spawn has decided yet. Written only by
+   * `TaskRepository.setWorktreeSkipReason` (spawn telemetry, no `updated_at`
+   * bump) and cleared by `recordWorktree`; the generic `update()` never touches
+   * it. Selected with `SELECT *` so the renderer sees it on every task.
+   */
+  worktree_skip_reason: WorktreeSkipReason | null;
   branch_name: string | null;
   pr_number: number | null;
   pr_url: string | null;
@@ -2392,6 +2428,8 @@ export interface TaskDetailBundle {
     labelColors: Record<string, string>;
     defaultBaseBranch: string;
     worktreesEnabled: boolean;
+    /** Per-agent execution mode, so the branch hint can say a remote agent gets no local worktree. */
+    agentExecution: Record<string, AgentProjectExecution>;
     browserEnabled: boolean;
   };
 }
@@ -3684,6 +3722,13 @@ export interface ProjectPathProbe {
   isDirectory: boolean;
   isGitRepo: boolean;
   isInsideWorktree: boolean;
+  /**
+   * False for an unborn HEAD (a freshly initialised repo) and for anything
+   * that is not a git repo. A repo with no commits cannot have a worktree
+   * (`git worktree add` has no ref to start from), so the branch hint reads
+   * this to say "runs in the project folder" instead of promising one.
+   */
+  hasCommits: boolean;
   /** Current branch name, or null when not a git repo or HEAD is unreadable. */
   currentBranch: string | null;
   /** The folder's basename, offered as the dialog's default project name. */

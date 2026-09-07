@@ -112,11 +112,17 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
               className={color ? 'bg-surface-control/60 font-medium' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
               style={color ? { color } : undefined}
             >
+              {/* The text is centered by `Pill` itself (it trims bare text to
+                  its cap height, see `trimTextChildren`). The button is a flex
+                  container so the icon is a flex item rather than an inline svg
+                  parked on the baseline of an empty line box, which had it
+                  sitting ~1px high while the text sat ~2px low. */}
               {label}
               <button
                 type="button"
                 onClick={() => removeLabel(label)}
-                className="ml-px rounded-full hover:bg-black/20 p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                className="ml-px flex items-center justify-center rounded-full hover:bg-black/20 p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                aria-label={`Remove ${label}`}
               >
                 <X size={12} />
               </button>

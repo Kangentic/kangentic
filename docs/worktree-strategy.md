@@ -124,24 +124,38 @@ When a removal fails because a process still pins the worktree, `removeWorktree`
 
 ### When a worktree is NOT created
 
-`ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) returns without creating anything in
-most of these cases, leaving `task.worktree_path` null so the agent's `cwd` falls back to the
-project path and the task runs unisolated in the main checkout. The two `WorktreeManager`-internal
-guards at the top of the table are a partial exception - see the note in each row.
+`ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) creates nothing in these cases, leaving
+`task.worktree_path` null so the agent's `cwd` falls back to the project path and the task runs
+unisolated in the main checkout. Every case is NAMED: `WorktreeManager.ensureWorktree` returns
+`{ skipped: true, reason }` (`WorktreeSkipped`) instead of a bare null, and the caller persists the
+reason to `task.worktree_skip_reason` (the `WorktreeSkipReason` union) via
+`TaskRepository.setWorktreeSkipReason`. That column is the ground truth for any surface that
+wants to say "running in the checkout the app runs from"; today it is recorded and exposed but
+has no renderer reader, since the 12px card glyph that drew it was reviewed out as too small to
+tell apart. It is cleared inside `recordWorktree` (the task has a worktree
+again), on a To Do reset, and on a Done move. The one return-only value, `'reused'`, is never
+persisted: the task keeps its worktree.
 
-| Condition | Why |
-|-----------|-----|
-| A worktree already exists at `task.worktree_path` and is genuinely present on disk | Idempotent short-circuit inside `WorktreeManager.ensureWorktree` - `worktree_path` stays exactly what it already was, not null. Recreating a live worktree would be wasted work. |
-| The project path itself is inside a worktree (`isInsideWorktree(this.projectPath)`) | Prevents nesting a worktree inside a worktree - a worktree checkout is never itself a valid parent for another `git worktree add`. |
-| `worktreesEnabled` is `false` (per-task `use_worktree` can override either direction) | Worktrees are turned off for this project by default. `task.use_worktree` is checked first when set (`worktree-manager.ts`'s `shouldUseWorktree`): a task can force worktree mode on in a project where it's off, or opt out where it's on. |
-| The project is not a git repository | Nothing to branch from. |
-| The resolved agent's execution mode is `remote` | The agent runs against a server-side directory instead, so a local worktree would be unused. Resolution mirrors `resolveTargetAgent` exactly (task override, column profile, column override, project default, global fallback) - if the two disagree, a local agent spawns into the main checkout. |
-| The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. |
+| Reason | Condition | Why |
+|--------|-----------|-----|
+| `reused` (return only) | A worktree already exists at `task.worktree_path` and is genuinely present on disk | Idempotent short-circuit inside `WorktreeManager.ensureWorktree` - `worktree_path` stays exactly what it already was. Recreating a live worktree would be wasted work; `ensureTaskWorktree` runs the base-drift probe on this path instead. |
+| `disabled` | `worktreesEnabled` is `false` for the project, or the task's `use_worktree` is `0` | `task.use_worktree` is checked first when set (`worktree-manager.ts`'s `shouldUseWorktree`): a task can force worktree mode on in a project where it's off, or opt out where it's on. Checked BEFORE the three structural reasons below, so forcing it on can never override them. |
+| `not-a-repo` | The project is not a git repository | Nothing to branch from. |
+| `nested-worktree` | The project path itself is inside a worktree (`isInsideWorktree(this.projectPath)`) | Prevents nesting a worktree inside a worktree - a worktree checkout is never itself a valid parent for another `git worktree add`. |
+| `no-commits` | The repository has **no commits** (`hasCommits` in `src/main/git/git-checks.ts`) | A freshly `git init`-ed repo has an unborn HEAD: the branch exists in name only, so `git worktree add` fails with `fatal: invalid reference: <branch>`. This is the state Kangentic produces itself when it initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's next action is usually a task move. Worktrees start working on their own once there is a first commit. |
+| `remote-agent` | The resolved agent's execution mode is `remote` (checked in `ensureTaskWorktree`, before `ensureWorktree` runs) | The agent runs against a server-side directory instead, so a local worktree would be unused. Resolution mirrors `resolveTargetAgent` exactly (task override, column profile, column override, project default, global fallback) - if the two disagree, a local agent spawns into the main checkout. The agent is NOT in the project folder in this case. |
+| `worktree-missing` | Startup recovery found `task.worktree_path` no longer on disk (`session-startup/auto-spawn.ts`, `resume-suspended.ts`) | The row's `worktree_path` and `branch_name` are nulled and the agent falls back to the project path; the reason records that the fallback happened. |
 
-This guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBase`), not in
-`ensureTaskWorktree` itself, so the `create_worktree` transition action (which also calls
-`ensureWorktree`) gets the identical no-commits fallback. `ensureTaskBranchCheckout` keeps its own
-separate no-commits guard, since it does not go through `WorktreeManager.ensureWorktree`.
+The renderer decides the three structural reasons and the remote case up front as well, from the
+project path probe (`isGitRepo`, `isInsideWorktree`, `hasCommits`) and the agent execution map, so
+the Branch row's hint and its disabled Worktree option state the outcome before the spawn
+(`src/renderer/utils/worktree-placement.tsx`). The persisted reason is still the ground truth.
+
+The no-commits guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBase`), not
+in `ensureTaskWorktree` itself, so the `create_worktree` transition action (which also calls
+`ensureWorktree`) gets the identical fallback and records the same reason. `ensureTaskBranchCheckout`
+keeps its own separate no-commits guard, since it does not go through
+`WorktreeManager.ensureWorktree`.
 
 #### Sharing one checkout is guarded, not prevented
 
@@ -529,8 +543,8 @@ resolved ref.
 - Throws and lists the repo's real branches when the default chain is fully exhausted
 - Resolves a base that exists only on origin and was never fetched (fetch retry)
 - Falls back to a verified `origin/<base>` start point when worktree creation's own fetch fails (the `verifiedStartPoint` seam)
-- Returns null (no-commits fallback) for an unborn HEAD, now enforced inside `ensureWorktree`
-- Regression pins for states that are already no-ops: detached HEAD, a bare repo, a broken `.git` file pointer
+- Reports `{ skipped: true, reason: 'no-commits' }` for an unborn HEAD, now enforced inside `ensureWorktree`
+- Regression pins for states that are already no-ops: detached HEAD (creates normally), a bare repo (`not-a-repo`), a broken `.git` file pointer (`nested-worktree`)
 
 **`resolveWorktreeBase` candidate order:**
 - Tries only the per-task base branch when set, never substituting main/master

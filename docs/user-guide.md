@@ -101,7 +101,7 @@ When an agent is already running, the same Model / Effort pills appear in the li
 
 Drag a task from To Do to any active column (Planning, Executing, etc.). Kangentic will:
 
-1. Create a git worktree for the task (if worktrees are enabled)
+1. Create a git worktree for the task (if worktrees are enabled). Otherwise the agent runs in the project folder, and the task detail says so - see [Worktrees](#worktrees)
 2. Spawn an agent CLI session with the task title and description as the prompt
 3. The task card shows a spinner while the agent is thinking
 
@@ -207,7 +207,7 @@ Click a task card to open the detail dialog. From here you can:
 - Open the task's transcript in the read-only [conversation viewer](#the-conversation-viewer) via the **View conversation** pill (speech-bubble icon). Muted until the task has session history, live or historical.
 - Access the kebab menu (three-dot icon) for additional actions:
   - **Edit** - switch to edit mode for title and description
-  - **Open folder** - open the worktree or project directory in your file manager
+  - **Open worktree** / **Open project folder** - open the task's directory in your file manager; the label names which one it is
   - **View conversation** - same as the header pill
   - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_create_task` / `kangentic_update_task` MCP tools (any platform), or manually through the PR URL field in edit mode. Those are the only ways to link a PR: writing a PR URL into the task description does not link it, so you can cite another task's PR as background without it being mistaken for this task's own. Also shown as a pill in the header bar and a clickable badge on the task card.
   - **Commands & Skills** - submenu of available Claude Code commands and skills (same as the header popover)
@@ -383,8 +383,11 @@ Click the column header's settings icon. You can configure:
 | **Color** | Header accent color |
 | **Icon** | Lucide icon name (e.g., `square-terminal`, `code`, `flask-conical`) |
 | **Agent** | Override the project's default agent for this column (e.g., use Codex for code review) |
+| **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column |
 | **Permission Mode** | Override the global permission mode for agents in this column |
-| **Auto Spawn** | Whether moving a task here spawns an agent (default: on) |
+| **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on) |
+| **Receive context from prior agent** | On a cross-agent move into this column, hand the previous agent's conversation to the new one |
+| **Session** / **On enter** | Whether the column runs the task's main session or its own isolated one, and whether entering resumes or always starts fresh |
 | **Message to agent** | Sent to the agent when a task enters the column. Plain instructions or a slash command; template variables fill in task details. Stored as `autoCommand` in `kangentic.json` |
 | **Message timing** | Whether the message interrupts the agent or waits for its current turn to finish |
 | **Plan Exit Target** | For plan-mode columns: where tasks move when planning completes |
@@ -573,9 +576,16 @@ If a teammate removes a column that still has your tasks, the column becomes a "
 
 When worktrees are enabled (default), each task gets its own git branch and working directory. This allows multiple agents to work in parallel without merge conflicts.
 
-### Per-Task Toggle
+A task WITHOUT a worktree runs in the project folder itself: the checkout you have open in your editor (and the one Kangentic runs from), shared with every other task that has no worktree. Nothing prevents two such agents from editing the same tree at once; Kangentic only refuses to switch that folder's branch under a live agent. This happens when you choose Project instead of Worktree in the Branch row, and also when the project cannot have a worktree at all: it is not a git repository, it has no commits yet, or the project folder is itself a git worktree (git cannot nest them). A remote-execution agent gets no local worktree either, but runs in its server directory rather than the project folder.
 
-Individual tasks can opt in or out of worktrees regardless of the global setting. Set this when creating a task or in the task detail dialog.
+Where an agent works is always visible:
+
+- **New Task dialog and edit form** - the line under the Branch row says where the task will run before you create it: "Runs in the project folder on `main`" (the branch the folder actually has checked out) versus "will be created from `main` in a new worktree". A pinned base or a custom branch without a worktree reads "`x` will be checked out in the project folder", since that is a real branch switch in the folder you have open. When the project cannot have a worktree, the line reads "Runs in the project folder" and the Worktree option is disabled, with the reason in its tooltip.
+- **Task detail** - the folder button in the header shows the worktree icon for a task in its own worktree and the git-folder icon otherwise, and the kebab's folder item reads "Open worktree" or "Open project folder".
+
+### Per-Task Placement
+
+The Branch row's Worktree | Project pair sets where an individual task runs, regardless of the global setting. Choose it when creating a task or in the task detail edit form. Choosing Worktree cannot override the structural cases above.
 
 ### Branch Naming
 

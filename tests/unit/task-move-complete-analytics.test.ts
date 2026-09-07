@@ -208,6 +208,7 @@ function makeTaskRepo(task: Task) {
     getById: vi.fn(() => ({ ...task })),
     move: vi.fn(),
     update: vi.fn(),
+    setWorktreeSkipReason: vi.fn(),
     list: vi.fn(() => [{ ...task }]),
     archive: vi.fn(),
   };
@@ -221,7 +222,7 @@ function makeSwimlaneRepo(lanes: Swimlane[]) {
   };
 }
 
-async function moveTaskToDone(task: Task): Promise<void> {
+async function moveTaskToDone(task: Task): Promise<{ taskRepo: ReturnType<typeof makeTaskRepo> }> {
   const doingLane = makeSwimlane(DOING_LANE_ID, { role: null });
   const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done' });
   const swimlaneRepo = makeSwimlaneRepo([doingLane, doneLane]);
@@ -233,6 +234,8 @@ async function moveTaskToDone(task: Task): Promise<void> {
     targetSwimlaneId: DONE_LANE_ID,
     targetPosition: 0,
   }, 'renderer');
+
+  return { taskRepo };
 }
 
 function getTaskCompleteProps(): Record<string, string | number | boolean> {
@@ -361,5 +364,64 @@ describe('handleTaskMove task_complete analytics', () => {
     await moveTaskToDone(task);
 
     expect(mockTrackMilestone).toHaveBeenCalledWith('first_task_complete');
+  });
+});
+
+/**
+ * The Done-move worktree-skip-reason clear (task-move.ts's
+ * `if (tasks.getById(task.id)) { tasks.setWorktreeSkipReason(task.id, null); }`
+ * guard). Done ends the spawn decision `worktree_skip_reason` describes, so
+ * moving into Done must clear a stale reason left by an earlier spawn that
+ * ran without a worktree - an unarchived task re-decides at its next spawn
+ * and must not keep claiming "runs in the project folder" from a leg that no
+ * longer applies. Both sibling task-move-*.test.ts files already had to stub
+ * `setWorktreeSkipReason: vi.fn()` purely so this line doesn't throw, without
+ * ever asserting on it - this closes that gap.
+ */
+describe('handleTaskMove Done-move worktree-skip-reason clear', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.latestRecord = null;
+    hoisted.summary = null;
+  });
+
+  it('clears the worktree skip reason to null once the task lands in Done', async () => {
+    const task = makeTask({
+      swimlane_id: DOING_LANE_ID,
+      session_id: null,
+      worktree_path: null,
+      worktree_skip_reason: 'remote-agent',
+    });
+
+    const { taskRepo } = await moveTaskToDone(task);
+
+    expect(taskRepo.setWorktreeSkipReason).toHaveBeenCalledWith(task.id, null);
+  });
+
+  it('does not clear the skip reason when the task row is already gone by the time the guard re-reads it (concurrent delete)', async () => {
+    const task = makeTask({ swimlane_id: DOING_LANE_ID, session_id: null, worktree_path: null });
+    const doingLane = makeSwimlane(DOING_LANE_ID, { role: null });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done' });
+    const swimlaneRepo = makeSwimlaneRepo([doingLane, doneLane]);
+    // First getById (Phase 1 fetch) returns the task; the second (this
+    // guard, re-read after the archive/suspend work) returns undefined, as a
+    // concurrent TASK_DELETE would leave it.
+    const taskRepo = {
+      getById: vi.fn().mockReturnValueOnce({ ...task }).mockReturnValue(undefined),
+      move: vi.fn(),
+      update: vi.fn(),
+      setWorktreeSkipReason: vi.fn(),
+      list: vi.fn(() => [{ ...task }]),
+      archive: vi.fn(),
+    };
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(context as never, {
+      taskId: task.id,
+      targetSwimlaneId: DONE_LANE_ID,
+      targetPosition: 0,
+    }, 'renderer');
+
+    expect(taskRepo.setWorktreeSkipReason).not.toHaveBeenCalled();
   });
 });

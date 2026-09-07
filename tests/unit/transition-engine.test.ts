@@ -117,6 +117,7 @@ function makeTaskRepo() {
     // No legacy folder to recover: these tasks were never created under the old
     // `<slug>-<shortId>` scheme, so they take their display_id.
     recoverLegacyWorktreeFolder: vi.fn(() => null),
+    setWorktreeSkipReason: vi.fn(),
   };
 }
 
@@ -626,6 +627,52 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
     const [, , options] = worktreeManagerMock.ensureWorktree.mock.calls[0] as [unknown, unknown, EnsureWorktreeOptions];
     expect(options.signal).toBeUndefined();
     expect(options.onProgress).toBeUndefined();
+  });
+
+  // The three tests below are this action's own skip-handling: an inline
+  // twin of recordWorktreeSkip (task-git.ts), which already has dedicated
+  // coverage in task-git-remote-worktree-skip.test.ts. Reverting only this
+  // branch (transition-engine.ts's `if ('skipped' in result)`) back to
+  // unconditionally persisting `result.reason` (including the literal
+  // 'reused') or dropping the `!==` guard would leave the twin file green.
+  it('persists a genuine skip reason and mirrors it onto the in-memory task', async () => {
+    worktreeManagerMock.ensureWorktree.mockResolvedValueOnce({ skipped: true, reason: 'not-a-repo' });
+    const task = makeTask({ worktree_path: null, worktree_skip_reason: null });
+    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
+    const { engine, taskRepo } = makeEngine({ action });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(taskRepo.recordWorktree).not.toHaveBeenCalled();
+    expect(taskRepo.setWorktreeSkipReason).toHaveBeenCalledWith(task.id, 'not-a-repo');
+    expect(task.worktree_skip_reason).toBe('not-a-repo');
+  });
+
+  it('clears the skip reason to null on a "reused" result, never persisting the literal "reused"', async () => {
+    worktreeManagerMock.ensureWorktree.mockResolvedValueOnce({ skipped: true, reason: 'reused' });
+    const task = makeTask({
+      worktree_path: '/some/project/.kangentic/worktrees/460',
+      worktree_skip_reason: 'not-a-repo',
+    });
+    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
+    const { engine, taskRepo } = makeEngine({ action });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(taskRepo.recordWorktree).not.toHaveBeenCalled();
+    expect(taskRepo.setWorktreeSkipReason).toHaveBeenCalledWith(task.id, null);
+    expect(task.worktree_skip_reason).toBeNull();
+  });
+
+  it('does not rewrite a skip reason the task already carries', async () => {
+    worktreeManagerMock.ensureWorktree.mockResolvedValueOnce({ skipped: true, reason: 'not-a-repo' });
+    const task = makeTask({ worktree_path: null, worktree_skip_reason: 'not-a-repo' });
+    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
+    const { engine, taskRepo } = makeEngine({ action });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(taskRepo.setWorktreeSkipReason).not.toHaveBeenCalled();
   });
 });
 
