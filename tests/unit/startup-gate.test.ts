@@ -292,6 +292,80 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     ).toContain("source: 'globalDbUnreadable'");
   });
 
+  it('wraps every getLastOpenedProject() call site in softly(\'lastOpenedProject\', ...)', () => {
+    // getLastOpenedProject() reads the global database, and this is the exact
+    // line DESKTOP-9 threw from: a bare call, below loadURL, with nothing
+    // between it and a SQLITE_IOERR. Comment-only mentions of the function name
+    // (this file narrates it in two docblocks) are excluded first, so only real
+    // call expressions are counted - otherwise the comments alone would inflate
+    // the count and hide a missing wrapper.
+    //
+    // Counted rather than anchored on the two known call sites by exact text: a
+    // THIRD call site added later that skips the wrapper must fail this test
+    // even though the two existing sites keep passing.
+    const codeSource = INDEX_SOURCE
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+
+    const callSites = codeSource.match(/getLastOpenedProject\(\)/g) ?? [];
+    const softenedCallSites = codeSource.match(/softly\('lastOpenedProject'/g) ?? [];
+
+    expect(
+      callSites.length,
+      'no getLastOpenedProject() call sites found in src/main/index.ts - has the function been renamed, or this scan\'s anchor gone stale?',
+    ).toBeGreaterThan(0);
+    expect(
+      softenedCallSites.length,
+      "every getLastOpenedProject() call in index.ts must be wrapped in softly('lastOpenedProject', ...): a bare call is what threw SQLITE_IOERR as an unhandled rejection in DESKTOP-9, and reintroducing even one unwrapped call site reopens it",
+    ).toBe(callSites.length);
+  });
+
+  it('debounces the Sentry report but calls the user notification unconditionally, inside the global-db-failure notifier', () => {
+    // This closure is registered via setGlobalDbFailureNotifier() entirely
+    // inside app.whenReady().then(...), which makes top-level electron calls and
+    // cannot be imported by a unit test - the same constraint the rest of this
+    // file works around with a static scan.
+    //
+    // softly() invokes this notifier on EVERY notifying failure (the renderer
+    // re-reads project:list on each project switch and HMR re-sync), but an
+    // unreadable database is one standing condition, not one event per read.
+    // reportHandledError must debounce to once per process behind
+    // globalDbFailureReported, or a burst of duplicate Sentry events would fire
+    // for a fault Sentry already has. notifyGlobalDbUnavailable owns its own
+    // once-per-incident + re-arm-on-retry semantics (see
+    // global-db-degradation.test.ts), so it must be called unconditionally:
+    // gating it on the same one-shot flag would silence the user-facing dialog
+    // after the very first failure even once a later Retry re-armed it.
+    const guardMarker = 'if (!globalDbFailureReported) {';
+    const guardStart = INDEX_SOURCE.indexOf(guardMarker);
+    expect(guardStart, 'the debounce guard `if (!globalDbFailureReported)` was not found in src/main/index.ts').toBeGreaterThan(-1);
+
+    // The guard's own closing brace is a newline followed by 4-space indent,
+    // which is unambiguous here: the only other `}` between the guard opening
+    // and its close belongs to reportHandledError's inline options object,
+    // which closes on the SAME line it opens on and never starts a line of its
+    // own at this indent.
+    const guardCloseIndex = INDEX_SOURCE.indexOf('\n    }\n', guardStart);
+    expect(guardCloseIndex, 'could not find the debounce guard\'s closing brace').toBeGreaterThan(guardStart);
+    const guardBody = INDEX_SOURCE.slice(guardStart, guardCloseIndex);
+
+    expect(
+      guardBody,
+      'reportHandledError must sit INSIDE the once-per-process guard: an unguarded call would send a burst of duplicate Sentry events for one standing condition every time softly() notifies',
+    ).toContain('reportHandledError(');
+    expect(
+      guardBody,
+      'notifyGlobalDbUnavailable must NOT be called inside the report guard: it has its own once-per-incident debounce with a re-arm on a successful Retry, and calling it here would double that semantics onto the wrong flag and silence the dialog after the very first failure',
+    ).not.toContain('notifyGlobalDbUnavailable(');
+
+    const afterGuard = INDEX_SOURCE.slice(guardCloseIndex, guardCloseIndex + 400);
+    expect(
+      afterGuard,
+      'notifyGlobalDbUnavailable must still be called, unconditionally, after the report guard closes - otherwise a degraded read after the first Sentry report never reaches the user at all',
+    ).toContain('notifyGlobalDbUnavailable(');
+  });
+
   it('keeps the degraded-startup escape hatch that also opens the gate', () => {
     // A count scan, not a proximity regex: the whenReady body already contains
     // unrelated .catch( calls (pruneStaleWorktreeProjects,
