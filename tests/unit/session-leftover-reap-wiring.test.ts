@@ -339,7 +339,11 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
       worktree_path: '/mock/project/.kangentic/worktrees/task-2',
       branch_name: null,
     };
-    const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
+    const tasks = {
+      getById: vi.fn(() => task),
+      update: vi.fn(),
+      setWorktreeSkipReason: vi.fn(),
+    } as unknown as TaskRepository;
 
     await cleanupTaskResources(context, task, tasks, null, '/mock/project');
 
@@ -401,6 +405,9 @@ function makeTaskRepo(task: Task) {
     move: vi.fn(),
     update: vi.fn(),
     archive: vi.fn(),
+    // Not used by anything this file asserts, but both paths under test clear
+    // the skip reason on their way through, so the stub has to answer it.
+    setWorktreeSkipReason: vi.fn(),
   };
 }
 
