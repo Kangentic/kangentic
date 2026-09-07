@@ -954,6 +954,29 @@ describe('adapter command composed through adaptCommandForShell', () => {
   });
 });
 
+// The real CommandBuilder.buildClaudeCommand's "--" end-of-options guard
+// (as opposed to the deliberately simplified inline buildClaudeCommand()
+// helper above, which never went through quoteArg for the marker) was never
+// exercised under a PowerShell-family shell, so a revert of the
+// `quoteArg('--', shell)` call back to a bare '--' literal passed every test
+// in this file until this one was added.
+describe('CommandBuilder buildClaudeCommand: quoted "--" end-of-options guard under PowerShell', () => {
+  it('quotes the -- marker before the prompt when the shell is PowerShell', () => {
+    const cmd = new CommandBuilder().buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'task-1',
+      cwd: '/project',
+      permissionMode: 'default',
+      sessionId: 'sess-123',
+      shell: 'powershell',
+      prompt: 'Simple task description',
+    });
+
+    expect(cmd).toContain('"--"');
+    expect(cmd).toContain('Simple task description');
+  });
+});
+
 describe('Status Bridge Script', () => {
   const bridgePath = path.resolve(__dirname, '../../src/main/agent/status-bridge.js');
 

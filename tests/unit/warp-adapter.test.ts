@@ -230,6 +230,15 @@ describe('WarpAdapter', () => {
         }));
         expect(command).toContain('"broken"');
       });
+
+      it('quotes the "--" end-of-options marker ahead of --prompt for PowerShell hosts', () => {
+        // The -- --prompt ordering itself is pinned separately above ("includes
+        // -- --prompt when prompt is provided") and stays out of scope here.
+        // This only pins that the marker is quoted under PowerShell: its binder
+        // consumes a bare -- before a .ps1 shim sees $args.
+        const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug', shell: 'powershell' }));
+        expect(command).toContain('"--" --prompt');
+      });
     });
 
     // ── Ignored options ──────────────────────────────────────────────────
