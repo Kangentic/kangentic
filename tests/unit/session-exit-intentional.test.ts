@@ -79,7 +79,8 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
   detectPR: vi.fn(() => null),
 }));
 
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: (cmd: string) => cmd,
   // performSpawn's deferred command write calls this ~100ms after every
   // spawn under this file's REAL timers; a factory without it throws
