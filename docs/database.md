@@ -31,6 +31,53 @@ All database connections are opened with three pragmas:
 
 All queries are synchronous via **better-sqlite3** -- they block the Node.js event loop briefly but avoid callback complexity.
 
+A connection is published to its module cache only after the pragmas and migrations have both
+succeeded. On failure the half-built handle is closed and the error is rethrown, so a retry
+reopens rather than reusing a connection that never ran migrations. `resetGlobalDb()` drops the
+cached global connection deliberately, which is what the Retry button below reopens through.
+
+## When the global database cannot be read
+
+`SQLITE_IOERR`, `SQLITE_READONLY`, and `SQLITE_BUSY` on `index.db` are environmental: an antivirus
+scan, a OneDrive or Dropbox sync lock, a read-only or full volume, or failing storage. There is
+nothing to fix in the query, so the policy is to say so rather than to retry silently or fail
+opaquely.
+
+**At startup.** `ensureGlobalDbReadable()` (`src/main/db/global-db-dialog.ts`) opens the database
+early in the `app.whenReady()` body, before the MCP server starts and before any window exists. A
+failure shows a modal naming the resolved file path, the SQLite code (or the plain error message
+when the failure carries no `SQLITE_*` code, such as a `NODE_MODULE_VERSION` mismatch), and the
+likely causes, with Retry and Quit. Retry drops the cached connection and reopens; a lock is usually over within
+seconds, so this recovers without a relaunch. Quit counts an `app_error` and calls `app.exit(0)`,
+which is correct rather than `app.quit()` because `registerAllIpc` has not run yet and
+`performShutdown` would throw reaching for a board config manager that does not exist. Under
+`NODE_ENV=test` the dialog is skipped so the E2E tier never hangs on a modal nobody can click.
+
+**While running.** Global-database reads go through `softly()` (`src/main/db/soft-db.ts`), which
+returns a fallback instead of throwing and logs once per operation. Four reads are softened:
+`project:list`, `projectGroup:list` and `project:getCurrent` in
+`src/main/ipc/handlers/projects.ts`, plus the `lastOpenedProject` lookup inside `createWindow()`.
+That last one is not an IPC handler and is the first global-database touch on the whole boot path,
+which is exactly where DESKTOP-9 threw.
+
+Only the two list reads raise the dialog, once per incident: a successful Retry re-arms it, so a
+later outage can still speak. `project:getCurrent` does not, because `project:list` already speaks
+for the pair and it answers null on the cold-boot path anyway.
+
+`createWindow()` is additionally wrapped in `try`/`finally`, because the `lastOpenedProject` read
+sits below its own `loadURL` call. A throw there used to skip `initUpdater`, `initAnnouncements`
+and `markStartupComplete`, leaving a live renderer invoking `announcements:get` with nobody
+listening (Sentry DESKTOP-3/4, the Windows event). Softening the read and making the block
+throw-proof are two layers against the same failure, not separate concerns.
+
+Writes are never softened: a mutation that swallows its failure reports a success that did not
+happen (see `.claude/rules/project-scoped-ipc.md`).
+
+Advisory tables opt out of the notification. The dev-port lease ledger degrades on every unit-tier
+CI run by design, so it passes `level: 'warn'` and no `notify`; wiring the dialog into the
+combinator itself would show it to production users and consume the one notification the project
+list needs.
+
 ## Global DB Schema
 
 ### projects table

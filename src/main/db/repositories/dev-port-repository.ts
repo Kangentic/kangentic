@@ -1,4 +1,5 @@
 import { getGlobalDb } from '../database';
+import { softly as softDbAccess } from '../soft-db';
 import type { DevPortLease } from '../../../shared/types';
 
 /**
@@ -30,24 +31,23 @@ import type { DevPortLease } from '../../../shared/types';
 
 /**
  * Run a ledger query, degrading to `fallback` if the global database cannot be
- * reached. Logged ONCE per process: the failure is a standing condition, not a
- * per-call event, and a line per task serialization would bury everything else.
+ * reached. The combinator now lives in `../soft-db` so this file and the
+ * project-list IPC handlers share one implementation of the log-once
+ * discipline; the shared version bounds the log per OPERATION rather than per
+ * process, which still avoids the line-per-task-serialization flood this
+ * comment originally objected to.
+ *
+ * Never `notify`. This ledger degrading is EXPECTED - it is what every
+ * unit-tier CI run does - so a dialog here would be wrong, and would burn the
+ * once-per-process notification that the project list genuinely needs.
  */
-let ledgerUnavailableLogged = false;
 function softly<T>(operation: string, fallback: T, run: () => T): T {
-  try {
-    return run();
-  } catch (error) {
-    if (!ledgerUnavailableLogged) {
-      ledgerUnavailableLogged = true;
-      console.warn(
-        `[dev-ports] Reservation ledger unavailable (${operation}); treating every task as holding `
-        + 'no ports. Reservations will not persist until the global database is reachable.',
-        error,
-      );
-    }
-    return fallback;
-  }
+  return softDbAccess(operation, fallback, run, {
+    tag: '[dev-ports]',
+    level: 'warn',
+    note: 'Treating every task as holding no ports. Reservations will not persist '
+      + 'until the global database is reachable.',
+  });
 }
 
 interface DevPortRow {

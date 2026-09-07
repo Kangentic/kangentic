@@ -27,7 +27,7 @@ import { isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } 
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
-import { initErrorReporting, isErrorReportingActive, setErrorReportingUser } from './analytics/error-reporting';
+import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
@@ -64,6 +64,8 @@ import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
+import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
+import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { loadVecExtension } from './retrieval/vec-extension';
@@ -1005,7 +1007,16 @@ const createWindow = () => {
   // IPC handlers were registered earlier in this function (registerAllIpc),
   // and Electron queues any webContents.send() calls until the renderer is ready.
   const cwd = getCwdArg();
-  const projectPath = cwd || getLastOpenedProject()?.path || null;
+  // Softened because this line is where DESKTOP-9 threw. It is the first
+  // global-database touch on the whole boot path, it sits BELOW loadURL, and a
+  // synchronous throw here took initUpdater and initAnnouncements down with it.
+  // The startup gate above should mean the database is already proven readable,
+  // but an antivirus scan or a sync lock is intermittent by nature and can
+  // arrive in between. Degrading to "no last project" opens the app on the
+  // project picker, which is a far better answer than a dead startup.
+  const projectPath = cwd
+    || softly('lastOpenedProject', null, () => getLastOpenedProject()?.path ?? null)
+    || null;
   const preloadPromise = (async () => {
     // Dev-only ephemeral: open isolated CLONES of the worktree, never the worktree
     // itself, so nothing the preview does (agents, edits, commits) can reach the
@@ -1092,7 +1103,10 @@ const createWindow = () => {
       // Found" dialog offers "Locate Folder..." instead of a dead board.
       // Electron queues the send until the renderer is ready.
       if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && mainWindow && !mainWindow.isDestroyed()) {
-        const lastOpened = getLastOpenedProject();
+        // Softened for the same reason as the read above: this one sits inside
+        // a catch, so a database throw here would replace a recoverable
+        // "Locate Folder..." prompt with an unhandled rejection.
+        const lastOpened = softly('lastOpenedProject', undefined, () => getLastOpenedProject());
         if (lastOpened && path.resolve(lastOpened.path) === path.resolve(projectPath)) {
           mainWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
         }
@@ -1215,6 +1229,70 @@ app.whenReady().then(async () => {
     endPhase('restoreShellEnv');
   }
 
+  // Prove the global index database is readable before startup builds anything
+  // on top of it (Sentry DESKTOP-9/A/B). SQLITE_IOERR there is environmental -
+  // an antivirus scan, a OneDrive or Dropbox sync lock, failing storage - and
+  // it used to surface as an unhandled rejection plus a renderer that got a
+  // stack trace where a message belonged.
+  //
+  // Placed EARLY, not next to createWindow(), for two reasons: the user sees
+  // the dialog before the MCP server's multi-second startup rather than after
+  // it, and proving the database readable before any window exists removes the
+  // whole "renderer races a startup that died half way through" scenario for
+  // this cause.
+  //
+  // Note this makes the global database open eagerly on every boot. It used to
+  // be opened lazily at the first getLastOpenedProject() call, which
+  // short-circuits whenever --cwd is passed, so preview and worktree dev runs
+  // never touched it at all.
+
+  // The notifier is what softly() reaches for when a global read degrades while
+  // the app is already running. The Sentry report is debounced, because softly()
+  // calls this on EVERY notifying failure and the renderer re-reads project:list
+  // on each project switch and HMR re-sync. An unreadable database is one
+  // condition, not one event per read, so an undebounced report would send a
+  // burst of identical events for a fault Sentry already has.
+  let globalDbFailureReported = false;
+  setGlobalDbFailureNotifier((error, operation) => {
+    if (!globalDbFailureReported) {
+      globalDbFailureReported = true;
+      reportHandledError(error, { source: 'global_db_read', operation });
+    }
+    // mainWindow is read at CALL time, not registration time: this runs before
+    // createWindow, so it is still null here and holds the real window by the
+    // time a read can degrade.
+    notifyGlobalDbUnavailable(error, operation, mainWindow);
+  });
+  phase('ensureGlobalDbReadable');
+  const globalDbReady = await ensureGlobalDbReadable();
+  endPhase('ensureGlobalDbReadable');
+  if (!globalDbReady.ok) {
+    // Count it. Handling this failure must not also make it invisible: the
+    // whole cluster was noticed only because it reached Sentry as an unhandled
+    // rejection. Aptabase rather than Sentry, matching the app_error sources
+    // around it, because the cause is environmental and the user has already
+    // been shown a dialog naming it.
+    trackEvent('app_error', {
+      source: 'globalDbUnreadable',
+      message: sanitizeErrorMessage(
+        globalDbReady.error instanceof Error
+          ? globalDbReady.error.message
+          : String(globalDbReady.error),
+      ),
+    });
+    // exit, not quit. The user chose Quit before registerAllIpc ran, so there
+    // is no IPC context, no window, no PTY and no open database to tear down -
+    // and performShutdown's first act is to reach for the board config manager,
+    // which throws "IPC not initialized" and aborts the rest of the teardown.
+    // app.exit(0) is what the single-instance-lock bail above already uses for
+    // the same "give up before startup built anything" case.
+    //
+    // The gate stays shut deliberately: no window, and no dock-click recovery
+    // into a state that cannot work.
+    app.exit(0);
+    return;
+  }
+
   // Fix node-pty spawn-helper permissions on macOS before any PTY spawns.
   // Must run before createWindow() which triggers session recovery.
   ensureSpawnHelperPermissions();
@@ -1312,20 +1390,36 @@ app.whenReady().then(async () => {
   initUsageAnalytics(path.join(PATHS.configDir, 'analytics-usage.json'));
   trackUpdateOutcome(app.getVersion());
 
-  // These four lines MUST stay one unbroken synchronous block. createWindow()
-  // calls mainWindow.loadURL() internally, so the renderer starts loading
-  // before initUpdater/initAnnouncements have registered their channels; only
-  // the absence of an await here guarantees the renderer cannot reach its first
+  // This span MUST stay one unbroken synchronous block. createWindow() calls
+  // mainWindow.loadURL() internally, so the renderer starts loading before
+  // initUpdater/initAnnouncements have registered their channels; only the
+  // absence of an await here guarantees the renderer cannot reach its first
   // invoke until they have. Adding an await in this span re-opens DESKTOP-3/4
   // from the whenReady path itself, which the static scan in
   // tests/unit/startup-gate.test.ts exists to catch.
-  createWindow();
-  initUpdater(mainWindow!);
-  initAnnouncements(mainWindow!);
-  // Open the gate: from here an activate event may rebuild the window. Before
-  // this point the module-scope activate handler is a no-op, so a macOS
-  // launch-time activate can no longer race ahead of the registrations above.
-  markStartupComplete();
+  //
+  // The finally covers the OTHER way to break the same block: a THROW. That is
+  // what the Windows DESKTOP-3/4 event was. createWindow() reached
+  // getLastOpenedProject() below loadURL, the global database threw
+  // SQLITE_IOERR, and the two registrations plus the gate open never ran - so
+  // a live renderer invoked announcements:get with nobody listening. An await
+  // scan cannot see that; the finally makes it structurally impossible.
+  // Neither init is idempotent, and a finally runs exactly once, so this is
+  // safe. With mainWindow still null the throw landed before the window
+  // existed, there is no renderer to confuse, and the whenReady .catch below
+  // handles it as before.
+  try {
+    createWindow();
+  } finally {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      initUpdater(mainWindow);
+      initAnnouncements(mainWindow);
+    }
+    // Open the gate: from here an activate event may rebuild the window. Before
+    // this point the module-scope activate handler is a no-op, so a macOS
+    // launch-time activate can no longer race ahead of the registrations above.
+    markStartupComplete();
+  }
 
   // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
   // shutdown/restart/log-off there is signaled via this BrowserWindow event
