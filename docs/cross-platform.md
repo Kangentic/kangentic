@@ -55,6 +55,43 @@ shell/ConPTY updates reshaping their startup bytes (pwsh 7.6 started emitting `\
 those markers); see [session-lifecycle](session-lifecycle.md) for the detection layer it pairs
 with.
 
+### npm `.cmd` shims under PowerShell and Git Bash
+
+`quoteArg(..., { multiline: true })` keeps a multi-line prompt on one physical input line. For the
+PowerShell family it rewrites each newline as a backtick-n escape inside `"..."`, which PowerShell
+expands back into real newlines before the agent sees the argument; for unix-like shells the
+newlines stay literal inside `'...'`. Both hold only while the shell launches the agent binary
+itself. An npm-installed CLI resolves on PATH to its `.cmd` shim (`which` walks PATHEXT, which
+lists neither `.ps1` nor an empty extension), and running a `.cmd` routes through cmd.exe, whose
+command line ends at the first newline: the agent received `<task>` and nothing else (#353).
+Measured on Windows PowerShell 5.1, pwsh 7.6, and Git Bash; no encoding survives cmd.exe.
+
+`resolveShimLaunch` (`src/main/agent/shared/shim-launch.ts`) runs at every spawn chokepoint after
+`ensureTrust` and before `buildCommand` (see `.claude/rules/spawn-entry-point-parity.md`). On
+Windows with a `.cmd` or `.bat` head it launches the sibling shim native to the host shell
+instead, and npm writes both beside every `.cmd`:
+
+| Host shell | Sibling | Gate |
+|------------|---------|------|
+| PowerShell (pwsh/powershell) | `<name>.ps1` (`& node.exe <bin.js> $args`; a `$args` splat preserves multi-line arguments on 5.1 and 7) | The host's effective execution policy allows scripts: `Get-ExecutionPolicy` is `RemoteSigned`, `Unrestricted`, or `Bypass`, probed once per shell per app run through that same executable with a 5 s timeout; a failed probe counts as blocked. The probe runs without the app's `PSModulePath`: inherited from a pwsh 7 ancestor it makes 5.1 fail to autoload the module that owns `Get-ExecutionPolicy`. Windows PowerShell 5.1 defaults to `Restricted` on client editions, pwsh 7 to `RemoteSigned`, and the two keep separate policies. |
+| Git Bash | `<name>` (the extensionless `#!/bin/sh` shim, `exec node <bin.js> "$@"`) | The file exists and starts with `#!`. |
+| cmd | none | `quoteArg` already flattens for a cmd host. |
+| WSL | none | WSL cannot launch a `.cmd` at all (see [WSL interop](#wsl-runs-the-windows-binary-interop)), and the sh shim would run a Windows bundle under a Linux node. |
+
+With no usable sibling, or under `Restricted` / `AllSigned`, it keeps the `.cmd` head and flattens
+the prompt with `sanitizeForPty`, so the whole title and description still arrive on one line
+(the reporter's own workaround), and it logs the cause once per shell and path; for the policy
+case the fix is `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` in that host, then an app
+restart. Other platforms are untouched, the session row keeps the original prompt, and no adapter
+knows any of this: a `.cmd` shim is a Windows packaging fact.
+
+Two consequences. The Windows process tree becomes `pwsh -> node` rather than
+`pwsh -> cmd.exe -> node` (the background-shell watcher's immediate-parent rule counts both
+shapes). And PowerShell's parameter binder consumes a bare `--` before a `.ps1` sees `$args`, so
+`quoteArg('--', shell)` emits `"--"` for PowerShell hosts; the quoted form reaches native
+commands and cmd.exe as a plain `--` on every route, which is why the Claude, Grok, Ollama, and
+Warp builders route their end-of-options marker through `quoteArg`.
+
 ### Spawn-time cwd fixups (Windows)
 
 `resolveSpawnCwd()` (`src/main/pty/spawn/pty-spawn.ts`) passes the working directory to node-pty via its `cwd` option, but two Windows shells mishandle certain valid directories at startup. In those cases it returns a `cwdFixupCommand` that the spawn flow writes into the PTY (raw, before the agent command) so the session lands in the real project directory:
@@ -69,7 +106,8 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 ## Path Handling
 
 - `toForwardSlash()` - normalizes backslashes to forward slashes for cross-platform CLI commands
-- `quoteArg(arg, shell?)` - shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. The shell parameter is explicitly passed in all spawn calls so quoting always matches the target shell. Falls back to platform detection when shell is omitted.
+- `quoteArg(arg, shell?, { multiline? })` - shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. The shell parameter is explicitly passed in all spawn calls so quoting always matches the target shell. Falls back to platform detection when shell is omitted. `{ multiline: true }` keeps newlines in prompt-style content (literal inside `'...'` for unix-like shells, backtick-n escapes for PowerShell, flattened for cmd); a bare `--` is emitted as `"--"` for PowerShell hosts. See [npm `.cmd` shims under PowerShell and Git Bash](#npm-cmd-shims-under-powershell-and-git-bash) for the one place that contract does not reach on its own.
+- `isPowerShellShell(shell)` - the PowerShell-family predicate (`powershell` / `pwsh` substring, the exact negation `isUnixLikeShell` applies) shared by `adaptCommandForShell`, `buildSpawnClearPrelude`, `resolveShellArgs`, `resolveSpawnCwd`, `quoteArg`, and `resolveShimLaunch`.
 - Git Bash: paths like `C:\Users\...` become `/c/Users/...`
 - WSL: paths like `C:\Users\...` become `/mnt/c/Users/...`
 - `adaptCommandForShell()` - adds the `& ` prefix for PowerShell commands, and for unix-like shells (Git Bash, WSL) converts the leading Windows exe path to POSIX form via `convertWindowsExePath()`, which handles bare, double-quoted, and single-quoted leading tokens (a quoted token stays quoted with the same quote character even without spaces, so shell-active path characters like `&` remain inert in the target shell)

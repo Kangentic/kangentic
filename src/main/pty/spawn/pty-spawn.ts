@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import { isUncPath, isCmdShell } from '../../../shared/paths';
+import { isUncPath, isCmdShell, isPowerShellShell } from '../../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 
@@ -33,7 +33,7 @@ export function resolveShellArgs(shell: string): ShellInvocation {
     return { exe: executable, args: parts.slice(1) };
   }
   if (shellName.includes('cmd')) return { exe: shell, args: [] };
-  if (shellName.includes('powershell') || shellName.includes('pwsh')) {
+  if (isPowerShellShell(shellName)) {
     return { exe: shell, args: ['-NoLogo'] };
   }
   if (shellName.includes('fish') || shellName.includes('nu')) {
@@ -238,16 +238,12 @@ export function resolveSpawnCwd(input: {
     });
   }
 
-  const lowerShellName = input.shellName.toLowerCase();
   let cwdFixupCommand: string | null = null;
   if (input.platform === 'win32') {
     if (isUncPath(effectiveCwd) && isCmdShell(input.shellName)) {
       cwdFixupCommand = `pushd "${effectiveCwd}"`;
       effectiveCwd = os.homedir();
-    } else if (
-      (lowerShellName.includes('powershell') || lowerShellName.includes('pwsh'))
-      && /[[\]]/.test(effectiveCwd)
-    ) {
+    } else if (isPowerShellShell(input.shellName) && /[[\]]/.test(effectiveCwd)) {
       const escapedCwd = effectiveCwd.replace(/'/g, "''");
       cwdFixupCommand = `Set-Location -LiteralPath '${escapedCwd}'`;
     }

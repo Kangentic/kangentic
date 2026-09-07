@@ -12,6 +12,7 @@ import os from 'node:os';
 import {
   quoteArg,
   isCmdShell,
+  isPowerShellShell,
   adaptCommandForShell,
   convertWindowsExePath,
   sanitizeForPty,
@@ -252,6 +253,67 @@ describe('Command Builder Logic', () => {
     expect(isCmdShell('bash')).toBe(false);
     expect(isCmdShell('powershell')).toBe(false);
     expect(isCmdShell('pwsh')).toBe(false);
+  });
+
+  it('isPowerShellShell matches the PowerShell family as a bare name, an .exe, or a full path', () => {
+    expect(isPowerShellShell('powershell')).toBe(true);
+    expect(isPowerShellShell('pwsh')).toBe(true);
+    expect(isPowerShellShell('PowerShell')).toBe(true);
+    expect(isPowerShellShell('PWSH')).toBe(true);
+    expect(isPowerShellShell('powershell.exe')).toBe(true);
+    expect(isPowerShellShell('pwsh.exe')).toBe(true);
+    expect(isPowerShellShell('C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBe(true);
+    expect(isPowerShellShell('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')).toBe(true);
+    expect(isPowerShellShell('C:/Program Files/PowerShell/7/pwsh.exe')).toBe(true);
+
+    expect(isPowerShellShell('cmd.exe')).toBe(false);
+    expect(isPowerShellShell('C:\\Windows\\System32\\cmd.exe')).toBe(false);
+    expect(isPowerShellShell('bash')).toBe(false);
+    expect(isPowerShellShell('C:\\Program Files\\Git\\bin\\bash.exe')).toBe(false);
+    expect(isPowerShellShell('zsh')).toBe(false);
+    expect(isPowerShellShell('fish')).toBe(false);
+    expect(isPowerShellShell('nu')).toBe(false);
+    expect(isPowerShellShell('/bin/sh')).toBe(false);
+    expect(isPowerShellShell('wsl -d Ubuntu')).toBe(false);
+  });
+
+  it('isPowerShellShell agrees with the inline substring test it replaced for every real shell form', () => {
+    // buildSpawnClearPrelude, adaptCommandForShell, resolveShellArgs, and
+    // resolveSpawnCwd each carried their own copy of this test. The predicate
+    // must stay behavior-identical for what the Windows picker stores, and it
+    // must be the exact negation isUnixLikeShell applies, so a spec can never
+    // be neither unix-like nor PowerShell.
+    const pickerForms = [
+      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      'C:\\Windows\\System32\\cmd.exe',
+      'wsl -d Ubuntu',
+      'powershell',
+      'pwsh',
+      '/bin/zsh',
+    ];
+    for (const form of pickerForms) {
+      const lower = form.toLowerCase();
+      expect(isPowerShellShell(form)).toBe(lower.includes('powershell') || lower.includes('pwsh'));
+    }
+  });
+
+  it('quoteArg quotes a bare -- for PowerShell hosts only', () => {
+    // PowerShell's parameter binder consumes an unquoted -- before a .ps1
+    // script (the npm shim resolveShimLaunch prefers) sees $args, so the
+    // end-of-options guard the Claude/Grok/Ollama/Warp builders emit would
+    // vanish on that route. The quoted form reaches every launcher as `--`.
+    expect(quoteArg('--', 'pwsh')).toBe('"--"');
+    expect(quoteArg('--', 'powershell')).toBe('"--"');
+    expect(quoteArg('--', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toBe('"--"');
+
+    expect(quoteArg('--', 'bash')).toBe('--');
+    expect(quoteArg('--', 'cmd')).toBe('--');
+    expect(quoteArg('--', 'wsl -d Ubuntu')).toBe('--');
+    expect(quoteArg('--')).toBe('--');
+    // Only the exact marker: a flag that starts with -- is an ordinary token.
+    expect(quoteArg('--prompt', 'pwsh')).toBe('--prompt');
   });
 
   it('PowerShell call operator prefix', () => {

@@ -1,41 +1,48 @@
 /**
- * Unit test for the SESSION_SPAWN_TRANSIENT handler's pre-spawn ensureTrust
- * call (src/main/ipc/handlers/transient-sessions.ts).
+ * Wiring test: the SESSION_SPAWN_TRANSIENT handler
+ * (src/main/ipc/handlers/transient-sessions.ts) resolves the shim launch for
+ * the PTY shell before building the Command Terminal's command.
  *
- * The Command Terminal is the likeliest maximized pane, so per
- * .claude/rules/spawn-entry-point-parity.md it is exactly where Claude's
- * fullscreen diff panel would otherwise reopen if the pre-spawn
- * `ensureTrust` (which also closes the diff panel - see
- * src/main/agent/adapters/claude/diff-panel.ts) is skipped or races
- * `buildCommand`.
+ * On Windows an npm-installed CLI resolves to its `.cmd` shim, which a
+ * PowerShell or Git Bash host launches through cmd.exe (#353). The Command
+ * Terminal carries no prompt, so nothing is truncated here, but its head must
+ * match what task spawns use: resolveShimLaunch
+ * (src/main/agent/shared/shim-launch.ts) swaps in the sibling shim the host
+ * can run, and the handler now also passes that shell to the builder so
+ * quoting matches the shell the PTY types into.
  *
- * The only existing guard for this line is a STATIC TEXT SCAN in
- * spawn-entry-point-parity.test.ts: it merely proves that a non-comment
- * `ensureTrust(` line appears earlier in the file than `buildCommand(`. That
- * scan stays GREEN for real regressions the scan cannot see:
- *   - the `await` is dropped (fire-and-forget), letting buildCommand / spawn
- *     race the global-config write,
- *   - the call moves into a branch that never executes at handler-call time,
- *   - the wrong argument (e.g. a worktree path instead of projectRoot) is
- *     passed.
+ * Mocking pattern follows transient-session-spawn-ensure-trust.test.ts (same
+ * handler, same capturedHandlers + mocked IpcContext shape), with the helper
+ * mocked at its leaf path and a pass-through default.
  *
- * This test drives the REAL handler function and pins the runtime contract:
- * ensureTrust is called exactly once, with the project root, and its promise
- * RESOLVES before buildCommand runs (caught via a deferred promise - a
- * dropped `await` would let buildCommand fire while ensureTrust is still
- * pending).
- *
- * Mocking pattern follows tests/unit/session-inject-settings-handler.test.ts
- * (same file under test, same capturedHandlers + mocked IpcContext shape).
+ * Red-green: building from `detection.path` instead of `launch.agentPath`
+ * fails the swap test; dropping `shell` from commandOptions fails the shell
+ * test; moving the resolve call above ensureTrust fails the ordering test.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const CMD_HEAD = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.CMD';
+const PS1_SIBLING = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.ps1';
+const PWSH = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
+
+const resolveShimLaunchMock = vi.hoisted(() =>
+  vi.fn(async (input: { agentPath: string; shell: string | undefined; prompt: string | undefined }) => ({
+    agentPath: input.agentPath,
+    prompt: input.prompt,
+    strategy: 'unchanged' as const,
+  })),
+);
+
+vi.mock('../../src/main/agent/shared/shim-launch', () => ({
+  resolveShimLaunch: resolveShimLaunchMock,
+}));
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -57,14 +64,11 @@ vi.mock('node:fs', () => ({
 
 vi.mock('uuid', () => ({ v4: vi.fn(() => 'mock-transient-task-id') }));
 
-const gitRevparseMock = vi.fn(async () => 'main\n');
-const gitCheckoutMock = vi.fn(async () => undefined);
-const gitMergeMock = vi.fn(async () => undefined);
 vi.mock('simple-git', () => ({
   default: vi.fn(() => ({
-    revparse: gitRevparseMock,
-    checkout: gitCheckoutMock,
-    merge: gitMergeMock,
+    revparse: vi.fn(async () => 'main\n'),
+    checkout: vi.fn(async () => undefined),
+    merge: vi.fn(async () => undefined),
   })),
 }));
 
@@ -135,20 +139,9 @@ function createMockContext(): MockContext {
     mcpServerHandle: null,
     sessionManager: {
       spawn: vi.fn(async () => ({ id: 'session-1' })),
-      // The handler reads the PTY shell for quoting and shim resolution
-      // (see transient-session-spawn-shim-launch.test.ts for that wiring).
-      getShell: vi.fn(async () => 'bash'),
+      getShell: vi.fn(async () => PWSH),
     },
   };
-}
-
-/** A promise plus its resolver, exposed so the test controls exactly when it settles. */
-function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
 }
 
 async function callSpawnHandler(context: MockContext, input: SpawnTransientSessionInput): Promise<unknown> {
@@ -161,27 +154,22 @@ async function callSpawnHandler(context: MockContext, input: SpawnTransientSessi
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe('SESSION_SPAWN_TRANSIENT handler: ensureTrust runs before buildCommand', () => {
+describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution wiring', () => {
   let context: MockContext;
-  let ensureTrustDeferred: ReturnType<typeof createDeferred<void>>;
   let ensureTrustMock: ReturnType<typeof vi.fn>;
   let buildCommandMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     capturedHandlers.clear();
-    gitRevparseMock.mockResolvedValue('main\n');
-    gitCheckoutMock.mockResolvedValue(undefined);
-    gitMergeMock.mockResolvedValue(undefined);
 
-    ensureTrustDeferred = createDeferred<void>();
-    ensureTrustMock = vi.fn(() => ensureTrustDeferred.promise);
+    ensureTrustMock = vi.fn(async () => {});
     buildCommandMock = vi.fn(() => 'claude');
 
     mockAgentRegistryGetOrThrow.mockReturnValue({
       name: 'claude',
       displayName: 'Claude Code',
-      detect: vi.fn(async () => ({ found: true, path: '/mock/claude', version: '1.0.0' })),
+      detect: vi.fn(async () => ({ found: true, path: CMD_HEAD, version: '1.0.0' })),
       ensureTrust: ensureTrustMock,
       buildCommand: buildCommandMock,
     });
@@ -190,35 +178,31 @@ describe('SESSION_SPAWN_TRANSIENT handler: ensureTrust runs before buildCommand'
     registerTransientSessionHandlers(context as never);
   });
 
-  it('calls ensureTrust(projectRoot) exactly once and does not call buildCommand until it resolves', async () => {
-    const resultPromise = callSpawnHandler(context, {
-      projectId: 'proj-1',
-      slot: 'slot-1',
-    });
+  it('fetches the session shell and hands it to resolveShimLaunch with the detected path and no prompt', async () => {
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
 
-    // Let the handler run every await that precedes ensureTrust (CLI detect,
-    // fetchIfStale, the revparse/checkout/merge sequence) without pinning a
-    // specific microtask count, which would be brittle. A generous timeout
-    // guards against event-loop starvation under a loaded machine (this repo
-    // has a documented flake class from worker contention).
-    await vi.waitFor(
-      () => {
-        expect(ensureTrustMock).toHaveBeenCalledTimes(1);
-      },
-      { timeout: 5000 },
-    );
+    expect(context.sessionManager.getShell).toHaveBeenCalledTimes(1);
+    expect(resolveShimLaunchMock).toHaveBeenCalledTimes(1);
+    expect(resolveShimLaunchMock).toHaveBeenCalledWith({ agentPath: CMD_HEAD, shell: PWSH, prompt: undefined });
+  });
 
-    // Load-bearing assertion: while ensureTrust's promise is still pending,
-    // buildCommand must NOT have run. A dropped `await` on ensureTrust would
-    // let buildCommand fire immediately here instead of waiting.
-    expect(buildCommandMock).not.toHaveBeenCalled();
+  it('builds the command from the resolved head and passes the shell to the builder', async () => {
+    resolveShimLaunchMock.mockResolvedValueOnce({ agentPath: PS1_SIBLING, prompt: undefined, strategy: 'ps1-sibling' });
 
-    ensureTrustDeferred.resolve();
-    await resultPromise;
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
 
-    expect(ensureTrustMock).toHaveBeenCalledTimes(1);
-    expect(ensureTrustMock).toHaveBeenCalledWith(PROJECT_ROOT);
     expect(buildCommandMock).toHaveBeenCalledTimes(1);
+    expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ agentPath: PS1_SIBLING, shell: PWSH });
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves after ensureTrust and before buildCommand', async () => {
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    const ensureTrustOrder = ensureTrustMock.mock.invocationCallOrder[0];
+    const resolveOrder = resolveShimLaunchMock.mock.invocationCallOrder[0];
+    const buildOrder = buildCommandMock.mock.invocationCallOrder[0];
+    expect(ensureTrustOrder).toBeLessThan(resolveOrder);
+    expect(resolveOrder).toBeLessThan(buildOrder);
   });
 });

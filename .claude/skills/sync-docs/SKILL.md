@@ -21,7 +21,7 @@ Each doc file and the source files that are its authority:
 | `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
 | `command-injection.md` | `src/main/transition-engine/injection-plan.ts`, `src/main/transition-engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
 | `database.md` | `src/main/db/migrations/**`, `src/main/db/database.ts`, `src/main/db/repositories/*.ts` |
-| `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/shared/paths.ts` (adaptCommandForShell, convertWindowsExePath; called from `src/main/pty/lifecycle/session-spawn-flow.ts`), `electron-builder.yml`, `scripts/build.js` |
+| `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/shared/paths.ts` (adaptCommandForShell, convertWindowsExePath, quoteArg, isPowerShellShell; called from `src/main/pty/lifecycle/session-spawn-flow.ts`), `src/main/agent/shared/shim-launch.ts`, `electron-builder.yml`, `scripts/build.js` |
 | `worktree-strategy.md` | `src/main/git/worktree-manager.ts`, `src/main/agent/adapters/claude/hook-manager.ts`, `src/main/agent/adapters/claude/trust-manager.ts` |
 | `activity-detection.md` | `src/main/agent/event-bridge.js`, `src/shared/types.ts` (EventType, EventTypeActivity, HookEvent), `src/main/activity-engine/engine/shapes.ts` (TransitionTrigger, default thresholds), `src/main/activity-engine/engine/watchdog.ts` (hold table) |
 | `mcp-server.md` | `src/main/agent/mcp-http-server.ts`, `src/main/agent/mcp-http/**`, `src/main/agent/commands/`, `src/main/ipc/handlers/sessions.ts`, `src/shared/types.ts` (MCP types) |

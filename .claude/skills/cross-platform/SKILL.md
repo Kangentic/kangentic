@@ -35,7 +35,8 @@ When spawning a PTY session, the shell type determines command construction:
 `src/shared/paths.ts` provides platform-safe path utilities:
 
 - **`toForwardSlash(path)`** - Replace backslashes with forward slashes. Required for all paths written to `.claude.json` or config files, as Claude Code uses forward slashes on all platforms.
-- **`quoteArg(arg, shell?)`** - Shell-aware quoting, keyed on the TARGET shell, not the host platform: unix-like shells (bash, zsh, WSL) get single quotes with `'\''` escaping; PowerShell/cmd get double quotes with backtick/`$`/`"` escaping. When `shell` is omitted, falls back to platform detection (win32 = double quotes). Simple args (matching `/^[a-zA-Z0-9_.\/:-]+$/`) left unquoted; a backslashed Windows path is never simple, so it is always quoted.
+- **`quoteArg(arg, shell?, { multiline? })`** - Shell-aware quoting, keyed on the TARGET shell, not the host platform: unix-like shells (bash, zsh, WSL) get single quotes with `'\''` escaping; PowerShell/cmd get double quotes with backtick/`$`/`"` escaping. When `shell` is omitted, falls back to platform detection (win32 = double quotes). Simple args (matching `/^[a-zA-Z0-9_.\/:-]+$/`) left unquoted; a backslashed Windows path is never simple, so it is always quoted. `{ multiline: true }` keeps newlines in prompt-style content: literal inside `'...'` for unix-like shells, backtick-n escapes inside `"..."` for PowerShell, flattened for cmd. A bare `--` is emitted as `"--"` for PowerShell hosts (its binder eats an unquoted one before a `.ps1` sees `$args`).
+- **`isPowerShellShell(shell)`** - The PowerShell-family predicate (`powershell` / `pwsh` substring), the exact negation `isUnixLikeShell` applies. Use it instead of an inline `includes()` pair.
 - **`convertWindowsExePath(cmd, isWsl)`** - Converts the leading Windows exe path of a command string to POSIX form (`/c/...` or `/mnt/c/...`), recognizing bare, double-quoted, and single-quoted leading tokens (single quotes are what `quoteArg` emits for unix-like shells; a single-quoted token stays single-quoted so shell-active path characters remain inert). Called via `adaptCommandForShell` at the PTY spawn seam.
 - **`toGitBashPath(path)`** - `C:\Users\dev` -> `/c/Users/dev`
 - **`toWslPath(path)`** - `C:\Users\dev` -> `/mnt/c/Users/dev`
@@ -47,7 +48,11 @@ When spawning a PTY session, the shell type determines command construction:
 
 PowerShell interprets `\"` differently from bash. The command builder replaces double quotes with single quotes in prompts BEFORE `quoteArg()` wrapping. Without this, prompts containing quotes break PowerShell sessions.
 
-Additionally, `--` (end-of-options) is inserted before the prompt to prevent content like `->` or `--flag` from being parsed as CLI options.
+Additionally, `--` (end-of-options) is inserted before the prompt to prevent content like `->` or `--flag` from being parsed as CLI options. It goes through `quoteArg('--', shell)`, which emits `"--"` for PowerShell hosts; see the next section for why.
+
+## PowerShell, Git Bash, and npm `.cmd` shims
+
+An npm-installed agent CLI resolves on PATH to its `.cmd` shim (`which` walks PATHEXT). Running a `.cmd` routes through cmd.exe, whose command line ends at the first newline, so the multi-line `{{task_xml}}` prompt reached the agent as `<task>` alone (#353) under PowerShell and Git Bash alike; a cmd host is already flattened by `quoteArg`. `resolveShimLaunch` (`src/main/agent/shared/shim-launch.ts`) runs at every spawn chokepoint after `ensureTrust` and before `buildCommand`: on Windows with a `.cmd` / `.bat` head it launches the sibling shim npm writes beside it, the `.ps1` for PowerShell (gated on the host's `Get-ExecutionPolicy` allowing scripts, probed once per shell per run) or the extensionless `#!/bin/sh` script for Git Bash. With no usable sibling it keeps the `.cmd` and flattens the prompt with `sanitizeForPty`, warning once. PowerShell's binder consumes a bare `--` before a `.ps1` sees `$args`, which is why `quoteArg` quotes that marker. Full contract: `docs/cross-platform.md`.
 
 ## Windows File Operations
 
@@ -133,6 +138,7 @@ Sparse-checkout excludes `.claude/commands/` from worktrees (commands walk up th
 ## Key Source Files
 
 - `src/main/pty/spawn/shell-resolver.ts` - Shell discovery and default selection
+- `src/main/agent/shared/shim-launch.ts` - Sibling-shim selection for a `.cmd` / `.bat` head under PowerShell or Git Bash, with the prompt-flatten fallback
 - `src/main/agent/adapters/claude/command-builder.ts` - Claude CLI command assembly, prompt sanitization
 - `src/main/git/worktree-manager.ts` - Worktree CRUD with Windows retry logic
 - `src/renderer/hooks/useTerminal.ts` - xterm setup, WebGL fallback, resize debouncing

@@ -682,7 +682,9 @@ export function hasNoNonConsoleDescendants(descendants: readonly ProcessInfo[]):
  * shell allowlist, but cmd is a wrapper inside bash, not a separate
  * logical bg shell. We use immediate-parent (not transitive ancestor)
  * because the agent CLI itself is sometimes launched through a shell
- * shim (pwsh -> npm-shim cmd.exe -> node[claude]). A transitive rule
+ * shim (pwsh -> npm-shim cmd.exe -> node[claude], the shape a `.cmd`
+ * head keeps when no sibling shim can run; see
+ * src/main/agent/shared/shim-launch.ts). A transitive rule
  * would treat that shim cmd as a "shell-like ancestor" of every bash
  * the agent spawns and skip them all, breaking the count.
  *
