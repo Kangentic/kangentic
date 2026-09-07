@@ -165,6 +165,19 @@ in one Sentry org, one triage surface.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
   restart cap produces a Sentry issue, and only once per latch; every crash increments the
   `utility_worker_crashed` counter. The same volume-versus-diagnostic split as `spawn_failed`.
+- **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
+  (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`
+  handler, and sits deliberately AFTER `trackEvent('app_error')` so the "how often do update
+  checks fail" volume view survives. GitHub returning a 504 on a routine check is not something
+  we can ship a fix for, and the next check succeeds.
+
+  It exists because the neighbouring `isTransientUpdaterError` cannot see these. electron-updater's
+  `newError()` constructs a new `Error` and assigns its own `code`, and `GitHubProvider` rewraps
+  twice, so an `HTTP_ERROR_504` arrives as `ERR_UPDATER_INVALID_RELEASE_FEED` and every code-based
+  branch misses. The original failure survives only as nested stack text inside the wrapper's
+  message, so the check reads the message, and requires BOTH a feed wrapper (by code or by the
+  literal phrase the wrapper writes) and a transient shape in the text. A genuinely malformed feed
+  carries no transient shape and stays reportable.
 - **Affected-install counts:** the same anonymous, non-reversible `clientId` documented under
   "Unique Installs" is attached as the Sentry user id, so an issue's Users column means
   "installs affected." It contains no personal data and shares the same kill switches.
@@ -176,12 +189,30 @@ in one Sentry org, one triage surface.
   hidden maps, upload them with debug IDs, and delete them from the output. Nothing ships in the
   artifact; resolution is entirely server-side. The DSN in source is a public routing
   identifier by design, not a secret. `KANGENTIC_SENTRY_TOKEN` is also what the `/sentry`
-  skill reads for issue retrieval, so one scoped variable serves both.
+  skill reads for issue retrieval, so one scoped variable serves both. Both plugins pass an
+  explicit `release.name` of `Kangentic@<version>`, matching what `@sentry/electron` reports at
+  runtime; left unset the bundler default is `GITHUB_SHA`, which files the artifacts under a name
+  no event ever carries.
 - **Native debug files** ride the same gate: the Windows release build (`scripts/build.js`) also
   uploads node-pty's shipped Windows PDBs (`node_modules/node-pty/prebuilds/win32-*/`) as Sentry
   debug files, so a native crash inside `conpty.node` symbolicates server-side to function and
   line instead of arriving as raw addresses (the DESKTOP-C investigation had to resolve those
-  offline). Only the Windows leg uploads, so the release matrix sends them once.
+  offline). Only the Windows leg uploads, so the release matrix sends them once. Debug files are
+  keyed by build id rather than by release, so this upload is unaffected by the release name above.
+- **The upload is not allowed to fail quietly**, because for two releases it did. v0.37.0 and
+  v0.38.0 both shipped with zero sourcemaps and zero debug files, which is why DESKTOP-D's stack
+  was nothing but `Si`, `b`, `cc` in `react-vendor-*.js`. Two independent causes, both silent:
+  - The `KANGENTIC_SENTRY_TOKEN` repository secret did not exist, so `${{ secrets.* }}` expanded
+    to the empty string and both gates read false. The `preflight-symbols` job in
+    `.github/workflows/release.yml` now fails the release before anything is built or drafted,
+    and `/release` checks the same secret before it creates the tag.
+  - Both plugins skip the upload when `NODE_ENV === 'development'`, logging only at debug level
+    and deleting the sourcemaps anyway. `scripts/build.js` sets `NODE_ENV=production` at module
+    load, and both it and `vite.config.mts` refuse to build if a token is present while
+    `NODE_ENV` is anything other than production, which also catches it being unset.
+
+  On top of that, every build now prints which way the gate went, and with a token present any
+  upload failure fails the build rather than warning past it.
 
 ## What We Don't Collect
 

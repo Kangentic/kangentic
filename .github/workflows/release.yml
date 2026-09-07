@@ -44,6 +44,39 @@ jobs:
           git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
           git push origin "v${{ inputs.version }}"
 
+  # Prove the Sentry upload token exists BEFORE anything is built or drafted.
+  #
+  # v0.38.0 and v0.37.0 both shipped with zero sourcemaps and zero native debug
+  # files, because the KANGENTIC_SENTRY_TOKEN secret was never created. An unset
+  # secret expands to the empty string, both build gates read falsy, and the
+  # uploads no-opped in total silence: the v0.38.0 build log contains no Sentry
+  # line at all. Every release since error reporting landed has therefore
+  # produced minified renderer frames with no maps to resolve them (DESKTOP-D)
+  # and native crashes with no PDBs (DESKTOP-C had to be symbolicated by hand).
+  #
+  # This job is the same judgement the rpm and deb upgrade gates below already
+  # make: a step that silently stops doing its job is worse than no step, since
+  # it still reads as coverage. Runs in seconds, before the 90-minute matrix.
+  #
+  # Deliberately carries no `environment:`, for the same reason
+  # create-draft-release does not: a required reviewer or wait timer here would
+  # stall the whole release on an approval gate.
+  preflight-symbols:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the Sentry symbol-upload token
+        env:
+          KANGENTIC_SENTRY_TOKEN: ${{ secrets.KANGENTIC_SENTRY_TOKEN }}
+        run: |
+          if [ -z "${KANGENTIC_SENTRY_TOKEN}" ]; then
+            echo "::error::KANGENTIC_SENTRY_TOKEN is not set, so this release would ship with no sourcemaps and no native debug files."
+            echo "::error::Add it as a repository secret on this repo. Repo scope is enough; all three release-<platform> environments inherit it."
+            echo "::error::The token needs the project:releases and project:write scopes."
+            exit 1
+          fi
+          echo "Sentry symbol-upload token is present."
+
   # Create THE single draft release, before any platform build starts.
   #
   # electron-builder's GitHub publisher does a check-then-create with no locking:
@@ -64,9 +97,17 @@ jobs:
   # Deliberately carries no `environment:`: the matrix legs gate on the
   # release-<platform> environments, and a required reviewer or wait timer here
   # would stall draft creation for all three.
+  # The preflight-symbols clause is load-bearing in BOTH halves, exactly like the
+  # create-draft-release clause on the `release` job below. always() is here to
+  # tolerate the conditional create-tag, and it also defeats the implicit
+  # "skip me if a dependency failed" behaviour - so a job named in `needs:` but
+  # not in `if:` would still run when that dependency FAILED. Gating the draft
+  # (rather than only the matrix) is what keeps a failed preflight from leaving
+  # an orphaned draft release behind; the `release` job then inherits the gate
+  # through its existing create-draft-release clause.
   create-draft-release:
-    needs: [create-tag]
-    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
+    needs: [create-tag, preflight-symbols]
+    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.preflight-symbols.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -180,7 +221,9 @@ jobs:
           DEBUG: electron-builder
           # Sentry release symbolication: sourcemaps (scripts/build.js,
           # vite.config.mts) and node-pty's Windows PDBs (scripts/build.js).
-          # Both uploads are no-ops while the secret is unset.
+          # The preflight-symbols job has already proven this is non-empty, and
+          # with it set every upload failure now fails the build rather than
+          # warning past it, so "the job went green" means the symbols landed.
           KANGENTIC_SENTRY_TOKEN: ${{ secrets.KANGENTIC_SENTRY_TOKEN }}
           # macOS notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
