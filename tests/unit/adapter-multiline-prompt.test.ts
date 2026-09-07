@@ -119,6 +119,29 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
     expect(command).not.toContain('\n');
   });
 
+  it('CodexCommandBuilder keeps the prompt multiline under PowerShell even when codexPath is still the .cmd head', () => {
+    // The deleted `usesPowerShellCmdShim` predicate flattened only when BOTH
+    // the shell was PowerShell AND codexPath ended in .cmd. The case above
+    // uses a .ps1 path, which never matched that predicate either, so it
+    // would pass whether or not the deleted branch came back. This is the
+    // one case a reverted flatten actually trips: a .cmd head under
+    // PowerShell. It runs on every CI OS, unlike the real-shim coverage in
+    // tests/unit/windows-cmd-shim-multiline-prompt.test.ts, which is
+    // describe.runIf(IS_WINDOWS) and skipped on Linux CI.
+    const builder = new CodexCommandBuilder();
+    const command = builder.buildCodexCommand({
+      codexPath: 'C:/Users/dev/AppData/Roaming/npm/codex.cmd',
+      taskId: 'task-1',
+      cwd: 'C:/project',
+      permissionMode: 'default',
+      shell: 'powershell',
+      prompt: MULTILINE_XML,
+    });
+
+    expect(command).toContain('`n');
+    expect(command).not.toContain('\n');
+  });
+
   it('AiderAdapter.buildCommand preserves newlines in prompt under bash', () => {
     const adapter = new AiderAdapter();
     const command = adapter.buildCommand({

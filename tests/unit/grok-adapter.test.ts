@@ -289,6 +289,17 @@ describe('GrokCommandBuilder', () => {
     expect(command).toContain("'hello'");
   });
 
+  it('quotes the "--" end-of-options guard for PowerShell hosts', () => {
+    // PowerShell's binder consumes a bare -- before a .ps1 shim sees $args,
+    // so the guard must reach the process through quoteArg's quoted form.
+    const command = builder.buildGrokCommand({
+      ...baseOptions,
+      shell: 'powershell',
+      prompt: 'fix the bug',
+    });
+    expect(command).toContain('"--"');
+  });
+
   it('routes per-session values through env, never argv', () => {
     const options = {
       ...baseOptions,
