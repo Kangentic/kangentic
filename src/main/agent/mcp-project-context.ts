@@ -6,7 +6,7 @@
  */
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../db/database';
-import { autoSpawnForTask } from '../ipc/helpers';
+import { autoSpawnForTask, captureSessionLeftovers, reapSessionLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { WorktreeManager } from '../git/worktree-manager';
 import { sendToRenderer } from '../ipc/send-to-renderer';
@@ -91,6 +91,13 @@ export function buildCommandContextForProject(
     },
 
     onTaskDeleted: (task) => {
+      // An MCP delete is a terminal transition, so it reaps what the session
+      // left running, exactly as the UI delete path does in `cleanupTaskSession`.
+      // Taken BEFORE the kill: the watcher stops publishing once the session
+      // ends and POSIX reparents the children to init at once, so there is no
+      // tree left to walk afterwards.
+      const leftovers = captureSessionLeftovers(ipcContext, task.session_id);
+
       // Kill any live PTY for the task
       if (task.session_id) {
         try {
@@ -104,6 +111,9 @@ export function buildCommandContextForProject(
       if (task.worktree_path) {
         const worktreeManager = new WorktreeManager(projectPath);
         worktreeManager.withLock(async () => {
+          // Before the removal: a live process holding the worktree as its cwd
+          // is what makes the delete fail on Windows.
+          await reapSessionLeftovers(task.id, leftovers);
           const removed = await worktreeManager.removeWorktree(task.worktree_path!);
           if (removed && task.branch_name) {
             const config = ipcContext.configManager.getEffectiveConfig(projectPath);
