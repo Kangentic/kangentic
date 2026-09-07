@@ -51,7 +51,8 @@ vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
   return { ShellResolver: MockShellResolver };
 });
 
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: (cmd: string) => cmd,
   buildSpawnClearPrelude: () => '',
   isUncPath: (pathString: string) => /^[\\/]{2}[^\\/]/.test(pathString),

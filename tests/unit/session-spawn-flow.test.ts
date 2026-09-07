@@ -79,7 +79,8 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
 // identity) so the cwd-fixup-order tests can override it per-call via
 // mockImplementationOnce to prove the fixup command bypasses it (see
 // "writes the fixup command RAW" below).
-vi.mock('../../src/shared/paths', () => ({
+vi.mock('../../src/shared/paths', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/shared/paths')>()),
   adaptCommandForShell: vi.fn((cmd: string) => cmd),
   // Default to no prelude so the write-order assertions below stay
   // byte-exact; the dedicated prelude test overrides this with a marker.
