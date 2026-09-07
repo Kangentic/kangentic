@@ -30,10 +30,11 @@ the token that way only if local production builds attempting an upload is accep
 otherwise set it per-session.
 
 Scopes: reading issues/events needs `event:read` + `project:read` + `org:read` (a User Auth
-Token from Settings > Account > API > Auth Tokens; resolving issues additionally needs
-`event:write`). A `403` from every endpoint means the stored token is a CI-scoped one
+Token from Settings > Account > API > Auth Tokens; assigning and resolving issues additionally
+need `event:write`). A `403` from every endpoint means the stored token is a CI-scoped one
 (`org:ci` - it can only upload sourcemaps): stop and ask the user to mint a read-scoped token
-rather than retrying.
+rather than retrying. A `403` on the assign PUT alone means the token is read-only: report the
+issues you could not mark and carry on, never let it block the triage itself.
 
 ## Retrieval
 
@@ -56,6 +57,8 @@ The endpoints that matter:
 | Latest event (stack trace, tags, breadcrumbs, contexts, release) | `GET /api/0/organizations/kangentic/issues/<ISSUE_ID>/events/latest/` |
 | All events for the issue | `GET /api/0/organizations/kangentic/issues/<ISSUE_ID>/events/` |
 | Search issues (e.g. new unresolved desktop issues) | `GET /api/0/organizations/kangentic/issues/?project=4511996066660352&query=is:unresolved&statsPeriod=14d` |
+| Assign an issue (the triage marker, see below) | `PUT /api/0/organizations/kangentic/issues/<ISSUE_ID>/` body `{"assignedTo":"user:<USER_ID>"}` |
+| Org members (read `user.id` for the actor above) | `GET /api/0/organizations/kangentic/members/` |
 
 The latest-event payload is large; extract what you need rather than dumping it: `entries`
 with `type: "exception"` carries the stack frames, `type: "breadcrumbs"` the trail, `tags`
@@ -125,9 +128,11 @@ shortId, title, count, userCount (affected installs), firstSeen, environment, an
 - Treat `environment: development` events as dev/preview noise (the
   `Kangentic telemetry verification:` issues are the rig's own test errors) - list them
   separately or not at all, never alongside production issues without saying so.
-- "New" means new to the user: if an issue's shortId already appears in an existing board task
-  (`kangentic_search_tasks` for the shortId), say it is already tracked instead of re-reporting
-  it as new.
+- "New" means new to the user: an **unassigned** issue whose shortId appears in no board task.
+  Assignment is the triage marker (see below), so start the sweep by reading `assignedTo` on
+  each issue and treat an assigned one as already looked at. Still confirm with
+  `kangentic_search_tasks` for the shortId, because assignment can be stale and a task can
+  exist without one, but an assigned issue is never reported as new.
 
 **"Investigate this issue / create a follow-up task."** Retrieve the issue and latest event,
 diagnose (below), then - when asked for a task - create ONE task via the kangentic MCP tools,
@@ -138,12 +143,30 @@ duplicates. Title: `Fix DESKTOP-N: <issue title, trimmed>`. Description: the Sen
 shortId, level, event/affected-install counts, environment + release, the diagnosis, and the
 few stack frames or tags that carry it. Default to To Do; the user decides when it spawns.
 
+**Then assign every issue the task covers.** Creating a board task and leaving the Sentry issue
+unassigned means the next sweep re-derives the whole cross-reference from scratch, which is what
+assignment exists to prevent here. Assignment is a triage marker, not a claim of ownership: it
+says a human has looked at this and it has a home. Rules:
+
+- Assign after the task is created, never before, so a failed create cannot leave a false marker.
+- One task can cover several issues (a cluster, or several issues that resolve in one file).
+  Assign all of them, not just the one that named the task.
+- Assign issues covered by an EXISTING task too when a sweep turns one up unassigned. The signal
+  is only useful if it is complete.
+- Never assign an issue with no board task, and never assign dev/preview rig noise. An unassigned
+  issue must keep meaning "nobody has dealt with this".
+- Resolve nothing. Assignment leaves the issue in the unresolved stream where a recurrence is
+  still visible, which is the whole point: a fix that does not hold shows up as new events on an
+  assigned issue rather than disappearing.
+
 ## Boundaries
 
 - Diagnose and report; fix only when the task asks for a fix.
 - Create a follow-up board task only when asked ("create a follow up task" style requests):
   include the Sentry link, shortId, affected-install count, and your diagnosis in the
   description.
+- Assigning an issue you just filed a task for is sanctioned and expected, no separate ask
+  needed. It is the one write this skill makes on its own.
 - Do not resolve/archive issues in Sentry unless explicitly asked (needs `event:write`).
 - Never paste the token or a full raw event dump into a task, commit, or reply; quote the
   frames and fields that carry the diagnosis.
