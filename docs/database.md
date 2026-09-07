@@ -59,11 +59,13 @@ which is correct rather than `app.quit()` because `registerAllIpc` has not run y
 `NODE_ENV=test` the dialog is skipped so the E2E tier never hangs on a modal nobody can click.
 
 **While running.** Global-database reads go through `softly()` (`src/main/db/soft-db.ts`), which
-returns a fallback instead of throwing and logs once per operation. Four reads are softened:
+returns a fallback instead of throwing and logs once per operation. Four operations are softened:
 `project:list`, `projectGroup:list` and `project:getCurrent` in
-`src/main/ipc/handlers/projects.ts`, plus the `lastOpenedProject` lookup inside `createWindow()`.
-That last one is not an IPC handler and is the first global-database touch on the whole boot path,
-which is exactly where DESKTOP-9 threw.
+`src/main/ipc/handlers/projects.ts`, plus `lastOpenedProject`, which is read at two call sites
+inside `createWindow()`: once to resolve the boot project path, and again inside the
+`preloadPromise` catch block when that path turns out to be missing. Neither is an IPC handler,
+and the first is the first global-database touch on the whole boot path, which is exactly where
+DESKTOP-9 threw. Both share the one operation name, so a failure at either logs once for the pair.
 
 Only the two list reads raise the dialog, once per incident: a successful Retry re-arms it, so a
 later outage can still speak. `project:getCurrent` does not, because `project:list` already speaks
