@@ -468,6 +468,11 @@ Each swimlane has its own overrides (stored in the per-project DB):
 > `BoardColumnConfig` (`id`, `name`, `role`, `icon`, `color`, `archived`) are not listed here:
 > they are set in the Board Manager UI and round-trip through `kangentic.json`. See
 > [Board Configuration](#board-configuration) below.
+>
+> `role` is the one identity field with a closed set of values: `todo`, `done`, or omitted. A
+> hand-edited `kangentic.json` naming anything else is treated as a custom column and logs a
+> reconciliation warning naming that column. See [database.md](database.md) for the full
+> validation chain.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

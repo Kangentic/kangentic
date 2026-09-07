@@ -3,6 +3,7 @@ import { SwimlaneRepository, deleteSwimlaneRowWithReferences } from '../../db/re
 import { ActionRepository } from '../../db/repositories/action-repository';
 import { getProjectDb } from '../../db/database';
 import type { BoardConfig, SwimlaneRole } from '../../../shared/types';
+import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
 
 /**
@@ -52,12 +53,34 @@ export function applyBoardConfigToDb(
   const transaction = db.transaction(() => {
     const existingLanes = swimlaneRepo.list();
 
-    // Normalize legacy role: "backlog" → "todo" (backlog is now a separate view)
+    // Normalize legacy role: "backlog" → "todo" (backlog is now a separate view).
+    // This one PROMOTES rather than drops, so it has to run before the catch-all
+    // below - nulling it instead would leave the board with no To Do role, and the
+    // hasTodo check further down would then prepend a second To Do column.
     for (const column of config.columns) {
       if (column.role === 'backlog' as SwimlaneRole) {
         column.role = 'todo';
         if (column.name === 'Backlog') column.name = 'To Do';
       }
+    }
+
+    // Anything still outside the union is a column this build does not know as a
+    // system column, so it becomes a custom column. Without this, a teammate's
+    // kangentic.json could write an arbitrary role string straight into SQLite (the
+    // column has no CHECK constraint) where nothing could later repair it: update()
+    // does not write role. That is how a role reached the renderer's two-key icon
+    // map and crashed the Board Manager.
+    for (const column of config.columns) {
+      // Read through `unknown`: the declared type says `SwimlaneRole | undefined`, but
+      // this value came from JSON.parse, so `"role": null` arrives as a real null.
+      // A column with no role is already a custom column, so only a role that was
+      // actually present and failed the union is worth warning about.
+      const declaredRole: unknown = column.role;
+      const normalized = normalizeSwimlaneRole(declaredRole);
+      if (normalized === null && declaredRole !== undefined && declaredRole !== null) {
+        warnings.push(`Column "${column.name}" has an unknown role "${column.role}". Treated as a custom column.`);
+      }
+      column.role = normalized ?? undefined;
     }
 
     const hasTodo = config.columns.some((column) => column.role === 'todo');
@@ -150,7 +173,7 @@ export function applyBoardConfigToDb(
           id: columnConfig.id,
           name: columnConfig.name,
           description: columnConfig.description ?? null,
-          role: columnConfig.role as SwimlaneRole | undefined,
+          role: columnConfig.role,
           color: columnConfig.color ?? '#3b82f6',
           icon: columnConfig.icon ?? null,
           is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? false)),
