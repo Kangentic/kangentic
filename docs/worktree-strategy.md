@@ -571,9 +571,11 @@ issued in parallel rather than serially behind a 2000ms cap each.
 
 `session-reap-real-processes.test.ts` is the discriminating one and uses REAL processes. It builds
 the incident's shape (a grandchild whose argv and executable path both fall outside the worktree and
-whose cwd is inside it), then asserts the path scan finds nothing, that `rmSync` fails while it
-lives, and that after the reap the directory removes. Relax any of those and the test starts passing
-on the path scan alone, which would green-light a fix that does not fix the bug.
+whose cwd is inside it), then asserts the path scan finds nothing and that after the reap the
+directory removes. Relax either and the test starts passing on the path scan alone, which would
+green-light a fix that does not fix the bug. It also asserts that `rmSync` fails while the process
+lives, but only on Windows: POSIX unlinks a busy directory happily, so on the Linux CI runner that
+third assertion does not execute and the test proves the first two.
 
 ### Base Branch Resolution (`worktree-base-branch.test.ts`)
 
