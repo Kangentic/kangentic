@@ -538,9 +538,12 @@ export function findZombies(
 
 /**
  * Filter the process list to ORPHANED processes pinning a SPECIFIC worktree
- * directory, by command line, executable path, or (POSIX only) current working
- * directory. The needle carries a forced trailing separator so a prefix-sibling
- * like `worktrees/foo-bar` never matches `worktrees/foo`.
+ * directory, by command line or executable path. A process referencing the
+ * worktree only through its CWD is invisible here on every platform, which is
+ * what the session-end reap covers instead. The needle carries a forced trailing
+ * separator so a prefix-sibling like `worktrees/foo-bar` never matches
+ * `worktrees/foo`, plus a boundary check so a command line naming the worktree
+ * ROOT still matches (see `commandLineReferencesPath`).
  *
  * ## The orphan gate, and why it now means what it says
  *
