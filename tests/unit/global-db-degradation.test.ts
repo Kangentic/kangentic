@@ -219,6 +219,49 @@ describe('getGlobalDb caching', () => {
     expect(runGlobalMigrationsMock).toHaveBeenCalledTimes(1);
   });
 
+  it('sets busy_timeout before switching to WAL, on both the global and project databases', async () => {
+    // busy_timeout is a connection setting: it only covers statements that run
+    // AFTER it. journal_mode = WAL is a lock-taking statement (it creates the
+    // -wal and -shm sidecars), and two Kangentic instances sharing a config dir
+    // (the main checkout plus a non-ephemeral worktree dev run) both open this
+    // file eagerly at boot now, so the WAL switch is exactly where they can
+    // collide. Swapping the two pragma lines back would silently drop the
+    // busy-wait coverage for that collision while every existing assertion
+    // (which only checked WAL was called, not when) kept passing.
+    const globalHealthy = healthyConnection();
+    const projectHealthy = healthyConnection();
+    openDatabase.mockReturnValueOnce(globalHealthy).mockReturnValueOnce(projectHealthy);
+
+    const { getGlobalDb, getProjectDb } = await freshModules();
+    getGlobalDb();
+    getProjectDb('project-1');
+
+    const expectedOrder = ['busy_timeout = 5000', 'journal_mode = WAL', 'foreign_keys = ON'];
+    expect(globalHealthy.pragma.mock.calls.map(([sql]) => sql)).toEqual(expectedOrder);
+    expect(projectHealthy.pragma.mock.calls.map(([sql]) => sql)).toEqual(expectedOrder);
+  });
+
+  it('does not let a close() that itself throws mask the original open failure', async () => {
+    // "the original open attempt's error is the one worth surfacing" is
+    // closeQuietly's whole stated purpose (see its docblock in database.ts). A
+    // connection whose file is already unreachable can easily fail its own
+    // close() too, and if that propagated it would replace the real
+    // SQLITE_IOERR with a generic close failure - which is exactly the wrong
+    // cause for the unreadable-database dialog to name.
+    const broken = ioErrorOnPragma();
+    broken.close = vi.fn(() => { throw new Error('close failed'); });
+    const healthy = healthyConnection();
+    openDatabase.mockReturnValueOnce(broken).mockReturnValueOnce(healthy);
+
+    const { getGlobalDb } = await freshModules();
+
+    expect(() => getGlobalDb()).toThrow('disk I/O error');
+    expect(broken.close).toHaveBeenCalled();
+    // The abandoned handle's own close failure must not have wedged the
+    // module: a second call still reopens normally.
+    expect(getGlobalDb()).toBe(healthy);
+  });
+
   it('closes a project connection whose pragma threw, too', async () => {
     // getProjectDb never had the cache bug (it writes the map only after
     // migrations), but it did leak the handle: on Windows an unclosed
@@ -247,6 +290,23 @@ describe('getGlobalDb caching', () => {
     expect(getGlobalDb()).toBe(first);
     resetGlobalDb();
     expect(first.close).toHaveBeenCalled();
+    expect(getGlobalDb()).toBe(second);
+  });
+
+  it('resetGlobalDb still reopens even when the old handle fails to close', async () => {
+    // A propagating close() here would throw straight out of the Retry button's
+    // click handler (askRetryOrQuit -> resetGlobalDb -> getGlobalDb), which is
+    // the one path that exists specifically to recover from a locked file - the
+    // exact case where the old handle's close() is likeliest to fail too.
+    const first = healthyConnection();
+    first.close = vi.fn(() => { throw new Error('close failed'); });
+    const second = healthyConnection();
+    openDatabase.mockReturnValueOnce(first).mockReturnValueOnce(second);
+
+    const { getGlobalDb, resetGlobalDb } = await freshModules();
+
+    expect(getGlobalDb()).toBe(first);
+    expect(() => resetGlobalDb()).not.toThrow();
     expect(getGlobalDb()).toBe(second);
   });
 });
@@ -454,6 +514,41 @@ describe('notifyGlobalDbUnavailable', () => {
 
     notifyGlobalDbUnavailable(new Error('boom again'), 'project:list');
     await vi.waitFor(() => expect(showMessageBoxMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not re-arm after a retry that fails again, so a later failure stays silent', async () => {
+    // The mirror of the re-arm test above. A Retry click that STILL fails must
+    // not flip `notified` back to false, or a second call site failing on the
+    // same still-broken database would pop a second identical dialog for a
+    // condition that has not actually changed.
+    //
+    // The naive version of this test (fire twice, assert one dialog) would
+    // pass whether or not the catch branch below ever ran, because `notified`
+    // never got reset either way. So this first waits for proof that the retry
+    // was actually attempted and actually failed, THEN fires the second call.
+    openDatabase.mockReturnValue(ioErrorOnPragma());
+    showMessageBoxMock.mockResolvedValue({ response: RETRY });
+    const { notifyGlobalDbUnavailable } = await freshModules();
+
+    notifyGlobalDbUnavailable(new Error('boom'), 'project:list');
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+      '[db] Retry failed; the global database is still unreadable.',
+      expect.anything(),
+    ));
+
+    // `notifyGlobalDbUnavailable` bails at `if (notified) return;` before it
+    // does anything else, and that early return is synchronous - so whether
+    // this second call did anything can be read back immediately, with no
+    // further wait needed.
+    notifyGlobalDbUnavailable(new Error('boom again'), 'projectGroup:list');
+    expect(
+      errorSpy,
+      'a second call for a different operation must bail at the top-of-function `notified` guard rather than logging its own "unavailable; notifying" line, which is the earliest observable proof it never re-entered the dialog flow',
+    ).not.toHaveBeenCalledWith(
+      expect.stringContaining('projectGroup:list'),
+      expect.anything(),
+    );
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(1);
   });
 
   it('owns the modal to the window the caller named', async () => {
