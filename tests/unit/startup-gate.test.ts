@@ -218,6 +218,80 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     ).toBe(false);
   });
 
+  it('registers updater and announcements from a finally, so a THROW cannot skip them', () => {
+    // The sibling of the await scan above, and the gap the Windows DESKTOP-3/4
+    // event fell through on 2026-09-03. An await is not the only way to break
+    // the "unbroken synchronous block": a THROW breaks it just as completely.
+    //
+    // What happened: createWindow() reaches getLastOpenedProject() BELOW its own
+    // loadURL call, the global database threw SQLITE_IOERR (DESKTOP-9), and
+    // initUpdater / initAnnouncements / markStartupComplete never ran. The
+    // renderer was already loading, so its first invoke found no handler. The
+    // await scan cannot see that, because no await was ever added.
+    //
+    // Anchored on `} finally {` rather than on brace-balancing, consistent with
+    // this file's other exact-text anchors.
+    const windowIndex = INDEX_SOURCE.indexOf('createWindow();');
+    const gateIndex = INDEX_SOURCE.indexOf('markStartupComplete();', windowIndex);
+    const span = INDEX_SOURCE.slice(windowIndex, gateIndex);
+
+    expect(
+      span,
+      'the in-body createWindow() call must be followed by a `} finally {`: without it, any throw inside createWindow after loadURL leaves a live renderer invoking announcements/updater channels that were never registered (the Windows DESKTOP-3/4 event)',
+    ).toContain('} finally {');
+
+    // The finally has to be the thing that CONTAINS the registrations, not
+    // merely sit somewhere in the span. Slice from the finally to the gate open
+    // and prove both calls are inside it.
+    const finallyIndex = span.indexOf('} finally {');
+    const finallyBody = span.slice(finallyIndex);
+    expect(
+      finallyBody,
+      'initUpdater must sit INSIDE the finally. Leaving it before the try, or between the try and the finally, is the starvable ordering this test exists to reject.',
+    ).toContain('initUpdater(');
+    expect(
+      finallyBody,
+      'initAnnouncements must sit INSIDE the finally, for the same reason as initUpdater: it is the channel pair the renderer actually invoked with nobody listening.',
+    ).toContain('initAnnouncements(');
+  });
+
+  it('opens the global database before it builds the window', () => {
+    // Sentry DESKTOP-9/A/B. The first global-database touch used to be
+    // getLastOpenedProject() inside createWindow, BELOW loadURL, with no guard
+    // at all: a SQLITE_IOERR there produced an unhandled rejection, a renderer
+    // holding a raw "Error invoking remote method" stack trace, and a startup
+    // that carried on half-initialized. Proving the database readable first is
+    // what turns that into a dialog naming the file.
+    const gateIndex = INDEX_SOURCE.indexOf('await ensureGlobalDbReadable()');
+    expect(
+      gateIndex,
+      'src/main/index.ts must await ensureGlobalDbReadable() during startup: without it a locked or failing index.db reaches the user as an unhandled rejection instead of a message naming the file (DESKTOP-9/A/B)',
+    ).toBeGreaterThan(-1);
+
+    const windowIndex = INDEX_SOURCE.indexOf('createWindow();');
+    expect(
+      gateIndex,
+      'the database check must run BEFORE createWindow(): once loadURL has fired, the renderer is already invoking channels, which is the whole failure this ordering prevents',
+    ).toBeLessThan(windowIndex);
+
+    // Calling it and ignoring the answer would leave startup walking into the
+    // state the dialog just told the user is broken.
+    //
+    // app.exit, not app.quit: the user chose Quit before registerAllIpc ran, so
+    // performShutdown's first act (reaching for the board config manager)
+    // throws "IPC not initialized" and aborts the rest of the teardown. Verified
+    // against a read-only index.db, which logged exactly that.
+    const bail = sliceAfter('await ensureGlobalDbReadable()', 1400);
+    expect(
+      bail,
+      'startup must ACT on ensureGlobalDbReadable(): a false answer is the user choosing Quit, and it has to stop the startup body rather than fall through into createWindow',
+    ).toContain('app.exit(0);');
+    expect(
+      bail,
+      'the give-up must still be counted. This whole cluster was noticed only because it reached Sentry as an unhandled rejection, so a gate that handles it silently trades one blind spot for another.',
+    ).toContain("source: 'globalDbUnreadable'");
+  });
+
   it('keeps the degraded-startup escape hatch that also opens the gate', () => {
     // A count scan, not a proximity regex: the whenReady body already contains
     // unrelated .catch( calls (pruneStaleWorktreeProjects,
