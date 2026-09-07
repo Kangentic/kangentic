@@ -18,7 +18,7 @@ import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
 import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
 import { ColumnsOverview, formatModelName, type OverviewRow } from './board-manager/ColumnsOverview';
 import { Pill } from '../Pill';
-import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
+import { ICON_REGISTRY, ROLE_DEFAULTS, getSwimlaneIcon, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
@@ -1721,14 +1721,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   >
                     <div className="flex-shrink-0">
                       {(() => {
-                        if (draft.icon) {
-                          const IconComp = ICON_REGISTRY.get(draft.icon);
-                          if (IconComp) return <IconComp size={14} strokeWidth={1.75} style={{ color: draft.color }} />;
-                        }
-                        if (draft.role) {
-                          const RoleIcon = ROLE_DEFAULTS[draft.role];
-                          return <RoleIcon size={14} strokeWidth={1.75} style={{ color: draft.color }} />;
-                        }
+                        // getSwimlaneIcon resolves the custom icon, then the role default,
+                        // and returns null rather than the undefined a two-key
+                        // Record<SwimlaneRole, ...> yields for a role outside the union.
+                        // Rendering that undefined is React error #130, which the root
+                        // ErrorBoundary turns into a blank board.
+                        const RoleIcon = getSwimlaneIcon(draft);
+                        if (RoleIcon) return <RoleIcon size={14} strokeWidth={1.75} style={{ color: draft.color }} />;
                         return (
                           <div
                             className="w-2.5 h-2.5 rounded-full"

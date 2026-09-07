@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { seedDefaultSwimlanes, seedDefaultActions } from './default-data';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
+import { SWIMLANE_ROLES } from '../../../shared/types';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -411,6 +412,26 @@ export function runProjectMigrations(db: Database.Database): void {
   // Migration: rename 'Backlog' swimlane to 'To Do' and migrate role 'backlog' -> 'todo'
   db.prepare("UPDATE swimlanes SET name = 'To Do' WHERE role IN ('backlog', 'todo') AND name IN ('Backlog', 'Not Started')").run();
   db.prepare("UPDATE swimlanes SET role = 'todo' WHERE role = 'backlog'").run();
+
+  // Data migration: drop any role outside the union, so a column that is not a
+  // system column is stored as one (role NULL).
+  //
+  // The earlier 'planning' -> NULL and 'running' -> NULL conversions each live inside
+  // a one-shot `if (!hasColumn)` guard, so a database whose permission_mode and
+  // plan_exit_target_id columns already existed never ran them, and a role written
+  // later (a teammate's kangentic.json, a hand-edited row) is never converted at all.
+  // Those values then reach the renderer's two-key role -> icon map and render
+  // `<undefined />`, which blanks the board via the ErrorBoundary.
+  //
+  // This one is unconditional, so it also repairs a role that arrives after the
+  // schema settles. It MUST stay the last statement that REPAIRS a `role`: the
+  // backlog remap above PROMOTES to 'todo', and running this first would null it
+  // instead, leaving the board with no To Do role for applyBoardConfigToDb to find.
+  // seedDefaultSwimlanes further down does write `role` later, but it inserts
+  // trusted literals into a fresh table rather than repairing an existing value.
+  db.prepare(
+    `UPDATE swimlanes SET role = NULL WHERE role IS NOT NULL AND role NOT IN (${SWIMLANE_ROLES.map(() => '?').join(', ')})`
+  ).run(...SWIMLANE_ROLES);
 
   // Migration: create backlog_tasks table for staging tasks before the board
   // (Originally created as backlog_items, renamed to backlog_tasks below)

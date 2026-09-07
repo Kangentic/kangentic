@@ -515,7 +515,28 @@ export interface BacklogAttachment {
   created_at: string;
 }
 
-export type SwimlaneRole = 'todo' | 'done';
+/**
+ * The system column roles, as a runtime array so callers that must check a role
+ * at runtime (the DB read path, the kangentic.json apply path, the migration that
+ * repairs legacy values) derive the set from one place instead of re-listing it.
+ */
+export const SWIMLANE_ROLES = ['todo', 'done'] as const;
+
+export type SwimlaneRole = (typeof SWIMLANE_ROLES)[number];
+
+/**
+ * Narrow an untrusted role to the union, or null.
+ *
+ * `swimlanes.role` is plain TEXT with no CHECK constraint, and roles that are no
+ * longer in the union genuinely shipped ('planning', 'running', 'backlog'). A value
+ * outside the union reaching the renderer crashed the Board Manager: every role icon
+ * comes from a two-key `Record<SwimlaneRole, ...>`, so `ROLE_DEFAULTS[role]` returned
+ * undefined and React was handed `<undefined />`. Anything unrecognized is a custom
+ * column, which is exactly what null means.
+ */
+export function normalizeSwimlaneRole(value: unknown): SwimlaneRole | null {
+  return SWIMLANE_ROLES.find((role) => role === value) ?? null;
+}
 
 /**
  * Which session track a task runs on when it enters a column.

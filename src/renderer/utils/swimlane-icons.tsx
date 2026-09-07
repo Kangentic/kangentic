@@ -67,7 +67,11 @@ export function getUsedIcons(swimlanes: Swimlane[], excludeId?: string): Set<str
     if (s.icon) {
       used.add(s.icon);
     } else if (s.role) {
-      used.add(ROLE_DEFAULT_NAMES[s.role]);
+      // Same two-key map as ROLE_DEFAULTS: a role from outside the union resolves to
+      // undefined, which would go into a Set<string> silently and then compare unequal
+      // to every real icon name in the picker.
+      const roleIconName = ROLE_DEFAULT_NAMES[s.role];
+      if (roleIconName) used.add(roleIconName);
     }
   }
   return used;
