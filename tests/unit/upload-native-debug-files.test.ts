@@ -45,6 +45,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const SENTRY_CLI_RESOLVED_PATH = require.resolve('@sentry/cli');
 const SENTRY_ESBUILD_PLUGIN_RESOLVED_PATH = require.resolve('@sentry/esbuild-plugin');
+const PACKAGE_JSON_RESOLVED_PATH = require.resolve('../../package.json');
 
 const ORIGINAL_PLATFORM = process.platform;
 // build.js assigns process.env.NODE_ENV at module load (see its comment: the
@@ -523,5 +524,65 @@ describe('announceSentryUploadMode', () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringMatching(/^\[build\] Sentry symbol upload: enabled \(release Kangentic@\d+\.\d+\.\d+\)$/),
     );
+  });
+});
+
+/**
+ * resolveSentryReleaseName() is not in build.js's module.exports - it is only
+ * reachable through announceSentryUploadMode() and resolveSentryEsbuildPlugins(),
+ * both of which the tests above only ever exercise against this repo's own
+ * package.json, which always has a usable version. So the throw branch (the
+ * one that stops a release from filing its symbols under the unmatchable
+ * "Kangentic@undefined") has never actually run. Same technique as
+ * installFakeSentryCli / installFakeSentryEsbuildPlugin above: seed Node's
+ * require cache at package.json's own resolved path, since build.js reads it
+ * via a plain `require('../package.json')`, not fs.readFileSync.
+ */
+describe('resolveSentryReleaseName (unexported; reached via announceSentryUploadMode)', () => {
+  it('throws rather than filing the release under Kangentic@undefined when package.json has no usable "version"', async () => {
+    vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
+    const buildModule = await import('../../scripts/build.js');
+
+    const originalCacheEntry = require.cache[PACKAGE_JSON_RESOLVED_PATH];
+    require.cache[PACKAGE_JSON_RESOLVED_PATH] = {
+      id: PACKAGE_JSON_RESOLVED_PATH,
+      filename: PACKAGE_JSON_RESOLVED_PATH,
+      loaded: true,
+      exports: { name: 'kangentic' }, // no "version" field
+    } as unknown as NodeJS.Module;
+
+    try {
+      expect(() => buildModule.announceSentryUploadMode()).toThrow(/no usable "version"/);
+      expect(() => buildModule.announceSentryUploadMode()).toThrow(/Kangentic@undefined/);
+    } finally {
+      if (originalCacheEntry) {
+        require.cache[PACKAGE_JSON_RESOLVED_PATH] = originalCacheEntry;
+      } else {
+        delete require.cache[PACKAGE_JSON_RESOLVED_PATH];
+      }
+    }
+  });
+
+  it('also throws on an empty-string "version", not just a missing one', async () => {
+    vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
+    const buildModule = await import('../../scripts/build.js');
+
+    const originalCacheEntry = require.cache[PACKAGE_JSON_RESOLVED_PATH];
+    require.cache[PACKAGE_JSON_RESOLVED_PATH] = {
+      id: PACKAGE_JSON_RESOLVED_PATH,
+      filename: PACKAGE_JSON_RESOLVED_PATH,
+      loaded: true,
+      exports: { name: 'kangentic', version: '' },
+    } as unknown as NodeJS.Module;
+
+    try {
+      expect(() => buildModule.announceSentryUploadMode()).toThrow(/no usable "version"/);
+    } finally {
+      if (originalCacheEntry) {
+        require.cache[PACKAGE_JSON_RESOLVED_PATH] = originalCacheEntry;
+      } else {
+        delete require.cache[PACKAGE_JSON_RESOLVED_PATH];
+      }
+    }
   });
 });
