@@ -3,7 +3,11 @@ import type { SessionUsage, ActivityState, ActivityReason, SessionEvent, AgentPa
 import { PtyActivityTracker } from './pty-activity-tracker';
 import { ActivityEngine, ActivitySnapshotWriter, type ActivityEngineOptions, type ActivityStatsSnapshot } from './engine';
 import { BgShellWatcher } from './background-shell/watcher';
-import { createProcessTreeProbe, type ProcessTreeProbe } from './background-shell/process-tree';
+import {
+  createProcessTreeProbe,
+  type CapturedSessionTree,
+  type ProcessTreeProbe,
+} from './background-shell/process-tree';
 import { looksLikeShellId } from './background-shell/looks-like-shell-id';
 import { UsageAccumulator } from './usage-accumulator';
 import { PRCommandDetector } from './pr-command-detector';
@@ -333,6 +337,15 @@ export class SessionTelemetry {
   notifySessionEnded(sessionId: string): void {
     if (!this.bgShellWatcher) return;
     this.bgShellWatcher.unregisterSession(sessionId);
+  }
+
+  /**
+   * The session's descendant PIDs as of the watcher's last healthy cycle, so a
+   * teardown can reap what the session leaves running. Null when the watcher is
+   * disabled or has nothing fresh; see `BgShellWatcher.getCapturedDescendants`.
+   */
+  getCapturedSessionTree(sessionId: string): CapturedSessionTree | null {
+    return this.bgShellWatcher?.getCapturedDescendants(sessionId) ?? null;
   }
 
   // ==== Idle-timeout sweep ====

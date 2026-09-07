@@ -42,6 +42,7 @@ import type {
   PtyResizeOrigin,
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
+import type { CapturedSessionTree } from '../activity-engine/background-shell/process-tree';
 
 export interface SessionManagerOptions {
   /**
@@ -1396,6 +1397,23 @@ export class SessionManager extends EventEmitter {
    */
   removeByTaskId(taskId: string): void {
     for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
+  }
+
+  /**
+   * The session's descendant PIDs as of the bg-shell watcher's last healthy
+   * cycle, for a teardown that wants to take the rest of the tree with the PTY.
+   *
+   * Read it BEFORE killing or suspending: the watcher stops publishing the
+   * moment the session is gone, and on POSIX the children are reparented to
+   * init immediately, so there is no tree left to walk afterwards.
+   *
+   * Null means there is no trustworthy snapshot (watcher off, never enumerated
+   * for this session, or the snapshot has aged out). Treat that as "nothing to
+   * reap", never as a reason to enumerate here - see
+   * `BgShellWatcher.getCapturedDescendants` for why.
+   */
+  getCapturedSessionTree(sessionId: string): CapturedSessionTree | null {
+    return this.telemetry.getCapturedSessionTree(sessionId);
   }
 
   /**
