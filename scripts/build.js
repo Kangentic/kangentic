@@ -6,6 +6,27 @@ const { copyExternalScripts } = require('./copy-external-scripts');
 
 const projectDir = path.resolve(__dirname, '..');
 
+// Set BEFORE anything imports vite or the Sentry bundler plugins.
+//
+// Both Sentry plugins share createSentryBuildPluginManager, which computes
+// `isDevMode = process.env.NODE_ENV === 'development'` ONCE, at plugin
+// CONSTRUCTION time, and then silently skips the upload: it logs "Running in
+// development mode. Will not upload sourcemaps." at debug level only, deletes
+// the maps anyway in its finally block, and lets the build exit 0. Nothing in a
+// normal build log records that it happened.
+//
+// Left to itself NODE_ENV is 'development' by the time the config factory runs,
+// so this is not a hypothetical: measured against this worktree, a build with a
+// valid token uploaded ZERO sourcemap bundles, and the same build with
+// NODE_ENV=production uploaded them. The missing CI secret was only the first of
+// two independent reasons no release has ever had readable renderer stacks;
+// this was the second, and it would have outlived fixing the secret.
+//
+// Setting it is also just correct: this script only ever produces a production
+// bundle. The dev server does not run through here, and the E2E devtools build
+// keeps its own KANGENTIC_BUILD_DEV flag.
+process.env.NODE_ENV = 'production';
+
 // `KANGENTIC_BUILD_DEV=1` keeps the devtools / inspection bridge tree in the
 // produced bundle. Off by default so `npm run build` still produces a
 // production-shaped artifact; on for E2E runs that exercise the dev-only
@@ -20,17 +41,107 @@ const keepDevtools = process.env.KANGENTIC_BUILD_DEV === '1';
 // as the conventional CI fallback. Maps are generated as separate files
 // (esbuild 'external' = no sourceMappingURL comment), uploaded with debug
 // IDs, then deleted, so nothing ships.
-const sentryAuthToken = process.env.KANGENTIC_SENTRY_TOKEN ?? process.env.SENTRY_AUTH_TOKEN;
+/**
+ * Pick the upload token from the environment.
+ *
+ * Trimmed truthiness, NOT `??`. GitHub Actions still injects an `env:` key whose
+ * `${{ secrets.X }}` expression came back empty, so an unset secret arrives as
+ * the empty string rather than as undefined. `??` only falls through on
+ * null/undefined, so `KANGENTIC_SENTRY_TOKEN ?? SENTRY_AUTH_TOKEN` returned ''
+ * and the documented CI fallback could never fire. Returns undefined when
+ * neither is usable, so `Boolean()` below reads the same either way.
+ *
+ * Exported for test: both call sites read process.env at module scope, so the
+ * pick cannot be exercised through the gate itself.
+ */
+function resolveSentryAuthToken(env) {
+  for (const name of ['KANGENTIC_SENTRY_TOKEN', 'SENTRY_AUTH_TOKEN']) {
+    const value = env[name];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return undefined;
+}
+
+const sentryAuthToken = resolveSentryAuthToken(process.env);
 const uploadSourcemaps = Boolean(sentryAuthToken);
 // One Sentry project receives both the sourcemaps and the native debug files.
 const SENTRY_ORG = 'kangentic';
 const SENTRY_PROJECT = 'desktop';
+/**
+ * Events report `Kangentic@<version>` (the @sentry/electron default, built from
+ * productName and app version), so the artifacts must be filed under the same
+ * name. Left unset, the bundler plugin falls back to GITHUB_SHA and the release
+ * carries maps its own Releases page cannot show. Symbolication itself rides on
+ * debug ids either way.
+ *
+ * Read lazily, matching resolveSentryReleaseName in vite.config.mts, so merely
+ * requiring this module for one of its exported helpers does no file IO.
+ */
+function resolveSentryReleaseName() {
+  const { version } = require('../package.json');
+  // Fail rather than file the maps under `Kangentic@undefined`, which uploads
+  // cleanly, reports success, and matches no event ever emitted. Mirrors the
+  // same guard in vite.config.mts.
+  if (typeof version !== 'string' || version === '') {
+    throw new Error(
+      '[build] Refusing to build: package.json has no usable "version", so the Sentry release '
+      + 'name would be "Kangentic@undefined" and no event would ever match the uploaded symbols.',
+    );
+  }
+  return `Kangentic@${version}`;
+}
+
+/**
+ * Refuse to construct an upload plugin that we know will decline to upload.
+ *
+ * Asserts NODE_ENV IS 'production', deliberately, rather than that it is not
+ * 'development'. The negative form would be dead code here: this module pins
+ * NODE_ENV to 'production' at load, so nothing between that line and this call
+ * can make the negative test fail. The positive form still fails if someone
+ * deletes that assignment, or if a future entry point builds these plugins
+ * without going through this script. That is the shape the original bug had -
+ * not a wrong value, but nobody setting the right one.
+ *
+ * The plugins treat NODE_ENV === 'development' as "skip, quietly": debug-level
+ * log, maps deleted anyway, exit 0. That is indistinguishable from success in a
+ * release log, which is how two releases shipped unreadable. A token was
+ * supplied, so an upload was intended; stop rather than produce a green build
+ * with nothing uploaded. vite.config.mts carries the same guard for the
+ * renderer half.
+ */
+function assertUploadCanActuallyRun() {
+  if (process.env.NODE_ENV !== 'production') {
+    throw new Error(
+      '[build] Refusing to build: a Sentry upload token is set, but NODE_ENV is '
+      + `${JSON.stringify(process.env.NODE_ENV)} rather than "production". The Sentry bundler `
+      + 'plugins skip their upload unless it is set, logging only at debug level and deleting the '
+      + 'sourcemaps anyway, so the release would ship with unreadable stacks and a green build '
+      + 'log. scripts/build.js pins it at module load; something has removed or overwritten that.',
+    );
+  }
+}
+
+/**
+ * Say which way the gate went, on every build. Printing nothing when the token
+ * is absent is what let v0.38.0 and v0.37.0 ship with no symbols at all and no
+ * trace of it in the release logs, so silence is the bug being fixed here.
+ */
+function announceSentryUploadMode() {
+  console.log(uploadSourcemaps
+    ? `[build] Sentry symbol upload: enabled (release ${resolveSentryReleaseName()})`
+    : '[build] Sentry symbol upload: skipped (no KANGENTIC_SENTRY_TOKEN or SENTRY_AUTH_TOKEN)');
+}
 
 // The uploadSourcemaps guard gates the require below (the function itself runs
 // eagerly at module load), so unit tests that require this module for
 // assertVendorChunksLazy never load the Sentry toolchain when no token is set.
+//
+// Exported for test: the release name and errorHandler override are otherwise
+// only checked indirectly through the plugin options object esbuild never
+// exposes.
 function resolveSentryEsbuildPlugins() {
   if (!uploadSourcemaps) return [];
+  assertUploadCanActuallyRun();
   const { sentryEsbuildPlugin } = require('@sentry/esbuild-plugin');
   return [
     sentryEsbuildPlugin({
@@ -38,6 +149,12 @@ function resolveSentryEsbuildPlugins() {
       project: SENTRY_PROJECT,
       authToken: sentryAuthToken,
       telemetry: false,
+      release: { name: resolveSentryReleaseName() },
+      // A token was supplied, so an upload was intended. Let the failure reach
+      // the build instead of logging past it: the plugin's default handler
+      // warns and continues, which ships an unreadable release while the
+      // release job still reports success.
+      errorHandler: (error) => { throw error; },
       sourcemaps: {
         filesToDeleteAfterUpload: ['.vite/build/*.map'],
       },
@@ -58,11 +175,17 @@ function resolveSentryEsbuildPlugins() {
  * files are identical on each, so one upload is enough. The `require` sits
  * behind the gate for the same reason as resolveSentryEsbuildPlugins.
  *
- * A failed upload warns and lets the build finish: the files only make a
- * FUTURE crash report readable, so they are not worth failing a release over.
- * `execute` must be asked to reject on a non-zero exit (`'rejectOnError'`);
- * its plain live mode resolves whatever sentry-cli exits with, which would
- * turn every failure into a false "uploaded" line below.
+ * A failed upload FAILS the build. It used to warn and continue, on the reasoning
+ * that the files only make a FUTURE crash readable. That reasoning assumed the
+ * warning would be read, and v0.38.0 proved otherwise: the upload never ran at
+ * all and nothing in the release log said so. A token being present means an
+ * upload was intended, so the only two acceptable outcomes are "uploaded" and
+ * "the release stopped". `execute` must be asked to reject on a non-zero exit
+ * (`'rejectOnError'`); its plain live mode resolves whatever sentry-cli exits
+ * with, which would turn every failure into a false "uploaded" line below.
+ *
+ * Debug files are keyed by build id, not by release, so this upload is
+ * unaffected by the release name and takes no release argument.
  */
 async function uploadNativeDebugFiles() {
   if (!uploadSourcemaps || process.platform !== 'win32') return;
@@ -71,8 +194,16 @@ async function uploadNativeDebugFiles() {
     .map((arch) => path.join(prebuildsDir, arch))
     .filter((dir) => fs.existsSync(dir));
   if (debugFileDirs.length === 0) {
-    console.warn('[build] No node-pty Windows prebuilds found; skipping the debug-file upload');
-    return;
+    // Not a skip. Reaching here means a token was supplied AND this is the win32
+    // leg, so an upload was intended and there is nothing to upload - the same
+    // "green build, no symbols" outcome as a failed upload, which is what
+    // DESKTOP-C had to be symbolicated by hand around. Fail like the catch below.
+    throw new Error(
+      '[build] No node-pty Windows prebuilds found under '
+      + `${prebuildsDir}, so there are no debug files to upload; refusing to ship a release `
+      + 'whose native frames cannot symbolicate. Check that node-pty installed its win32 '
+      + 'prebuilds (a partial or pruned npm ci drops them).',
+    );
   }
   const SentryCli = require('@sentry/cli');
   const sentryCli = new SentryCli(null, { authToken: sentryAuthToken, silent: false });
@@ -82,8 +213,8 @@ async function uploadNativeDebugFiles() {
       'rejectOnError',
     );
   } catch (error) {
-    console.warn('[build] node-pty debug-file upload failed; native frames from this release will not symbolicate on Sentry:', error);
-    return;
+    console.error('[build] node-pty debug-file upload FAILED; refusing to ship a release whose native frames cannot symbolicate.');
+    throw error;
   }
   console.log(`[build] Uploaded node-pty debug files to Sentry from ${debugFileDirs.length} prebuild dir(s)`);
 }
@@ -201,6 +332,7 @@ const esbuildCommon = {
 };
 
 async function build() {
+  announceSentryUploadMode();
   console.log('[build] Running tsc --noEmit type check...');
   execSync('npx tsc --noEmit', { cwd: projectDir, stdio: 'inherit' });
   console.log('[build] Type check passed');
@@ -301,4 +433,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { assertVendorChunksLazy, uploadNativeDebugFiles };
+module.exports = {
+  assertVendorChunksLazy,
+  uploadNativeDebugFiles,
+  resolveSentryAuthToken,
+  announceSentryUploadMode,
+  assertUploadCanActuallyRun,
+  resolveSentryEsbuildPlugins,
+};

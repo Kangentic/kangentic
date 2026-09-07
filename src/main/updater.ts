@@ -63,6 +63,67 @@ export function isTransientUpdaterError(error: Error): boolean {
   return false;
 }
 
+/**
+ * The two electron-updater wrappers that swallow a releases-feed fetch failure.
+ * GitHubProvider rewraps twice: getLatestTagName produces
+ * ERR_UPDATER_LATEST_VERSION_NOT_FOUND, and parseUpdateInfo then wraps that in
+ * ERR_UPDATER_INVALID_RELEASE_FEED.
+ */
+const FEED_WRAPPER_CODES = new Set([
+  'ERR_UPDATER_INVALID_RELEASE_FEED',
+  'ERR_UPDATER_LATEST_VERSION_NOT_FOUND',
+]);
+
+/** The literal sentences those same two wrappers write into their message. */
+const FEED_WRAPPER_PHRASES =
+  /Cannot parse releases feed|Unable to find latest version on GitHub/;
+
+/** Transient network shapes as they appear in NESTED stack text, not as a code. */
+const TRANSIENT_CAUSE_PATTERNS = [
+  /HttpError: (408|429|50\d)\b/,
+  /\b(ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)\b/,
+];
+
+/**
+ * True when a releases-feed failure is a transient network blip wearing a
+ * structural error's clothes.
+ *
+ * builder-util-runtime's newError() constructs a BRAND NEW Error and assigns
+ * its own `code`, so electron-updater's double rewrap destroys the original
+ * code: an HTTP 504 from the feed request arrives as
+ * ERR_UPDATER_INVALID_RELEASE_FEED. That is why isTransientUpdaterError misses
+ * these entirely - all six of its code branches test a code that no longer
+ * exists, while its message branches still fire. The original failure survives
+ * only as nested `e.stack` text inside the wrapper's message, so this reads the
+ * message.
+ *
+ * Both halves must hold: the error is one of the two feed wrappers AND its text
+ * carries a transient shape. A genuinely malformed feed has no transient shape
+ * and stays loud, and a signature or checksum failure is not a feed wrapper at
+ * all, so the structural cases stay reportable.
+ *
+ * The wrapper test accepts EITHER the code or the phrase. Requiring the code
+ * would make this no-op in production if `code` is ever dropped between the
+ * throw and the 'error' emit, while every unit test kept passing, since a test
+ * sets `code` by hand. The phrase is written by the same wrapper that sets the
+ * code, so it cannot drift away from it.
+ *
+ * Patterns are unanchored on purpose: the wrapper embeds the nested stack in
+ * the MIDDLE of its own sentence, the same hazard BENIGN_RENDERER_ERRORS
+ * documents for monaco.
+ */
+export function hasTransientNetworkCause(error: Error): boolean {
+  const errorCode = (error as NodeJS.ErrnoException).code;
+  const errorMessage = error.message ?? '';
+
+  const isFeedWrapper =
+    (errorCode !== undefined && FEED_WRAPPER_CODES.has(errorCode))
+    || FEED_WRAPPER_PHRASES.test(errorMessage);
+  if (!isFeedWrapper) return false;
+
+  return TRANSIENT_CAUSE_PATTERNS.some((pattern) => pattern.test(errorMessage));
+}
+
 /** @internal Exported for testing. */
 export async function checkWithRetry(): Promise<void> {
   try {
@@ -221,6 +282,19 @@ export function initUpdater(mainWindow: BrowserWindow): void {
       source: 'updater',
       message: sanitizeErrorMessage(error.message),
     });
+    // A feed failure that is transient underneath its structural wrapper is
+    // counted above but never filed as an issue: GitHub returned a 504 on a
+    // routine check and the next check succeeds, so there is nothing to ship.
+    //
+    // This line's POSITION is load-bearing. Above trackEvent it would delete a
+    // volume count that works today ("how often do update checks fail"), which
+    // is the same split the missing-CLI exclusion makes inside
+    // reportHandledError. Below the call it would do nothing at all.
+    if (hasTransientNetworkCause(error)) {
+      console.log('[UPDATER] Counting but not reporting a transient feed failure:',
+        error.message.slice(0, 80));
+      return;
+    }
     // Handled, so Sentry's global handlers never see it; forward the real
     // error so structural updater failures are diagnosable, not just counted.
     reportHandledError(error, { source: 'updater' });

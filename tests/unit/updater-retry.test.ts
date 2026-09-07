@@ -8,7 +8,13 @@
  *   - autoUpdater.on('error') handler branches:
  *       1. checkRetrying || downloadRetrying in-flight - no trackEvent, no reportHandledError
  *       2. isTransientUpdaterError - no trackEvent, no reportHandledError, console.log suppression message
- *       3. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
+ *       3. hasTransientNetworkCause - trackEvent YES, reportHandledError NO. The only branch
+ *          where the two split. A rewrapped feed failure (DESKTOP-F: GitHub 504 arriving as
+ *          ERR_UPDATER_INVALID_RELEASE_FEED) is un-actionable as an issue but still worth
+ *          counting, so its gate sits BETWEEN the two reporters. Moving that gate above
+ *          trackEvent would delete the volume signal; moving it below reportHandledError
+ *          would do nothing at all. Both regressions are pinned here.
+ *       4. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
  *          called, gated identically (reportHandledError sits after the same two early
  *          returns, so a regression that moves it above either guard would page Sentry
  *          for a transient or in-flight-retry error)
@@ -299,6 +305,52 @@ describe("autoUpdater.on('error') listener", () => {
     expect(mocks.reportHandledError).not.toHaveBeenCalled();
 
     consoleLogSpy.mockRestore();
+  });
+
+  it('counts a rewrapped transient feed failure but does NOT report it to Sentry', () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mocks.sanitizeErrorMessage.mockReturnValue('sanitized feed failure');
+
+    const errorListener = getRegisteredListener('error');
+    // DESKTOP-F's shape: a GitHub 504 that electron-updater's double rewrap has
+    // relabelled as a structural feed error, so isTransientUpdaterError misses it.
+    const wrapped = makeError(
+      'Cannot parse releases feed: Error: Unable to find latest version on GitHub'
+        + ' (https://github.com/Kangentic/kangentic/releases/latest),'
+        + ' please ensure a production release exists: HttpError: 504',
+      'ERR_UPDATER_INVALID_RELEASE_FEED',
+    );
+    errorListener(wrapped);
+
+    // The volume view survives: this is still "an update check failed".
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.trackEvent).toHaveBeenCalledWith('app_error', {
+      source: 'updater',
+      message: 'sanitized feed failure',
+    });
+    // But it never becomes an issue - there is nothing to ship a fix for.
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[UPDATER] Counting but not reporting a transient feed failure:'),
+      expect.any(String),
+    );
+
+    consoleLogSpy.mockRestore();
+  });
+
+  it('still reports a feed error with no transient cause (a real broken feed)', () => {
+    const errorListener = getRegisteredListener('error');
+    // Same wrapper code, but the nested text is a parse failure rather than a
+    // network blip. This is the case the new gate must NOT swallow.
+    const malformed = makeError(
+      'Cannot parse releases feed: Error: Unexpected token < in JSON at position 0',
+      'ERR_UPDATER_INVALID_RELEASE_FEED',
+    );
+    errorListener(malformed);
+
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(malformed, { source: 'updater' });
   });
 
   it('does NOT call trackEvent while checkRetrying is true (in-flight guard)', async () => {

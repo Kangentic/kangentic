@@ -27,7 +27,13 @@ A persisted token doubles as a build switch: `scripts/build.js` and `vite.config
 release sourcemap upload whenever `KANGENTIC_SENTRY_TOKEN` (or `SENTRY_AUTH_TOKEN`) is present
 at build time. A Windows User-level value survives into every later `npm run build`, so store
 the token that way only if local production builds attempting an upload is acceptable;
-otherwise set it per-session.
+otherwise set it per-session. A local build that uploads writes real artifact bundles to the
+`desktop` project under `Kangentic@<version>`, which is harmless (Sentry matches by debug id, so
+bundles from a build nobody shipped simply go unused) but is not nothing.
+
+Release builds run only on the CI matrix, so what actually decides whether a RELEASE gets symbols
+is the `KANGENTIC_SENTRY_TOKEN` repository secret, not any local value. The `preflight-symbols`
+job in `.github/workflows/release.yml` fails the release when that secret is missing.
 
 Scopes: reading issues/events needs `event:read` + `project:read` + `org:read` (a User Auth
 Token from Settings > Account > API > Auth Tokens; assigning and resolving issues additionally
