@@ -32,19 +32,25 @@
  * already-condemned parents to match Windows `taskkill /T` on POSIX - see that
  * file's header):
  *   - Self-skip: own PID and walked parent PIDs are never killed.
- *   - Orphan gate: a process whose parent is still alive is never killed (it is
- *     actively supervised - a live Playwright worker, the dogfooding `npm start`
- *     window, a `/preview` window). See `hasLiveParent`. The boot sweep
- *     (`reapWorktreeElectronZombies`) resolves liveness against the COMPLETE
- *     `scanLivePids` set (every process image), so a live app from a concurrent
- *     worktree whose supervising parent is a non-enumerated image is correctly
- *     spared (bug #258). The per-worktree Done-move reap
- *     (`findWorktreePathProcesses`) DELIBERATELY keeps the narrow electron/node
- *     liveness so it can still end a shell-parented pinner - see that function's
- *     header.
- *   - Path needle: only processes whose CommandLine references the matched path
- *     are candidates. The per-worktree needle carries a trailing separator so
- *     `worktrees/foo` never matches `worktrees/foo-bar`.
+ *   - Orphan gate: a process whose parent is still alive is never killed by
+ *     EITHER entry point (it is actively supervised - a live Playwright worker,
+ *     the dogfooding `npm start` window, a `/preview` window, a terminal the
+ *     user left in the directory). See `hasLiveParent`.
+ *     `reapWorktreeElectronZombies` resolves liveness against the COMPLETE
+ *     `scanLivePids` set (bug #258); `findWorktreePathProcesses` gets the same
+ *     completeness for free because it is fed `scanAllProcesses`, which is what
+ *     turned that gate from an accident of the filtered scan into a real
+ *     guarantee. Supervised holders are not ignored, only spared: they are named
+ *     by `findWorktreePathHolders` so the failure reads "Held by node.exe
+ *     (pid N)" instead of a silent retry.
+ *   - Path needle: only processes referencing the matched path are candidates.
+ *     The boot sweep matches CommandLine; the per-worktree reap also matches
+ *     ExecutablePath. A process referencing the worktree ONLY through its cwd is
+ *     invisible to both, because `Win32_Process` has no working-directory
+ *     property at all; that is what the session-end reap exists to cover. The
+ *     per-worktree needle carries a trailing separator so `worktrees/foo` never
+ *     matches `worktrees/foo-bar`, plus a boundary check so a command line
+ *     naming the worktree ROOT still matches (`commandLineReferencesPath`).
  *   - Defensive: any scan/walk failure aborts the reaper with an empty return
  *     (including an empty complete-liveness scan, which would otherwise read
  *     every process as orphaned), so a broken `Get-CimInstance` can never
@@ -56,6 +62,7 @@
  */
 
 import { spawn, type SpawnOptions } from 'node:child_process';
+import { isProcessAlive } from '../shared/process-liveness';
 
 export interface ZombieScanOptions {
   /** Filesystem root to match orphan paths against (worktrees + node_modules). */
@@ -74,6 +81,18 @@ export interface ProcessRow {
   pid: number;
   ppid: number;
   commandLine: string;
+  /**
+   * Absolute path of the process image, when the scan collected it. Only the
+   * UNFILTERED scan (`scanAllProcesses`) populates this; the image-filtered
+   * `scanProcesses` leaves it undefined, so a consumer must treat absence as
+   * "unknown", never as "not under the needle".
+   *
+   * It matters because a process launched by a bare name (`func.exe start
+   * --port 5003`) carries no path in its command line at all, and a binary
+   * living inside the worktree (`node_modules/.bin`, a `.venv`) is pinning the
+   * directory just as hard as one named in argv.
+   */
+  executablePath?: string;
 }
 
 /** Options for the per-worktree production reap. */
@@ -102,9 +121,23 @@ let cachedScan: { rows: ProcessRow[]; capturedAt: number } | null = null;
 const SCAN_CACHE_TTL_MS = 5_000;
 
 /**
+ * Same TTL cache for the UNFILTERED scan, kept separate from `cachedScan`
+ * because the two carry different row sets and different fields. Sharing one
+ * slot would let a filtered scan satisfy a request that needs every image, which
+ * is precisely the miss this module shipped with.
+ */
+let cachedAllScan: { rows: ProcessRow[]; capturedAt: number } | null = null;
+
+/**
  * Normalize a path for case-insensitive substring comparison on Windows
  * and forward-slash matching on every platform. Returns lowercase on
  * Windows, original case elsewhere.
+ *
+ * Case and separator only. It does not canonicalize, so a Windows path reported
+ * under an 8.3 short name (`C:/progra~1/...`) or carrying the `\\?\` long-path
+ * prefix will not match a needle spelled the long way, and such a holder is
+ * neither killed nor named. Both forms are rare in `Win32_Process` output; this
+ * is a known limit of matching by string rather than by resolved identity.
  */
 export function normalizePath(value: string): string {
   const slashed = value.replace(/\\/g, '/');
@@ -262,9 +295,102 @@ export async function scanProcessesCached(scanTimeoutMs: number): Promise<Proces
   return rows;
 }
 
-/** Test-only: clear the scan cache between cases. */
+/**
+ * Enumerate EVERY process image, with `ExecutablePath` alongside `CommandLine`.
+ *
+ * The filtered `scanProcesses` above lists only electron.exe and node.exe, which
+ * is why a leaked `func.exe` / `dotnet` / `python` dev server pinning a worktree
+ * was invisible to the reaper. This scan sees them.
+ *
+ * It is NOT a drop-in replacement for `scanProcesses`, and deliberately does not
+ * replace it: `findZombies` and the E2E leak janitor both depend on the filtered
+ * table (see `findWorktreePathProcesses`'s note on narrow liveness), and
+ * repointing them would silently change which processes they kill.
+ *
+ * Cost, measured on a 505-process Windows host: ~300ms of query and 171KB of
+ * JSON, on top of ~600ms of PowerShell startup. That is why only the removal
+ * FAILURE path uses it, where the removal has already failed and nothing the
+ * user is waiting on gets slower.
+ *
+ * Returns an empty array on any failure, like its filtered sibling.
+ */
+export async function scanAllProcesses(scanTimeoutMs: number): Promise<ProcessRow[]> {
+  if (process.platform === 'win32') {
+    return scanAllProcessesWindows(scanTimeoutMs);
+  }
+  // `ps -ax -o pid=,ppid=,command=` already lists every process on POSIX, so
+  // the filtered scan and this one are the same query there. `command=` is the
+  // full argv, which subsumes the executable path.
+  return scanProcessesUnix(scanTimeoutMs);
+}
+
+/** `scanAllProcesses` behind the same 5s TTL contract as `scanProcessesCached`. */
+export async function scanAllProcessesCached(scanTimeoutMs: number): Promise<ProcessRow[]> {
+  if (cachedAllScan && Date.now() - cachedAllScan.capturedAt < SCAN_CACHE_TTL_MS) {
+    return cachedAllScan.rows;
+  }
+  const rows = await _internals.scanAllProcesses(scanTimeoutMs);
+  if (rows.length > 0) {
+    cachedAllScan = { rows, capturedAt: Date.now() };
+  }
+  return rows;
+}
+
+async function scanAllProcessesWindows(scanTimeoutMs: number): Promise<ProcessRow[]> {
+  const psCommand =
+    'Get-CimInstance Win32_Process '
+    + '| Select-Object ProcessId,ParentProcessId,CommandLine,ExecutablePath '
+    + '| ConvertTo-Json -Compress';
+  const stdout = await runCommandWithTimeout(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-Command', psCommand],
+    { timeoutMs: scanTimeoutMs, windowsHide: true },
+  );
+  return parseProcessRowsFromJson(stdout);
+}
+
+/**
+ * Parse the Windows scan's JSON into rows. A single-row result arrives as one
+ * object rather than an array, which is why this normalizes before iterating.
+ * Rows missing `ProcessId` are dropped; every other field degrades to a default
+ * so one malformed entry cannot lose the whole scan.
+ *
+ * Exported for fixture testing on Linux CI, where PowerShell cannot run.
+ * Pure; never throws.
+ */
+export function parseProcessRowsFromJson(stdout: string): ProcessRow[] {
+  if (!stdout) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const result: ProcessRow[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const typedRow = row as {
+      ProcessId?: number;
+      ParentProcessId?: number;
+      CommandLine?: string | null;
+      ExecutablePath?: string | null;
+    };
+    if (typeof typedRow.ProcessId !== 'number') continue;
+    result.push({
+      pid: typedRow.ProcessId,
+      ppid: typeof typedRow.ParentProcessId === 'number' ? typedRow.ParentProcessId : 0,
+      commandLine: typeof typedRow.CommandLine === 'string' ? typedRow.CommandLine : '',
+      executablePath: typeof typedRow.ExecutablePath === 'string' ? typedRow.ExecutablePath : undefined,
+    });
+  }
+  return result;
+}
+
+/** Test-only: clear the scan caches between cases. */
 export function __resetScanCacheForTest(): void {
   cachedScan = null;
+  cachedAllScan = null;
 }
 
 async function scanProcessesWindows(scanTimeoutMs: number): Promise<ProcessRow[]> {
@@ -411,59 +537,224 @@ export function findZombies(
 }
 
 /**
- * Filter the process list to orphans pinning a SPECIFIC worktree directory.
- * A process matches when its CommandLine contains the normalized worktree path
- * (with a trailing separator so a prefix-sibling like `worktrees/foo-bar` never
- * matches `worktrees/foo`) AND it is genuinely orphaned (parent dead or init).
+ * Filter the process list to ORPHANED processes pinning a SPECIFIC worktree
+ * directory, by command line, executable path, or (POSIX only) current working
+ * directory. The needle carries a forced trailing separator so a prefix-sibling
+ * like `worktrees/foo-bar` never matches `worktrees/foo`.
  *
- * Unlike `findZombies` this does not require `/node_modules/electron/` in the
- * command line: an orphaned `node.exe` test runner pins the directory just as
- * hard, and on Windows the scan is already filtered to electron.exe/node.exe.
+ * ## The orphan gate, and why it now means what it says
  *
- * The orphan gate is the same cross-process-safety guarantee as `findZombies`:
- * a live parent means the process is actively supervised. Killing the orphaned
- * root with `taskkill /T` (Windows) or relying on Chromium parent-death exit
- * (POSIX) clears its gpu/utility children too.
+ * A live parent means the process is actively supervised, and killing it would
+ * be wrong: on this path the pinner can be something Kangentic never spawned -
+ * a terminal the user left `cd`'d into the worktree, an editor, a dev server
+ * they started by hand.
  *
- * Note the gate's reach is bounded by what the scan enumerates. On Windows the
- * scan lists only electron.exe/node.exe, so a LIVE but shell-parented pinner
- * (e.g. a `playwright`/`vitest` runner launched directly from pwsh, whose parent
- * pwsh.exe is not in the table) reads as an orphan and IS killed here. That is
- * intended at this call site: this runs only when a task is moved to Done, and a
- * Done move is meant to end every process the task left pinning its worktree.
- * It is NOT a general "kill anything supervised" path - it fires once, scoped to
- * one worktree path, behind the per-task lock.
+ * The gate used to be load-bearing in an invisible way. It was fed the
+ * IMAGE-FILTERED scan, so `livePids` held electron/node rows only and a
+ * shell-parented pinner read as an orphan and got killed anyway - the gate said
+ * "spare the supervised" while the incomplete input quietly made it kill them.
+ * Feeding it `scanAllProcesses` makes the liveness set complete, so the gate now
+ * does exactly what it claims.
+ *
+ * That is safe to rely on ONLY because the session-end reap
+ * (`src/main/pty/session-tree-reap.ts`) already kills what a session spawned,
+ * without a gate, from its own process tree. This path is the backstop for
+ * processes we did NOT spawn, so it can afford to be careful. If that reap is
+ * ever removed, revisit this gate rather than assuming it still covers the case.
+ *
+ * A supervised holder is not simply ignored: `findWorktreePathHolders` names it
+ * so the failure surfaces as "Held by node.exe (pid N)" instead of a silent
+ * retry.
+ *
  */
+/**
+ * The normalized worktree path with a forced trailing separator, the form both
+ * the killing path and the reporting path match against.
+ */
+function worktreeNeedleFor(worktreePath: string): string {
+  const needle = normalizePath(worktreePath);
+  return needle.endsWith('/') ? needle : `${needle}/`;
+}
+
+/**
+ * Does this row reference the worktree at `needleWithSlash`?
+ *
+ * The two references a scan can actually see. A third - the process's cwd - is
+ * what the motivating incident had, and no scan can see it on Windows:
+ * `Win32_Process` exposes CommandLine, ExecutablePath and ParentProcessId and
+ * nothing resembling a working directory. That gap is exactly why the
+ * session-end reap in `src/main/pty/session-tree-reap.ts` is the primary
+ * mechanism and the removal-failure scan is only the backstop.
+ *
+ * Shared by `findWorktreePathProcesses` (which kills) and
+ * `findWorktreePathHolders` (which names), so reporting can never see LESS than
+ * the reap would kill. A holder we would kill but could not name surfaces as an
+ * unexplained failure, and keeping the two matchers structurally identical is
+ * what rules that out - the invariant used to be restated in a comment on each
+ * function and maintained by hand.
+ */
+function rowReferencesWorktree(row: ProcessRow, needleWithSlash: string): boolean {
+  const commandLine = normalizePath(row.commandLine);
+  const executablePath = row.executablePath ? normalizePath(row.executablePath) : '';
+  return (commandLine !== '' && commandLineReferencesPath(commandLine, needleWithSlash))
+    || (executablePath !== '' && executablePath.startsWith(needleWithSlash));
+}
+
 export function findWorktreePathProcesses(
   rows: ProcessRow[],
   worktreePath: string,
   skipPids: Set<number>,
 ): ReapedProcess[] {
-  let needle = normalizePath(worktreePath);
-  if (!needle.endsWith('/')) needle = `${needle}/`;
-  // Deliberate narrow liveness (NOT the complete `scanLivePids` set that
-  // `findZombies` takes): this per-worktree Done-move reap is meant to end even a
-  // shell-parented pinner whose parent image the filtered scan never enumerates.
-  // See this function's header and the module header (bug #258).
+  const needle = worktreeNeedleFor(worktreePath);
+  // Complete, because `reapProcessesForWorktree` feeds this the UNFILTERED scan.
+  // See the header: that completeness is what turns the gate below from an
+  // accident into a real guarantee.
   const livePids = new Set(rows.map((row) => row.pid));
 
   const reaped: ReapedProcess[] = [];
   for (const row of rows) {
     if (skipPids.has(row.pid)) continue;
-    const haystack = normalizePath(row.commandLine);
-    if (!haystack) continue;
 
+    // Supervised: someone owns this process. Name it, do not kill it.
     if (hasLiveParent(row, livePids)) continue;
 
-    if (haystack.includes(needle)) {
-      reaped.push({
-        pid: row.pid,
-        commandLine: row.commandLine,
-        reason: 'worktree-path-orphan',
-      });
-    }
+    if (!rowReferencesWorktree(row, needle)) continue;
+
+    reaped.push({
+      pid: row.pid,
+      commandLine: row.commandLine,
+      reason: 'worktree-path-orphan',
+    });
   }
   return reaped;
+}
+
+
+/**
+ * Does a normalized command line reference the worktree at `needleWithSlash`
+ * (a normalized worktree path carrying a forced trailing separator)?
+ *
+ * Testing the trailing-separator form ALONE misses a command line that names the
+ * worktree ROOT exactly - `node <worktree>`, `code <worktree>`, `--cwd
+ * <worktree>` - which is exactly the supervised-holder shape the holder scan
+ * exists to name. Measured in a preview: a live `node.exe` holding worktree 3
+ * was reported as `holders=none` purely because its path argument had no
+ * trailing slash.
+ *
+ * The separator still does its original job of rejecting a prefix sibling
+ * (`worktrees/foo` must never match `worktrees/foo-bar`), so the bare-root form
+ * is accepted only where a real boundary follows: end of string, whitespace, or
+ * a closing quote.
+ */
+export function commandLineReferencesPath(haystack: string, needleWithSlash: string): boolean {
+  if (haystack.includes(needleWithSlash)) return true;
+  const root = needleWithSlash.slice(0, -1);
+  for (let from = 0; ; from += 1) {
+    const at = haystack.indexOf(root, from);
+    if (at === -1) return false;
+    const next = haystack[at + root.length];
+    if (next === undefined || next === ' ' || next === '\t' || next === '"' || next === "'") {
+      return true;
+    }
+    from = at;
+  }
+}
+
+/**
+ * A process pinning a worktree path. Reported, never killed: this is the
+ * diagnostic half of the reaper.
+ */
+export interface WorktreeHolder {
+  pid: number;
+  /** Best-effort image name derived from the command line's first token. */
+  image: string;
+  commandLine: string;
+}
+
+/**
+ * Best-effort image name from a command line: the basename of the first token,
+ * quoted or not. Returns '' when the command line is empty, which happens for
+ * processes the scan cannot read.
+ */
+export function processImageName(commandLine: string): string {
+  const trimmed = commandLine.trim();
+  if (!trimmed) return '';
+  let executable: string;
+  if (trimmed.startsWith('"')) {
+    const closingQuote = trimmed.indexOf('"', 1);
+    executable = closingQuote === -1 ? trimmed.slice(1) : trimmed.slice(1, closingQuote);
+  } else {
+    executable = trimmed.split(/\s+/)[0] ?? '';
+  }
+  const separator = Math.max(executable.lastIndexOf('/'), executable.lastIndexOf('\\'));
+  return separator === -1 ? executable : executable.slice(separator + 1);
+}
+
+/** Short label for a user-facing message: `node.exe (pid 12345)`. */
+export function describeHolder(holder: WorktreeHolder): string {
+  return holder.image ? `${holder.image} (pid ${holder.pid})` : `pid ${holder.pid}`;
+}
+
+/**
+ * Processes referencing `worktreePath`, for REPORTING only. Nothing here kills.
+ *
+ * It shares the needle and the self-skip set with `findWorktreePathProcesses`
+ * but DELIBERATELY omits the `hasLiveParent` orphan gate, and that omission is
+ * the entire reason this function exists. The gate is a kill-safety rule: a live
+ * parent means the process is actively supervised, so ending it would be wrong.
+ * Naming it is not wrong, and the holder we most want to name is precisely the
+ * supervised one - in the incident this was written for, the directory was
+ * pinned by a live dev server the user had started, so the orphan-gated finder
+ * named nothing and the create hung with no explanation.
+ *
+ * One limit worth knowing before trusting an empty result: `Win32_Process`
+ * exposes no working-directory property, so a holder that references the
+ * worktree ONLY through its cwd cannot be seen. An empty list means "no holder
+ * we can see", not "no holder". It is no longer limited by image, though: the
+ * caller feeds it the unfiltered scan, so a `pwsh.exe` or an editor pinning the
+ * directory is named like anything else.
+ */
+export function findWorktreePathHolders(
+  rows: ProcessRow[],
+  worktreePath: string,
+  skipPids: Set<number>,
+): WorktreeHolder[] {
+  const needle = worktreeNeedleFor(worktreePath);
+
+  const holders: WorktreeHolder[] = [];
+  for (const row of rows) {
+    if (skipPids.has(row.pid)) continue;
+    // Deliberately the SAME matcher the killing path runs, not a copy of it.
+    if (!rowReferencesWorktree(row, needle)) continue;
+    holders.push({
+      pid: row.pid,
+      image: processImageName(row.commandLine),
+      commandLine: row.commandLine,
+    });
+  }
+  return holders;
+}
+
+/**
+ * Name the processes holding `worktreePath`. Reuses `scanAllProcessesCached`, so
+ * when this runs right after the reap on the same removal it costs nothing: the
+ * 5s TTL still holds that scan. Never throws; an empty list is the degraded
+ * answer.
+ */
+export async function describeWorktreeHolders(
+  worktreePath: string,
+  scanTimeoutMs?: number,
+): Promise<WorktreeHolder[]> {
+  const timeoutMs = scanTimeoutMs ?? DEFAULT_WORKTREE_SCAN_TIMEOUT_MS;
+  try {
+    const rows = await _internals.scanAllProcessesCached(timeoutMs);
+    if (rows.length === 0) return [];
+    const skipPids = _internals.buildSelfSkipSet(rows, process.pid);
+    return _internals.findWorktreePathHolders(rows, worktreePath, skipPids);
+  } catch (error) {
+    console.warn('[REAPER] holder scan failed:', error);
+    return [];
+  }
 }
 
 /**
@@ -481,7 +772,15 @@ export async function killProcess(pid: number): Promise<void> {
         { timeoutMs: 2000, windowsHide: true },
       );
     } catch (error) {
-      console.warn(`[REAPER] taskkill failed for pid=${pid}:`, error);
+      // A pid that exited between selection and kill is the EXPECTED case, not a
+      // failure: `/T` on a parent already took the subtree, and taskkill then
+      // exits 128 ("process not found") for each child we also targeted. Warning
+      // on that filled the log with noise on every successful reap. Only report
+      // a kill that failed against a process still standing (access denied, a
+      // protected process).
+      if (isProcessAlive(pid)) {
+        console.warn(`[REAPER] taskkill failed for pid=${pid}:`, error);
+      }
     }
     return;
   }
@@ -577,7 +876,10 @@ export async function reapProcessesForWorktree(
   const scanTimeoutMs = options.scanTimeoutMs ?? DEFAULT_WORKTREE_SCAN_TIMEOUT_MS;
   let rows: ProcessRow[];
   try {
-    rows = await _internals.scanProcessesCached(scanTimeoutMs);
+    // The UNFILTERED scan: a pinning dev server is rarely node or electron. This
+    // path only runs after a removal has already failed, so its extra ~300ms is
+    // not on anything a user is waiting for.
+    rows = await _internals.scanAllProcessesCached(scanTimeoutMs);
   } catch (error) {
     console.warn('[REAPER] worktree scan failed:', error);
     return [];
@@ -592,7 +894,11 @@ export async function reapProcessesForWorktree(
     return [];
   }
 
-  const candidates = _internals.findWorktreePathProcesses(rows, options.worktreePath, skipPids);
+  const candidates = _internals.findWorktreePathProcesses(
+    rows,
+    options.worktreePath,
+    skipPids,
+  );
   if (candidates.length === 0) return [];
 
   const killed: ReapedProcess[] = [];
@@ -616,11 +922,14 @@ export async function reapProcessesForWorktree(
 
 export const _internals = {
   scanProcesses,
+  scanAllProcesses,
   scanLivePids,
   scanProcessesCached,
+  scanAllProcessesCached,
   buildSelfSkipSet,
   findZombies,
   findWorktreePathProcesses,
+  findWorktreePathHolders,
   killProcess,
 };
 

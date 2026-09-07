@@ -13,8 +13,10 @@ import {
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
   createTransitionEngine,
+  captureSessionLeftovers,
   cleanupTaskResources,
   deleteTaskWorktree,
+  reapSessionLeftovers,
   spawnAgent,
 } from '../helpers';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
@@ -411,6 +413,12 @@ export async function handleTaskMove(
       // --- Priority 2: TARGET IS DONE → suspend + archive (resumable on unarchive) ---
       if (toLane?.role === 'done') {
         context.terminalSubmitScheduler.cancel(task.id);
+        // Taken before the suspend below: suspending kills the PTY, which
+        // orphans whatever the agent backgrounded inside the worktree. On POSIX
+        // those children reparent to init immediately, so the tree cannot be
+        // walked afterwards. Reading it costs nothing - see
+        // captureSessionLeftovers.
+        const leftovers = captureSessionLeftovers(context, task.session_id);
         if (task.session_id) {
           const record = sessionRepo.getLatestForTask(task.id);
           // Accept 'running' AND 'exited' -- exited covers Claude natural exit.
@@ -450,6 +458,13 @@ export async function handleTaskMove(
             console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
           }
         }
+        // Kill what the session left running in the worktree before anything
+        // tries to delete it. A backgrounded dev server holds the directory as
+        // its cwd, which on Windows makes the removal below fail and leaves a
+        // husk with no git admin entry - the failure that later hangs a fresh
+        // worktree creation. Must precede deleteTaskWorktree.
+        await reapSessionLeftovers(task.id, leftovers);
+
         // Capture git churn (fire-and-forget, best-effort). In the PR flow the
         // branch is usually already merged by the time a task reaches Done, so
         // this mostly just re-confirms whatever an earlier suspend/move already
@@ -990,7 +1005,15 @@ export async function handleTaskMove(
                 // candidates AND the prune / removeBranch below, leaving exactly
                 // the stale state this block exists to clear.
                 try {
-                  await worktreeManager.removeWorktree(expectedPath);
+                  // `moderate`, not the default `thorough`. Creation just failed
+                  // on this same path, so a second full-budget grind re-proves
+                  // what we already know while the user waits and the git queue
+                  // stays held: measured, the two thorough passes put the
+                  // failure toast ~62s out instead of ~34s. This block is
+                  // explicitly best-effort ("will retry on next attempt"), and a
+                  // still-pinned path is picked up by the husk-reuse and
+                  // startup-retry net either way.
+                  await worktreeManager.removeWorktree(expectedPath, { removalProfile: 'moderate' });
                 } catch (removalError) {
                   console.warn(`[TASK_MOVE] Skipped stale worktree candidate ${expectedPath}:`, removalError);
                   continue;

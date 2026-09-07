@@ -36,6 +36,33 @@ export interface ProcessInfo {
   comm: string;
 }
 
+/**
+ * A session's descendant PIDs as of one enumerating watcher cycle.
+ *
+ * Exists so a session teardown can kill what the session left running WITHOUT
+ * enumerating processes itself. Measured on a 505-process Windows host, a cold
+ * `powershell -NoProfile` spawn costs ~670ms even for a pid/ppid/name-only
+ * projection - the cost is process startup, not the query - and a teardown runs
+ * on the drag-to-Done path, which the board's jitter budget cannot absorb. The
+ * watcher already walks this exact subtree every enumerating cycle and discards
+ * all but a count, so publishing it here is one array assignment and the
+ * teardown reads it for free.
+ *
+ * `capturedAt` is what makes it safe to act on: PIDs are recycled aggressively
+ * on Windows, so a consumer must reject a stale snapshot rather than kill a pid
+ * that has since been reassigned. The watcher's skip cycles also prune dead pids
+ * out of the set as they exit, so a recycled pid is never inherited by an entry
+ * that was left standing while dead.
+ */
+export interface CapturedSessionTree {
+  /** The session's PTY pid, i.e. the shell the agent CLI runs under. */
+  rootPid: number;
+  /** Every descendant pid observed, at any depth. */
+  pids: number[];
+  /** `Date.now()` of the cycle that observed them. */
+  capturedAt: number;
+}
+
 export interface ProcessTreeProbe {
   /** Returns true if the PID is alive (or exists but we can't signal it). */
   isAlive(pid: number): boolean;

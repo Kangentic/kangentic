@@ -167,7 +167,13 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 }));
 
 import fs from 'node:fs';
-import { WorktreeManager, GitQueuePriority, setWorktreeRemovedListener } from '../../src/main/git/worktree-manager';
+import {
+  WorktreeManager,
+  GitQueuePriority,
+  setWorktreeRemovedListener,
+  type WorktreeRemovalOutcome,
+} from '../../src/main/git/worktree-manager';
+import type { WorktreeHolder } from '../../src/main/git/zombie-reaper';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 import { linkNodeModules } from '../../src/main/git/node-modules-link';
@@ -1043,12 +1049,19 @@ describe('WorktreeManager -- stale branch recovery', () => {
    * not the public removeWorktree wrapper, deliberately: the wrapper fires the
    * worktree-removed listener, and this path is about to recreate a worktree at
    * that same location. Stub the method that actually performs the removal.
+   *
+   * `holders` is what the removal could see pinning the path; an empty list is
+   * the degraded case (no holder the process scan enumerates) and keeps the
+   * generic guidance in the error message.
    */
-  const stubHuskRemovalFailure = (manager: WorktreeManager): void => {
+  const stubHuskRemovalFailure = (
+    manager: WorktreeManager,
+    holders: WorktreeHolder[] = [],
+  ): void => {
     vi.spyOn(
-      manager as unknown as { removeWorktreeInternal: () => Promise<boolean> },
+      manager as unknown as { removeWorktreeInternal: () => Promise<WorktreeRemovalOutcome> },
       'removeWorktreeInternal',
-    ).mockResolvedValue(false);
+    ).mockResolvedValue({ removed: false, timedOut: false, holders });
   };
 
   it('createWorktree reuses auto-generated branch that already exists', async () => {
@@ -1192,6 +1205,54 @@ describe('WorktreeManager -- stale branch recovery', () => {
     expect(worktreeFolderFromPath(worktreeAddArgs[worktreeIndex + 3])).toBe('7');
     expect(worktreeAddArgs[worktreeIndex + 4]).toBe('test-task-abcd1234');
     expect(worktreeAddArgs).not.toContain('-b');
+  });
+
+  it('still reuses an empty husk when the removal hit its budget rather than a hard error', async () => {
+    // The wall-clock timeout must NOT short-circuit the husk branch. An
+    // emptied-but-pinned directory is still reusable, and failing it would turn
+    // the Windows pinned-CWD case into an error the user cannot clear. The
+    // directory listing decides, exactly as it did before the budget existed.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+    vi.mocked(fs.readdirSync).mockReturnValue([] as unknown as ReturnType<typeof fs.readdirSync>);
+    mockProjectGit.raw.mockResolvedValue('');
+
+    const mgr = new WorktreeManager('/project');
+    vi.spyOn(
+      mgr as unknown as { removeWorktreeInternal: () => Promise<WorktreeRemovalOutcome> },
+      'removeWorktreeInternal',
+    ).mockResolvedValue({ removed: false, timedOut: true, holders: [] });
+
+    const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(result.branchName).toBe('test-task-abcd1234');
+    const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
+      (call: string[][]) => call[0]?.includes('worktree') && call[0]?.includes('add'),
+    );
+    expect(worktreeAddCall![0]).toContain('--force');
+  });
+
+  it('names the holding process in the error when the scan found one', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+    vi.mocked(fs.readdirSync).mockReturnValue(['somefile'] as unknown as ReturnType<typeof fs.readdirSync>);
+    mockProjectGit.raw.mockResolvedValue('');
+
+    const mgr = new WorktreeManager('/project');
+    stubHuskRemovalFailure(mgr, [
+      { pid: 12345, image: 'node.exe', commandLine: 'node.exe scripts/dev.js' },
+    ]);
+
+    const error = await mgr
+      .createWorktree(worktreeTask('abcd1234-0000', 'Test task'))
+      .catch((thrown: unknown) => thrown as Error);
+
+    expect(error.message).toContain('Held by node.exe (pid 12345)');
+    // The named holder REPLACES the guess rather than following it.
+    expect(error.message).not.toContain('A process is likely holding files in it');
+    // Load-bearing prefix: describeSpawnFailure suppresses its own "Worktree
+    // setup failed" prefix for a message that already starts this way.
+    expect(error.message.startsWith('Cannot create worktree:')).toBe(true);
   });
 
   it('throws an actionable error when a non-empty stale directory cannot be removed', async () => {
@@ -1903,6 +1964,40 @@ describe('WorktreeManager - queue observability', () => {
       (call) => String(call[0]).includes('still running'),
     ).length;
     expect(after).toBe(before);
+  });
+
+  it('escalates the heartbeat to warn once a holder passes the slow threshold', async () => {
+    // A `log` line is dropped entirely on a production build, so a wedged queue
+    // used to leave nothing at all in an error-level log tail. Past 60s the
+    // same line moves to `warn`, which always persists.
+    vi.useFakeTimers();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    WorktreeManager.clearQueue('/obs-slow');
+    let release: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+
+    const job = WorktreeManager.withGitLock(
+      '/obs-slow',
+      async () => { await blocked; },
+      { label: 'create-worktree:abcd1234' },
+    );
+
+    const stillRunning = (call: unknown[]): boolean =>
+      String(call[0]).includes('create-worktree:abcd1234 still running');
+
+    // 45s: three heartbeats, all below the threshold and still at log level.
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(logSpy.mock.calls.filter(stillRunning)).toHaveLength(3);
+    expect(warnSpy.mock.calls.filter(stillRunning)).toHaveLength(0);
+
+    // 60s: the fourth heartbeat crosses the threshold.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(logSpy.mock.calls.filter(stillRunning)).toHaveLength(3);
+    expect(warnSpy.mock.calls.filter(stillRunning)).toHaveLength(1);
+
+    release!();
+    await job;
   });
 
   it('re-emits onWaitProgress every 5s while parked and stops once the job runs', async () => {

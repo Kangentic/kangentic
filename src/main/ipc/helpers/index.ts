@@ -15,6 +15,12 @@ export {
 export type { SpawnFailureStep } from './task-git';
 export { createTransitionEngine, spawnAgent, autoSpawnForTask, resolveSpawnOverrides } from './agent-spawn';
 export type { AgentSpawnOptions } from './agent-spawn';
-export { cleanupTaskSession, cleanupTaskResources, deleteTaskWorktree } from './task-cleanup';
+export {
+  captureSessionLeftovers,
+  cleanupTaskSession,
+  cleanupTaskResources,
+  deleteTaskWorktree,
+  reapSessionLeftovers,
+} from './task-cleanup';
 export { openAttachmentFile, OPEN_PATH_TIMEOUT_MS } from './attachment-open';
 export type { OpenableAttachment, OpenAttachmentOptions } from './attachment-open';

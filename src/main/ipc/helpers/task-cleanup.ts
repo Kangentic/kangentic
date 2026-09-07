@@ -6,7 +6,53 @@ import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '..
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
+import { reapCapturedTree } from '../../pty/session-tree-reap';
+import type { CapturedSessionTree } from '../../activity-engine/background-shell/process-tree';
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * Snapshot what a task's session currently has running under its PTY.
+ *
+ * MUST be called before the session is killed or suspended. The bg-shell watcher
+ * stops publishing the moment the session ends, and on POSIX the children are
+ * reparented to init immediately, so after the kill there is no tree left to
+ * walk. Free: it reads a snapshot the watcher already took, and deliberately
+ * does not enumerate (a scan here would cost ~670ms of PowerShell startup on the
+ * drag-to-Done path). See `src/main/pty/session-tree-reap.ts`.
+ */
+export function captureSessionLeftovers(
+  context: IpcContext,
+  sessionId: string | null,
+): CapturedSessionTree | null {
+  if (!sessionId) return null;
+  try {
+    return context.sessionManager.getCapturedSessionTree(sessionId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Kill what the session left running in the worktree: the orphaned descendants
+ * captured by `captureSessionLeftovers` before the kill.
+ *
+ * Must complete BEFORE worktree removal. A live process holding the directory as
+ * its cwd is exactly what makes the removal fail on Windows, leaving a husk with
+ * no git admin entry.
+ *
+ * Best-effort by contract: a teardown never fails because a reap did.
+ */
+export async function reapSessionLeftovers(
+  taskId: string,
+  captured: CapturedSessionTree | null,
+): Promise<void> {
+  if (!captured) return;
+  try {
+    await reapCapturedTree(captured);
+  } catch (error) {
+    console.warn(`[SESSION-REAP] Leftover reap failed for task ${taskId.slice(0, 8)} (non-fatal):`, error);
+  }
+}
 
 /**
  * Let every adapter drop the per-directory state it recorded for a worktree
@@ -49,6 +95,9 @@ export async function cleanupTaskSession(
   // Kill active PTY session and wait for process exit before proceeding.
   // The PTY process holds CWD + conpty handles on the worktree directory;
   // awaiting exit ensures those handles are released before cleanup.
+  // Taken before the kill: killing the PTY orphans its descendants, and on
+  // POSIX they are reparented to init at once, so the tree is unwalkable after.
+  const leftovers = captureSessionLeftovers(context, task.session_id);
   if (task.session_id) {
     try {
       // kill() always tags the exit intentional, so this deliberate hard
@@ -64,6 +113,10 @@ export async function cleanupTaskSession(
       tasks.update({ id: task.id, session_id: null });
     }
   }
+
+  // A dev server the agent backgrounded outlives the PTY and holds the worktree
+  // directory as its cwd, which is what makes the removal below fail.
+  await reapSessionLeftovers(task.id, leftovers);
 
   // Safety net: kill any PTY session for this task that was spawned by a
   // concurrent move but not yet written to the task's session_id field.
