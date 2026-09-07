@@ -93,10 +93,19 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
     expect(command).toContain(EXPECTED_FRAGMENT);
   });
 
-  it('CodexCommandBuilder flattens multiline prompts for PowerShell CMD shims', () => {
+  it('CodexCommandBuilder keeps the prompt multiline under PowerShell, since the chokepoint owns the .cmd decision', () => {
+    // The narrow form of the #353 fix flattened here, in the builder, whenever
+    // the head was a .cmd and the shell was PowerShell. That moved to
+    // resolveShimLaunch (src/main/agent/shared/shim-launch.ts), which runs at
+    // every spawn chokepoint and either swaps in the sibling shim that carries
+    // newlines or flattens the prompt before any builder sees it. So the head
+    // a builder receives is already safe for the shell, and every adapter can
+    // keep one unconditional multiline contract instead of fourteen copies of
+    // a Windows packaging rule. Delivery through a REAL .cmd shim is pinned by
+    // tests/unit/windows-cmd-shim-multiline-prompt.test.ts.
     const builder = new CodexCommandBuilder();
     const command = builder.buildCodexCommand({
-      codexPath: 'C:/Users/dev/AppData/Roaming/npm/codex.CMD',
+      codexPath: 'C:/Users/dev/AppData/Roaming/npm/codex.ps1',
       taskId: 'task-1',
       cwd: 'C:/project',
       permissionMode: 'default',
@@ -104,9 +113,10 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
       prompt: MULTILINE_XML,
     });
 
+    // PowerShell's own escape for a newline, which its parser expands back
+    // before the child sees the argument.
+    expect(command).toContain('`n');
     expect(command).not.toContain('\n');
-    expect(command).not.toContain('`n');
-    expect(command).toContain('"<task> <title>Fix login</title> <description> Step 1. Step 2. </description> </task>"');
   });
 
   it('AiderAdapter.buildCommand preserves newlines in prompt under bash', () => {

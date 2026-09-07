@@ -1,4 +1,4 @@
-import { toForwardSlash, quoteArg, isUnixLikeShell, sanitizeForPty } from '../../../../shared/paths';
+import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { buildHooks } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
@@ -141,19 +141,6 @@ function buildMcpConfigArgs(options: CodexCommandOptions): string[] {
   ];
 }
 
-/**
- * PowerShell expands `n before it hands an argument to an npm .CMD shim. The
- * shim then invokes cmd.exe, which treats the resulting physical newlines as
- * command boundaries instead of forwarding the full positional prompt.
- */
-function usesPowerShellCmdShim(codexPath: string, shell?: string): boolean {
-  const lowerShell = shell?.toLowerCase() ?? '';
-  return (
-    (lowerShell.includes('powershell') || lowerShell.includes('pwsh'))
-    && /\.cmd$/i.test(codexPath.trim())
-  );
-}
-
 export class CodexCommandBuilder {
   buildCodexCommand(options: CodexCommandOptions): string {
     const { shell } = options;
@@ -213,17 +200,19 @@ export class CodexCommandBuilder {
     // resumed conversation already contains it, and re-sending would re-ask
     // the task prompt on every resume.
     if (!isResume && options.prompt) {
-      const preservePromptNewlines = !usesPowerShellCmdShim(options.codexPath, shell);
-      const prompt = preservePromptNewlines
-        ? options.prompt
-        : sanitizeForPty(options.prompt);
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
         : process.platform === 'win32';
       const safePrompt = needsDoubleQuoteReplacement
-        ? prompt.replace(/"/g, "'")
-        : prompt;
-      parts.push(quoteArg(safePrompt, shell, { multiline: preservePromptNewlines }));
+        ? options.prompt.replace(/"/g, "'")
+        : options.prompt;
+      // Unconditionally multiline. A `.cmd` head would truncate this at the
+      // first newline (#353), but by here `codexPath` has already been through
+      // resolveShimLaunch at the spawn chokepoint, which either swapped in the
+      // sibling shim that carries newlines or flattened the prompt itself. The
+      // decision is shell and packaging knowledge, not Codex knowledge, so it
+      // stays out of this builder and out of the other thirteen.
+      parts.push(quoteArg(safePrompt, shell, { multiline: true }));
     }
 
     return parts.join(' ');
