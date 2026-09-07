@@ -66,6 +66,17 @@ lists neither `.ps1` nor an empty extension), and running a `.cmd` routes throug
 command line ends at the first newline: the agent received `<task>` and nothing else (#353).
 Measured on Windows PowerShell 5.1, pwsh 7.6, and Git Bash; no encoding survives cmd.exe.
 
+Detection reads the same shims. `which` checks that a shim file exists, never that its target
+does, and on Windows it searches the working directory before `PATH`, so a `gemini.cmd` left in a
+project root by an uninstalled local package used to shadow the real `%APPDATA%\npm\gemini.cmd`
+and report the agent missing. `AgentDetector` now enumerates every match and probes them in
+order, spending at most four version probes per name. A `.cmd` / `.bat` / `.ps1` shim whose
+`node_modules/...` target no longer exists is skipped without a spawn
+(`src/main/agent/shared/npm-shim-target.ts`) and costs nothing against that budget, so a run of
+dead shims cannot push the real install out of it. npm's third shim file is extensionless and is
+what `which` returns on macOS and Linux, so there the skip does not apply and a dead shim costs
+one probe before the search moves on.
+
 `resolveShimLaunch` (`src/main/agent/shared/shim-launch.ts`) runs at every spawn chokepoint after
 `ensureTrust` and before `buildCommand` (see `.claude/rules/spawn-entry-point-parity.md`). On
 Windows with a `.cmd` or `.bat` head it launches the sibling shim native to the host shell

@@ -36,6 +36,19 @@ export interface BoardChangedEvent {
  * so the ipc-7-layer-parity rule does not apply here.
  */
 export class BoardEventBus extends EventEmitter {
+  constructor() {
+    super();
+    // One Agent Monitor listener lives for the app's lifetime, and every
+    // paired phone adds one read-board subscription per project it streams
+    // (its agent feed draws across all of them). That is 1 + devices x
+    // projects, which legitimately crosses Node's default max of 10 on any
+    // machine with a phone and more than nine projects, so raise the cap to
+    // keep a normal fan-out from tripping a spurious
+    // MaxListenersExceededWarning (a genuine leak still shows as an
+    // unbounded climb well past this).
+    this.setMaxListeners(100);
+  }
+
   emitBoardChanged(event: BoardChangedEvent): void {
     this.emit('board-changed', event);
   }
