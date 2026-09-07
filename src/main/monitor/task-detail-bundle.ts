@@ -60,7 +60,10 @@ export function buildTaskDetailBundle(
       labelColors: effectiveConfig.backlog?.labelColors ?? {},
       defaultBaseBranch: boardDefaultBranch || effectiveConfig.git.defaultBaseBranch,
       worktreesEnabled: effectiveConfig.git.worktreesEnabled,
-      agentExecution: effectiveConfig.agent.execution ?? {},
+      // Optional-chained like `backlog` and `browser` above: absent means no
+      // agent is configured for remote execution, which is the common case and
+      // the safe default (the branch hint then reads every agent as local).
+      agentExecution: effectiveConfig.agent?.execution ?? {},
       browserEnabled: effectiveConfig.browser?.enabled !== false,
     },
   };
