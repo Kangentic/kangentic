@@ -1537,7 +1537,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
             data-testid="board-manager-save"
             className="px-6 py-1.5 min-w-[96px] text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
           >
-            {saving ? 'Saving...' : 'Save'}
+            {/* Disables rather than relabels while saving, like every other
+                dialog footer: a control must not change shape when pressed. */}
+            Save
           </button>
         </div>
       }

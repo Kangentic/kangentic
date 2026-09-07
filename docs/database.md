@@ -139,6 +139,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | session_id | TEXT | | NULL |
 | worktree_path | TEXT | | NULL |
 | worktree_folder | TEXT | | NULL |
+| worktree_skip_reason | TEXT | | NULL |
 | branch_name | TEXT | | NULL |
 | pr_number | INTEGER | | NULL |
 | pr_url | TEXT | | NULL |
@@ -175,6 +176,18 @@ Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_di
 `worktree_path` is non-null, `basename(worktree_path)` equals it. See
 [Worktree Strategy](worktree-strategy.md#worktree-directory-naming) for why the name has to be
 stored rather than recomputed.
+
+`worktree_skip_reason` records WHY the task's last spawn ran without a worktree, i.e. in the shared
+project checkout: one of `'disabled' | 'not-a-repo' | 'nested-worktree' | 'no-commits' |
+'remote-agent' | 'worktree-missing'` (the `WorktreeSkipReason` union), or NULL while the task has a
+worktree or no spawn has decided yet. Written only by `TaskRepository.setWorktreeSkipReason` (spawn
+telemetry, so no `updated_at` bump) and cleared by `recordWorktree`, a To Do reset, and a Done move;
+the generic `update()` never touches it. It is the ground truth for any surface that wants to say
+"running in the checkout the app runs from" rather than infer it from a null `worktree_path`, but
+today it is recorded and exposed with no renderer reader: the 12px card glyph that drew it was
+reviewed out as too small to tell apart. The task card's marker and the detail header's "Project
+folder" chip still read `worktree_path`.
+See [Worktree Strategy](worktree-strategy.md#when-a-worktree-is-not-created).
 
 `profile_id` names a Board Profile - a team-shared, named alternate set of per-column strategy
 settings the task rides as it moves (see [Configuration > Board Profiles](configuration.md#board-profiles)).
@@ -625,6 +638,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 
 56. **`auto_command_mode` column on swimlanes** - adds `auto_command_mode TEXT NOT NULL DEFAULT 'immediate'`, declaring WHEN a column's `auto_command` fires: `'immediate'` (inject on arrival, interrupting the agent's current turn if there is one) or `'deferred'` (hold until that turn genuinely finishes, judged by activity `idle` AND a quiet PTY - see [Command Injection](command-injection.md)). No backfill is needed: `'immediate'` is exactly the behavior every existing column already had. Team-shared, so it round-trips through `kangentic.json` as `autoCommandMode` alongside `autoCommand`. Idempotent guarded `ALTER TABLE`.
 57. **auto_command outcome columns on tasks** - adds `auto_command_state`, `auto_command_text`, `auto_command_error`, and `auto_command_at` (all `TEXT DEFAULT NULL`), recording what happened to the task's most recent auto_command injection so a failure is observable instead of a console warning nobody sees. `auto_command_state` is one of `'confirmed' | 'unconfirmed' | 'escalated' | 'failed' | 'cancelled'`; `auto_command_at` is UTC ISO 8601. `'unconfirmed'` is NOT a failure - only Claude implements a `command-injection` verifier, so on every other agent a delivery can only ever land there, and conflating the two would make the field meaningless off Claude. Written by `reportAutoCommandOutcome` outside the normal `update()` path so engine telemetry never bumps `updated_at`. Four idempotent guarded `ALTER TABLE`s.
+58. **`worktree_skip_reason` column on tasks** - adds `worktree_skip_reason TEXT DEFAULT NULL`, recording why a task's last spawn ran WITHOUT a worktree (the `WorktreeSkipReason` union: `'disabled' | 'not-a-repo' | 'nested-worktree' | 'no-commits' | 'remote-agent' | 'worktree-missing'`). `WorktreeManager.ensureWorktree` used to collapse every guard into one silent `null`, so nothing could tell the user their agent was running in the shared project checkout - the tree the app itself runs from; it now returns a `WorktreeSkipped` naming the reason, and `ensureTaskWorktree` / the `create_worktree` action / startup recovery persist it. Recorded and exposed but not yet read by any renderer surface: the 12px card glyph that drew it was reviewed out as too small to tell apart, so the card marker and the detail header's "Project folder" chip still read `worktree_path`. Written by `TaskRepository.setWorktreeSkipReason` outside the normal `update()` path (no `updated_at` bump), cleared inside `recordWorktree`'s transaction and on a To Do reset or Done move. No backfill: NULL correctly means "never evaluated". Idempotent guarded `ALTER TABLE`.
 
 ### Key Migrations (Global DB)
 
@@ -667,8 +681,9 @@ Operates on a per-project DB.
 | `create(input)` | Insert at the end of the target swimlane (next position). Transactional: allocates a monotonic `display_id` from `project_meta` in the same transaction as the INSERT |
 | `nextPositionInSwimlane(swimlaneId)` | The raw append position past everything in a swimlane, archived rows included. `create()`'s append anchor, and what MCP task placement resolves an out-of-range ordinal slot against |
 | `update(input)` | Partial update -- only provided fields are changed |
-| `recordWorktree(id, path, branch, folder)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss |
+| `recordWorktree(id, path, branch, folder)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together, clearing `worktree_skip_reason` in the same transaction. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss |
 | `setWorktreeFolder(id, folder)` | Record the worktree's directory name. Write-once: guarded on `worktree_folder IS NULL`, so a task's worktree can never be relocated by a later write |
+| `setWorktreeSkipReason(id, reason)` | Record why the last spawn ran without a worktree (a `WorktreeSkipReason`), or null once it has one. Does NOT bump `updated_at`: spawn telemetry must not reorder the board |
 | `recoverLegacyWorktreeFolder(taskId, worktreesRoot)` | For a pre-numeric-scheme task whose `worktree_path` was already cleared by a Done move, recover and persist its original directory name from the newest `sessions.cwd`. Accepts only a direct child of `worktreesRoot`, so a project that is itself checked out at a worktree path cannot claim the enclosing worktree's name |
 | `move(input)` | Transactional move: shift positions in old and new swimlanes, update task |
 | `reorderWithinSwimlane(swimlaneId, orderedTaskIds)` | Dense rewrite of one swimlane's task order to 0..N-1 in a single transaction. The write behind `kangentic_reorder_tasks` and `kangentic_move_task`'s same-column `position`. Unlike `move()`'s two-shift arithmetic it heals position gaps left by archiving; a stray id from another swimlane is a no-op (`swimlane_id` guard), and re-issuing the same order writes nothing (`position != ?` guard, so `updated_at` moves only on rows that actually shift) |

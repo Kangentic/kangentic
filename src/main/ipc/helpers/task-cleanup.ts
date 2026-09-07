@@ -140,6 +140,14 @@ export async function cleanupTaskResources(
 ): Promise<void> {
   await cleanupTaskSession(context, task, tasks, projectId, projectPath);
 
+  // A full reset ends the spawn decision `worktree_skip_reason` describes; the
+  // next spawn re-decides. Unconditional (not inside the worktree block below)
+  // because the task carrying a reason is exactly the one WITHOUT a worktree.
+  // Guarded: a concurrent delete may already have removed the row.
+  if (tasks.getById(task.id)) {
+    tasks.setWorktreeSkipReason(task.id, null);
+  }
+
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
 
   // Remove worktree + branch

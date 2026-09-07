@@ -60,6 +60,7 @@ export function buildTaskDetailBundle(
       labelColors: effectiveConfig.backlog?.labelColors ?? {},
       defaultBaseBranch: boardDefaultBranch || effectiveConfig.git.defaultBaseBranch,
       worktreesEnabled: effectiveConfig.git.worktreesEnabled,
+      agentExecution: effectiveConfig.agent.execution ?? {},
       browserEnabled: effectiveConfig.browser?.enabled !== false,
     },
   };

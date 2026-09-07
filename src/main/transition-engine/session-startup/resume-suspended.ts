@@ -318,6 +318,7 @@ export async function resumeSuspendedSessions(
       if (!fs.existsSync(record.cwd)) {
         if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
           taskRepo.update({ id: task.id, worktree_path: null, branch_name: null });
+          taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing');
         }
         console.log(`[SESSION_RECOVERY] CWD ${record.cwd} missing -- marking exited`);
         retireRecord(sessionRepo, record.id);

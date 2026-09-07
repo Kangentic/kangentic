@@ -1274,6 +1274,22 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN auto_command_at TEXT DEFAULT NULL');
   }
 
+  // Migration: record WHY a task's last spawn ran without a worktree (the
+  // `WorktreeSkipReason` union: 'disabled' | 'not-a-repo' | 'nested-worktree' |
+  // 'no-commits' | 'remote-agent' | 'worktree-missing'). Null while the task has
+  // a worktree or no spawn has decided yet. `WorktreeManager.ensureWorktree`
+  // used to collapse every guard into one silent null, so nothing could tell
+  // the user their agent was running in the shared project checkout. It is the
+  // ground truth for saying so, but has no renderer reader yet: the 12px card
+  // glyph that drew it was reviewed out as too small to tell apart, so the card
+  // and the detail header still read `worktree_path`.
+  // Written by `TaskRepository.setWorktreeSkipReason` (no
+  // `updated_at` bump: it is spawn telemetry, not a user edit) and cleared by
+  // `recordWorktree`. No backfill: NULL correctly means "never evaluated".
+  if (!taskInjectionColumns.includes('worktree_skip_reason')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN worktree_skip_reason TEXT DEFAULT NULL');
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

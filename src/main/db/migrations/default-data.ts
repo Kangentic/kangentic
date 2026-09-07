@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../../shared/task-template-vars';
 
 /**
  * The seeded default board. Exported (not just function-local) so the
@@ -78,7 +79,7 @@ function seedActionsAndTransitions(db: Database.Database, now: string): void {
     'Start Planning Agent',
     'spawn_agent',
     JSON.stringify({
-      promptTemplate: '{{task_xml}}{{attachments}}',
+      promptTemplate: DEFAULT_SPAWN_PROMPT_TEMPLATE,
     }),
     now,
   );

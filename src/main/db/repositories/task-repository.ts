@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 
@@ -193,7 +193,23 @@ export class TaskRepository {
     this.db.transaction(() => {
       this.update({ id, worktree_path: worktreePath, branch_name: branchName });
       this.setWorktreeFolder(id, worktreeFolder);
+      // A task that once fell back to the shared checkout and now has a
+      // worktree must not keep claiming otherwise. Inside the transaction so
+      // the path and the reason can never disagree.
+      this.setWorktreeSkipReason(id, null);
     })();
+  }
+
+  /**
+   * Persist why the task's last spawn ran WITHOUT a worktree (see
+   * `WorktreeSkipReason`), or null once it has one again. Deliberately does NOT
+   * bump `updated_at`: this is spawn telemetry, not a user edit, and a spawn that
+   * skips a worktree must not reorder the board or trip "recently updated". The
+   * generic `update()` column list omits the column for the same reason
+   * `worktree_folder` is omitted, so a normal task edit never clobbers it.
+   */
+  setWorktreeSkipReason(taskId: string, reason: WorktreeSkipReason | null): void {
+    this.db.prepare('UPDATE tasks SET worktree_skip_reason = ? WHERE id = ?').run(reason, taskId);
   }
 
   /**
@@ -274,6 +290,7 @@ export class TaskRepository {
       session_id: null,
       worktree_path: null,
       worktree_folder: null,
+      worktree_skip_reason: null,
       branch_name: input.customBranchName?.trim() || null,
       pr_number: null,
       pr_url: null,

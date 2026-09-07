@@ -123,7 +123,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const worktreeManager = new WorktreeManager(repo);
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-aaaaaaaa' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     // Unaffected by the resolver: base === configured default, no fallback engaged.
     expect(result!.branchName).not.toContain('/');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
@@ -138,7 +138,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const worktreeManager = new WorktreeManager(repo);
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-bbbbbbbb' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
     expect(configuredBase).toBe('master');
     // Substitution collapses base === default, so the branch name stays unprefixed
@@ -173,7 +173,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const task = makeTask({ id: 'task-mmmmmmmm', base_branch: 'release/2.0' });
     const result = await worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
     expect(configuredBase).toBe('release/2.0');
     expect(result!.branchName.startsWith('release-2.0/')).toBe(true);
@@ -210,7 +210,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const config = baseGitConfig({ defaultBaseBranch: 'main' });
     const first = await worktreeManager.ensureWorktree(makeTask({ id: 'task-kkkkkkkk', title: 'Round trip task' }), config);
 
-    expect(first).not.toBeNull();
+    expect(first).toHaveProperty('worktreePath');
     expect(first!.branchName).not.toContain('/');
 
     // Simulate the real Done-cleanup removal path (not a bare fs.rmSync, which would
@@ -229,7 +229,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
       config,
     );
 
-    expect(second).not.toBeNull();
+    expect(second).toHaveProperty('worktreePath');
     expect(second!.worktreePath).toBe(first!.worktreePath);
     expect(second!.branchName).toBe(first!.branchName);
   }, 20000);
@@ -266,7 +266,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const task = makeTask({ id: 'task-eeeeeeee', base_branch: 'develop' });
     const result = await worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
     expect(configuredBase).toBe('develop');
   });
@@ -295,12 +295,12 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const task = makeTask({ id: 'task-ffffffff', base_branch: 'develop' });
     const result = await worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
     expect(configuredBase).toBe('develop');
   });
 
-  it('returns null (no-commits fallback) for a repo with an unborn HEAD, now enforced inside ensureWorktree', async () => {
+  it('reports no-commits for a repo with an unborn HEAD, now enforced inside ensureWorktree', async () => {
     const repo = tempRepoPath('no-commits');
     initRepo(repo, 'main');
     // No commit: unborn HEAD.
@@ -308,7 +308,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const worktreeManager = new WorktreeManager(repo);
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-gggggggg' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'no-commits' });
   });
 
   // --- Regression pins: states the Step 1 probe confirmed are already no-ops,
@@ -325,20 +325,20 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const worktreeManager = new WorktreeManager(repo);
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-hhhhhhhh' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
   });
 
-  it('returns null for a bare repo (regression pin: isGitRepo guard, unaffected by this change)', async () => {
+  it('reports not-a-repo for a bare repo (regression pin: isGitRepo guard, unaffected by this change)', async () => {
     const bareDir = tempRepoPath('bare.git');
     execFileSync('git', ['init', '--bare', '-b', 'main', bareDir], { windowsHide: true });
 
     const worktreeManager = new WorktreeManager(bareDir);
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-iiiiiiii' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'not-a-repo' });
   });
 
-  it('returns null when .git is a broken file pointer (regression pin: isInsideWorktree guard)', async () => {
+  it('reports nested-worktree when .git is a broken file pointer (regression pin: isInsideWorktree guard)', async () => {
     const dir = tempRepoPath('broken-git-file');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, '.git'), 'gitdir: /nonexistent/path/.git/worktrees/x\n');
@@ -346,7 +346,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const worktreeManager = new WorktreeManager(dir);
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-jjjjjjjj' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ skipped: true, reason: 'nested-worktree' });
   });
 });
 
@@ -522,7 +522,7 @@ describe('WorktreeManager createWorktree seam - narrowed refspec (fetch succeeds
     // fixture, unrelated to the seam under test.
     const result = await worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'develop' }));
 
-    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('worktreePath');
     // Proves the worktree was cut from the LOCAL 'develop' shadow branch, not from a
     // bogus 'origin/develop' that the fetch process merely claimed to succeed against
     // (which does not exist as a ref at all and would fail `git worktree add` outright).

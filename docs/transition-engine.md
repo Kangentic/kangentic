@@ -65,7 +65,7 @@ Config:
 | Field | Type | Description |
 |-------|------|-------------|
 | `agent` | string | Agent identifier (default: `'claude'`) |
-| `promptTemplate` | string | Template with `{{placeholders}}` |
+| `promptTemplate` | string | Template with `{{placeholders}}`. When no `spawn_agent` action supplies one, a fresh spawn out of To Do uses `DEFAULT_SPAWN_PROMPT_TEMPLATE` (`{{task_xml}}{{attachments}}`, declared once in `src/shared/task-template-vars.ts`) |
 | `nonInteractive` | boolean | Use `--print` mode (run and exit) |
 
 ### `send_command`

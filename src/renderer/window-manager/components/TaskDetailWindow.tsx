@@ -770,7 +770,6 @@ export function TaskDetailWindow({
                   onCancel={actions.handleCancel}
                   onSubmit={actions.handleSave}
                   submitLabel="Save"
-                  busyLabel="Saving..."
                   busy={actions.saving}
                   disabled={!!branchConfig.branchNameError}
                   leading={isInTodo ? (

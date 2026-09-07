@@ -66,7 +66,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 
 import { deleteTaskWorktree, cleanupTaskResources } from '../../src/main/ipc/helpers/task-cleanup';
 
-type MockTaskRepo = { update: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn> };
+type MockTaskRepo = { update: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn>; setWorktreeSkipReason: ReturnType<typeof vi.fn> };
 type MockContext = {
   currentProjectPath: string | null;
   sessionManager: Record<string, unknown>;
@@ -76,7 +76,7 @@ type MockContext = {
 function createMockTaskRepo(): MockTaskRepo {
   // getById defaults to truthy so the branch write-back's concurrent-delete
   // guard passes; tests that exercise the guard override it.
-  return { update: vi.fn(), getById: vi.fn(() => ({ id: 'task' })) };
+  return { update: vi.fn(), getById: vi.fn(() => ({ id: 'task' })), setWorktreeSkipReason: vi.fn() };
 }
 
 function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
@@ -401,5 +401,46 @@ describe('cleanupTaskResources', () => {
     expect(mockRemoveBranch).not.toHaveBeenCalled();
     // worktree_path/branch_name preserved so a retry pass can pick it back up.
     expect(tasks.update).not.toHaveBeenCalled();
+  });
+
+  // A full reset (TASK_DELETE, or a move-to-To-Do reset) ends the spawn
+  // decision `worktree_skip_reason` describes; the task's next spawn
+  // re-decides. This must clear unconditionally on the WORKTREE-LESS branch
+  // too - it sits outside the `if (task.worktree_path && ...)` block on
+  // purpose, since the task carrying a reason is exactly the one WITHOUT a
+  // worktree. A task with no worktree_path isolates the guard: it skips the
+  // whole removal block below, so `tasks.getById` is called exactly once
+  // here (the guard itself), with no second call from the removal block's
+  // own getById re-check to conflate with.
+  it('clears the worktree skip reason to null when the task row still exists (no worktree to remove)', async () => {
+    const tasks = createMockTaskRepo();
+    const context = createCleanupContext(false);
+    const task = {
+      id: 'task-13',
+      session_id: null,
+      worktree_path: null,
+      branch_name: null,
+    };
+
+    await cleanupTaskResources(context as never, task, tasks as never, undefined, context.currentProjectPath);
+
+    expect(tasks.setWorktreeSkipReason).toHaveBeenCalledWith('task-13', null);
+    expect(mockRemoveWorktree).not.toHaveBeenCalled();
+  });
+
+  it('does not clear the skip reason when the task row is already gone (concurrent delete)', async () => {
+    const tasks = createMockTaskRepo();
+    tasks.getById.mockReturnValue(undefined);
+    const context = createCleanupContext(false);
+    const task = {
+      id: 'task-14',
+      session_id: null,
+      worktree_path: null,
+      branch_name: null,
+    };
+
+    await cleanupTaskResources(context as never, task, tasks as never, undefined, context.currentProjectPath);
+
+    expect(tasks.setWorktreeSkipReason).not.toHaveBeenCalled();
   });
 });

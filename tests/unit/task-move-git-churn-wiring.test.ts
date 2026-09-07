@@ -241,6 +241,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
       getById: vi.fn(() => makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null })),
       move: vi.fn(),
       update: vi.fn(),
+      setWorktreeSkipReason: vi.fn(),
       archive: vi.fn(),
       list: vi.fn(() => [makeTask()]),
     };
@@ -453,6 +454,7 @@ describe('handleTaskMove projectId threading into ensureTaskWorktree / ensureTas
       getById: vi.fn(() => makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null })),
       move: vi.fn(),
       update: vi.fn(),
+      setWorktreeSkipReason: vi.fn(),
       archive: vi.fn(),
       list: vi.fn(() => [makeTask()]),
     };
