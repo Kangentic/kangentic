@@ -23,11 +23,16 @@ Overridable via the `KANGENTIC_DATA_DIR` environment variable. When set, all dat
 
 ## Configuration
 
-All database connections are opened with three pragmas:
+All database connections are opened with three pragmas, in this order:
 
-- `journal_mode = WAL` -- concurrent reads without blocking writers
 - `busy_timeout = 5000` -- wait up to 5 seconds on locked databases before returning SQLITE_BUSY
+- `journal_mode = WAL` -- concurrent reads without blocking writers
 - `foreign_keys = ON` -- enforce referential integrity on all foreign key constraints
+
+The order matters. `busy_timeout` is a connection setting that covers only the statements after
+it, and `journal_mode = WAL` takes a lock: it creates the `-wal` and `-shm` sidecars. Setting the
+timeout second would leave the WAL switch, the one statement most likely to collide, with no retry
+window at all.
 
 All queries are synchronous via **better-sqlite3** -- they block the Node.js event loop briefly but avoid callback complexity.
 

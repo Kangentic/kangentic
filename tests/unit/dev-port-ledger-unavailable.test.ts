@@ -35,6 +35,9 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 
 const { devPortRepository } = await import('../../src/main/db/repositories/dev-port-repository');
+// `../database` is mocked above, but soft-db (the shared combinator the
+// repository now routes through) is not - this is the real module.
+const { setGlobalDbFailureNotifier } = await import('../../src/main/db/soft-db');
 
 let warn: ReturnType<typeof vi.spyOn>;
 
@@ -45,6 +48,10 @@ beforeEach(() => {
 
 afterEach(() => {
   warn.mockRestore();
+  // soft-db's notifier is process-global module state, not reset per test. A
+  // notifier registered here would otherwise leak into whichever test runs
+  // next in this file.
+  setGlobalDbFailureNotifier(() => {});
 });
 
 describe('DevPortRepository with an unreachable global database', () => {
@@ -91,5 +98,33 @@ describe('DevPortRepository with an unreachable global database', () => {
       devPortRepository.getByPort(7300 + index);
     }
     expect(warn.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it('never notifies the global-db-failure listener: this ledger degrading is expected, not a fault', () => {
+    // src/main/db/soft-db.ts's own docblock is explicit: `notify` is opt-in,
+    // reserved for a read whose failure genuinely leaves the app
+    // non-functional. The dev-port ledger degrades on every unit-tier CI run
+    // by design (that is the whole reason this file exists), so wiring a
+    // notification in here would pop "Kangentic can't read its database" at a
+    // production user for a condition that is completely normal in dev, and
+    // would burn the once-per-process notification that an unreadable
+    // project:list genuinely needs.
+    //
+    // tests/unit/global-db-degradation.test.ts already pins "options with no
+    // `notify` never call the notifier" at the combinator level, but that test
+    // builds its own options object - it cannot catch a future edit that adds
+    // `notify: true` to THIS file's private softly() wrapper. This exercises
+    // the real production module instead, so that edit would actually fail a
+    // test.
+    const notifier = vi.fn();
+    setGlobalDbFailureNotifier(notifier);
+
+    devPortRepository.listForTask('task-1');
+    devPortRepository.getByTaskId('task-1');
+    devPortRepository.getByPort(7300);
+    devPortRepository.claim(7300, 'proj-1', 'task-1');
+    devPortRepository.releaseByTaskId('task-1');
+
+    expect(notifier).not.toHaveBeenCalled();
   });
 });
