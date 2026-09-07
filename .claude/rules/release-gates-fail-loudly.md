@@ -44,14 +44,20 @@ Any step in the release path that exists to guarantee something must fail when i
   preflight stops being able to fail (`exit 1`) or acquires an `environment:` approval gate, or when
   `release` loses the clause it inherits the gate through. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/upload-native-debug-files.test.ts` pins the build-side
-  half: the skip line is printed, a present-token upload failure throws, and the `NODE_ENV` guard
-  rejects unset and non-production values.
+  (esbuild/main+preload) half: the skip line is printed, a present-token upload failure throws, the
+  `NODE_ENV` guard rejects unset and non-production values, and `resolveSentryReleaseName` throws
+  on a missing or empty `version`.
+- **Test (mechanical, CI):** `tests/unit/vite-config-sentry-guards.test.ts` pins the mirrored
+  renderer half in `vite.config.mts`: `resolveSentryVitePlugins` throws unless `NODE_ENV` is
+  `production`, and `resolveSentryReleaseName` throws on a missing or empty `version` - both
+  reached by calling the config module's default export directly (`defineConfig` returns it
+  unchanged), since neither function is otherwise exported.
 - **Review:** `/code-review` covers the parts that are judgement rather than shape, mainly whether a
   newly added step that can no-op says so.
 
-The general form ("does this step warn where it should fail") is not mechanizable, so the two tests
-deliberately pin the two concrete shapes that have already broken a release rather than attempting
-the general case.
+The general form ("does this step warn where it should fail") is not mechanizable, so the tests
+above deliberately pin the concrete shapes that have already broken a release rather than
+attempting the general case.
 
 ## Scope
 
