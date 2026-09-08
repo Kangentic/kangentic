@@ -436,5 +436,29 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(result).toBe(event);
       expect(mocks.trackEventSpy).not.toHaveBeenCalled();
     });
+
+    it('finds the minidump among several attachments, including one that carries no attachmentType at all', async () => {
+      // Sentry's other attachment kinds (view-hierarchy, screenshots) do not
+      // all carry an attachmentType, and the minidump is not always first in
+      // the array. This pins the .find() picking the RIGHT one by type, not
+      // by position or by "has Uint8Array data".
+      const beforeSend = await initAndGetBeforeSend();
+
+      const result = beforeSend(
+        { platform: 'native', release: 'Kangentic@0.39.0' },
+        {
+          attachments: [
+            { filename: 'view-hierarchy.json', data: new Uint8Array([1, 2, 3]) },
+            { attachmentType: 'event.screenshot', filename: 'screenshot.png', data: new Uint8Array([4, 5, 6]) },
+            { attachmentType: 'event.minidump', filename: 'crash.dmp', data: buildMinidump({ modules: FFPROBE_MODULES }) },
+          ],
+        }
+      );
+
+      expect(result).toBeNull();
+      expect(mocks.trackEventSpy).toHaveBeenCalledWith('foreign_minidump_dropped', {
+        module: 'ffprobe',
+      });
+    });
   });
 });
