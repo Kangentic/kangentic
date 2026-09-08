@@ -119,6 +119,26 @@ interface LaneRecord {
 
 const lanes = new Map<string, LaneRecord>();
 
+/**
+ * Bumped by every `destroyAllLanes()` sweep.
+ *
+ * `openLane` is async BEFORE it constructs its window (the jar seed), and a lane
+ * only enters `lanes` after that. So a sweep landing in that gap finds nothing
+ * to destroy, and the window is constructed immediately afterwards - outliving
+ * the teardown that was meant to remove it.
+ *
+ * That is not a theoretical ordering. It is how the app ends up alive with no
+ * main window: the surviving offscreen lane holds `getAllWindows()` above zero,
+ * so `window-all-closed` never fires and `app.quit()` never runs on Windows or
+ * Linux (it is gated on `platform !== 'darwin'`), and the process lingers
+ * invisibly still holding the single-instance lock. Every relaunch then exits
+ * at once (Sentry DESKTOP-J reached the crash through exactly this state).
+ *
+ * `openLane` captures this counter on entry and abandons once it changes, which
+ * closes the gap for every await in the function rather than only today's.
+ */
+let laneSweepGeneration = 0;
+
 /** Lane ids are prefixed so a handle is recognizable in a log or an error. */
 const LANE_ID_PREFIX = 'lane_';
 
@@ -196,6 +216,11 @@ export type OpenLaneResult =
  * target it by `sessionId`.
  */
 export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
+  // Captured before any await. See laneSweepGeneration: a sweep that lands while
+  // this function is suspended must not be outlived by the window it is about to
+  // build.
+  const sweepGenerationAtEntry = laneSweepGeneration;
+
   // Reclaim abandoned lanes before counting, so a long-lived session that opened
   // and forgot lanes an hour ago is not refused a new one over renderer
   // processes nothing is using. Opportunistic on purpose - see destroyIdleLanes.
@@ -236,6 +261,19 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
       resolve();
     });
   });
+
+  // THE gap this guard exists for: the jar seed above suspended, and a sweep
+  // (the main window closing, or app shutdown) ran while it did. `lanes` was
+  // empty then, so the sweep had nothing to destroy - and constructing the
+  // window now would leave an offscreen BrowserWindow nothing will ever clean
+  // up, keeping the app alive with no visible window.
+  if (sweepGenerationAtEntry !== laneSweepGeneration) {
+    return {
+      ok: false,
+      kind: 'lane-swept',
+      detail: 'The browser lanes were torn down while this one was opening (the window closed, or the app is quitting). Retry once: a sweep from a closed window is already over, but a quitting app will keep refusing.',
+    };
+  }
 
   const window = new BrowserWindow({
     show: false,
@@ -281,6 +319,18 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
       ok: false,
       kind: 'lane-load-failed',
       detail: `The lane could not load ${input.url}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  // The load above suspended too. A sweep during it DID find this lane (it
+  // entered `lanes` before the load) and already destroyed the window, so
+  // registering now would publish a handle to a dead guest for the registry to
+  // self-heal away later.
+  if (!lanes.has(laneId)) {
+    return {
+      ok: false,
+      kind: 'lane-swept',
+      detail: 'The browser lanes were torn down while this one was loading (the window closed, or the app is quitting). Retry once: a sweep from a closed window is already over, but a quitting app will keep refusing.',
     };
   }
 
@@ -392,6 +442,13 @@ export function destroyIdleLanes(idleMs: number, now: number = Date.now()): numb
  * must not skip them.
  */
 export function destroyAllLanes(): void {
+  // First, so nothing added below can skip it. The position is not observable
+  // today: this function is synchronous, the per-lane catch means the loop
+  // always reaches the end, and destroying a lane cannot re-enter openLane (the
+  // hand-off returns early on entry.kind === 'lane'). What it buys is future
+  // proofing against an early return or an await added inside the loop, not
+  // protection from a throwing destroy - the catch is what covers that.
+  laneSweepGeneration++;
   for (const lane of [...lanes.values()]) {
     try {
       destroyLane(lane.laneId);
@@ -402,7 +459,11 @@ export function destroyAllLanes(): void {
   }
 }
 
-/** Test seam: drop bookkeeping without touching real windows. */
+/** Test seam: drop bookkeeping without touching real windows. Resets the sweep
+ *  counter too, so a test that sweeps cannot carry a generation into the next
+ *  one. Nothing reads the counter's absolute value today, but leaving live
+ *  module state behind is how order-dependent tests start. */
 export function resetLanesForTests(): void {
   lanes.clear();
+  laneSweepGeneration = 0;
 }

@@ -74,7 +74,15 @@ Profiles. Column names and task content never leave the machine.
 `source` discriminates the failure path: `uncaughtException`, `unhandledRejection`,
 `render-process-gone` (extras: `reason`, `exitCode`), `error_boundary` (extras: `boundary`,
 `panel`, `components`), `updater`, `pty_spawn` (extras: `shell`, `shellArgs`, `cwdExists`,
-`shellExists`, `errno`, `platform`, `arch`), and `pty_spawn_cwd_missing` (extra: `platform`).
+`shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`), and
+`secondInstanceNoWindow`.
+
+`secondInstanceNoWindow` is the window-lifecycle fault: a second launch hit the single-instance
+lock and found the running process alive with no main window, which off macOS means a browser
+lane survived the teardown sweep and held the window count above zero, so `window-all-closed`
+never fired. The handler rebuilds the window either way; the event is what keeps the underlying
+leak visible instead of being absorbed by the recovery. It is not sent on macOS, where an app
+outliving its window is the ordinary lifecycle rather than a fault.
 
 Renderer errors (`source: error_boundary`) carry three extra properties that say *where* the error
 happened, since a message alone is rarely enough to locate one. `boundary` is `root`, `panel`, or

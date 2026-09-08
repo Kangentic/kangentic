@@ -23,7 +23,7 @@ import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
-import { isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } from './startup-gate';
+import { decideSecondInstanceAction, isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } from './startup-gate';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
@@ -135,8 +135,10 @@ function safeReadDeveloperFlag(key: DeveloperFlagKey): boolean {
 // `src/devtools/` tree is dropped from production builds via
 // `__KANGENTIC_DEV__` dead-code elimination + esbuild tree-shaking.
 if (__KANGENTIC_DEV__) {
-  // `mainWindow` is declared as `let` lower in this file (around line 230)
-  // and assigned inside `createWindow()`. The arrow-function callbacks
+  // `mainWindow` is declared as `let` lower in this file (search for
+  // `let mainWindow`) and assigned inside `createWindow()`. It is also reset to
+  // null when the window closes, so this getter can return null at any time -
+  // every consumer must handle that. The arrow-function callbacks
   // below close over it but only READ at call time (not at definition);
   // every caller (notifyDevtoolsRefresh, the inspection server's HTTP
   // handlers, the before-quit hook) runs strictly after createWindow has
@@ -625,11 +627,49 @@ if (!isEphemeral && !isE2ETest) {
   if (!gotTheLock) {
     app.exit(0);
   } else {
+    // Sentry DESKTOP-J: this used to be a bare `if (mainWindow)`. The 'closed'
+    // handler never nulled the variable, so after the window closed it held a
+    // DESTROYED BrowserWindow, isMinimized() threw, and the throw escaped a raw
+    // Electron event handler with nothing below it to catch. The decision is in
+    // startup-gate.ts so it can be unit-tested; see its docblock for why the
+    // three checks are ordered the way they are.
     app.on('second-instance', () => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+      const action = decideSecondInstanceAction({
+        hasLiveWindow: Boolean(mainWindow && !mainWindow.isDestroyed()),
+        shuttingDown: isShuttingDown(),
+        startupComplete: isStartupComplete(),
+      });
+      if (action === 'ignore') return;
+      if (action === 'focus') {
+        if (mainWindow!.isMinimized()) mainWindow!.restore();
+        // The window is constructed with `show: false` and only shown from
+        // 'ready-to-show', so for the first seconds of a cold start it is live
+        // and INVISIBLE. focus() alone there makes the user's second launch do
+        // nothing they can see - the same dead outcome as the crash, minus the
+        // Sentry event. backgroundColor is set at construction, so showing
+        // early paints the theme colour rather than a white flash, and
+        // 'ready-to-show' still runs its own maximize()/show() afterwards.
+        if (!mainWindow!.isVisible()) mainWindow!.show();
+        mainWindow!.focus();
+        return;
       }
+      // The app outlived its window. Off macOS that is a fault: window-all-closed
+      // quits, so reaching here means a browser lane survived the 'closed' sweep
+      // and held the window count above zero, leaving an invisible process still
+      // holding the single-instance lock. Count it - recovering silently would
+      // trade a visible crash for a hidden lane leak.
+      //
+      // On macOS it is the documented lifecycle instead (window-all-closed only
+      // quits when platform !== 'darwin', below), so a user who closes the window
+      // and relaunches lands here with nothing wrong. Reporting that as an
+      // app_error would bury the real leak signal under the ordinary case.
+      if (process.platform !== 'darwin') {
+        trackEvent('app_error', {
+          source: 'secondInstanceNoWindow',
+          message: 'second-instance arrived with no live main window; rebuilding',
+        });
+      }
+      rebuildMainWindow();
     });
   }
 }
@@ -737,21 +777,21 @@ function showTerminalAwareContextMenu(
 }
 
 const createWindow = () => {
-  // Unreachable while the startup gate holds: the only two call sites are the
-  // whenReady body (once) and the activate handler, which the gate limits to a
-  // zero window count. Kept because the failure it prevents is severe and
-  // silent - a second BrowserWindow orphans the first, which holds
-  // getAllWindows() above zero forever, so window-all-closed never fires,
-  // before-quit never runs, and syncShutdownCleanup never kills PTYs, suspends
-  // session records, or closes DBs (the same trap described at the 'closed'
-  // handler below). Report rather than throw, and sit above phase() so the
-  // early return cannot leave a startup phase unclosed.
+  // Unreachable while the startup gate holds: the call sites are the whenReady
+  // body (once) and rebuildMainWindow, whose own two callers (activate,
+  // second-instance) are each gated on there being no live window. Kept because
+  // the failure it prevents is severe and silent - a second BrowserWindow
+  // orphans the first, which holds getAllWindows() above zero forever, so
+  // window-all-closed never fires, before-quit never runs, and
+  // syncShutdownCleanup never kills PTYs, suspends session records, or closes
+  // DBs (the same trap described at the 'closed' handler below). Report rather
+  // than throw, and sit above phase() so the early return cannot leave a
+  // startup phase unclosed.
   //
-  // Returning without assigning mainWindow is safe for both callers, which
-  // dereference it as mainWindow! on the very next line: this branch is taken
-  // only WHEN a live window exists, so that non-null assertion still holds and
-  // they simply re-point the updater/announcements refs at the window they
-  // already had.
+  // Returning without assigning mainWindow is safe for every caller: this
+  // branch is taken only WHEN a live window exists, so rebuildMainWindow's
+  // `mainWindow!` still holds and it simply re-points the updater/announcements
+  // refs at the window it already had.
   if (mainWindow && !mainWindow.isDestroyed()) {
     console.error('[APP] createWindow called with a live main window; ignoring');
     trackEvent('app_error', {
@@ -810,6 +850,31 @@ const createWindow = () => {
     },
   });
 
+  /**
+   * THIS window, for the deferred callbacks below.
+   *
+   * A listener body that reads the module-level `mainWindow` reads it at EVENT
+   * time, not registration time, so after a rebuild it resolves to whichever
+   * window is current rather than the one the listener was attached to. That is
+   * unreachable today (createWindow refuses to run while a live window exists,
+   * and a destroyed window fires nothing), but it is a real hazard now that two
+   * gated paths can rebuild, and the non-null assertions it forced were load
+   * bearing on that same unreachability.
+   *
+   * Liveness checks that genuinely mean "is there a current window at all"
+   * (saveBounds, the pop-out push, did-finish-load's synchronous setTitle)
+   * deliberately keep reading the module variable.
+   *
+   * A send that RESUMES after an await is not one of those, however current the
+   * window looked when the listener started: the module variable can have been
+   * nulled by 'closed' and reassigned by a rebuild while the await was pending,
+   * so the push would land in the new window's renderer, which is running its
+   * own preload and will announce its own result. The two post-await sends
+   * below (PROJECT_PATH_MISSING, PROJECT_AUTO_OPENED) therefore use this
+   * capture and check isDestroyed on it.
+   */
+  const createdWindow = mainWindow;
+
   // Explicitly set icon for Windows/Linux taskbar
   if (process.platform !== 'darwin') {
     mainWindow.setIcon(iconImage);
@@ -828,7 +893,7 @@ const createWindow = () => {
         const isCtrlShiftI =
           input.control && input.shift && input.key.toLowerCase() === 'i';
         if (isF12 || isCtrlShiftI) {
-          mainWindow?.webContents.toggleDevTools();
+          createdWindow.webContents.toggleDevTools();
         }
       }
     });
@@ -837,9 +902,9 @@ const createWindow = () => {
   mainWindow.once('ready-to-show', () => {
     mark('ready_to_show');
     if (!isTest && (!savedBounds || savedBounds.maximized)) {
-      mainWindow!.maximize();
+      createdWindow.maximize();
     }
-    mainWindow!.show();
+    createdWindow.show();
   });
 
   // Debounced save of window bounds on move/resize
@@ -909,10 +974,18 @@ const createWindow = () => {
   //
   // On 'closed', NOT 'close', and the difference is load-bearing. Destroying the
   // window tears down its <webview> guests, each of which fires the registry's
-  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane, created
-  // synchronously (openLane registers before its first await). That all happens
-  // after 'close' handlers return, so sweeping there would be undone by the very
-  // teardown that triggered it. 'closed' runs once the guests are already gone.
+  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane. That all
+  // happens after 'close' handlers return, so sweeping there would be undone by
+  // the very teardown that triggered it. 'closed' runs once the guests are
+  // already gone.
+  //
+  // Sweeping here is necessary but NOT sufficient on its own, and this comment
+  // used to claim otherwise ("created synchronously - openLane registers before
+  // its first await"). That stopped being true when the lane opener grew a jar
+  // seed: openLane now awaits BEFORE it constructs its window, so a lane whose
+  // hand-off starts during this teardown is invisible to the sweep below and
+  // would be built right after it. browser-lane-manager.ts closes that with a
+  // sweep generation openLane re-checks after each await.
   //
   // The accepted cost: on macOS the app outlives its window, so this ends an
   // agent's lane when the user closes the window rather than quitting. That is
@@ -920,8 +993,48 @@ const createWindow = () => {
   // above zero, which makes app.on('activate') refuse to rebuild the window and
   // locks the user out of the app entirely.
   mainWindow.on('closed', () => {
+    // Sentry DESKTOP-J. Without this the variable keeps a DESTROYED
+    // BrowserWindow, so every bare `if (mainWindow)` in this file is a
+    // truthiness check that passes and then throws "Object has been destroyed"
+    // on the first method call. That is what killed the second-instance
+    // handler; the did-finish-load title/auto-open sends had the same latent
+    // bug. Nulling makes the plain check mean what it reads as.
+    //
+    // Cleared BEFORE destroyAllLanes(), and the ordering is free rather than
+    // load bearing: nothing the sweep reaches reads this variable. Lane
+    // teardown runs through the pane registry, and the hand-off it can trigger
+    // is async (that is the whole point of the sweep generation described
+    // above), so it resumes after this handler has returned, by which time the
+    // variable is null either way. Clearing first only means no code added to
+    // the sweep later can see the destroyed window.
+    //
+    // Identity-checked so a closing window can only ever clear ITS OWN
+    // reference. Electron fires 'closed' during destroy and createWindow
+    // refuses to build while a live window exists, so a stale 'closed' cannot
+    // outlive a rebuild today - but an unconditional null here would blank a
+    // freshly built window if that ever stopped holding.
+    if (mainWindow === createdWindow) mainWindow = null;
     destroyAllLanes();
   });
+
+  // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
+  // shutdown/restart/log-off there is signaled via this BrowserWindow event
+  // instead. Route it through the same synchronous shutdown flush as
+  // before-quit / SIGINT/SIGTERM so a session killed by the OS still gets a
+  // closing event instead of a stale one.
+  //
+  // Attached HERE, per window, rather than once in the whenReady body: a
+  // rebuilt window (activate, or a second-instance that found no window) would
+  // otherwise have no session-end hook at all, so a later logout would leave
+  // osInitiatedShutdown false and the before-quit drain would hold the quit
+  // during an OS shutdown - the one thing .claude/rules/synchronous-shutdown.md
+  // says it never does.
+  if (process.platform === 'win32') {
+    mainWindow.on('session-end', () => {
+      osInitiatedShutdown = true;
+      performShutdown();
+    });
+  }
 
   // Register IPC handlers early so speculative preloading (below) can use them.
   // Idempotent: on macOS dock re-activation, the guard in registerAllIpc()
@@ -1102,13 +1215,13 @@ const createWindow = () => {
       // disk). Surface it to the renderer so the "Project Folder Not
       // Found" dialog offers "Locate Folder..." instead of a dead board.
       // Electron queues the send until the renderer is ready.
-      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && mainWindow && !mainWindow.isDestroyed()) {
+      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && !createdWindow.isDestroyed()) {
         // Softened for the same reason as the read above: this one sits inside
         // a catch, so a database throw here would replace a recoverable
         // "Locate Folder..." prompt with an unhandled rejection.
         const lastOpened = softly('lastOpenedProject', undefined, () => getLastOpenedProject());
         if (lastOpened && path.resolve(lastOpened.path) === path.resolve(projectPath)) {
-          mainWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
+          createdWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
         }
       }
       console.error('[APP] Failed to preload project:', err);
@@ -1146,8 +1259,8 @@ const createWindow = () => {
     // Await the preload that started during createWindow -- typically already resolved
     const project = await preloadPromise;
     finishStartupTimer();
-    if (project && mainWindow) {
-      mainWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
+    if (project && !createdWindow.isDestroyed()) {
+      createdWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
     }
 
     // Activate all other projects' sessions in the background.
@@ -1161,6 +1274,41 @@ const createWindow = () => {
         .finally(() => { endPhase('activateAllProjects'); });
     }, 5000);
   });
+};
+
+/**
+ * Rebuild the main window after it was closed while the app stayed alive, and
+ * re-point the two module-level window refs that createWindow does not own.
+ *
+ * Shared by the only two paths that may rebuild - the macOS 'activate' dock
+ * click and a 'second-instance' launch that finds no window - because forgetting
+ * either update call leaves that module holding a destroyed window, silently.
+ *
+ * NOT initUpdater / initAnnouncements: neither is idempotent, which is why the
+ * whenReady body calls those once and everything afterwards only re-points.
+ * A rebuilt window therefore inherits the gap already documented on the
+ * whenReady .catch path.
+ */
+const rebuildMainWindow = () => {
+  // try/finally for the same reason the whenReady body uses one: createWindow
+  // can throw BELOW `new BrowserWindow` (that is what DESKTOP-3/4 was, a
+  // database throw after loadURL), which leaves a live window whose updater and
+  // announcements refs still point at the destroyed one. Without the finally
+  // the throw skips the re-point entirely, and both callers are raw Electron
+  // event handlers, so it is the process-level uncaughtException hook that
+  // catches it and this function never resumes.
+  //
+  // The guard inside covers the other order: a throw at construction leaves
+  // mainWindow null, and `mainWindow!` would hand null to a parameter typed
+  // BrowserWindow.
+  try {
+    createWindow();
+  } finally {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      updateUpdaterWindow(mainWindow);
+      updateAnnouncementsWindow(mainWindow);
+    }
+  }
 };
 
 // Replace the default application menu with a minimal one.
@@ -1421,17 +1569,8 @@ app.whenReady().then(async () => {
     markStartupComplete();
   }
 
-  // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
-  // shutdown/restart/log-off there is signaled via this BrowserWindow event
-  // instead. Route it through the same synchronous shutdown flush as
-  // before-quit / SIGINT/SIGTERM so a session killed by the OS still gets a
-  // closing event instead of a stale one.
-  if (process.platform === 'win32') {
-    mainWindow!.on('session-end', () => {
-      osInitiatedShutdown = true;
-      performShutdown();
-    });
-  }
+  // The Windows 'session-end' hook is attached per window inside createWindow,
+  // so a rebuilt window keeps it too.
 
   // System suspend fixes the stale-last-event case where the process is
   // killed while asleep before it can flush anything: emit one heartbeat
@@ -1597,9 +1736,7 @@ app.on('activate', () => {
     openWindowCount: BrowserWindow.getAllWindows().length,
   });
   if (!shouldCreate) return;
-  createWindow();
-  updateUpdaterWindow(mainWindow!);
-  updateAnnouncementsWindow(mainWindow!);
+  rebuildMainWindow();
 });
 
 /** Send a heartbeat event with current session counts. Skipped when no
