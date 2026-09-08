@@ -116,10 +116,31 @@ tarball (`node_modules/node-pty/prebuilds/win32-x64/conpty.pdb`):
    handled when this one was raised.
 
 The Windows release build uploads those PDBs as Sentry debug files when the token is present
-(`scripts/build.js`), so a future event should symbolicate without this. Two caveats when reading
-a native event: the SDK persists scope to disk with a 500 ms write throttle, so the last
-half-second of breadcrumbs before the crash is usually missing (an entire quit sequence fits in
-that gap), and `Kangentic.exe` frames carry names only because Electron publishes its symbols.
+(`scripts/build.js`), so a future event should symbolicate without this. `Kangentic.exe` frames
+carry names only because Electron publishes its symbols.
+
+Reading a native event, in order of what trips people up:
+
+- **Check for a `native_crash` context first.** `beforeSend`
+  (`src/main/analytics/native-crash-event.ts`) writes one from the dump itself: `crash_time`,
+  `crashed_version`, `uploaded_by_version`, `main_module`, `found_at_startup`, and whether the
+  release or the app context was corrected. Its absence dates the event to before that filter
+  shipped, so the two traps below still apply to it in full.
+- **On an older event, the release tag is the UPLOADING build's, not the crashed one's.**
+  Crashpad writes the dump and the next launch uploads it; if the user upgraded in between, the
+  tag is a build that never crashed. `contexts.crashpad._version` is the build that did.
+  DESKTOP-M cost a triage sweep a wrong conclusion this way.
+- **Breadcrumbs on a startup-found dump are not the crashed session's.** On an older event they
+  are the uploading launch's, wholly or partly; on a corrected one they are removed rather than
+  left to mislead. Breadcrumbs on an event tagged `exit.reason` are trustworthy: that tag marks
+  the two SDK paths that report a crash the running session watched happen.
+- **A crash in a process Kangentic merely spawned no longer arrives at all.** On macOS, mach
+  exception ports are inherited across exec, so an agent shelling out to ffmpeg or a headless
+  browser used to file its crashes as ours (DESKTOP-K, DESKTOP-N). Those are dropped before
+  upload now and counted as Aptabase `foreign_minidump_dropped` instead. If a native issue looks
+  like someone else's binary, check that counter rather than expecting a Sentry issue.
+- **Scope persists with a 500 ms write throttle**, so on any event the last half-second of
+  breadcrumbs before the crash is missing. An entire quit sequence fits in that gap.
 
 ## Typical requests
 

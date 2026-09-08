@@ -1,7 +1,15 @@
+import path from 'node:path';
 import { app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
+import type { ErrorEvent, EventHint } from '@sentry/electron/main';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
 import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
+import { trackEvent } from './analytics';
+import {
+  correctNativeCrashEvent,
+  readMinidumpIdentity,
+  type NativeCrashContext,
+} from './native-crash-event';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -107,6 +115,66 @@ export function reportHandledError(
   }
 }
 
+/** The attachment type `@sentry/electron` gives the raw crash dump it uploads. */
+const MINIDUMP_ATTACHMENT_TYPE = 'event.minidump';
+
+/**
+ * Where a healthy install's images live, and which build is doing the reporting.
+ * Resolved from the running app rather than hardcoded, and resolved lazily (only
+ * once an event actually carries a dump) so a missing Electron API can never
+ * take initErrorReporting() down with it.
+ */
+function resolveNativeCrashContext(): NativeCrashContext {
+  const executablePath = app.getPath('exe');
+  return {
+    // On macOS the executable sits at Contents/MacOS/<name>; going up one level
+    // to Contents/ also covers Frameworks/, the helper bundles, and
+    // Resources/app.asar.unpacked. Elsewhere every image sits beside the exe.
+    installRoot:
+      process.platform === 'darwin'
+        ? path.resolve(path.dirname(executablePath), '..')
+        : path.dirname(executablePath),
+    appExecutableName: path.basename(executablePath),
+    appVersion: app.getVersion(),
+    caseInsensitivePaths: process.platform === 'win32',
+  };
+}
+
+/**
+ * The `beforeSend` body, for native crash events only: it drops a crash that
+ * happened in a process that is not ours, and corrects the release tag and scope
+ * of one that is. Everything else passes through untouched, including renderer
+ * events (the SDK re-captures those through main's client, so they reach this
+ * hook too).
+ *
+ * The whole thing fails OPEN. A `beforeSend` that throws makes the SDK drop the
+ * event, so a bug in the minidump reader would silently delete every native
+ * crash rather than one. Any doubt at all and the event goes through unchanged.
+ */
+export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+  try {
+    const minidump = hint.attachments?.find(
+      (attachment) => attachment.attachmentType === MINIDUMP_ATTACHMENT_TYPE
+    );
+    if (!minidump || !(minidump.data instanceof Uint8Array)) return event;
+
+    const identity = readMinidumpIdentity(minidump.data);
+    const decision = correctNativeCrashEvent(event, identity, resolveNativeCrashContext());
+    if (decision.action === 'keep') return decision.event;
+
+    // Counted, not reported, the same split as a transient updater failure or a
+    // recoverable utility crash. Once this filter ships, DESKTOP-K stops growing
+    // and this counter is the only fleet-wide evidence left that foreign
+    // processes are still writing into our crash database, which is what the
+    // mach-exception-port follow-up needs a before and after number for. The
+    // module name is a basename, so it carries no path and no home directory.
+    trackEvent('foreign_minidump_dropped', { module: decision.mainModule });
+    return null;
+  } catch {
+    return event;
+  }
+}
+
 /**
  * Initialize Sentry error reporting. Must be called BEFORE app.whenReady(),
  * next to initAnalytics() (the SDK wires its renderer IPC/protocol transport
@@ -123,6 +191,18 @@ export function reportHandledError(
  * deciding that a whole class of event is un-actionable and should never become
  * an issue is a product judgement about our own code, not a data-privacy rule.
  * See the annotated entries below.
+ *
+ * NATIVE CRASH EVENTS are the one exception to "filtering lives in
+ * `ignoreErrors`", and to the no-beforeSend stance above. `ignoreErrors` is the
+ * `eventFiltersIntegration`, which matches only an event's message and its
+ * exception type and value. A minidump event has none of those, so the matcher
+ * sees an empty candidate list and the filter is a no-op on it. The thing that
+ * says whether the crash was even ours lives in the attached dump, not on the
+ * event, and Sentry derives the stack and the image list from that dump only
+ * AFTER upload. So this one class is filtered in `beforeSend`
+ * (filterNativeCrashEvent, above), which is the only hook that can see the
+ * attachment. It is still filtering, not scrubbing: the scrubbing stance is
+ * unchanged.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -149,6 +229,9 @@ export function initErrorReporting(): void {
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
         ),
+      // Native crash events only; see the NATIVE CRASH EVENTS note above for why
+      // this one class cannot go in ignoreErrors below.
+      beforeSend: filterNativeCrashEvent,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data
       // we need removed from events we do keep.
