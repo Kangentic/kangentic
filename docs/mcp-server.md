@@ -1128,11 +1128,14 @@ control.
 A lane is offscreen. It does not appear on screen, does not disturb the pane the user is looking at,
 and cannot take their keyboard focus. It shares the task's cookie jar, so it inherits
 whatever the user is already signed into. Lanes are capped per task; past the cap `open_pane` returns
-`lane-limit` and names the lanes to reuse. Close one with `kangentic_browser_close_pane`, which
-destroys lanes directly. A lane is also destroyed when the session that opened it ends, when it goes
-idle, and on app quit - so forgetting to close one leaks nothing. An `open_pane` that races one of
-those teardowns returns `lane-swept` rather than a handle. Retry once: a sweep from a closed window
-is over by then, but a quitting app keeps refusing.
+`lane-limit` and names the lanes to reuse. A lane whose first URL does not load within the load
+deadline returns `lane-load-failed` and is destroyed rather than left half-open, so a dev server that
+is still starting reads as a retryable failure instead of a hang. Close one with
+`kangentic_browser_close_pane`, which destroys lanes directly. A lane is also destroyed when the
+session that opened it ends, when it goes idle, when the app's main window closes, and on app quit -
+so forgetting to close one leaks nothing. An `open_pane` that races one of those teardowns returns
+`lane-swept` rather than a handle. Retry once: a sweep from a closed window is over by then, but a
+quitting app keeps refusing.
 
 `kangentic_browser_list_panes` reports each surface's `kind` (and `handoff` for a lane standing in
 for a closed pane) so an agent can tell its own lane from the task's shared pane.
