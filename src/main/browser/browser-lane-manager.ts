@@ -129,10 +129,10 @@ const lanes = new Map<string, LaneRecord>();
  *
  * That is not a theoretical ordering. It is how the app ends up alive with no
  * main window: the surviving offscreen lane holds `getAllWindows()` above zero,
- * so `window-all-closed` never fires, `app.quit()` never runs on Windows, and
- * the process lingers invisibly still holding the single-instance lock. Every
- * relaunch then exits at once (Sentry DESKTOP-J reached the crash through
- * exactly this state).
+ * so `window-all-closed` never fires and `app.quit()` never runs on Windows or
+ * Linux (it is gated on `platform !== 'darwin'`), and the process lingers
+ * invisibly still holding the single-instance lock. Every relaunch then exits
+ * at once (Sentry DESKTOP-J reached the crash through exactly this state).
  *
  * `openLane` captures this counter on entry and abandons once it changes, which
  * closes the gap for every await in the function rather than only today's.
@@ -271,7 +271,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     return {
       ok: false,
       kind: 'lane-swept',
-      detail: 'The browser lanes were torn down while this one was opening (the window closed, or the app is quitting).',
+      detail: 'The browser lanes were torn down while this one was opening (the window closed, or the app is quitting). Retry once: a sweep from a closed window is already over, but a quitting app will keep refusing.',
     };
   }
 
@@ -330,7 +330,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     return {
       ok: false,
       kind: 'lane-swept',
-      detail: 'The browser lanes were torn down while this one was loading (the window closed, or the app is quitting).',
+      detail: 'The browser lanes were torn down while this one was loading (the window closed, or the app is quitting). Retry once: a sweep from a closed window is already over, but a quitting app will keep refusing.',
     };
   }
 
@@ -442,8 +442,12 @@ export function destroyIdleLanes(idleMs: number, now: number = Date.now()): numb
  * must not skip them.
  */
 export function destroyAllLanes(): void {
-  // Before the loop, so a lane whose construction is mid-await abandons even if
-  // one of the destroys below throws.
+  // First, so nothing added below can skip it. The position is not observable
+  // today: this function is synchronous, the per-lane catch means the loop
+  // always reaches the end, and destroying a lane cannot re-enter openLane (the
+  // hand-off returns early on entry.kind === 'lane'). What it buys is future
+  // proofing against an early return or an await added inside the loop, not
+  // protection from a throwing destroy - the catch is what covers that.
   laneSweepGeneration++;
   for (const lane of [...lanes.values()]) {
     try {
@@ -455,7 +459,11 @@ export function destroyAllLanes(): void {
   }
 }
 
-/** Test seam: drop bookkeeping without touching real windows. */
+/** Test seam: drop bookkeeping without touching real windows. Resets the sweep
+ *  counter too, so a test that sweeps cannot carry a generation into the next
+ *  one. Nothing reads the counter's absolute value today, but leaving live
+ *  module state behind is how order-dependent tests start. */
 export function resetLanesForTests(): void {
   lanes.clear();
+  laneSweepGeneration = 0;
 }
