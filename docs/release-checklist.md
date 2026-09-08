@@ -1,10 +1,10 @@
 # Release Smoke Checklist
 
-Manual validation against real, authenticated agent CLIs before publishing a draft release. Automated tests use mock fixtures (`tests/fixtures/mock-*.{js,cmd}`) which exercise spawn, capture, and resume mechanics but do not exercise real model latency, real tool calls, or conversation continuity across resume. This checklist closes that gap.
+Manual validation against real, authenticated agent CLIs, run against a release's built artifacts. Automated tests use mock fixtures (`tests/fixtures/mock-*.{js,cmd}`) which exercise spawn, capture, and resume mechanics but do not exercise real model latency, real tool calls, or conversation continuity across resume. This checklist closes that gap.
 
 Run from a packaged build (`npm run make`) on the platform you primarily ship from, against a project that has the agent CLI installed and authenticated. Use a throwaway project directory so file writes do not pollute real work.
 
-If any step fails, do not publish the draft release. File a bug, fix forward, cut a new tag.
+If any step fails, file a bug, fix forward, and cut a new tag. The lever is [Rollback](deployment.md#rollback), not withholding the release: `publish-release` publishes as soon as the builds succeed, and no human decides whether the draft goes live. Never publish a draft by hand either, least of all while the builds are still running. That is how v0.39.0 shipped with none of its 11 assets. See [Draft Releases Are Invisible to Auto-Updater](deployment.md#draft-releases-are-invisible-to-auto-updater).
 
 ## OpenCode
 
