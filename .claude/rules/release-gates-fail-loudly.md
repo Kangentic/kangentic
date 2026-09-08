@@ -42,7 +42,12 @@ Any step in the release path that exists to guarantee something must fail when i
   `.github/workflows/release.yml` and fails when any `always()` job has a `needs:` entry its `if:`
   does not reference, when the draft release stops depending on `preflight-symbols`, when that
   preflight stops being able to fail (`exit 1`) or acquires an `environment:` approval gate, or when
-  `release` loses the clause it inherits the gate through. Runs via `npm run test:unit`.
+  `release` loses the clause it inherits the gate through. It also pins the two shapes v0.39.0
+  broke: `create-draft-release` must be able to FAIL on a release that is already published and
+  incomplete (rather than reusing it, which lets electron-builder skip every upload while the
+  builds still exit 0), and the rpm and deb upgrade gates must resolve their baseline from the
+  release LIST excluding this build's own tag, never from `/releases/latest`, which returns the
+  release under construction the moment anything publishes it. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/upload-native-debug-files.test.ts` pins the build-side
   (esbuild/main+preload) half: the skip line is printed, a present-token upload failure throws, the
   `NODE_ENV` guard rejects unset and non-production values, and `resolveSentryReleaseName` throws

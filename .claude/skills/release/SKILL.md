@@ -209,7 +209,21 @@ Summarize the release:
 - Changelog entry: show the generated entry
 - **Release notes:** Read `RELEASE_NOTES.md` and display the contents. Tell the user: "These release notes will be applied to the draft GitHub Release automatically by CI."
 - GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions`. The tag push triggers the Release workflow, which creates ONE draft Release, builds all three platforms into it, verifies the asset manifest, and then publishes it automatically.
-- **Open the releases page** in the user's browser: run `start https://github.com/Kangentic/kangentic/releases` so the user can confirm the release went live.
+
+**Watch the run before opening anything.** Get the run id with `gh run list --repo
+Kangentic/kangentic --workflow=release.yml --limit 1`, then wait on it with `gh run watch <runId>
+--repo Kangentic/kangentic --exit-status` (run it in the background; it takes 10 to 15 minutes).
+
+**Then** verify the end state rather than trusting the exit code, and only after that open the
+releases page in the user's browser with `start
+https://github.com/Kangentic/kangentic/releases`:
+
+- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 11 assets.
+- `npm view kangentic version` must report the new version.
+
+Opening the releases page while the builds are still running is what caused the v0.39.0 failure
+below, so the order here is the guard, not a preference: it puts a draft and a Publish button in
+front of a human for the ten minutes when clicking it does the most damage.
 
 **Never publish the draft by hand.** Publishing is automatic once
 `scripts/verify-release-assets.js` confirms the tag resolves to exactly one release carrying all
@@ -218,6 +232,14 @@ gate FAILED, and the draft is presumed incomplete. Clicking Publish in the GitHu
 only check that stands between a partial release and every user's auto-updater, which is exactly
 how v0.35.0 shipped macOS-less. Read the `publish-release` job log, fix the cause, and re-run the
 workflow instead.
+
+Publishing it EARLY, while the builds are still running, is the worse half and is how v0.39.0
+first shipped empty. electron-builder uploads only into a draft: handed a published release it
+skips every artifact with `existing type not compatible with publishing type` and the builds
+still exit 0, leaving a published release carrying nothing. `create-draft-release` now fails the
+run in seconds when it finds that state, but the recovery is still manual: `gh release delete
+vX.Y.Z --yes` (the tag survives), then a FULL re-run with `gh run rerun <runId>`. Not
+`--failed`, which re-runs only the failed job and leaves the other platforms' assets unbuilt.
 
 ## Allowed Tools
 
