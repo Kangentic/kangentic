@@ -6,6 +6,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.39.0] - 2026-09-07
+
+### Features
+
+- Add a {{projectPath}} task-template variable (26155a69)
+- Add an Azure DevOps PR connector and gate dispatch on remote ownership (71d9dcf9)
+- Name where each agent runs, before and after the spawn (903018c6)
+
+### Fixes
+
+- Walk every PATH match so a dead npm shim cannot hide a real install (fec6b26c)
+- Launch the sibling shim for a Windows .cmd agent head (8f54f284)
+- Filter transient updater feed failures, and make the release symbol upload run (8923f4d9)
+- Stop an out-of-union column role blanking the board (02e848bf)
+- Degrade gracefully when the global database cannot be read (ce3f07c5)
+- Reap processes pinning a worktree, bound the removal retry (526cf092)
+- Reap session leftovers on the MCP delete path (7c08e417)
+- Tolerate a config with no agent section in the monitor detail bundle (7c59b769)
+- Flatten Codex prompts for PowerShell CMD shims (957f0887)
+- Drain node-pty exit callbacks before Electron tears Node down (ab7a0d52)
+- Keep the session registry at one row per task (18b0858d)
+- Stop the arrival-focus claim deadline racing the mount it awaits (a928f100)
+- Keep Claude Code's fullscreen diff panel closed on every spawn (4eb40c5f)
+- Stop reporting un-actionable conditions to Sentry (0d2877f8)
+- Clamp a restored diff scroll position to the current layout (16861ae5)
+- Gate the macOS launch-time activate behind startup (8e693aa6)
+
+### Other
+
+- Point the Oz detection section at the file its prose describes (d970f1c3)
+- Cover the override detail, the per-name probe budget, and the delimiter fix (7a0ed89e)
+- Make the shared-paths mocks partial so a new export cannot break them (230a04d6)
+- Pin the shim-launch behaviors a revert would not have caught (29276a2c)
+- Fold the narrow .cmd flatten into the shared shim resolver (77e018e8)
+- Cover the vite.config.mts upload guards and both version guards (118eccbd)
+- Restore NODE_ENV after importing build.js (a0bd4627)
+- Renumber the swimlane role migration after the rebase collision (2cd6d05c)
+- Name both lastOpenedProject call sites, not one (d320c259)
+- Cover the remaining branches of the unreadable-database path (21179bc9)
+- Teach the reap-wiring stubs about setWorktreeSkipReason (9d17a7db)
+- Correct two claims left stale by the POSIX cwd removal (d8f78fe9)
+- Add the reap helpers to the task-move analytics barrel mock (1b7b4c98)
+- Pin the cap-height trim's text-run merging (e0cadc61)
+- Assign a Sentry issue once its board task exists (b50ff580)
+- Correct the hint eviction wording and scope the unreadable-answer path (49babdaa)
+- Cover the registry kind plumbing, cache eviction, and a malformed escape (4801bac5)
+- Pin the PR degrade-hint set and the resolver-message toast (7157b426)
+- Merge the unslop writing guidance into one always-on rule (484f1691)
+- Add the PTY exit-callback drain to the Key Constants table (1ec8ab3b)
+- Pin that the real SessionManager.killAll returns the killed pids (eb5de18c)
+- Pin every cache a replaced exited placeholder row clears (04b66d02)
+- Pin the all-rows kill and the live-row dictation lookup (c4a02081)
+- Pin that the diff-panel write runs after the trust writers (df666332)
+- Pin the Command Terminal's pre-spawn ensureTrust at runtime (1a3b6816)
+- Name every entry point that fires a resume spawn_failed (328e46a9)
+- De-flake the archived-task resume-toggle spec (1fc9993f)
+- Pin the typed missing-CLI throw on the spawn path (7c5e0167)
+- Pin the transient-session missing-CLI error type (9968739c)
+- Set the collapse preference explicitly instead of toggling it (add8fda0)
+- Fix a marker-vs-TUI-clear race in the Codex/Cursor redraw tests (1069fc7b)
+- Pin the agent-spawn and task-move {{projectPath}} call sites (6a6c20b7)
+- Pin {{projectPath}} to the project checkout at the executeAction call site (092d0da5)
+- Pin the live gate read and the unconditional escape hatch (51426b49)
+- Wait for the flags write instead of sleeping 20ms (2cd9344a)
+- Pin the windowing share and merge-gap thresholds (f8267539)
+- Pack sparsely-changed bodies as hunk windows (38f61bee)
+- Trim the opt-out mechanics from the v0.38.0 note (00d19994)
+- Correct the v0.38.0 error-reporting note to opt-out (00086378)
+
 ## [v0.38.0] - 2026-08-30
 
 ### Features
