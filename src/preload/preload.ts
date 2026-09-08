@@ -276,6 +276,7 @@ const api: ElectronAPI = {
     getToolBreakdown: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TOOL_BREAKDOWN, sessionId),
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
+    setTransientLabel: (sessionId: string, label: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_LABEL, sessionId, label),
     setFocused: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_FOCUSED, sessionIds),
     setMounted: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_MOUNTED, sessionIds),
     notifyUserInterrupt: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_NOTIFY_USER_INTERRUPT, sessionId),

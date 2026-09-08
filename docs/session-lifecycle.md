@@ -1049,6 +1049,32 @@ Transient sessions are ephemeral Claude Code terminals spawned from the command 
 - **No resume capability** - killed on close, not suspendable
 - **No queue** - spawned immediately regardless of concurrency limits
 
+### Identity survives a renderer reload
+
+Which Command Terminal window owns which PTY is a `(projectId, slot)` pairing held in the
+renderer's `transientSessions` map. That map is renderer-only memory: HMR preserves it via
+`import.meta.hot.data`, a full page reload does not. Main keeps every transient PTY running
+regardless, so without recovery a reload left a live conversation with nothing pointing at it,
+and the window came back as an empty fresh boot.
+
+Main is the authority for the pairing. `ManagedSession` retains `commandTerminalSlot`,
+`commandTerminalBranch`, and `commandTerminalLabel` (in memory, not a DB row, so this does not
+make a transient session persistent), and `toSession` carries all three to the renderer on every
+session row. `planTransientRecovery`
+(`src/renderer/stores/session-store/transient-recovery.ts`) rebuilds the map from that on every
+`syncSessions`, for every project:
+
+1. An entry already pointing at a running session is kept verbatim, which preserves the
+   first-prompt-wins label.
+2. Every other survivor claims the slot main recorded for it.
+3. A survivor whose slot is taken, or that carries none, takes the lowest free slot, so no live
+   PTY is left unreachable.
+
+Step 3 is the one case where a terminal is renumbered; see
+`src/shared/command-terminal-name.ts` for why that is preferred to orphaning it. A window that
+mounts before recovery runs adopts an unpaired live PTY for its slot rather than spawning
+(`findAdoptableTransientSession`), so the duplicate cannot be recreated by a race.
+
 ### Spawn Flow (`SESSION_SPAWN_TRANSIENT`)
 
 1. Optionally checkout a target branch (falls back to current branch on failure)

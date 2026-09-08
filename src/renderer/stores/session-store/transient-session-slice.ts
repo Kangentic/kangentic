@@ -43,6 +43,35 @@ export function transientKey(projectId: string, slot: string): string {
   return `${projectId}::${slot}`;
 }
 
+/**
+ * Build the pairing entry for a SURVIVING PTY that main says owns `(projectId,
+ * slot)`.
+ *
+ * Shared by the only two paths that re-pair a survivor - `adoptTransientSession`
+ * below and `planTransientRecovery`'s pairing pass - because they have to agree on
+ * which fields an entry carries, and they did not. The adopt path built the entry
+ * by hand and omitted `label`, so a terminal recovered through it came back as
+ * "Command Terminal N"; recovery's pass 1 then kept that label-less entry verbatim,
+ * the auto-namer re-derived a name from a LATER prompt, and main refused the mirror
+ * because first-write-wins. One builder is what stops that drifting again.
+ *
+ * `spawnTransientSession` deliberately does NOT use this: a fresh spawn takes its
+ * branch from the spawn RESULT rather than the session row, and has no label yet.
+ */
+export function buildTransientSessionEntry(
+  projectId: string,
+  slot: string,
+  session: Session,
+): TransientSessionEntry {
+  return {
+    projectId,
+    slot,
+    sessionId: session.id,
+    branch: session.commandTerminalBranch ?? null,
+    ...(session.commandTerminalLabel ? { label: session.commandTerminalLabel } : {}),
+  };
+}
+
 /** Every transient session id for a project, in map order. Drives the focused-set
  *  push (each visible terminal must be focused). Activity aggregates do NOT use
  *  this: they go through `selectCommandTerminalSummary` below, which reads the
@@ -77,11 +106,11 @@ const EMPTY_COMMAND_TERMINAL_SUMMARY: CommandTerminalSummary = { count: 0, tone:
  * tone. Drives the title-bar glyph and the per-project sidebar indicator.
  *
  * Reads the SESSIONS list rather than the `transientSessions` map on purpose. That
- * map is renderer-owned window pairing, and its hard-reload recovery only re-pairs
- * the CURRENT project's survivors (see `syncSessions`), so a map-based count would
- * read zero for every background project after a reload. `session:list` is unscoped
- * and every row carries `projectId` + `transient` stamped by main, so this stays
- * correct cross-project and across reloads.
+ * map is renderer-owned window pairing, reconstructed after a reload by
+ * `planTransientRecovery`; reading main's own rows keeps this count independent of
+ * whether that reconstruction has run yet. `session:list` is unscoped and every row
+ * carries `projectId` + `transient` stamped by main, so it is correct cross-project
+ * and across reloads by construction.
  *
  * WORKING wins: any active terminal makes the whole project read active, else
  * attention if any needs you, else rest. Bucketed only through the shared
@@ -165,6 +194,14 @@ export interface TransientSessionSlice {
     branch?: string,
     grid?: { cols: number; rows: number },
   ) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
+  /** Pair an ALREADY-RUNNING transient PTY to `(projectId, slot)` without spawning.
+   *
+   *  The window mount effect's last resort before it spawns: main's session row
+   *  says this PTY belongs to this slot, but nothing in the map points at it. That
+   *  is the reload-orphan shape, and spawning instead would manufacture a duplicate
+   *  and strand the survivor. Recovery normally re-pairs first, so this only fires
+   *  when a window mounts ahead of it. */
+  adoptTransientSession: (projectId: string, slot: string, session: Session) => void;
   /** Kill one slot's transient PTY (IPC) and scrub its renderer state.
    *
    *  Reports which of the three things actually happened, because they are not
@@ -247,6 +284,15 @@ export function createTransientSessionSlice(preserved: {
       return result;
     },
 
+    adoptTransientSession: (projectId, slot, session) => {
+      set((state) => ({
+        transientSessions: {
+          ...state.transientSessions,
+          [transientKey(projectId, slot)]: buildTransientSessionEntry(projectId, slot, session),
+        },
+      }));
+    },
+
     killTransientSessionBySlot: async (projectId, slot) => {
       const entry = get().transientSessions[transientKey(projectId, slot)];
       // No entry means no PTY to address. Nothing was killed, and saying so is the
@@ -308,6 +354,7 @@ export function createTransientSessionSlice(preserved: {
     setTransientSessionLabel: (sessionId, label) => {
       const trimmed = label.trim();
       if (!trimmed) return;
+      let applied = false;
       set((state) => {
         const next = { ...state.transientSessions };
         for (const [key, entry] of Object.entries(next)) {
@@ -316,10 +363,19 @@ export function createTransientSessionSlice(preserved: {
             // user-set or earlier-derived label on subsequent prompts.
             if (entry.label) return state;
             next[key] = { ...entry, label: trimmed };
+            applied = true;
             return { transientSessions: next };
           }
         }
         return state;
+      });
+      // Mirror to main so the name outlives this renderer. Only on a real apply,
+      // so a no-op (already labelled, or no owning entry) issues no IPC. Main
+      // holds it passively; nothing here waits on it, and a rejection costs only
+      // the name after a future reload.
+      if (!applied) return;
+      void window.electronAPI.sessions.setTransientLabel(sessionId, trimmed).catch(() => {
+        // Best-effort - the label is already applied locally.
       });
     },
 

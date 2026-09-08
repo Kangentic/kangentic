@@ -34,6 +34,7 @@ import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey, type TransientKillOutcome } from '../../stores/session-store/transient-session-slice';
+import { findAdoptableTransientSession } from '../../stores/session-store/transient-recovery';
 import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -244,6 +245,23 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       }
     }
 
+    // No map entry, but main may still be running a PTY stamped with this slot: a
+    // renderer reload destroys the map while every transient PTY survives.
+    // Spawning here would manufacture a duplicate AND leave that survivor
+    // unreachable, which is the bug this guard closes. `syncSessions` normally
+    // re-pairs first, so this covers a window that mounts ahead of it - not a
+    // theoretical case: strip this branch and
+    // `command-terminal.spec.ts`'s "adopts the live PTY for its slot" test spawns
+    // a second PTY and strands the first.
+    const adoptable = findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot);
+    if (adoptable) {
+      state.adoptTransientSession(currentProjectId, slot, adoptable);
+      setSessionId(adoptable.id);
+      setBranch(adoptable.commandTerminalBranch ?? null);
+      setTerminalReady(true);
+      return;
+    }
+
     state.spawnTransientSession(slot)
       .then((result) => {
         setSessionId(result.session.id);
@@ -271,16 +289,33 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // On an HMR remount, skip the shimmer when reattaching to a live transient
   // session (otherwise useState(false) would flash the launch overlay).
   const [terminalReady, setTerminalReady] = useState(() => {
-    if (!getIsHmrReload()) return false;
     const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
     if (!currentProjectId) return false;
+    const state = useSessionStore.getState();
+    // An adoptable survivor attaches without spawning, so it must skip the
+    // shimmer - otherwise a reload-recovered terminal flashes the launch overlay
+    // over a conversation that is already running.
+    //
+    // Checked BEFORE the HMR gate below, not after, because a genuine page reload
+    // is the case it exists for and `getIsHmrReload()` is FALSE there: the flag is
+    // "false on cold start, true after any HMR cycle" (utils/hmr-flag.ts), and a
+    // full reload is a cold start. Behind the gate this branch could only ever run
+    // under Fast Refresh, which is the one path that does not need it - the map
+    // survives HMR via import.meta.hot.data, so the entry check below already
+    // covers it. Being adoptable is a strictly stronger condition than "this is
+    // HMR" anyway: it means main is running a live PTY for this exact slot, which
+    // is reason enough to skip the launch overlay however the renderer got here.
+    if (findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot)) return true;
+    if (!getIsHmrReload()) return false;
     // Reattach shimmer-free only if the slot's session is still alive; a stale
     // entry (session died while the layer was hidden, exit event not yet applied)
     // must fall through to the spawn path WITH the shimmer, mirroring the mount
     // effect's alive check below.
-    const state = useSessionStore.getState();
     const existing = state.transientSessions[transientKey(currentProjectId, slot)];
-    return !!existing && state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running');
+    if (existing) {
+      return state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running');
+    }
+    return false;
   });
 
   useEffect(() => {

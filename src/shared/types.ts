@@ -718,6 +718,34 @@ export interface Session {
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
   /**
+   * For a transient session, the durable Command Terminal window SLOT id
+   * (`slot-1`, ...) the renderer allocated at spawn. Null for task agents and for
+   * a transient spawned by a path that sends none.
+   *
+   * On this DTO for CORRECTNESS, which is what separates it from `agentName`
+   * (deliberately kept off, as a diagnostic - see `listManagedSummaries` in
+   * src/main/pty/session-registry.ts). The renderer's (project, slot) pairing map
+   * is renderer-only memory that a full page reload destroys, leaving live PTYs
+   * with nothing pointing at them. This is main's authoritative copy of the
+   * pairing, so recovery re-pairs a survivor to the slot it actually ran under
+   * instead of guessing a position. See planTransientRecovery.
+   */
+  commandTerminalSlot?: string | null;
+  /** For a transient session, the branch it was spawned on (the RESOLVED branch,
+   *  after any checkout fallback). Null for task agents. Carried for the same
+   *  reason as the slot: recovery restores it, so a recovered terminal's header
+   *  branch pill is not blank. */
+  commandTerminalBranch?: string | null;
+  /** For a transient session, the name auto-derived from its first prompt. Null
+   *  until one is derived, and for task agents.
+   *
+   *  Derived in the renderer (`auto-name-scheduler.ts`) and pushed to main purely
+   *  so it survives a reload, alongside the slot and branch. Without that, a
+   *  recovered terminal drops back to "Command Terminal N" AND the auto-namer
+   *  re-fires on the next prompt, renaming it after whatever the user happened to
+   *  type second. */
+  commandTerminalLabel?: string | null;
+  /**
    * Parallel-session discriminator for the terminal badge. Null/undefined (main
    * session, or legacy/transient sessions) shows as "Main"; a swimlane id (the
    * column this session is isolated to) shows as "Isolated". See
@@ -4830,6 +4858,10 @@ export interface ElectronAPI {
     getToolBreakdown: (sessionId: string) => Promise<PerToolStat[]>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
     killTransient: (sessionId: string) => Promise<void>;
+    /** Record a transient session's auto-derived name on main, so it survives a
+     *  renderer reload. Fire-and-forget: the renderer has already applied it
+     *  locally, and main only retains it for recovery. */
+    setTransientLabel: (sessionId: string, label: string) => Promise<void>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of

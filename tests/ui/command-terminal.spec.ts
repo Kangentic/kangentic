@@ -278,6 +278,11 @@ function multiTerminalPreConfig(): string {
 
 const RECONCILE_PROJECT_ID = 'proj-cmd-restart';
 const HARD_RELOAD_PROJECT_ID = 'proj-cmd-hard-reload';
+const SLOT_MISMATCH_PROJECT_ID = 'proj-cmd-slot-mismatch';
+const ORPHAN_RACE_PROJECT_ID = 'proj-cmd-orphan-race';
+const BACKGROUND_FOREGROUND_PROJECT_ID = 'proj-cmd-bg-foreground';
+const BACKGROUND_PROJECT_ID = 'proj-cmd-bg-background';
+const ADOPT_PROJECT_ID = 'proj-cmd-adopt';
 
 /**
  * Init-script fragment that decorates the DEFAULT mock spawnTransient (which
@@ -349,8 +354,9 @@ function restartBlobPreConfig(): string {
 }
 
 /** One project with the same 2-window blob PLUS two surviving running transient
- *  PTYs: the hard-reload path. syncSessions re-pairs the survivors to slot-1 /
- *  slot-2 at boot, so on first open both windows restore and reattach. */
+ *  PTYs: the hard-reload path. Each survivor carries the slot main recorded for
+ *  it, so syncSessions re-pairs them EXACTLY and on first open both windows
+ *  restore and reattach. */
 function hardReloadPreConfig(): string {
   return `
     window.__mockPreConfigure(function (state) {
@@ -371,11 +377,13 @@ function hardReloadPreConfig(): string {
         id: 'hr-sess-1', taskId: 'hr-sess-1', projectId: '${HARD_RELOAD_PROJECT_ID}', pid: 3001,
         status: 'running', shell: 'bash', cwd: '/mock/hard-reload-project', startedAt: ts,
         exitCode: null, resuming: false, transient: true,
+        commandTerminalSlot: 'slot-1', commandTerminalBranch: 'main',
       });
       state.sessions.push({
         id: 'hr-sess-2', taskId: 'hr-sess-2', projectId: '${HARD_RELOAD_PROJECT_ID}', pid: 3002,
         status: 'running', shell: 'bash', cwd: '/mock/hard-reload-project', startedAt: ts,
         exitCode: null, resuming: false, transient: true,
+        commandTerminalSlot: 'slot-2', commandTerminalBranch: 'feature/two',
       });
       return { currentProjectId: '${HARD_RELOAD_PROJECT_ID}' };
     });
@@ -384,17 +392,220 @@ function hardReloadPreConfig(): string {
   `;
 }
 
-/** Transient-session entries (slot + sessionId) tracked for a project. */
-async function transientEntriesFor(page: Page, projectId: string): Promise<Array<{ slot: string; sessionId: string }>> {
+/** Survivors on NON-CONSECUTIVE slots whose ids sort the OPPOSITE way to those
+ *  slots. This is the fixture shape `hardReloadPreConfig` cannot express: there,
+ *  `hr-sess-1` / `hr-sess-2` happen to sort into slot order, so a positional
+ *  `slot-${index + 1}` guess over an id-sorted list lands correctly by accident.
+ *  Here it pairs `slot-1`->`sm-zzz` and `slot-2`->`sm-aaa`, i.e. each window shows
+ *  the other terminal's conversation under a title that says otherwise. */
+function slotMismatchPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${SLOT_MISMATCH_PROJECT_ID}',
+        name: 'Slot Mismatch Project',
+        path: '/mock/slot-mismatch-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-sm-' + i, position: i, created_at: ts }));
+      });
+      state.sessions.push({
+        id: 'sm-zzz', taskId: 'sm-zzz', projectId: '${SLOT_MISMATCH_PROJECT_ID}', pid: 3101,
+        status: 'running', shell: 'bash', cwd: '/mock/slot-mismatch-project', startedAt: ts,
+        exitCode: null, resuming: false, transient: true,
+        commandTerminalSlot: 'slot-2', commandTerminalBranch: 'main',
+      });
+      state.sessions.push({
+        id: 'sm-aaa', taskId: 'sm-aaa', projectId: '${SLOT_MISMATCH_PROJECT_ID}', pid: 3102,
+        status: 'running', shell: 'bash', cwd: '/mock/slot-mismatch-project', startedAt: ts,
+        exitCode: null, resuming: false, transient: true,
+        commandTerminalSlot: 'slot-3', commandTerminalBranch: 'main',
+      });
+      return { currentProjectId: '${SLOT_MISMATCH_PROJECT_ID}' };
+    });
+    ${spawnCounterSource()}
+  `;
+}
+
+/** One project with no seeded sessions. The test spawns a terminal itself and then
+ *  injects a survivor, which is how it reproduces the "a fresh spawn won the race"
+ *  shape that a pre-seeded fixture cannot: the map must already hold an entry for
+ *  the project when recovery runs. */
+function orphanRacePreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${ORPHAN_RACE_PROJECT_ID}',
+        name: 'Orphan Race Project',
+        path: '/mock/orphan-race-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-or-' + i, position: i, created_at: ts }));
+      });
+      return { currentProjectId: '${ORPHAN_RACE_PROJECT_ID}' };
+    });
+    ${spawnCounterSource()}
+  `;
+}
+
+/** Two projects, the FIRST current, with a surviving PTY belonging to the second.
+ *  The background project's terminal must still be re-paired: recovery used to be
+ *  wrapped in `if (currentProjectId)` and scoped to it, so switching to that
+ *  project found nothing and spawned over the live terminal. */
+function backgroundProjectPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      ['${BACKGROUND_FOREGROUND_PROJECT_ID}', '${BACKGROUND_PROJECT_ID}'].forEach(function (id, index) {
+        state.projects.push({
+          id: id,
+          name: index === 0 ? 'Foreground Project' : 'Background Project',
+          path: '/mock/bg-project-' + index,
+          github_url: null,
+          default_agent: 'claude',
+          last_opened: ts,
+          created_at: ts,
+        });
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-bg-' + i, position: i, created_at: ts }));
+      });
+      state.sessions.push({
+        id: 'bg-sess-1', taskId: 'bg-sess-1', projectId: '${BACKGROUND_PROJECT_ID}', pid: 3201,
+        status: 'running', shell: 'bash', cwd: '/mock/bg-project-1', startedAt: ts,
+        exitCode: null, resuming: false, transient: true,
+        commandTerminalSlot: 'slot-2', commandTerminalBranch: 'main',
+      });
+      return { currentProjectId: '${BACKGROUND_FOREGROUND_PROJECT_ID}' };
+    });
+    ${spawnCounterSource()}
+  `;
+}
+
+/** One project with a single surviving PTY on slot-1. The test drops the pairing
+ *  map by hand afterwards, which is the one state recovery cannot produce for
+ *  itself: `sessions` holding a live terminal while the map holds nothing. */
+function adoptPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${ADOPT_PROJECT_ID}',
+        name: 'Adopt Project',
+        path: '/mock/adopt-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-ad-' + i, position: i, created_at: ts }));
+      });
+      state.sessions.push({
+        id: 'ad-sess-1', taskId: 'ad-sess-1', projectId: '${ADOPT_PROJECT_ID}', pid: 3301,
+        status: 'running', shell: 'bash', cwd: '/mock/adopt-project', startedAt: ts,
+        exitCode: null, resuming: false, transient: true,
+        commandTerminalSlot: 'slot-1', commandTerminalBranch: 'main',
+      });
+      return { currentProjectId: '${ADOPT_PROJECT_ID}' };
+    });
+    ${spawnCounterSource()}
+  `;
+}
+
+/** Drop every transient pairing entry, leaving the sessions list untouched. */
+async function clearTransientPairings(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { setState: (partial: { transientSessions: Record<string, unknown> }) => void } };
+    }).__zustandStores;
+    stores?.session?.setState({ transientSessions: {} });
+  });
+}
+
+/** Transient-session entries (slot + sessionId + branch) tracked for a project. */
+async function transientEntriesFor(
+  page: Page,
+  projectId: string,
+): Promise<Array<{ slot: string; sessionId: string; branch: string | null }>> {
   return page.evaluate((projectId) => {
     const stores = (window as unknown as {
-      __zustandStores?: { session?: { getState: () => { transientSessions: Record<string, { projectId: string; slot: string; sessionId: string }> } } };
+      __zustandStores?: { session?: { getState: () => { transientSessions: Record<string, { projectId: string; slot: string; sessionId: string; branch: string | null }> } } };
     }).__zustandStores;
     const map = stores?.session?.getState().transientSessions ?? {};
     return Object.values(map)
       .filter((entry) => entry.projectId === projectId)
-      .map((entry) => ({ slot: entry.slot, sessionId: entry.sessionId }));
+      .map((entry) => ({ slot: entry.slot, sessionId: entry.sessionId, branch: entry.branch }));
   }, projectId);
+}
+
+/** A project's slot-to-sessionId pairing, as a plain sorted object. The pairing is
+ *  what the recovery has to get RIGHT: a count-only assertion passes just as
+ *  happily when a window is showing another terminal's conversation. */
+async function transientPairingFor(page: Page, projectId: string): Promise<Record<string, string>> {
+  const entries = await transientEntriesFor(page, projectId);
+  const pairing: Record<string, string> = {};
+  for (const entry of entries) pairing[entry.slot] = entry.sessionId;
+  return pairing;
+}
+
+/** Push a running Command Terminal PTY into the mock AFTER boot, then re-run the
+ *  renderer's session sync, modelling main having kept a terminal alive that the
+ *  renderer does not yet know about.
+ *
+ *  `__mockPreConfigure` hands out the mock's own `sessions` array by reference, so
+ *  a post-boot push lands in `sessions.list()`. The caller asserts the row arrived
+ *  before relying on it. */
+async function injectRunningTerminal(
+  page: Page,
+  session: { id: string; projectId: string; slot: string; branch?: string },
+): Promise<void> {
+  await page.evaluate((session) => {
+    const configure = (window as unknown as {
+      __mockPreConfigure?: (fn: (state: { sessions: unknown[] }) => void) => void;
+    }).__mockPreConfigure;
+    configure?.((state) => {
+      state.sessions.push({
+        id: session.id,
+        taskId: session.id,
+        projectId: session.projectId,
+        pid: 4242,
+        status: 'running',
+        shell: 'bash',
+        cwd: '/mock/project',
+        startedAt: new Date().toISOString(),
+        exitCode: null,
+        resuming: false,
+        transient: true,
+        commandTerminalSlot: session.slot,
+        commandTerminalBranch: session.branch ?? 'main',
+      });
+    });
+  }, session);
+  await page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { syncSessions: () => Promise<boolean> } } };
+    }).__zustandStores;
+    return stores?.session?.getState().syncSessions();
+  });
+}
+
+/** The count the sidebar's per-project Command Terminal indicator is printing, or
+ *  0 when it is absent (the indicator hides itself at zero). */
+async function sidebarTerminalCount(page: Page, projectId: string): Promise<number> {
+  const indicator = page.getByTestId(`project-terminals-${projectId}`);
+  if (await indicator.count() === 0) return 0;
+  return Number(await indicator.first().getAttribute('data-count'));
 }
 
 /** Count of fresh spawnTransient calls recorded for a project. */
@@ -1383,6 +1594,19 @@ test.describe('Command Terminal', () => {
           .poll(async () => (await transientEntriesFor(page, HARD_RELOAD_PROJECT_ID)).length, { timeout: 8000, intervals: [100, 200, 500] })
           .toBe(2);
 
+        // Each survivor is paired to the slot MAIN recorded for it. A length check
+        // alone cannot tell a correct pairing from a window quietly showing the
+        // other terminal's conversation, which is the failure this guards.
+        expect(await transientPairingFor(page, HARD_RELOAD_PROJECT_ID)).toEqual({
+          'slot-1': 'hr-sess-1',
+          'slot-2': 'hr-sess-2',
+        });
+        // The branch survives recovery too, so the header pill is not blank.
+        const recoveredBranches = (await transientEntriesFor(page, HARD_RELOAD_PROJECT_ID))
+          .sort((first, second) => first.slot.localeCompare(second.slot))
+          .map((entry) => entry.branch);
+        expect(recoveredBranches).toEqual(['main', 'feature/two']);
+
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         // Both reattached: no fresh spawns for the project.
@@ -1404,6 +1628,131 @@ test.describe('Command Terminal', () => {
         const geometryBySlot = await commandWindowGeometryBySlot(page);
         expectGeometryNear(geometryBySlot['slot-1'], HARD_RELOAD_BLOB_GEOMETRY['slot-1']);
         expectGeometryNear(geometryBySlot['slot-2'], HARD_RELOAD_BLOB_GEOMETRY['slot-2']);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('survivors are paired to their own slots, not to a position in a sorted list', async () => {
+      const { browser, page } = await launchWithState(slotMismatchPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await expect
+          .poll(() => transientPairingFor(page, SLOT_MISMATCH_PROJECT_ID), { timeout: 8000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-2': 'sm-zzz', 'slot-3': 'sm-aaa' });
+
+        // Slots 2 and 3 with nothing on slot 1: the numbering is the terminal's own
+        // durable identity, not a rank, so a window keeps its name when a sibling
+        // is closed. Renumbering here would rename a window the user is looking at.
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect
+          .poll(() => commandWindowAnchors(page), { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual(['slot-2', 'slot-3']);
+        expect(await spawnCountFor(page, SLOT_MISMATCH_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a survivor is still recovered when a fresh spawn already tracked the project', async () => {
+      // The reported production failure. Recovery used to bail the moment the
+      // project had ANY tracked entry, so the terminal that won the post-reload
+      // race permanently hid every other survivor: the PTY kept running with its
+      // pending question and nothing could reach it.
+      const { browser, page } = await launchWithState(orphanRacePreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // A real spawn puts slot-1 in the map, so the project is "already tracked".
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect
+          .poll(async () => (await transientEntriesFor(page, ORPHAN_RACE_PROJECT_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(1);
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+
+        // Main was keeping a second terminal alive all along, stamped with the same
+        // slot the fresh spawn took (a slot is reused as soon as its window closes).
+        await injectRunningTerminal(page, {
+          id: 'orphaned-pty', projectId: ORPHAN_RACE_PROJECT_ID, slot: 'slot-1', branch: 'main',
+        });
+        await expect
+          .poll(async () => (await runningSessionIds(page, ['orphaned-pty'])).length, { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(1);
+
+        // The live window keeps slot-1; the survivor re-homes rather than being
+        // dropped, so both PTYs stay reachable.
+        await expect
+          .poll(async () => (await transientEntriesFor(page, ORPHAN_RACE_PROJECT_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(2);
+        const pairing = await transientPairingFor(page, ORPHAN_RACE_PROJECT_ID);
+        expect(Object.values(pairing)).toContain('orphaned-pty');
+
+        // The symptom the bug report opens with: the sidebar counted both PTYs
+        // (it reads main's rows) while only one window existed. A pairing-only
+        // assertion can pass while the layer still shows one window for two PTYs.
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        expect(await sidebarTerminalCount(page, ORPHAN_RACE_PROJECT_ID)).toBe(2);
+        // Adopted, not respawned: still the one spawn from the top of the test.
+        expect(await spawnCountFor(page, ORPHAN_RACE_PROJECT_ID)).toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a window mounting with no pairing adopts the live PTY for its slot instead of spawning', async () => {
+      // The mount effect's own guard, isolated. Recovery normally re-pairs before
+      // any window mounts, so the only way to reach this is to hand the renderer
+      // the state it protects against: main still running a terminal for slot-1
+      // while the pairing map holds nothing. Spawning here would BOTH manufacture
+      // a duplicate PTY and strand the live one.
+      const { browser, page } = await launchWithState(adoptPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect
+          .poll(async () => (await transientEntriesFor(page, ADOPT_PROJECT_ID)).length, { timeout: 8000, intervals: [100, 200, 500] })
+          .toBe(1);
+
+        await clearTransientPairings(page);
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+        // Bound to the SURVIVOR, and the map re-points at it. A fresh spawn would
+        // satisfy the window count just as well, which is why neither assertion
+        // alone is enough.
+        await expect
+          .poll(() => transientPairingFor(page, ADOPT_PROJECT_ID), { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-1': 'ad-sess-1' });
+        expect(await spawnCountFor(page, ADOPT_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a background project keeps its surviving terminal', async () => {
+      const { browser, page } = await launchWithState(backgroundProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Recovered while the OTHER project is open. Scoping recovery to the current
+        // project left this PTY unpaired until the user switched, by which point the
+        // layer had already spawned a fresh terminal over the top of it.
+        await expect
+          .poll(() => transientPairingFor(page, BACKGROUND_PROJECT_ID), { timeout: 8000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-2': 'bg-sess-1' });
+
+        await page.locator('[role="button"]:has-text("Background Project")').click();
+        await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(BACKGROUND_PROJECT_ID);
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect
+          .poll(() => commandWindowAnchors(page), { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual(['slot-2']);
+        expect(await spawnCountFor(page, BACKGROUND_PROJECT_ID)).toBe(0);
       } finally {
         await browser.close();
       }
