@@ -211,6 +211,34 @@ describe('createBeforeQuitHandler', () => {
     expect(secondEvent.preventDefault).not.toHaveBeenCalled();
   });
 
+  /**
+   * The real Windows session-end path (src/main/index.ts) sets
+   * osShutdownCannotBeDelayed and calls performShutdown() itself, BEFORE
+   * Electron's own before-quit fires. performShutdown() is idempotent
+   * (isShuttingDown()), so the before-quit pass that follows always sees
+   * cleanupRan: false together with osInitiated: true - the note and the
+   * OS-skip are not independent cases, they always arrive as a pair on that
+   * path. Every other test in this file exercises the two flags in isolation
+   * (osInitiated:true defaults cleanupRan to true; cleanupRan:false defaults
+   * osInitiated to false), so none of them proves the real pairing logs both
+   * lines, in order. Red-green: moving the isOsInitiatedShutdown check above
+   * the `!cleanupRanInThisPass` note in before-quit-handler.ts turns this red
+   * by dropping the note line entirely for a shutdown that already ran.
+   */
+  it('logs the cleanup-ran-earlier note before the OS-shutdown skip, matching the real Windows session-end order', () => {
+    const { dependencies, handler, event, log } =
+      makeHarness({ pids: [4242], killedCount: 1 }, { osInitiated: true, cleanupRan: false });
+
+    handler(event);
+
+    expect(log.mock.calls.map((call) => call[0])).toEqual([
+      '[SHUTDOWN] pty-drain:note cleanup-ran-earlier',
+      '[SHUTDOWN] pty-drain:skip reason=os-initiated-shutdown',
+    ]);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(dependencies.drainPtyExitCallbacks).not.toHaveBeenCalled();
+  });
+
   it('notes a cleanup that had already run under another entry point, and still drains', () => {
     // performShutdown returning false means another path already ran the
     // cleanup, so the report describes THAT pass. Its routine producer is the
