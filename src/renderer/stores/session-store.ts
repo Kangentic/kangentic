@@ -7,7 +7,8 @@ import type { SessionStore, PendingTuiAnchor } from './session-store/types';
 import { buildSessionByTaskId, withSessionUpserted } from './session-store/session-index';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
-import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
+import { createTransientSessionSlice, type TransientSessionEntry } from './session-store/transient-session-slice';
+import { planTransientRecovery } from './session-store/transient-recovery';
 import { registerSessionLifecycleHooks } from './session-lifecycle-hooks';
 import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
 import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
@@ -443,38 +444,26 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       pendingCommandLabel: nextPendingCommandLabel,
     });
 
-    // Recover transient session entries after a full page reload. The main
-    // process keeps transient PTYs alive, but the renderer's in-memory map is
-    // lost on a hard reload (HMR preserves it via import.meta.hot.data, so this
-    // only fires on a true reload, not Fast Refresh). Rebuild best-effort: pair
-    // the project's surviving transient PTYs to slot ids in a stable order. The
-    // command windows reattach by (project, slot) on next open. Skip if the
-    // project already has tracked entries (the HMR-preserved path).
-    if (currentProjectId) {
-      const alreadyTracked = Object.values(get().transientSessions).some(
-        (entry) => entry.projectId === currentProjectId,
-      );
-      if (!alreadyTracked) {
-        const survivors = mergedSessions
-          .filter((session) => session.transient && session.projectId === currentProjectId && session.status === 'running')
-          .sort((sessionA, sessionB) => sessionA.id.localeCompare(sessionB.id));
-        if (survivors.length > 0) {
-          set((state) => {
-            const transientSessions: Record<string, TransientSessionEntry> = { ...state.transientSessions };
-            survivors.forEach((session, index) => {
-              const slot = `slot-${index + 1}`;
-              transientSessions[transientKey(currentProjectId, slot)] = {
-                projectId: currentProjectId,
-                slot,
-                sessionId: session.id,
-                branch: null,
-              };
-            });
-            return { transientSessions };
-          });
-        }
-      }
-    }
+    // Re-pair surviving Command Terminal PTYs to their windows. Main keeps
+    // transient PTYs alive across a renderer reload, but the (project, slot) map
+    // is renderer-only memory - HMR preserves it via import.meta.hot.data, a full
+    // reload does not - so without this a live conversation is left with nothing
+    // pointing at it, and the project's terminal count exceeds its window count.
+    //
+    // Unconditional, per-slot, and cross-project by design. It used to be gated on
+    // "this project has no tracked entries", so one freshly spawned terminal
+    // permanently blocked re-pairing of that project's other survivors, and
+    // wrapped in `if (currentProjectId)`, so a background project's terminals were
+    // never recovered at all. It also dealt out `slot-1, slot-2, ...` over a
+    // uuid-sorted list, which could put someone else's conversation under
+    // "Command Terminal 1". The slot now arrives on the session row, so pairing is
+    // exact; the planner keeps already-paired entries verbatim, which is what
+    // makes running on every sync (Fast Refresh included) safe for their labels.
+    const recoveredTransientSessions = planTransientRecovery({
+      sessions: mergedSessions,
+      transientSessions: get().transientSessions,
+    });
+    if (recoveredTransientSessions) set({ transientSessions: recoveredTransientSessions });
 
     return true;
   },

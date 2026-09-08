@@ -58,6 +58,17 @@ export interface ManagedSession {
    * not a live read of HEAD.
    */
   commandTerminalBranch?: string | null;
+  /**
+   * For a transient session, the name auto-derived from its first prompt.
+   * Undefined for task agents and until one is derived.
+   *
+   * Main does not compute this and does not use it: the renderer derives it (via
+   * the adapter's `summarize`) and pushes it here so it OUTLIVES the renderer.
+   * The pairing map that holds it is renderer-only memory, so without this a
+   * reload loses every terminal's name, and the auto-namer then re-derives from
+   * whatever prompt comes next. Same reason the slot and branch live here.
+   */
+  commandTerminalLabel?: string | null;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at
@@ -181,6 +192,14 @@ export function toSession(session: ManagedSession): Session {
     exitCode: session.exitCode,
     resuming: session.resuming,
     transient: session.transient || undefined,
+    // The renderer pairs a Command Terminal window to its PTY by (project, slot)
+    // in renderer-only memory, which a full page reload destroys. These two are
+    // main's authoritative copy of that pairing, so `syncSessions` can re-pair a
+    // survivor exactly instead of guessing. Dropping them here is what used to
+    // orphan a live terminal on every reload.
+    commandTerminalSlot: session.commandTerminalSlot ?? null,
+    commandTerminalBranch: session.commandTerminalBranch ?? null,
+    commandTerminalLabel: session.commandTerminalLabel ?? null,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
   };
@@ -385,6 +404,11 @@ export class SessionRegistry {
    * widening the DTO would ripple through every existing consumer). Returns a
    * narrow projection rather than `ManagedSession` so callers still cannot
    * reach the pty handle, parsers, or adapter attachment.
+   *
+   * `commandTerminalSlot` / `commandTerminalBranch` used to be in that same
+   * monitor-only category and no longer are: `toSession` carries them too, because
+   * the renderer needs the slot to re-pair a surviving Command Terminal PTY to its
+   * window after a page reload. `agentName` remains the narrow-DTO example.
    */
   listManagedSummaries(): ManagedSessionSummary[] {
     return Array.from(this.sessions.values(), (session) => ({

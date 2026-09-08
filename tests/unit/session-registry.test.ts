@@ -12,10 +12,11 @@
  *     spawn flow drains with, so a second stale row cannot survive a spawn).
  *   - registerSuspendedPlaceholder: idempotent per task. A live or suspended
  *     row blocks the insert; an exited row is replaced.
+ *   - toSession: the Command Terminal pairing fields reach the renderer.
  */
 
 import { describe, it, expect } from 'vitest';
-import { SessionRegistry } from '../../src/main/pty/session-registry';
+import { SessionRegistry, toSession } from '../../src/main/pty/session-registry';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 
 /** Build a minimal ManagedSession with only the fields relevant to this test. */
@@ -36,6 +37,41 @@ function makeManagedSession(overrides: Partial<ManagedSession> = {}): ManagedSes
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// toSession
+// ---------------------------------------------------------------------------
+
+/**
+ * `listSessions()` is `Array.from(this.sessions.values(), toSession)`, so this
+ * mapper is the only thing every session row the renderer ever sees passes
+ * through. It used to drop the Command Terminal slot, which forced the renderer's
+ * reload recovery to GUESS which window each surviving PTY belonged to: a live
+ * conversation could come back under another terminal's title, or not come back
+ * at all.
+ */
+describe('toSession', () => {
+  it('carries the Command Terminal slot, branch and derived name to the renderer', () => {
+    const session = toSession(makeManagedSession({
+      transient: true,
+      commandTerminalSlot: 'slot-2',
+      commandTerminalBranch: 'feature/x',
+      commandTerminalLabel: 'Fix the parser',
+    }));
+
+    expect(session.commandTerminalSlot).toBe('slot-2');
+    expect(session.commandTerminalBranch).toBe('feature/x');
+    expect(session.commandTerminalLabel).toBe('Fix the parser');
+  });
+
+  it('reports null for a task agent, which has none of them', () => {
+    const session = toSession(makeManagedSession());
+
+    expect(session.commandTerminalSlot).toBeNull();
+    expect(session.commandTerminalBranch).toBeNull();
+    expect(session.commandTerminalLabel).toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // hasLiveSessionForTask

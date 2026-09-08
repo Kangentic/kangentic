@@ -152,6 +152,14 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     return { session, branch, checkoutError };
   });
 
+  // Retain the renderer-derived terminal name on the live session. Purely so it
+  // survives a renderer reload: the pairing map that normally holds it is
+  // renderer-only memory, and `planTransientRecovery` reads this back off the
+  // session row to restore the name with the slot and branch.
+  ipcMain.handle(IPC.SESSION_SET_TRANSIENT_LABEL, (_, sessionId: string, label: string) => {
+    context.sessionManager.setCommandTerminalLabel(sessionId, label);
+  });
+
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
     // Capture session info before removal for cleanup
     const session = context.sessionManager.getSession(sessionId);

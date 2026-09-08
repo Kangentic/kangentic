@@ -1900,6 +1900,24 @@ export class SessionManager extends EventEmitter {
     this.telemetry.setSessionUsage(sessionId, partial);
   }
 
+  /**
+   * Record a Command Terminal's auto-derived name so it outlives the renderer.
+   *
+   * Main is a passive holder here: the renderer derives the name and has already
+   * applied it locally, and nothing in main reads it back except `toSession`,
+   * which hands it to the next renderer that has to rebuild the pairing map.
+   * First write wins, matching the renderer's own first-prompt-wins rule, so a
+   * later re-derivation cannot silently rename a terminal the user already knows
+   * by name. Unknown or non-transient sessions are ignored.
+   */
+  setCommandTerminalLabel(sessionId: string, label: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.transient || session.commandTerminalLabel) return;
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    session.commandTerminalLabel = trimmed;
+  }
+
   /** Return cached activity state for all sessions (survives renderer reloads). */
   getActivityCache(): Record<string, ActivityState> {
     return this.telemetry.getActivityCache();
