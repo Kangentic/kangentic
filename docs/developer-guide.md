@@ -385,6 +385,7 @@ Native modules:
 - `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (conversation-memory retrieval; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar)
 - `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)
 - `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
+- `onnxruntime-common`, `sharp` (with its `@img/*` platform binding), `detect-libc`, `semver` - what transformers.js requires at module scope; unpacked for the same reason, since the worker never looks inside the asar. `build/afterPack.js` loads the worker's externals from the unpacked tree after packing and fails the build if any of this closure is missing (`build/verify-unpacked-worker.js`)
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 

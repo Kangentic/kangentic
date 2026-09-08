@@ -36,6 +36,19 @@ files:
   - "node_modules/@huggingface/transformers/**"
   - "node_modules/onnxruntime-node/**"
   - "node_modules/onnxruntime-web/**"
+  # The embed worker is forked from the UNPACKED tree (see asarUnpack), where
+  # Node resolves modules from real directories and never looks inside the
+  # asar. So every package transformers.node.cjs requires at module scope has
+  # to be listed here AND unpacked below: onnxruntime-common (also required by
+  # onnxruntime-node), sharp, and sharp's own runtime deps (@img/*, detect-libc,
+  # semver). With any of them missing the packaged worker exits 1 on every fork
+  # (DESKTOP-H). build/afterPack.js loads the worker's externals from the
+  # unpacked tree after packing and fails the build when this closure drifts.
+  - "node_modules/onnxruntime-common/**"
+  - "node_modules/sharp/**"
+  - "node_modules/@img/**"
+  - "node_modules/detect-libc/**"
+  - "node_modules/semver/**"
   - "!node_modules/better-sqlite3/{src,deps}/**"
   - "!node_modules/better-sqlite3/binding.gyp"
   - "!node_modules/node-pty/{src,scripts,deps,third_party}/**"
@@ -52,11 +65,20 @@ asarUnpack:
   # native .node addon (plus its sibling onnxruntime.dll / DirectML.dll on
   # Windows) cannot be dlopen'd from inside asar either; the embed worker runs
   # from the unpacked tree so it resolves sqlite-vec, transformers, and
-  # onnxruntime-node via plain node_modules resolution.
+  # onnxruntime-node via plain node_modules resolution. Plain resolution cuts
+  # both ways: a module the worker reaches transitively that stays inside the
+  # asar is invisible to it, so the whole runtime closure of transformers.js
+  # (onnxruntime-common, sharp, @img/*, detect-libc, semver) is unpacked too.
+  # The afterPack gate proves the closure loads before the build is accepted.
   - "node_modules/sqlite-vec-*/**"
   - "node_modules/@huggingface/transformers/**"
   - "node_modules/onnxruntime-node/**"
   - "node_modules/onnxruntime-web/**"
+  - "node_modules/onnxruntime-common/**"
+  - "node_modules/sharp/**"
+  - "node_modules/@img/**"
+  - "node_modules/detect-libc/**"
+  - "node_modules/semver/**"
   - ".vite/build/embed-worker.js"
   - ".vite/build/line-count-worker.js"
   - ".vite/build/event-bridge.js"

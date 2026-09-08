@@ -60,6 +60,8 @@ export interface EmbedWorkerClient extends Embedder {
   waitForInteractiveIdle(): Promise<void>;
   dispose(): void;
   readonly crashed: boolean;
+  /** Why the worker is off (exit code + first error line), or null. */
+  readonly crashReason: string | null;
   readonly activeDevice: string | null;
 }
 
@@ -450,6 +452,10 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
 
     get workerCrashed(): boolean {
       return client?.crashed ?? false;
+    },
+
+    get workerCrashReason(): string | null {
+      return client?.crashReason ?? null;
     },
 
     /** Synchronous shutdown: mark disposed, resolve the wake deferred (so a

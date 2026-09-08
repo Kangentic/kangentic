@@ -2,6 +2,7 @@ import path from 'node:path';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { PATHS } from '../../config/paths';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
+import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import type { Embedder } from '../types';
 import type { EmbeddingModelDef } from './embedding-config';
 import type { MemoryAcceleration } from '../../../shared/types';
@@ -107,6 +108,12 @@ export class EmbedClient implements Embedder {
     return this.restartPolicy.exhausted;
   }
 
+  /** Why the worker is off, for the Memory tab: the newest crash's exit code
+   *  and first error line. Null while nothing has crashed in the window. */
+  get crashReason(): string | null {
+    return this.restartPolicy.lastCrashDescription;
+  }
+
   /** The execution provider the worker actually initialized on this run
    *  (e.g. 'dml', 'webgpu', 'cpu'), or null before the worker has reported ready. */
   get activeDevice(): string | null {
@@ -190,7 +197,7 @@ export class EmbedClient implements Embedder {
 
     let child: UtilityProcess;
     try {
-      child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME });
+      child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
       // A fork that throws is a crash like any other, so it goes through the
       // policy rather than latching the cap directly - otherwise one transient
@@ -201,8 +208,14 @@ export class EmbedClient implements Embedder {
     }
     this.child = child;
 
+    // stderr is piped and drained from the first tick, before init is posted:
+    // an undrained pipe blocks the worker, and the tail is what names a crash
+    // in the project log and the Sentry report (see stderr-tail.ts).
+    const stderrTail = new StderrTail();
+    captureWorkerStderr(child, stderrTail, !app.isPackaged);
+
     child.on('message', (message: unknown) => this.onWorkerMessage(message));
-    child.on('exit', (code: number) => this.onWorkerExit(child, code));
+    child.on('exit', (code: number) => this.onWorkerExit(child, code, stderrTail));
 
     this.readyPromise = new Promise<boolean>((resolve) => {
       const readyTimer = setTimeout(() => resolve(false), INIT_TIMEOUT_MS);
@@ -276,7 +289,7 @@ export class EmbedClient implements Embedder {
     }
   }
 
-  private onWorkerExit(child: UtilityProcess, exitCode?: number): void {
+  private onWorkerExit(child: UtilityProcess, exitCode?: number, stderrTail?: StderrTail): void {
     const intentional = this.intentionalShutdown;
     // Cleared BEFORE the staleness guard below, not after. The flag belongs to
     // the teardown that set it, so a stale exit must still consume it -
@@ -303,7 +316,7 @@ export class EmbedClient implements Embedder {
     this.pending.clear();
     this.notifyInteractiveIdleIfClear();
     // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode);
+    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode, stderrTail);
   }
 
   /** Hold (or release) the worker against the idle recycle. Releasing re-arms

@@ -344,6 +344,7 @@ export const retrievalService = {
     const isDownloadingThis = modelDownloadState === 'downloading' && downloadingModelId === model.id;
 
     let semantic: MemorySemanticState;
+    let workerError: string | undefined;
     if (!indexingEnabled || !semanticOn) {
       // Genuinely off: the user has not enabled semantic search.
       semantic = 'disabled';
@@ -353,7 +354,10 @@ export const retrievalService = {
       // Enabled, but the model is still downloading / not ready yet.
       semantic = 'downloading';
     } else if (embedEngine.workerCrashed) {
+      // The restart policy gave up. Carry its reason so the Memory tab can say
+      // why instead of only that it failed.
       semantic = 'error';
+      workerError = embedEngine.workerCrashReason ?? undefined;
     } else if (!currentProjectHasVec(context)) {
       semantic = 'lexical';
     } else {
@@ -373,6 +377,7 @@ export const retrievalService = {
       activeBackend: humanizeBackend(embedEngine.activeDevice),
       modelProgress: showProgress ? modelDownloadProgress : undefined,
       vecError: semantic === 'lexical' ? lastVecLoadError() ?? undefined : undefined,
+      workerError,
       model: {
         id: model.id,
         displayName: model.displayName,

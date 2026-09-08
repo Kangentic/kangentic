@@ -73,6 +73,8 @@ export function setErrorReportingUser(clientId: string): void {
  * spawn failures, the silent agent-spawn catches) would stay invisible as
  * diagnosable issues - exactly the "hidden issue" class error reporting
  * exists for. Tags are for grouping/filtering; never put content in them.
+ * Content (a captured stderr tail, say) goes in `contexts`, which Sentry shows
+ * as named blocks on the event and never uses for grouping.
  *
  * User-configuration errors are the one class deliberately excluded. A missing
  * agent CLI (AgentCliNotFoundError) is the user's environment, not a defect we
@@ -83,12 +85,21 @@ export function setErrorReportingUser(clientId: string): void {
  * the neighbouring isAbortError guards must skip the analytics counter too.
  * Every current and future call site inherits the exclusion.
  */
-export function reportHandledError(error: unknown, tags: Record<string, string> = {}): void {
+export type ErrorReportContexts = Record<string, Record<string, unknown>>;
+
+export function reportHandledError(
+  error: unknown,
+  tags: Record<string, string> = {},
+  contexts: ErrorReportContexts = {},
+): void {
   if (!active) return;
   if (isUserConfigurationError(error)) return;
   try {
     Sentry.withScope((scope) => {
       for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
+      for (const [contextName, contextValue] of Object.entries(contexts)) {
+        scope.setContext(contextName, contextValue);
+      }
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
     });
   } catch {

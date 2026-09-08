@@ -430,6 +430,14 @@ is no per-search toggle. The Memory tab also offers a "Rebuild index" action tha
 purges and re-runs the backfill sweep for the current project (recovery from a
 stale or corrupt index).
 
+When the embedding worker crashes three times inside five minutes, the restart
+policy stops respawning it and search falls back to keyword matches until the
+window decays. The Memory tab's note then names the reason (`MemoryStatus.workerError`:
+the worker's exit code plus the first error line of its stderr, for example
+`exited with code 1: Error: Cannot find module 'onnxruntime-common'`), and the
+same text is in `<project>/.kangentic/logs/<date>.log` as a
+`[utility-process]` warning.
+
 ### Mobile Bridge
 
 The Mobile Devices tab hosts the desktop half of the mobile companion app's pairing/transport link (`src/main/mobile-bridge/`, see [Mobile Bridge](mobile-bridge.md)). Global-only (per-machine) - the identity, roster, and relay connection represent this desktop installation, not any one project.
