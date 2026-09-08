@@ -1,6 +1,13 @@
 /**
- * Unit tests for the startup gate (src/main/startup-gate.ts) and its wiring
- * into src/main/index.ts.
+ * Unit tests for src/main/startup-gate.ts and its wiring into
+ * src/main/index.ts. The module owns both window-lifecycle predicates, so this
+ * suite covers two crashes.
+ *
+ * Sentry DESKTOP-J (`decideSecondInstanceAction`): the second-instance handler
+ * checked `if (mainWindow)` and nothing ever nulled that variable, so a second
+ * launch after the window closed called isMinimized() on a DESTROYED
+ * BrowserWindow and died with an uncaught `TypeError: Object has been
+ * destroyed`. See the describe block for the full ordering rationale.
  *
  * Regression cover for Sentry DESKTOP-3 / DESKTOP-4: on a cold macOS launch,
  * `app.on('activate')` fires DURING launch. The old handler saw a zero window
@@ -27,7 +34,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { shouldCreateWindowOnActivate } from '../../src/main/startup-gate';
+import { decideSecondInstanceAction, shouldCreateWindowOnActivate } from '../../src/main/startup-gate';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const INDEX_SOURCE = fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 'utf-8');
@@ -40,6 +47,84 @@ function sliceAfter(marker: string, length: number): string {
   const start = INDEX_SOURCE.indexOf(marker);
   if (start === -1) throw new Error(`src/main/index.ts no longer contains ${marker}`);
   return INDEX_SOURCE.slice(start, start + length);
+}
+
+/**
+ * index.ts with comment-only lines removed, for the COUNT and containment scans
+ * below.
+ *
+ * They match bare call text, which prose can contain: this file's own docblocks
+ * discuss `createWindow` and `rebuildMainWindow` by name. Stripping `//` lines
+ * and JSDoc `*` bodies first means a comment can never inflate a count into a
+ * false green. Positions for the ORDERING scans are still taken from the raw
+ * source, since stripping shifts every offset.
+ */
+const INDEX_CODE = INDEX_SOURCE
+  .split('\n')
+  .filter((line) => {
+    const trimmed = line.trim();
+    // Deliberately NOT a bare startsWith('*'): that also drops any future code
+    // line whose first character is an asterisk, which would silently remove a
+    // call from the counts below - a fail-open, and these scans are the only
+    // thing standing between an ungated rebuild path and production.
+    const isJsDocBody = trimmed === '*' || trimmed.startsWith('* ') || trimmed.startsWith('*/');
+    return !trimmed.startsWith('//') && !trimmed.startsWith('/*') && !isJsDocBody;
+  })
+  .join('\n');
+
+/**
+ * Offset of the whenReady body's own `createWindow();`, found by searching from
+ * the `app.whenReady().then(` call rather than from the top of the file.
+ *
+ * The startup-ordering scans below are all about the STARTUP call: what runs
+ * before it, and that nothing suspends between it and the gate open. A plain
+ * indexOf('createWindow();') was unambiguous while the whenReady body held the
+ * only bare call. DESKTOP-J added a second one inside `rebuildMainWindow`,
+ * which is defined above app.whenReady() - so the plain scan silently bound to
+ * the helper instead and measured a span with nothing to do with startup. Two
+ * of those scans went red with misleading messages; the third ('registers
+ * updater and announcements from a finally') kept PASSING while measuring
+ * restoreShellEnv's finally, which is the worse failure because nothing
+ * reports it.
+ *
+ * Anchoring inside the startup body makes the helper's position irrelevant:
+ * wherever it is defined, the startup call is the first one after whenReady.
+ */
+function whenReadyCreateWindowIndex(): number {
+  // `.then(` is load-bearing: two COMMENTS earlier in the file mention
+  // "app.whenReady()" in prose (the ConfigManager seed note and the analytics
+  // ordering note), and a bare indexOf binds to the first of those - which sits
+  // above rebuildMainWindow and so hands back the helper's call again.
+  const whenReady = INDEX_SOURCE.indexOf('app.whenReady().then(');
+  if (whenReady === -1) throw new Error('src/main/index.ts no longer calls app.whenReady().then(...)');
+  const index = INDEX_SOURCE.indexOf('createWindow();', whenReady);
+  if (index === -1) throw new Error('no createWindow() call site found after app.whenReady()');
+  return index;
+}
+
+/**
+ * A whole region of comment-stripped index.ts, marker to marker.
+ *
+ * No character budget, deliberately, and this file already learned why twice:
+ * `sliceAfter`'s callers below are tuned to today's code length, so adding a
+ * branch or a comment to a handler pushes the code being asserted on out of the
+ * window and the test goes red with a message about a bug nobody touched. This
+ * is the idiom the whenReady `.catch` scan already uses ("no fixed character
+ * budget, so comment growth cannot push the call out of the window"); stripping
+ * comments on top of it means the region is exactly the handler's code.
+ */
+function sliceCodeBetween(startMarker: string, endMarker: string): string {
+  const start = INDEX_CODE.indexOf(startMarker);
+  if (start === -1) throw new Error(`src/main/index.ts no longer contains ${startMarker}`);
+  const end = INDEX_CODE.indexOf(endMarker, start);
+  if (end === -1) throw new Error(`the region opened by ${startMarker} is never closed by ${endMarker}`);
+  return INDEX_CODE.slice(start, end);
+}
+
+/** The whole `second-instance` handler body. Its own close is at 4-space indent;
+ *  the trackEvent call it contains closes at 6, so the marker is unambiguous. */
+function secondInstanceHandler(): string {
+  return sliceCodeBetween("app.on('second-instance', () => {", '\n    });');
 }
 
 describe('shouldCreateWindowOnActivate', () => {
@@ -99,6 +184,100 @@ describe('shouldCreateWindowOnActivate', () => {
         openWindowCount: 0,
       }),
     ).toBe(false);
+  });
+});
+
+/**
+ * Sentry DESKTOP-J: a fatal, uncaught `TypeError: Object has been destroyed`
+ * out of the second-instance handler.
+ *
+ * The old handler was `if (mainWindow) { if (mainWindow.isMinimized()) ... }`.
+ * Nothing ever assigned `mainWindow = null`, so once the window closed the
+ * variable held a DESTROYED BrowserWindow: the truthiness check passed and
+ * isMinimized() threw out of a raw Electron event handler with no JS frame
+ * below it to catch.
+ */
+describe('decideSecondInstanceAction', () => {
+  it('rebuilds when the app outlived its window - the DESKTOP-J case', () => {
+    // The exact crash state: the window is gone but the process is still alive
+    // holding the single-instance lock, because a browser lane survived the
+    // 'closed' sweep and window-all-closed therefore never fired. The old code
+    // read this as "focus" and threw; anything but 'rebuild' here either
+    // crashes or silently swallows the user's second launch into a process
+    // they cannot see.
+    expect(
+      decideSecondInstanceAction({
+        hasLiveWindow: false,
+        shuttingDown: false,
+        startupComplete: true,
+      }),
+    ).toBe('rebuild');
+  });
+
+  it('focuses an existing window - the ordinary double-launch', () => {
+    expect(
+      decideSecondInstanceAction({
+        hasLiveWindow: true,
+        shuttingDown: false,
+        startupComplete: true,
+      }),
+      'the common path must still raise the running window, which is the whole point of holding the single-instance lock',
+    ).toBe('focus');
+  });
+
+  it('ignores a second launch during shutdown even though a window is still live', () => {
+    // THE ordering test. The before-quit drain HIDES windows rather than
+    // destroying them, so mid-quit hasLiveWindow is genuinely true. Checking
+    // hasLiveWindow before shuttingDown would return 'focus' here and un-hide
+    // an app that is already tearing down its PTYs and databases.
+    expect(
+      decideSecondInstanceAction({
+        hasLiveWindow: true,
+        shuttingDown: true,
+        startupComplete: true,
+      }),
+      'the shutdown check must come FIRST: the drain hides rather than destroys, so a live-but-hidden window during a quit would otherwise be raised back up mid-teardown',
+    ).toBe('ignore');
+  });
+
+  it('ignores a second launch during shutdown with no window left', () => {
+    expect(
+      decideSecondInstanceAction({
+        hasLiveWindow: false,
+        shuttingDown: true,
+        startupComplete: true,
+      }),
+      'rebuilding a window during shutdown resurrects the app mid-teardown',
+    ).toBe('ignore');
+  });
+
+  it('refuses to rebuild before startup completes', () => {
+    // The DESKTOP-3/4 race, reached from the second-instance side this time:
+    // createWindow calls loadURL, so building a window before the whenReady
+    // body has registered its channels lets the renderer invoke handlers that
+    // do not exist yet. The whenReady body creates the window anyway.
+    expect(
+      decideSecondInstanceAction({
+        hasLiveWindow: false,
+        shuttingDown: false,
+        startupComplete: false,
+      }),
+      'a second launch arriving mid-startup must NOT build a window: the whenReady body is about to create one, and racing it is exactly the announcements/updater "No handler registered" failure of DESKTOP-3/4',
+    ).toBe('ignore');
+  });
+
+  it('still focuses a live window while startup is incomplete', () => {
+    // The startup gate exists to stop a window being BUILT too early, not to
+    // stop an existing one being raised. Gating 'focus' on it too would make a
+    // second launch during a slow startup do nothing at all.
+    expect(
+      decideSecondInstanceAction({
+        hasLiveWindow: true,
+        shuttingDown: false,
+        startupComplete: false,
+      }),
+      'startupComplete must gate ONLY the rebuild: a window that already exists is safe to raise whether or not the startup sequence has finished',
+    ).toBe('focus');
   });
 });
 
@@ -176,11 +355,49 @@ describe('the startup gate is wired into src/main/index.ts', () => {
 
   it('creates the window from exactly two call sites', () => {
     // `const createWindow = () =>` is the definition and does not match.
-    const callSites = INDEX_SOURCE.match(/createWindow\(\);/g) ?? [];
+    const callSites = INDEX_CODE.match(/createWindow\(\);/g) ?? [];
     expect(
       callSites.length,
-      'createWindow() must be invoked from exactly two places - the whenReady body and the gated activate handler. A third caller is a third chance to build a duplicate window, which the gate does not cover.',
+      'createWindow() must be invoked from exactly two places - the whenReady body and rebuildMainWindow(). A third caller is a third chance to build a duplicate window, which the gate does not cover.',
     ).toBe(2);
+  });
+
+  /**
+   * The sibling of the count above, and the reason that count is still worth
+   * anything after DESKTOP-J added a second rebuild path.
+   *
+   * createWindow() does NOT re-point the updater and announcements window refs;
+   * that pairing lives at the call site. Funnelling both rebuild paths through
+   * one helper is what stops a new site from silently leaving those two modules
+   * holding a destroyed window. But the helper also means the count above no
+   * longer measures "how many things can rebuild the window" - so count the
+   * helper's callers too, or a fourth rebuild path added through it would pass
+   * both scans while being completely ungated.
+   */
+  it('rebuilds the window from exactly two gated call sites, both through the shared helper', () => {
+    const rebuildSites = INDEX_CODE.match(/rebuildMainWindow\(\);/g) ?? [];
+    expect(
+      rebuildSites.length,
+      'rebuildMainWindow() must be invoked from exactly two places - the gated activate handler and the gated second-instance handler. A third caller needs its own gate: createWindow only refuses a LIVE window, so an ungated rebuild during startup races IPC registration (DESKTOP-3/4) and one during shutdown resurrects the app mid-teardown.',
+    ).toBe(2);
+
+    // The helper has to be what re-points the two refs. Leaving either call at
+    // the old activate site (or omitting it from the helper) puts the updater
+    // and announcements modules back on a destroyed window after a rebuild,
+    // which is the silent bug the extraction exists to prevent.
+    const helper = sliceCodeBetween('const rebuildMainWindow = () => {', '\n};');
+    expect(
+      helper,
+      'rebuildMainWindow() must call updateUpdaterWindow(...): without it the updater keeps pushing at the window that was just destroyed',
+    ).toContain('updateUpdaterWindow(');
+    expect(
+      helper,
+      'rebuildMainWindow() must call updateAnnouncementsWindow(...): without it the announcements changed-push keeps targeting the destroyed window',
+    ).toContain('updateAnnouncementsWindow(');
+    expect(
+      helper,
+      'rebuildMainWindow() must NOT call initUpdater/initAnnouncements - neither is idempotent, so a rebuild that re-inits double-registers their handlers and timers',
+    ).not.toContain('initUpdater(');
   });
 
   it('opens the gate with no suspension point after creating the window', () => {
@@ -188,7 +405,7 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     // the renderer is already booting when it returns; only the absence of an
     // await between there and the gate/registrations guarantees the renderer
     // cannot invoke before initUpdater and initAnnouncements have run.
-    const windowIndex = INDEX_SOURCE.indexOf('createWindow();');
+    const windowIndex = whenReadyCreateWindowIndex();
     expect(windowIndex, 'no createWindow() call site found').toBeGreaterThan(-1);
 
     const gateIndex = INDEX_SOURCE.indexOf('markStartupComplete();', windowIndex);
@@ -231,7 +448,7 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     //
     // Anchored on `} finally {` rather than on brace-balancing, consistent with
     // this file's other exact-text anchors.
-    const windowIndex = INDEX_SOURCE.indexOf('createWindow();');
+    const windowIndex = whenReadyCreateWindowIndex();
     const gateIndex = INDEX_SOURCE.indexOf('markStartupComplete();', windowIndex);
     const span = INDEX_SOURCE.slice(windowIndex, gateIndex);
 
@@ -268,7 +485,7 @@ describe('the startup gate is wired into src/main/index.ts', () => {
       'src/main/index.ts must await ensureGlobalDbReadable() during startup: without it a locked or failing index.db reaches the user as an unhandled rejection instead of a message naming the file (DESKTOP-9/A/B)',
     ).toBeGreaterThan(-1);
 
-    const windowIndex = INDEX_SOURCE.indexOf('createWindow();');
+    const windowIndex = whenReadyCreateWindowIndex();
     expect(
       gateIndex,
       'the database check must run BEFORE createWindow(): once loadURL has fired, the renderer is already invoking channels, which is the whole failure this ordering prevents',
@@ -418,6 +635,104 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     expect(
       INDEX_SOURCE.includes('mcpServerSettled = true;'),
       'mcpServerSettled must be set after the startMcpHttpServer try/catch so a swallowed failure still counts as settled; setting it only inside the try leaves the failure path indistinguishable from "startup has not run yet"',
+    ).toBe(true);
+  });
+
+  /**
+   * The DESKTOP-J wiring. The predicate above is only worth anything if the
+   * handler actually asks it, feeds it live values, and obeys the answer.
+   */
+  it('decides second-instance through the predicate, on live inputs', () => {
+    const handler = secondInstanceHandler();
+
+    expect(
+      handler,
+      "the second-instance handler must decide through decideSecondInstanceAction(...); a bare `if (mainWindow)` is the DESKTOP-J crash itself",
+    ).toContain('decideSecondInstanceAction(');
+
+    // Hardcoding either input keeps the call in place while defeating it
+    // entirely - the same failure mode the activate scan above guards against.
+    expect(
+      handler,
+      'the handler must read the LIVE shutdown flag via isShuttingDown(), not a literal: during the before-quit drain the window is hidden but not destroyed, so a stale `false` here would raise an app that is mid-teardown',
+    ).toContain('shuttingDown: isShuttingDown()');
+    expect(
+      handler,
+      'the handler must read the LIVE gate via isStartupComplete(), not a literal, or a second launch during startup rebuilds a window that races IPC registration (DESKTOP-3/4)',
+    ).toContain('startupComplete: isStartupComplete()');
+
+    expect(
+      /if \(action === 'ignore'\) return;/.test(handler),
+      "the handler must ACT on the predicate: computing an action and then focusing regardless still contains the call and is still the crash",
+    ).toBe(true);
+  });
+
+  it('computes hasLiveWindow with isDestroyed, never bare truthiness', () => {
+    // THE assertion that pins DESKTOP-J shut. mainWindow is non-null and
+    // DESTROYED for the whole window between 'closed' and the process exiting,
+    // so `Boolean(mainWindow)` alone is exactly the check that threw.
+    const handler = secondInstanceHandler();
+    expect(
+      handler,
+      'hasLiveWindow must be computed as `mainWindow && !mainWindow.isDestroyed()`. A bare truthiness check passes on a destroyed window and then throws "Object has been destroyed" on isMinimized() - which is Sentry DESKTOP-J.',
+    ).toContain('hasLiveWindow: Boolean(mainWindow && !mainWindow.isDestroyed())');
+  });
+
+  it('shows a hidden-but-live window instead of only focusing it', () => {
+    // The window is built with `show: false` and only shown from
+    // 'ready-to-show', so for the first seconds of a cold start it is live and
+    // invisible - and markStartupComplete() has already run by then, so a
+    // second launch lands squarely in the focus branch. focus() on an
+    // invisible window does nothing the user can see.
+    const handler = secondInstanceHandler();
+    expect(
+      handler,
+      "the focus branch must show() a hidden-but-live window. Between `new BrowserWindow({ show: false })` and 'ready-to-show' the window is live and invisible, so focus() alone makes the user's second launch do nothing at all - the same dead outcome as the crash, minus the Sentry event.",
+    ).toContain('isVisible()');
+  });
+
+  it('counts the windowless rebuild instead of recovering from it silently', () => {
+    // Reaching the rebuild branch means a browser lane survived the 'closed'
+    // sweep and left a windowless zombie holding the single-instance lock.
+    // Handling that silently would trade a visible fatal for an invisible leak,
+    // which is the trade the ensureGlobalDbReadable scan above also refuses.
+    // A wider budget than the sibling scans above: the telemetry sits in the
+    // LAST branch of the handler, after both early returns.
+    const handler = secondInstanceHandler();
+    expect(
+      handler,
+      'the rebuild branch must report source: \'secondInstanceNoWindow\'. Without it the fix converts a Sentry-visible crash into a silent recovery and destroys the only signal for the lane leak underneath it.',
+    ).toContain("source: 'secondInstanceNoWindow'");
+  });
+
+  it('nulls mainWindow when the window closes', () => {
+    // The root cause. Every bare `if (mainWindow)` in index.ts (the
+    // second-instance handler, and the did-finish-load setTitle and
+    // PROJECT_AUTO_OPENED sends) is only correct because of this assignment.
+    const closedHandler = sliceCodeBetween("mainWindow.on('closed', () => {", '\n  });');
+    expect(
+      closedHandler,
+      "the 'closed' handler must set mainWindow = null. Leaving a destroyed BrowserWindow in the variable is the root cause of DESKTOP-J: it makes every truthiness check in the file pass and then throw on first use.",
+    ).toContain('mainWindow = null;');
+  });
+
+  it('attaches the Windows session-end hook per window, not once at startup', () => {
+    // Attached in the whenReady body, a REBUILT window (activate, or a
+    // second-instance that found none) gets no session-end hook at all. A later
+    // Windows logout then leaves osInitiatedShutdown false, and the before-quit
+    // drain holds the quit during an OS shutdown - the one case
+    // .claude/rules/synchronous-shutdown.md says it never holds.
+    const windowIndex = INDEX_SOURCE.indexOf('const createWindow = () => {');
+    const createWindowEnd = INDEX_SOURCE.indexOf('const rebuildMainWindow = () => {');
+    expect(createWindowEnd, 'rebuildMainWindow must be defined after createWindow').toBeGreaterThan(windowIndex);
+
+    // Asserted as a boolean rather than with toContain, so a failure prints
+    // "expected false to be true" instead of dumping the whole 450-line
+    // createWindow body into the CI log - the same reason sliceAfter exists.
+    const createWindowBody = INDEX_SOURCE.slice(windowIndex, createWindowEnd);
+    expect(
+      createWindowBody.includes("on('session-end'"),
+      "the Windows 'session-end' listener must be attached INSIDE createWindow, so every window built gets it. Attached once in the whenReady body, a rebuilt window has no OS-shutdown hook and a logout leaves osInitiatedShutdown false, which makes the before-quit drain hold an OS-initiated quit.",
     ).toBe(true);
   });
 
