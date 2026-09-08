@@ -127,6 +127,13 @@ function secondInstanceHandler(): string {
   return sliceCodeBetween("app.on('second-instance', () => {", '\n    });');
 }
 
+/** The whole `activate` handler body. Its own close sits at column 0; the
+ *  shouldCreateWindowOnActivate object literal it opens closes at 2-space
+ *  indent, so the column-0 marker is unambiguous. */
+function activateHandler(): string {
+  return sliceCodeBetween("app.on('activate', () => {", '\n});');
+}
+
 describe('shouldCreateWindowOnActivate', () => {
   it('refuses the launch-time activate that fires before startup completes', () => {
     // The DESKTOP-3/4 case exactly: macOS fires activate during launch, no
@@ -327,9 +334,11 @@ describe('the startup-complete flag', () => {
  */
 describe('the startup gate is wired into src/main/index.ts', () => {
   it('routes the activate handler through the gate predicate', () => {
-    // Anchored on the full call, not just "app.on('activate'": an unrelated
-    // comment upstream mentions the event by name, and indexOf finds that first.
-    const handler = sliceAfter("app.on('activate', () => {", 400);
+    // sliceCodeBetween rather than a fixed character budget: the file already
+    // learned twice (see its own docblock) that a budget tuned to today's code
+    // length silently stops covering the call once a comment or branch pushes
+    // it out of the window.
+    const handler = activateHandler();
     expect(
       handler,
       "src/main/index.ts must decide app.on('activate') with shouldCreateWindowOnActivate(...); an inline getAllWindows().length === 0 check alone is what raced ahead of IPC registration on a cold macOS launch (DESKTOP-3/4)",
@@ -351,6 +360,24 @@ describe('the startup gate is wired into src/main/index.ts', () => {
       handler,
       'the activate handler must read the LIVE gate value via isStartupComplete(), not a literal or a cached local - anything else defeats the gate while leaving the predicate call and its `if (!...) return;` guard in place',
     ).toContain('startupComplete: isStartupComplete()');
+
+    // Passing the gate is not the same as rebuilding through the shared helper.
+    // The two counting tests below ("creates the window from exactly two call
+    // sites" and "rebuilds the window from exactly two gated call sites") only
+    // pin totals across the whole file; neither one names WHERE its two sites
+    // are. The second-instance handler's own call is pinned directly (see
+    // "gates the windowless-rebuild telemetry on non-darwin"), but nothing
+    // previously named activate's. Moving this call out of activate (into a
+    // bare createWindow(), or dropping it, or relocating it to some third,
+    // untested site) would still leave both totals at 2 - `createWindow();`
+    // stays bound to whenReady + the helper's own body regardless of who
+    // calls the helper, and `rebuildMainWindow();` would just move from one
+    // counted site to another - and every other assertion in this test green,
+    // while the macOS dock click silently stopped rebuilding the window.
+    expect(
+      handler,
+      'the activate handler must rebuild through rebuildMainWindow(), not createWindow() directly: rebuildMainWindow is what re-points the updater and announcements refs after a rebuild (see "rebuilds the window from exactly two gated call sites"), and calling createWindow() here instead would leave those two modules pointed at a destroyed window after every dock-click rebuild',
+    ).toContain('rebuildMainWindow();');
   });
 
   it('creates the window from exactly two call sites', () => {
@@ -718,10 +745,15 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     // second launch lands squarely in the focus branch. focus() on an
     // invisible window does nothing the user can see.
     const handler = secondInstanceHandler();
+    // Pinned as one string, guard and action together: a bare
+    // `.toContain('isVisible()')` also passes for an INVERTED guard
+    // (`if (mainWindow!.isVisible()) mainWindow!.show();`), which calls
+    // show() only on a window that is already visible and does nothing at
+    // all for the hidden-but-live case this test exists to cover.
     expect(
       handler,
-      "the focus branch must show() a hidden-but-live window. Between `new BrowserWindow({ show: false })` and 'ready-to-show' the window is live and invisible, so focus() alone makes the user's second launch do nothing at all - the same dead outcome as the crash, minus the Sentry event.",
-    ).toContain('isVisible()');
+      "the focus branch must show() a hidden-but-live window via `if (!mainWindow!.isVisible()) mainWindow!.show();`. Between `new BrowserWindow({ show: false })` and 'ready-to-show' the window is live and invisible, so focus() alone - or a show() gated on the OPPOSITE of this check - makes the user's second launch do nothing at all: the same dead outcome as the crash, minus the Sentry event.",
+    ).toContain('if (!mainWindow!.isVisible()) mainWindow!.show();');
   });
 
   it('counts the windowless rebuild instead of recovering from it silently', () => {
