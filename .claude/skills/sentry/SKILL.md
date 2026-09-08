@@ -123,9 +123,10 @@ Reading a native event, in order of what trips people up:
 
 - **Check for a `native_crash` context first.** `beforeSend`
   (`src/main/analytics/native-crash-event.ts`) writes one from the dump itself: `crash_time`,
-  `crashed_version`, `uploaded_by_version`, `main_module`, `found_at_startup`, and whether the
-  release or the app context was corrected. Its absence dates the event to before that filter
-  shipped, so the two traps below still apply to it in full.
+  `crashed_version`, `uploaded_by_version`, `main_module`, `module_count`, `found_at_startup`, and
+  whether the release or the app context was corrected. Absence means one of two things: the event
+  predates that filter, or its dump could not be parsed and was therefore kept untouched. Either
+  way the two traps below still apply to it in full.
 - **On an older event, the release tag is the UPLOADING build's, not the crashed one's.**
   Crashpad writes the dump and the next launch uploads it; if the user upgraded in between, the
   tag is a build that never crashed. `contexts.crashpad._version` is the build that did.

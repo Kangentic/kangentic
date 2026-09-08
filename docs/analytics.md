@@ -246,10 +246,12 @@ in one Sentry org, one triage surface.
   good trail. Those two are also the only paths that stamp an `exit.reason` tag, which is what the
   correction is gated on. The ownership filter above stays unconditional, since a live crash event
   can still pick up a stray foreign dump sitting in the same directory. What the dump itself says
-  lands in a `native_crash` context on every kept event: crash time, crashed version, uploading
-  version, the main module's file name, and which corrections fired. Note the SDK decrements its
-  10-minidumps-per-session budget at capture time, before `beforeSend` runs, so dropped foreign dumps
-  still consume it.
+  lands in a `native_crash` context on every kept event whose dump PARSED: crash time, crashed
+  version, uploading version, the main module's file name, the module count, whether the dump was
+  found at startup, and which corrections fired. A dump the reader cannot parse keeps its event
+  untouched and carries no context block, so the absence of one is itself a signal when triaging.
+  Note the SDK decrements its 10-minidumps-per-session budget at capture time, before `beforeSend`
+  runs, so dropped foreign dumps still consume it.
 - **Native debug files** ride the same gate: the Windows release build (`scripts/build.js`) also
   uploads node-pty's shipped Windows PDBs (`node_modules/node-pty/prebuilds/win32-*/`) as Sentry
   debug files, so a native crash inside `conpty.node` symbolicates server-side to function and
@@ -316,7 +318,7 @@ Sentry). `KANGENTIC_ERROR_REPORTING` controls Sentry alone:
 | `KANGENTIC_TELEMETRY` | `0` or `false` | ALL telemetry disabled: analytics and error reporting (opt-out) |
 | `KANGENTIC_TELEMETRY` | `1` or `true` | Telemetry enabled, even in dev builds (for local debugging) |
 | `KANGENTIC_TELEMETRY` | *(unset)* | Enabled in production only (default) |
-| `KANGENTIC_ERROR_REPORTING` | `0` or `false` | Error reporting disabled; analytics unaffected |
+| `KANGENTIC_ERROR_REPORTING` | `0` or `false` | Error reporting disabled; analytics unaffected, except `foreign_minidump_dropped`, which fires from the Sentry `beforeSend` hook and so never installs |
 | `KANGENTIC_ERROR_REPORTING` | `1` or `true` | Error reporting enabled, even in dev builds (unless `KANGENTIC_TELEMETRY=0`) |
 | `KANGENTIC_ERROR_REPORTING` | *(unset)* | Inherits the `KANGENTIC_TELEMETRY` behavior |
 
