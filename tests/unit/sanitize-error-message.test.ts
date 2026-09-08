@@ -6,7 +6,7 @@ vi.mock('@aptabase/electron/main', () => ({
   trackEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { sanitizeErrorMessage } from '../../src/main/analytics/analytics';
+import { sanitizeErrorMessage, MAX_ANALYTICS_STRING_LENGTH } from '../../src/main/analytics/analytics';
 
 describe('sanitizeErrorMessage', () => {
   it('strips Windows drive paths', () => {
@@ -31,5 +31,15 @@ describe('sanitizeErrorMessage', () => {
   it('truncates to the Aptabase server-side cap (180 characters)', () => {
     const longMessage = 'A'.repeat(300);
     expect(sanitizeErrorMessage(longMessage)).toHaveLength(180);
+  });
+});
+
+describe('MAX_ANALYTICS_STRING_LENGTH', () => {
+  it('matches the Aptabase server-side string cap', () => {
+    // Aptabase truncates a string property at 180 characters server-side, so a
+    // larger local cap would let a value arrive already cut and never delivered
+    // in full. register-all.ts truncates the `panel` property with this same
+    // constant, so pin it directly rather than only through sanitizeErrorMessage.
+    expect(MAX_ANALYTICS_STRING_LENGTH).toBe(180);
   });
 });
