@@ -106,11 +106,14 @@ export interface SecondInstanceState {
  *    must NOT gate `focus`: a window that already exists is safe to raise
  *    whether or not startup finished.
  *
- * `rebuild` means the app outlived its window - a browser lane survived the
- * 'closed' sweep, so getAllWindows() stayed above zero, window-all-closed never
- * fired, and on Windows app.quit() never ran. The process is an invisible
- * zombie still holding the lock. Rebuilding is what stops a second launch from
- * being silently swallowed by it.
+ * `rebuild` means the app outlived its window. Off macOS that is a fault: a
+ * browser lane survived the 'closed' sweep, so getAllWindows() stayed above
+ * zero, window-all-closed never fired, and app.quit() never ran (it is gated on
+ * platform !== 'darwin', so Linux is exposed as much as Windows). The process
+ * is invisible and still holds the lock. On macOS the same state is the
+ * ordinary lifecycle, and `rebuild` is simply how the window comes back.
+ * Either way, rebuilding is what stops a second launch from being silently
+ * swallowed.
  */
 export function decideSecondInstanceAction(state: SecondInstanceState): SecondInstanceAction {
   if (state.shuttingDown) return 'ignore';

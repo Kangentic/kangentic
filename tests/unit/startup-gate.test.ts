@@ -400,6 +400,39 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     ).not.toContain('initUpdater(');
   });
 
+  it('wraps createWindow() in a try/finally inside rebuildMainWindow, so a throw cannot skip the re-point', () => {
+    // The sibling of the whenReady finally scan below ('registers updater and
+    // announcements from a finally'), for the OTHER call site that has to
+    // re-point updater/announcements after a throwing createWindow. createWindow
+    // can throw BELOW `new BrowserWindow` (the DESKTOP-3/4 database read, for
+    // instance), which would otherwise leave the live rebuilt window with its
+    // updater/announcements refs still pointed at the destroyed one.
+    const helper = sliceCodeBetween('const rebuildMainWindow = () => {', '\n};');
+
+    expect(
+      helper,
+      'rebuildMainWindow must call createWindow() from inside a try, followed by a `} finally {`: without it, a throw inside createWindow after loadURL leaves the re-point entirely skipped',
+    ).toContain('} finally {');
+
+    const tryIndex = helper.indexOf('try {');
+    expect(tryIndex, 'no try block found in rebuildMainWindow').toBeGreaterThan(-1);
+    const finallyIndex = helper.indexOf('} finally {');
+    expect(
+      helper.slice(tryIndex, finallyIndex),
+      'createWindow() must be called INSIDE the try block the finally guards, or the finally protects nothing',
+    ).toContain('createWindow();');
+
+    const finallyBody = helper.slice(finallyIndex);
+    expect(
+      finallyBody,
+      'updateUpdaterWindow must sit INSIDE the finally, not merely somewhere in rebuildMainWindow: placed before the try, a throwing createWindow would skip it entirely',
+    ).toContain('updateUpdaterWindow(');
+    expect(
+      finallyBody,
+      'updateAnnouncementsWindow must sit INSIDE the finally, for the same reason as updateUpdaterWindow',
+    ).toContain('updateAnnouncementsWindow(');
+  });
+
   it('opens the gate with no suspension point after creating the window', () => {
     // THE load-bearing assertion. createWindow() calls loadURL() internally, so
     // the renderer is already booting when it returns; only the absence of an
@@ -705,6 +738,44 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     ).toContain("source: 'secondInstanceNoWindow'");
   });
 
+  it('gates the windowless-rebuild telemetry on non-darwin, but always rebuilds regardless of platform', () => {
+    // On macOS, an app alive with zero windows is the documented lifecycle
+    // (window-all-closed only quits when platform !== 'darwin'), so reporting
+    // it as app_error there would bury the real lane-leak signal Windows/Linux
+    // rely on. The rebuild itself must stay unconditional - a macOS dock
+    // relaunch still has to bring the window back.
+    const handler = secondInstanceHandler();
+
+    const guardMarker = "if (process.platform !== 'darwin') {";
+    const guardStart = handler.indexOf(guardMarker);
+    expect(
+      guardStart,
+      "the rebuild branch must guard its telemetry on process.platform !== 'darwin': without it, the ordinary macOS lifecycle (window closed, app still running) reports as an app_error and buries the real Windows/Linux lane-leak signal under noise",
+    ).toBeGreaterThan(-1);
+
+    // The guard's own closing brace: newline, 6-space indent (matching the
+    // guard's own opening indent), closing brace. No trailing-newline
+    // requirement, since the guard's close can legitimately be the LAST line
+    // of the sliced handler (sliceCodeBetween excludes the newline before its
+    // end marker). Unambiguous within this handler regardless: the trackEvent
+    // call it contains closes its inline options object at 8-space indent, a
+    // different level that this 6-space anchor cannot match mid-line.
+    const guardCloseIndex = handler.indexOf('\n      }', guardStart);
+    expect(guardCloseIndex, "could not find the non-darwin guard's own closing brace").toBeGreaterThan(guardStart);
+    const guardBody = handler.slice(guardStart, guardCloseIndex);
+
+    expect(
+      guardBody,
+      'trackEvent must sit INSIDE the non-darwin guard. Moving it outside would report app_error on every platform, including the ordinary macOS case where nothing is wrong',
+    ).toContain("trackEvent('app_error', {");
+
+    const afterGuard = handler.slice(guardCloseIndex);
+    expect(
+      afterGuard,
+      'rebuildMainWindow() must sit OUTSIDE (after) the non-darwin guard, so the rebuild itself stays unconditional. Moving it inside the guard would leave macOS unable to recover its window from this branch at all',
+    ).toContain('rebuildMainWindow();');
+  });
+
   it('nulls mainWindow when the window closes', () => {
     // The root cause. Every bare `if (mainWindow)` in index.ts (the
     // second-instance handler, and the did-finish-load setTitle and
@@ -714,6 +785,18 @@ describe('the startup gate is wired into src/main/index.ts', () => {
       closedHandler,
       "the 'closed' handler must set mainWindow = null. Leaving a destroyed BrowserWindow in the variable is the root cause of DESKTOP-J: it makes every truthiness check in the file pass and then throw on first use.",
     ).toContain('mainWindow = null;');
+
+    // Presence of `mainWindow = null;` is not the whole guarantee: the null-out
+    // must be identity-checked against createdWindow (this window's own
+    // capture), not unconditional. An unconditional `mainWindow = null` would
+    // still contain the substring above and pass that assertion, while blanking
+    // a freshly REBUILT window: 'closed' fires whenever ANY window (including a
+    // stale one from before a rebuild) is destroyed, and only the identity
+    // check makes a closing window clear ONLY its own reference.
+    expect(
+      closedHandler,
+      'the null-out must be identity-checked with `if (mainWindow === createdWindow) mainWindow = null;`, not an unconditional `mainWindow = null;`. Electron fires \'closed\' on destroy, and an unconditional null-out would blank a freshly rebuilt window if a stale handler from a prior window ever fired after it',
+    ).toContain('if (mainWindow === createdWindow) mainWindow = null;');
   });
 
   it('attaches the Windows session-end hook per window, not once at startup', () => {
@@ -749,5 +832,64 @@ describe('the startup gate is wired into src/main/index.ts', () => {
       sliceAfter("source: 'duplicateCreateWindow'", 200),
       'the duplicate-window guard must RETURN, not merely report. A log-only branch falls straight through and builds the second BrowserWindow anyway, which is the orphan described above.',
     ).toContain('return;');
+  });
+
+  it('sends both post-await pushes through the captured createdWindow, isDestroyed-guarded, never the module-level mainWindow', () => {
+    // The two pushes that resume AFTER an await: PROJECT_PATH_MISSING (in the
+    // preload IIFE's catch) and PROJECT_AUTO_OPENED (in did-finish-load, after
+    // `await preloadPromise`). Reading the module-level mainWindow here would
+    // let a close-then-rebuild during the await redirect the old launch's push
+    // into the NEW window's renderer, which is running its own preload and
+    // will announce its own result. createdWindow is captured once, at
+    // construction, so it always names the window THIS createWindow() call
+    // built - and each send is guarded by isDestroyed() because sending into a
+    // destroyed window throws.
+    const pathMissingGuardMarker = 'err.message.includes(PROJECT_PATH_MISSING_PREFIX) && !createdWindow.isDestroyed())';
+    const pathMissingGuardIndex = INDEX_CODE.indexOf(pathMissingGuardMarker);
+    expect(
+      pathMissingGuardIndex,
+      'the PROJECT_PATH_MISSING branch must guard on !createdWindow.isDestroyed(), not merely on the error type: sending into a destroyed window throws',
+    ).toBeGreaterThan(-1);
+
+    const pathMissingSend = 'createdWindow.webContents.send(IPC.PROJECT_PATH_MISSING';
+    const pathMissingSendIndex = INDEX_CODE.indexOf(pathMissingSend, pathMissingGuardIndex);
+    expect(
+      pathMissingSendIndex,
+      'PROJECT_PATH_MISSING must be sent via createdWindow, the per-window capture - not the module-level mainWindow, which could have been nulled by \'closed\' and reassigned by a rebuild during this catch\'s own awaits',
+    ).toBeGreaterThan(-1);
+
+    const pathMissingSpan = INDEX_CODE.slice(pathMissingGuardIndex, pathMissingSendIndex + pathMissingSend.length);
+    expect(
+      pathMissingSpan.includes('mainWindow'),
+      'nothing in the PROJECT_PATH_MISSING branch may read the module-level mainWindow: this catch resumes after the preload IIFE\'s own awaits, so mainWindow could have been reassigned by a rebuild in the meantime, redirecting the push into the wrong renderer',
+    ).toBe(false);
+
+    // PROJECT_AUTO_OPENED. Scoped to the span starting at `await
+    // preloadPromise;` so the SYNCHRONOUS setTitle just above it (which
+    // deliberately still reads mainWindow - it means "is there a current
+    // window at all", not "which window did this listener attach to") cannot
+    // make this scan pass or fail for the wrong reason.
+    const awaitPreloadIndex = INDEX_CODE.indexOf('await preloadPromise;');
+    expect(awaitPreloadIndex, 'no `await preloadPromise;` found in did-finish-load').toBeGreaterThan(-1);
+
+    const autoOpenedGuardMarker = 'if (project && !createdWindow.isDestroyed()) {';
+    const autoOpenedGuardIndex = INDEX_CODE.indexOf(autoOpenedGuardMarker, awaitPreloadIndex);
+    expect(
+      autoOpenedGuardIndex,
+      'the PROJECT_AUTO_OPENED send must guard on !createdWindow.isDestroyed(): the same close-then-rebuild race, one line after the await',
+    ).toBeGreaterThan(-1);
+
+    const autoOpenedSend = 'createdWindow.webContents.send(IPC.PROJECT_AUTO_OPENED';
+    const autoOpenedSendIndex = INDEX_CODE.indexOf(autoOpenedSend, autoOpenedGuardIndex);
+    expect(
+      autoOpenedSendIndex,
+      'PROJECT_AUTO_OPENED must be sent via createdWindow, not mainWindow',
+    ).toBeGreaterThan(-1);
+
+    const postAwaitSpan = INDEX_CODE.slice(awaitPreloadIndex, autoOpenedSendIndex + autoOpenedSend.length);
+    expect(
+      postAwaitSpan.includes('mainWindow'),
+      'nothing between `await preloadPromise;` and the PROJECT_AUTO_OPENED send may read the module-level mainWindow: this send resumes after an await, so mainWindow could have been nulled by \'closed\' and reassigned by a rebuild in the meantime, redirecting the push into the wrong renderer',
+    ).toBe(false);
   });
 });

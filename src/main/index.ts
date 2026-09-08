@@ -653,14 +653,22 @@ if (!isEphemeral && !isE2ETest) {
         mainWindow!.focus();
         return;
       }
-      // The app outlived its window: a browser lane survived the 'closed' sweep,
-      // so window-all-closed never fired and this process is an invisible zombie
-      // still holding the single-instance lock. Count it - recovering silently
-      // would trade a visible crash for a hidden lane leak.
-      trackEvent('app_error', {
-        source: 'secondInstanceNoWindow',
-        message: 'second-instance arrived with no live main window; rebuilding',
-      });
+      // The app outlived its window. Off macOS that is a fault: window-all-closed
+      // quits, so reaching here means a browser lane survived the 'closed' sweep
+      // and held the window count above zero, leaving an invisible process still
+      // holding the single-instance lock. Count it - recovering silently would
+      // trade a visible crash for a hidden lane leak.
+      //
+      // On macOS it is the documented lifecycle instead (window-all-closed only
+      // quits when platform !== 'darwin', below), so a user who closes the window
+      // and relaunches lands here with nothing wrong. Reporting that as an
+      // app_error would bury the real leak signal under the ordinary case.
+      if (process.platform !== 'darwin') {
+        trackEvent('app_error', {
+          source: 'secondInstanceNoWindow',
+          message: 'second-instance arrived with no live main window; rebuilding',
+        });
+      }
       rebuildMainWindow();
     });
   }
@@ -854,10 +862,18 @@ const createWindow = () => {
    * bearing on that same unreachability.
    *
    * Liveness checks that genuinely mean "is there a current window at all"
-   * (saveBounds, the pop-out push, did-finish-load) deliberately keep reading
-   * the module variable.
+   * (saveBounds, the pop-out push, did-finish-load's synchronous setTitle)
+   * deliberately keep reading the module variable.
+   *
+   * A send that RESUMES after an await is not one of those, however current the
+   * window looked when the listener started: the module variable can have been
+   * nulled by 'closed' and reassigned by a rebuild while the await was pending,
+   * so the push would land in the new window's renderer, which is running its
+   * own preload and will announce its own result. The two post-await sends
+   * below (PROJECT_PATH_MISSING, PROJECT_AUTO_OPENED) therefore use this
+   * capture and check isDestroyed on it.
    */
-  const win = mainWindow;
+  const createdWindow = mainWindow;
 
   // Explicitly set icon for Windows/Linux taskbar
   if (process.platform !== 'darwin') {
@@ -877,7 +893,7 @@ const createWindow = () => {
         const isCtrlShiftI =
           input.control && input.shift && input.key.toLowerCase() === 'i';
         if (isF12 || isCtrlShiftI) {
-          win.webContents.toggleDevTools();
+          createdWindow.webContents.toggleDevTools();
         }
       }
     });
@@ -886,9 +902,9 @@ const createWindow = () => {
   mainWindow.once('ready-to-show', () => {
     mark('ready_to_show');
     if (!isTest && (!savedBounds || savedBounds.maximized)) {
-      win.maximize();
+      createdWindow.maximize();
     }
-    win.show();
+    createdWindow.show();
   });
 
   // Debounced save of window bounds on move/resize
@@ -984,16 +1000,20 @@ const createWindow = () => {
     // handler; the did-finish-load title/auto-open sends had the same latent
     // bug. Nulling makes the plain check mean what it reads as.
     //
-    // Cleared BEFORE destroyAllLanes(): the comment above describes the lane
-    // hand-off running synchronously during this teardown, so nothing reached
-    // from here should be able to observe the destroyed window.
+    // Cleared BEFORE destroyAllLanes(), and the ordering is free rather than
+    // load bearing: nothing the sweep reaches reads this variable. Lane
+    // teardown runs through the pane registry, and the hand-off it can trigger
+    // is async (that is the whole point of the sweep generation described
+    // above), so it resumes after this handler has returned, by which time the
+    // variable is null either way. Clearing first only means no code added to
+    // the sweep later can see the destroyed window.
     //
     // Identity-checked so a closing window can only ever clear ITS OWN
     // reference. Electron fires 'closed' during destroy and createWindow
     // refuses to build while a live window exists, so a stale 'closed' cannot
     // outlive a rebuild today - but an unconditional null here would blank a
     // freshly built window if that ever stopped holding.
-    if (mainWindow === win) mainWindow = null;
+    if (mainWindow === createdWindow) mainWindow = null;
     destroyAllLanes();
   });
 
@@ -1195,13 +1215,13 @@ const createWindow = () => {
       // disk). Surface it to the renderer so the "Project Folder Not
       // Found" dialog offers "Locate Folder..." instead of a dead board.
       // Electron queues the send until the renderer is ready.
-      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && mainWindow && !mainWindow.isDestroyed()) {
+      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && !createdWindow.isDestroyed()) {
         // Softened for the same reason as the read above: this one sits inside
         // a catch, so a database throw here would replace a recoverable
         // "Locate Folder..." prompt with an unhandled rejection.
         const lastOpened = softly('lastOpenedProject', undefined, () => getLastOpenedProject());
         if (lastOpened && path.resolve(lastOpened.path) === path.resolve(projectPath)) {
-          mainWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
+          createdWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
         }
       }
       console.error('[APP] Failed to preload project:', err);
@@ -1239,8 +1259,8 @@ const createWindow = () => {
     // Await the preload that started during createWindow -- typically already resolved
     const project = await preloadPromise;
     finishStartupTimer();
-    if (project && mainWindow) {
-      mainWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
+    if (project && !createdWindow.isDestroyed()) {
+      createdWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
     }
 
     // Activate all other projects' sessions in the background.
@@ -1270,13 +1290,24 @@ const createWindow = () => {
  * whenReady .catch path.
  */
 const rebuildMainWindow = () => {
-  createWindow();
-  // Guarded rather than `mainWindow!`, mirroring the whenReady finally: if
-  // `new BrowserWindow` ever throws, mainWindow is still null here and the
-  // non-null assertion would hand null to a parameter typed BrowserWindow.
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    updateUpdaterWindow(mainWindow);
-    updateAnnouncementsWindow(mainWindow);
+  // try/finally for the same reason the whenReady body uses one: createWindow
+  // can throw BELOW `new BrowserWindow` (that is what DESKTOP-3/4 was, a
+  // database throw after loadURL), which leaves a live window whose updater and
+  // announcements refs still point at the destroyed one. Without the finally
+  // the throw skips the re-point entirely, and both callers are raw Electron
+  // event handlers, so it is the process-level uncaughtException hook that
+  // catches it and this function never resumes.
+  //
+  // The guard inside covers the other order: a throw at construction leaves
+  // mainWindow null, and `mainWindow!` would hand null to a parameter typed
+  // BrowserWindow.
+  try {
+    createWindow();
+  } finally {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      updateUpdaterWindow(mainWindow);
+      updateAnnouncementsWindow(mainWindow);
+    }
   }
 };
 
