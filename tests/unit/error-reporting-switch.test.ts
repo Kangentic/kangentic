@@ -3,10 +3,33 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mocks = vi.hoisted(() => {
   const setTagSpy = vi.fn();
   const setContextSpy = vi.fn();
+  const trackEventSpy = vi.fn();
+  // The mocked install must be native to the HOST, not always Windows.
+  // resolveNativeCrashContext derives the install root with node:path, so on
+  // CI's Linux runner path.dirname of a backslash path returns '.', every one
+  // of our own images then fails the ownership check, and a real crash is
+  // dropped. That is green on Windows and red on CI.
+  const executablePath =
+    process.platform === 'win32'
+      ? 'C:\\Users\\dev\\AppData\\Local\\Programs\\Kangentic\\Kangentic.exe'
+      : process.platform === 'darwin'
+        ? '/Applications/Kangentic.app/Contents/MacOS/Kangentic'
+        : '/opt/Kangentic/kangentic';
+  const userDataPath =
+    process.platform === 'win32' ? 'C:\\Users\\dev\\AppData\\Roaming\\kangentic' : '/home/dev/.config/kangentic';
   return {
-    electronMock: { app: { isPackaged: true } },
+    electronMock: {
+      app: {
+        isPackaged: true,
+        // beforeSend resolves the install root and the reporting build from
+        // these, but only once an event actually carries a minidump.
+        getPath: (name: string) => (name === 'exe' ? executablePath : userDataPath),
+        getVersion: () => '0.39.0',
+      },
+    },
     setTagSpy,
     setContextSpy,
+    trackEventSpy,
     sentryMock: {
       init: vi.fn(),
       setUser: vi.fn(),
@@ -27,8 +50,24 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({ app: mocks.electronMock.app }));
 vi.mock('@sentry/electron/main', () => mocks.sentryMock);
+vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: mocks.trackEventSpy }));
 
 import { resolveErrorReportingEnabled } from '../../src/main/analytics/error-reporting';
+import {
+  buildMinidump,
+  FFPROBE_MODULES,
+  LINUX_APP_MODULES,
+  MACOS_APP_MODULES,
+  WINDOWS_APP_MODULES,
+} from '../fixtures/minidump-fixture';
+
+/** The image list of one of our own crashes, on whichever host runs the suite. */
+const OUR_APP_MODULES =
+  process.platform === 'win32'
+    ? WINDOWS_APP_MODULES
+    : process.platform === 'darwin'
+      ? MACOS_APP_MODULES
+      : LINUX_APP_MODULES;
 
 describe('resolveErrorReportingEnabled', () => {
   it('KANGENTIC_TELEMETRY=0/false is the superset kill switch: disables Sentry regardless of the error-reporting switch', () => {
@@ -302,6 +341,100 @@ describe('error reporting runtime behavior (module-state gated)', () => {
         'Console',
         'FunctionToString',
       ]);
+    });
+  });
+
+  /**
+   * The native crash class cannot go in ignoreErrors: that matcher reads an
+   * event's message and exception value, and a minidump event has neither. What
+   * says whether the crash was even ours is in the attached dump, so it is
+   * filtered in beforeSend instead. These cases pin the wiring; the decision
+   * itself is covered in tests/unit/native-crash-event.test.ts.
+   */
+  describe('beforeSend, for native crash events', () => {
+    type BeforeSend = (
+      event: Record<string, unknown>,
+      hint: Record<string, unknown>
+    ) => Record<string, unknown> | null;
+
+    async function initAndGetBeforeSend(): Promise<BeforeSend> {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      const options = mocks.sentryMock.init.mock.calls[0][0] as { beforeSend: BeforeSend };
+      expect(typeof options.beforeSend).toBe('function');
+      return options.beforeSend;
+    }
+
+    function minidumpHint(modules: string[], annotations: Record<string, string> = {}) {
+      return {
+        attachments: [
+          {
+            attachmentType: 'event.minidump',
+            filename: 'crash.dmp',
+            data: buildMinidump({ modules, simpleAnnotations: annotations }),
+          },
+        ],
+      };
+    }
+
+    beforeEach(() => {
+      mocks.trackEventSpy.mockClear();
+    });
+
+    it('drops a crash in a process that merely inherited our crash handler, and counts it', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+
+      const result = beforeSend(
+        { platform: 'native', release: 'Kangentic@0.39.0' },
+        minidumpHint(FFPROBE_MODULES)
+      );
+
+      expect(result).toBeNull();
+      expect(mocks.trackEventSpy).toHaveBeenCalledWith('foreign_minidump_dropped', {
+        module: 'ffprobe',
+      });
+    });
+
+    it('keeps our own crash and reattributes it to the build that actually crashed', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+
+      const result = beforeSend(
+        { platform: 'native', release: 'Kangentic@0.39.0', breadcrumbs: [{ message: 'later run' }] },
+        minidumpHint(OUR_APP_MODULES, { _version: '0.38.0' })
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.release).toBe('Kangentic@0.38.0');
+      expect(result?.breadcrumbs).toBeUndefined();
+      expect(mocks.trackEventSpy).not.toHaveBeenCalled();
+    });
+
+    it('leaves a live-reported error alone: it carries no minidump', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const liveError = {
+        release: 'Kangentic@0.39.0',
+        breadcrumbs: [{ message: 'the crashed session own trail' }],
+        exception: { values: [{ type: 'TypeError', value: 'boom' }] },
+      };
+
+      // DESKTOP-J's shape: mechanism generic, its own breadcrumbs, correct tag.
+      expect(beforeSend(liveError, {})).toBe(liveError);
+      expect(liveError.breadcrumbs).toHaveLength(1);
+      expect(mocks.trackEventSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the event when the dump cannot be read, so a parser fault cannot delete the stream', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const event = { platform: 'native', release: 'Kangentic@0.39.0' };
+
+      const result = beforeSend(event, {
+        attachments: [
+          { attachmentType: 'event.minidump', filename: 'crash.dmp', data: Buffer.alloc(20000, 0x5a) },
+        ],
+      });
+
+      expect(result).toBe(event);
+      expect(mocks.trackEventSpy).not.toHaveBeenCalled();
     });
   });
 });
