@@ -38,6 +38,13 @@ until every one is gone plus 100ms of further loop turns (deadline 1500ms), then
 `app.quit()` again. The second `before-quit` pass is a no-op and Electron proceeds. With no PTY
 killed, the quit is the plain synchronous one.
 
+A killed PTY whose child pid was unreadable has no probe, so the drain spends a fixed 400ms blind
+budget for it instead of waiting on liveness. `killAllSessions` therefore returns a `PtyKillReport`
+(pids plus a total kill count) rather than a bare pid list: an empty pid list must never be read as
+"no PTY was killed" when one was killed and simply could not be named. No production path produces
+that today (node-pty sets `pid` synchronously at construction, and a failed spawn throws instead of
+yielding a wrapper reading 0), so the count is a guard against a future one, not a live case.
+
 Why it exists (Sentry DESKTOP-C, symbolicated against node-pty's shipped `conpty.pdb`): node-pty
 delivers a PTY's exit through a native `Napi::ThreadSafeFunction`. When that callback is first
 dispatched after `node::Stop()` (Electron's `PostMainMessageLoopRun` stops Node, then
@@ -53,9 +60,22 @@ finalizer joins the waiting thread, so an un-killed child hangs teardown until t
 Why it does not reintroduce the zombie problem: it is timer-only (`setTimeout` plus
 `process.kill(pid, 0)`), never awaits network, PTY output, IPC, or DB work, is deadline-bounded,
 re-enters through `app.quit()` (never `process.exit()`, so Electron's own teardown runs), runs
-only when the cleanup actually killed a PTY, never runs after an OS-initiated shutdown (Windows
-`session-end`, powerMonitor `shutdown`), and the hard failsafe is armed inside `performShutdown()`
-before the drain starts.
+only when the cleanup actually killed a PTY, never runs after an OS shutdown the app cannot ask to
+be delayed, and the hard failsafe is armed inside `performShutdown()` before the drain starts.
+
+Which OS shutdowns those are is per platform, and each route must pick a side. Windows
+`session-end` is documented by Electron as unpreventable ("once this event fires, there is no way
+to prevent the session from ending"), so it sets `osShutdownCannotBeDelayed` and the drain is
+skipped. The macOS/Linux powerMonitor `shutdown` event is documented as accepting
+`preventDefault()` to ask the OS for time to exit cleanly, so that handler takes it, runs the flush,
+and calls `app.quit()`; the `before-quit` that follows drains normally. Leaving that path disarmed
+meant every macOS or Linux reboot with a live PTY killed the children and then raced node-pty's
+exit callback against `node::Stop()`.
+
+Every path that SKIPS the drain emits a breadcrumb (`[SHUTDOWN] pty-drain:skip reason=...`), so a
+native crash report arriving with no `pty-drain:start` says why the drain did not run instead of
+being unfalsifiable. The OS disarm reaches the handler as its own dependency rather than as an
+empty pid list, precisely so its skip reason is distinguishable from "nothing was killed".
 
 ## Enforcement (self-maintaining)
 
@@ -64,10 +84,18 @@ before the drain starts.
   and closing connections before close to plug leaks. `tests/unit/pty-exit-callback-drain.test.ts`
   pins the drain's settle, deadline, and never-rejects contract;
   `tests/unit/before-quit-drain-wiring.test.ts` pins the handler state machine (hold once, re-quit
-  once, pass the second time) and scans `src/main/index.ts` for the `createBeforeQuitHandler`
-  registration, the `app.quit()` re-entry, the absence of `process.exit` there, and the
-  OS-shutdown disarm; `tests/unit/session-shutdown-flow.test.ts` pins that `killAllSessions`
-  returns the killed pids. All run in CI via `npm run test:unit`.
+  once, pass the second time), the skip-reason breadcrumbs, the kill-report wiring, and scans
+  `src/main/index.ts` for the `createBeforeQuitHandler` registration, the `app.quit()` re-entry, the
+  absence of `process.exit` there, and the per-platform OS-shutdown pairing (Windows disarms and
+  never calls `preventDefault`; powerMonitor calls `preventDefault` and never disarms);
+  `tests/unit/session-shutdown-flow.test.ts` pins that `killAllSessions` returns a `PtyKillReport`
+  counting every kill, including one whose child pid was unreadable;
+  `tests/unit/shutdown-history-wiring.test.ts` pins that a throwing cleanup step still reaches the
+  PTY kill, and walks `syncShutdownCleanup`'s pre-kill AST so a future step added without
+  `runCleanupStep` fails rather than silently reopening that hole. It parses rather than
+  line-matches because a multi-line call and a `const x = getY();` initializer both hide from a
+  line scan. One bare call is allowed by name, the `sessionManager` read the kill itself needs:
+  a throw there leaves nothing to kill with either way. All run in CI via `npm run test:unit`.
 - **Contract:** the JSDoc in `src/main/shutdown.ts` and
   `src/main/pty/shutdown/session-shutdown.ts` restate the synchronous requirement at the call
   sites.
