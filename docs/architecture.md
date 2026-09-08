@@ -394,7 +394,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 ### Analytics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`, `componentStack?`) saying where it came from. See [Analytics](analytics.md). |
+| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Analytics](analytics.md). |
 | `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Analytics](analytics.md). |
 
 ### App (1 channel)

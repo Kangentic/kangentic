@@ -14,7 +14,7 @@ import {
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
  * `desktop`). A DSN is a public routing identifier by design (like
- * APTABASE_APP_KEY in analytics.ts), not a secret. An empty string would make
+ * DEFAULT_APTABASE_APP_KEY in analytics.ts), not a secret. An empty string would make
  * initErrorReporting() a no-op and keep the renderer flag off, so the wiring
  * ships inert if this is ever cleared.
  */
