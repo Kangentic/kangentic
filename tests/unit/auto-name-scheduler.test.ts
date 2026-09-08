@@ -173,16 +173,16 @@ function setupStores(options: {
   });
 }
 
-function setupSummarizeApi(impl: (input: { prompt: string }) => Promise<unknown> | unknown): void {
+function setupSummarizeApi(impl: (input: { prompt: string }) => Promise<unknown> | unknown): ReturnType<typeof vi.fn> {
   // The scheduler reads `window.electronAPI.agent.summarize` directly. In the
   // node test env vitest provides no `window`, so we attach to globalThis (which
   // is the same object the production code's `window` resolves to under jsdom).
   (globalThis as unknown as { window: Record<string, unknown> }).window = (globalThis as unknown as { window?: Record<string, unknown> }).window ?? {};
+  const summarize = vi.fn(async (input: { prompt: string }) => impl(input));
   (globalThis as unknown as { window: { electronAPI: unknown } }).window.electronAPI = {
-    agent: {
-      summarize: vi.fn(async (input: { prompt: string }) => impl(input)),
-    },
+    agent: { summarize },
   };
+  return summarize;
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +465,32 @@ describe('maybeLabelTransientSession', () => {
     maybeLabelTransientSession('transient-1', makePromptEvent('hello'));
     await vi.runAllTimersAsync();
 
+    expect(setTransientSessionLabel).not.toHaveBeenCalled();
+  });
+
+  it('marks an already-labelled entry as done without deriving a new name', () => {
+    // The reload-recovery shape: recovery restored the label from main onto the
+    // entry, but the in-memory `autoNameLabeledTransient` guard was cleared by the
+    // reload itself, so the entry's `label` is the only signal left that this
+    // session is already named. Falling through here would pay a summarize call
+    // on this later prompt and then discard the result, since setTransientSessionLabel
+    // is first-prompt-wins - leaving the renderer's derivation attempt and main's
+    // retained name permanently disagreeing about which prompt "won".
+    const setTransientSessionLabel = vi.fn();
+    setupStores({
+      transientSessions: {
+        'project-1::slot-1': {
+          projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null, label: 'Already Named',
+        },
+      },
+      setTransientSessionLabel,
+    });
+    const summarize = setupSummarizeApi(() => ({ ok: true, title: 'should not fire' }));
+
+    maybeLabelTransientSession('transient-1', makePromptEvent('a later prompt'));
+
+    expect(autoNameLabeledTransient.has('transient-1')).toBe(true);
+    expect(summarize).not.toHaveBeenCalled();
     expect(setTransientSessionLabel).not.toHaveBeenCalled();
   });
 
