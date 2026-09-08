@@ -116,10 +116,11 @@ describe('killAllSessions', () => {
     expect(firstOutputClear).toHaveBeenCalledTimes(1);
   });
 
-  // The returned pids feed the before-quit exit-callback drain (Sentry
+  // The returned report feeds the before-quit exit-callback drain (Sentry
   // DESKTOP-C): the quit is held until these children are gone so node-pty's
-  // exit callback is dispatched while JS is still callable.
-  describe('returned child pids', () => {
+  // exit callback is dispatched while JS is still callable. killedCount is the
+  // half that ARMS the drain; pids is only what it can probe.
+  describe('the returned PtyKillReport', () => {
     function makePty(pid: number | undefined): pty.IPty {
       return { write: vi.fn(), kill: vi.fn(), pid } as unknown as pty.IPty;
     }
@@ -135,14 +136,14 @@ describe('killAllSessions', () => {
         return true;
       });
 
-      expect(killAllSessions(context)).toEqual([4242, 4343]);
+      expect(killAllSessions(context)).toEqual({ pids: [4242, 4343], killedCount: 2 });
     });
 
     it('returns nothing for a session with no PTY', () => {
       const session = makeSession({ pty: null });
       const { context, killPty } = makeContext([session]);
 
-      expect(killAllSessions(context)).toEqual([]);
+      expect(killAllSessions(context)).toEqual({ pids: [], killedCount: 0 });
       expect(killPty).not.toHaveBeenCalled();
     });
 
@@ -153,15 +154,35 @@ describe('killAllSessions', () => {
       const { context, killPty } = makeContext([session]);
       killPty.mockReturnValue(false);
 
-      expect(killAllSessions(context)).toEqual([4242]);
+      expect(killAllSessions(context)).toEqual({ pids: [4242], killedCount: 1 });
     });
 
-    it('skips a PTY whose pid is missing or not a positive integer', () => {
+    /**
+     * The red-green for the whole kill-report change. Dropping the PID for an
+     * unreadable one is correct: there is nothing to probe. Dropping the KILL
+     * is what let a whole shutdown skip the drain, because the handler read an
+     * empty pid list as "no PTY was killed" and quit straight into node::Stop()
+     * with an exit callback still in flight. Fails against any implementation
+     * that derives killedCount from pids.length.
+     */
+    it('counts a PTY with an unreadable pid as a kill even though it lists no pid to probe', () => {
       const missing = makeSession({ id: 'sess-1', pty: makePty(undefined) });
       const zero = makeSession({ id: 'sess-2', pty: makePty(0) });
       const { context } = makeContext([missing, zero]);
 
-      expect(killAllSessions(context)).toEqual([]);
+      expect(killAllSessions(context)).toEqual({ pids: [], killedCount: 2 });
+    });
+
+    it('counts every kill while listing only the probe-able pids', () => {
+      const readable = makeSession({ id: 'sess-1', pty: makePty(4242) });
+      const unreadable = makeSession({ id: 'sess-2', pty: makePty(undefined) });
+      const noPty = makeSession({ id: 'sess-3', pty: null });
+      const { context } = makeContext([readable, unreadable, noPty]);
+
+      // The mixed case the killedCount >= pids.length invariant describes: the
+      // drain probes 4242 and spends the blind budget for sess-2. sess-3 was
+      // never killed at all, so it contributes to neither.
+      expect(killAllSessions(context)).toEqual({ pids: [4242], killedCount: 2 });
     });
   });
 });

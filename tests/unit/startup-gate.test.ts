@@ -834,7 +834,7 @@ describe('the startup gate is wired into src/main/index.ts', () => {
   it('attaches the Windows session-end hook per window, not once at startup', () => {
     // Attached in the whenReady body, a REBUILT window (activate, or a
     // second-instance that found none) gets no session-end hook at all. A later
-    // Windows logout then leaves osInitiatedShutdown false, and the before-quit
+    // Windows logout then leaves osShutdownCannotBeDelayed false, and the before-quit
     // drain holds the quit during an OS shutdown - the one case
     // .claude/rules/synchronous-shutdown.md says it never holds.
     const windowIndex = INDEX_SOURCE.indexOf('const createWindow = () => {');
@@ -847,7 +847,7 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     const createWindowBody = INDEX_SOURCE.slice(windowIndex, createWindowEnd);
     expect(
       createWindowBody.includes("on('session-end'"),
-      "the Windows 'session-end' listener must be attached INSIDE createWindow, so every window built gets it. Attached once in the whenReady body, a rebuilt window has no OS-shutdown hook and a logout leaves osInitiatedShutdown false, which makes the before-quit drain hold an OS-initiated quit.",
+      "the Windows 'session-end' listener must be attached INSIDE createWindow, so every window built gets it. Attached once in the whenReady body, a rebuilt window has no OS-shutdown hook and a logout leaves osShutdownCannotBeDelayed false, which makes the before-quit drain hold an OS-initiated quit.",
     ).toBe(true);
   });
 

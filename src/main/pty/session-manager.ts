@@ -19,6 +19,7 @@ import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
 import { suspendAllSessions, killAllSessions } from './shutdown/session-shutdown';
+import type { PtyKillReport } from './shutdown/session-shutdown';
 import { ResizeManager } from './lifecycle/resize-manager';
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
@@ -2115,10 +2116,10 @@ export class SessionManager extends EventEmitter {
    * Synchronously kill every PTY and clean up. Runs from Electron's
    * `before-quit` handler. Must NOT become async - see
    * session-shutdown.killAllSessions and
-   * .claude/rules/synchronous-shutdown.md. Returns the killed children's
-   * pids for the before-quit exit-callback drain.
+   * .claude/rules/synchronous-shutdown.md. Returns the PtyKillReport the
+   * before-quit exit-callback drain waits on.
    */
-  killAll(): number[] {
+  killAll(): PtyKillReport {
     return killAllSessions(this.shutdownContext());
   }
 
