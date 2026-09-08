@@ -842,6 +842,23 @@ const createWindow = () => {
     },
   });
 
+  /**
+   * THIS window, for the deferred callbacks below.
+   *
+   * A listener body that reads the module-level `mainWindow` reads it at EVENT
+   * time, not registration time, so after a rebuild it resolves to whichever
+   * window is current rather than the one the listener was attached to. That is
+   * unreachable today (createWindow refuses to run while a live window exists,
+   * and a destroyed window fires nothing), but it is a real hazard now that two
+   * gated paths can rebuild, and the non-null assertions it forced were load
+   * bearing on that same unreachability.
+   *
+   * Liveness checks that genuinely mean "is there a current window at all"
+   * (saveBounds, the pop-out push, did-finish-load) deliberately keep reading
+   * the module variable.
+   */
+  const win = mainWindow;
+
   // Explicitly set icon for Windows/Linux taskbar
   if (process.platform !== 'darwin') {
     mainWindow.setIcon(iconImage);
@@ -860,7 +877,7 @@ const createWindow = () => {
         const isCtrlShiftI =
           input.control && input.shift && input.key.toLowerCase() === 'i';
         if (isF12 || isCtrlShiftI) {
-          mainWindow?.webContents.toggleDevTools();
+          win.webContents.toggleDevTools();
         }
       }
     });
@@ -869,9 +886,9 @@ const createWindow = () => {
   mainWindow.once('ready-to-show', () => {
     mark('ready_to_show');
     if (!isTest && (!savedBounds || savedBounds.maximized)) {
-      mainWindow!.maximize();
+      win.maximize();
     }
-    mainWindow!.show();
+    win.show();
   });
 
   // Debounced save of window bounds on move/resize
@@ -941,10 +958,18 @@ const createWindow = () => {
   //
   // On 'closed', NOT 'close', and the difference is load-bearing. Destroying the
   // window tears down its <webview> guests, each of which fires the registry's
-  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane, created
-  // synchronously (openLane registers before its first await). That all happens
-  // after 'close' handlers return, so sweeping there would be undone by the very
-  // teardown that triggered it. 'closed' runs once the guests are already gone.
+  // guest-destroyed path -> the lane hand-off -> a BRAND NEW lane. That all
+  // happens after 'close' handlers return, so sweeping there would be undone by
+  // the very teardown that triggered it. 'closed' runs once the guests are
+  // already gone.
+  //
+  // Sweeping here is necessary but NOT sufficient on its own, and this comment
+  // used to claim otherwise ("created synchronously - openLane registers before
+  // its first await"). That stopped being true when the lane opener grew a jar
+  // seed: openLane now awaits BEFORE it constructs its window, so a lane whose
+  // hand-off starts during this teardown is invisible to the sweep below and
+  // would be built right after it. browser-lane-manager.ts closes that with a
+  // sweep generation openLane re-checks after each await.
   //
   // The accepted cost: on macOS the app outlives its window, so this ends an
   // agent's lane when the user closes the window rather than quitting. That is
@@ -962,7 +987,13 @@ const createWindow = () => {
     // Cleared BEFORE destroyAllLanes(): the comment above describes the lane
     // hand-off running synchronously during this teardown, so nothing reached
     // from here should be able to observe the destroyed window.
-    mainWindow = null;
+    //
+    // Identity-checked so a closing window can only ever clear ITS OWN
+    // reference. Electron fires 'closed' during destroy and createWindow
+    // refuses to build while a live window exists, so a stale 'closed' cannot
+    // outlive a rebuild today - but an unconditional null here would blank a
+    // freshly built window if that ever stopped holding.
+    if (mainWindow === win) mainWindow = null;
     destroyAllLanes();
   });
 

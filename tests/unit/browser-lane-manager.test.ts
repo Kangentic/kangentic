@@ -29,6 +29,8 @@ interface FakeWindow {
 let created: Array<{ options: Record<string, unknown>; window: FakeWindow }> = [];
 let nextId = 100;
 let loadShouldFail = false;
+/** Set by a test to hold `loadURL` open, so a sweep can land mid-load. */
+let loadGate: (() => Promise<void>) | null = null;
 
 vi.mock('electron', () => ({
   BrowserWindow: class {
@@ -41,6 +43,7 @@ vi.mock('electron', () => ({
           id,
           setFrameRate: vi.fn(),
           loadURL: vi.fn(async () => {
+            if (loadGate) await loadGate();
             if (loadShouldFail) throw new Error('ERR_CONNECTION_REFUSED');
           }),
           once: vi.fn(),
@@ -115,6 +118,7 @@ beforeEach(() => {
   registered.length = 0;
   unregistered.length = 0;
   loadShouldFail = false;
+  loadGate = null;
   resetLanesForTests();
   fakeSyncJarFromIdentity.mockReset();
   fakeSyncJarFromIdentity.mockResolvedValue(undefined);
@@ -147,6 +151,74 @@ describe('openLane', () => {
     const result = await openLane(input({ handoff: true }));
     expect(result.ok).toBe(true);
     expect(registered[0]).toMatchObject({ kind: 'lane', handoff: true });
+  });
+
+  /**
+   * The windowless-zombie race behind Sentry DESKTOP-J.
+   *
+   * `openLane` awaits the jar seed BEFORE constructing its window, and a lane
+   * only enters the bookkeeping map after that. So a `destroyAllLanes()` sweep
+   * landing in the gap finds nothing, and the window it was supposed to remove
+   * gets built immediately afterwards.
+   *
+   * The consequence is not a leaked object. An offscreen BrowserWindow holds
+   * `getAllWindows()` above zero, so `window-all-closed` never fires, `app.quit()`
+   * never runs on Windows, and the process lives on invisibly holding the
+   * single-instance lock - which is the state a second launch then crashed into.
+   */
+  it('does not build a window when a sweep lands during the jar seed', async () => {
+    let releaseJarSeed = (): void => undefined;
+    fakeSyncJarFromIdentity.mockImplementation(
+      () => new Promise<void>((resolve) => { releaseJarSeed = () => resolve(); }),
+    );
+
+    const pending = openLane(input());
+    // The sweep runs while openLane is suspended, exactly as it does from the
+    // main window's 'closed' handler during a hand-off.
+    expect(created, 'the window must not exist yet - that is what makes it invisible to the sweep').toHaveLength(0);
+    destroyAllLanes();
+    releaseJarSeed();
+
+    const result = await pending;
+    expect(result.ok, 'a lane whose sweep already ran must not report success').toBe(false);
+    expect(
+      created,
+      'openLane must abandon after a sweep instead of constructing a BrowserWindow nothing will ever destroy: that window keeps getAllWindows() above zero, so window-all-closed never fires and the app survives with no visible window',
+    ).toHaveLength(0);
+    expect(registered, 'an abandoned lane must not be published to the registry').toHaveLength(0);
+    expect(laneCountForTask('task-1')).toBe(0);
+  });
+
+  it('does not register a lane that a sweep destroyed during its load', async () => {
+    // The SECOND await. By now the lane is in the map, so the sweep really does
+    // destroy its window - but an unguarded openLane would still go on to
+    // publish a registry handle pointing at that dead guest.
+    let releaseLoad = (): void => undefined;
+    loadGate = () => new Promise<void>((resolve) => { releaseLoad = () => resolve(); });
+
+    const pending = openLane(input({ url: 'http://localhost:4300' }));
+    await vi.waitFor(() => expect(created, 'the window exists by the load stage').toHaveLength(1));
+    expect(laneCountForTask('task-1'), 'and the lane is tracked, so the sweep can see it').toBe(1);
+
+    destroyAllLanes();
+    expect(created[0].window.destroyed, 'the sweep destroys the window it can see').toBe(true);
+    releaseLoad();
+
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(
+      registered,
+      'a lane the sweep already destroyed must not be published: the handle would point at a dead guest for the registry to self-heal away later',
+    ).toHaveLength(0);
+  });
+
+  it('lets a later lane open normally once the sweep is over', async () => {
+    // The generation guard must not latch: after a sweep, the next open is a
+    // legitimate new lane (the user reopened a project, an agent asked again).
+    destroyAllLanes();
+    const result = await openLane(input());
+    expect(result.ok, 'the sweep counter must gate only the opens it interrupted, not every future one').toBe(true);
+    expect(created).toHaveLength(1);
   });
 
   it('creates an OFFSCREEN, never-shown window', async () => {
