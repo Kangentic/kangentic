@@ -43,14 +43,18 @@ const TEST_MODEL: EmbeddingModelDef = {
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  /** Present only when a test forks with a piped stderr (the real shape);
+   *  absent otherwise, which the client must tolerate. */
+  stderr?: EventEmitter;
 }
 
 const forkedChildren: FakeChild[] = [];
 
-function makeFakeChild(): FakeChild {
+function makeFakeChild(withStderr = false): FakeChild {
   const child = new EventEmitter() as FakeChild;
   child.postMessage = vi.fn();
   child.kill = vi.fn();
+  if (withStderr) child.stderr = new EventEmitter();
   return child;
 }
 
@@ -407,7 +411,7 @@ describe('EmbedClient', () => {
       // GENUINE crash is counted rather than silently read as intentional.
       secondChild.emit('exit', 1);
       expect(recordCrashSpy).toHaveBeenCalledTimes(1);
-      expect(recordCrashSpy).toHaveBeenCalledWith(1);
+      expect(recordCrashSpy).toHaveBeenCalledWith(1, expect.anything());
       expect(client.crashed).toBe(false);
 
       client.dispose();
@@ -605,6 +609,55 @@ describe('EmbedClient', () => {
     expect(mockFork).toHaveBeenCalledTimes(1);
 
     client.dispose();
+  });
+
+  it('forks the worker with stderr piped (stdin ignored, stdout inherited) so a crash can be explained', async () => {
+    // DESKTOP-H: with Electron's default `inherit`, a packaged GUI build sent
+    // the worker's uncaught-exception dump nowhere, and every report could
+    // only say "exit code 1". Dropping `pipe` silently kills the diagnostic.
+    const client = new EmbedClient(TEST_MODEL);
+    await embedAfterReady(client, ['x']);
+
+    expect(mockFork).toHaveBeenCalledWith(
+      expect.stringContaining('embed-worker.js'),
+      [],
+      expect.objectContaining({
+        serviceName: 'kangentic-embeddings',
+        stdio: ['ignore', 'inherit', 'pipe'],
+      }),
+    );
+    client.dispose();
+  });
+
+  it("hands the worker's captured stderr to the restart policy on an unexpected exit, and exposes it as the crash reason", async () => {
+    // The mocked app is unpackaged, so the client also passes chunks through
+    // to this process's stderr; silence that for the test output.
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      mockFork.mockImplementation(() => {
+        const child = makeFakeChild(true);
+        forkedChildren.push(child);
+        return child;
+      });
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+      const { promise, child } = await embedAfterReady(client, ['x'], { timeoutMs: 5000 });
+
+      child.stderr?.emit('data', Buffer.from("Error: Cannot find module 'onnxruntime-common'\n"));
+      child.stderr?.emit('data', Buffer.from('Require stack:\n'));
+      child.emit('exit', 1);
+      await expect(promise).resolves.toBeNull();
+
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      const [exitCode, stderrTail] = recordCrashSpy.mock.calls[0];
+      expect(exitCode).toBe(1);
+      expect(stderrTail?.snapshot()).toBe("Error: Cannot find module 'onnxruntime-common'\nRequire stack:");
+      expect(stderrWrite).toHaveBeenCalled();
+      expect(client.crashReason).toBe("exited with code 1: Error: Cannot find module 'onnxruntime-common'");
+    } finally {
+      stderrWrite.mockRestore();
+    }
   });
 });
 

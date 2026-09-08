@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
 }));
 
 import { LineCountClient } from '../../src/main/git/line-count/line-count-client';
+import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 
 // Mirrors the private IDLE_SHUTDOWN_MS in line-count-client.ts.
 const IDLE_SHUTDOWN_MS = 60_000;
@@ -29,14 +30,18 @@ const DECAY_MS = 5 * 60_000;
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  /** Present only when a test forks with a piped stderr (the real shape);
+   *  absent otherwise, which the client must tolerate. */
+  stderr?: EventEmitter;
 }
 
 const forkedChildren: FakeChild[] = [];
 
-function makeFakeChild(): FakeChild {
+function makeFakeChild(withStderr = false): FakeChild {
   const child = new EventEmitter() as FakeChild;
   child.postMessage = vi.fn();
   child.kill = vi.fn();
+  if (withStderr) child.stderr = new EventEmitter();
   return child;
 }
 
@@ -289,6 +294,53 @@ describe('LineCountClient', () => {
       client.dispose();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('forks the worker with stderr piped (stdin ignored, stdout inherited), the same shape as the embed worker', async () => {
+    const client = new LineCountClient();
+    const promise = client.countFiles(['/mock/a.txt']);
+    lastChild().emit('message', { type: 'result', id: 1, entries: [] });
+    await promise;
+
+    expect(mockFork).toHaveBeenCalledWith(
+      expect.stringContaining('line-count-worker.js'),
+      [],
+      expect.objectContaining({
+        serviceName: 'kangentic-line-count',
+        stdio: ['ignore', 'inherit', 'pipe'],
+      }),
+    );
+    client.dispose();
+  });
+
+  it("hands the worker's captured stderr to the restart policy on an unexpected exit", async () => {
+    // The mocked app is unpackaged, so the client also passes chunks through
+    // to this process's stderr; silence that for the test output.
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      mockFork.mockImplementation(() => {
+        const child = makeFakeChild(true);
+        forkedChildren.push(child);
+        return child;
+      });
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-line-count', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new LineCountClient(policy);
+      const promise = client.countFiles(['/mock/a.txt']);
+      const child = lastChild();
+
+      child.stderr?.emit('data', Buffer.from('Error: worker blew up\n'));
+      child.emit('exit', 1);
+      await expect(promise).resolves.toBeNull();
+
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      const [exitCode, stderrTail] = recordCrashSpy.mock.calls[0];
+      expect(exitCode).toBe(1);
+      expect(stderrTail?.snapshot()).toBe('Error: worker blew up');
+      expect(policy.lastCrashDescription).toBe('exited with code 1: Error: worker blew up');
+    } finally {
+      stderrWrite.mockRestore();
     }
   });
 });

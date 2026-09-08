@@ -95,6 +95,7 @@ function makeFakeClient(overrides?: Partial<EmbedWorkerClient>): EmbedWorkerClie
     waitForInteractiveIdle: vi.fn(() => Promise.resolve()),
     dispose: vi.fn(),
     crashed: false,
+    crashReason: null,
     activeDevice: 'cpu',
     dimensions: 384,
     modelTag: 'bge-base@q8-cls',

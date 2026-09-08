@@ -76,7 +76,10 @@ issue = affected installs).
 
 - **Mechanism first.** `mechanism` on the exception says how it was caught: `onunhandledrejection`
   / `onerror` (renderer globals), `generic` via `captureException` (a boundary or
-  `reportHandledError` - check the `source` tag: `updater`, `pty_spawn`, `spawn`).
+  `reportHandledError` - check the `source` tag: `updater`, `pty_spawn`, `spawn`, `global_db_read`,
+  `utility_process`). A `utility_process` event carries a `utility_process` context block under
+  `contexts` with the worker's stderr tail; read that before the stack, since the stack is only the
+  restart policy's report site and the tail is what the worker printed before it died.
 - **Symbolication caveat:** packaged-release events resolve to real file/line only once a
   release build uploaded sourcemaps (`KANGENTIC_SENTRY_TOKEN` set during `npm run build`;
   `SENTRY_AUTH_TOKEN` is accepted as the fallback). A dev

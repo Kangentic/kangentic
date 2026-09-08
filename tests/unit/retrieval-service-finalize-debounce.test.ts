@@ -50,6 +50,7 @@ const embedEngineMock = vi.hoisted(() => ({
   reconcile: vi.fn(),
   activeDevice: null as string | null,
   workerCrashed: false,
+  workerCrashReason: null as string | null,
 }));
 vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({
   embedEngine: embedEngineMock,
