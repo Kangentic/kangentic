@@ -349,6 +349,47 @@ describe('createEmbedEngine getEmbedder (resolveEmbedder)', () => {
   });
 });
 
+describe('createEmbedEngine workerCrashReason', () => {
+  // Neither end of this forwarding getter is exercised by its neighbors:
+  // embed-client.test.ts asserts EmbedClient.crashReason directly (never
+  // through an engine), and retrieval-service-status.test.ts mocks the whole
+  // embed-engine module, so it never runs this getter's own body either. A
+  // regression here (e.g. forwarding `client.crashed` instead of
+  // `client.crashReason`, or dropping the `?? null` fallback) would leave
+  // every existing test green while the Memory tab's worker-error note
+  // silently went blank.
+  it('is null before any client has been resolved', () => {
+    const engine = createEmbedEngine({
+      getDb: () => ({}) as unknown as Database.Database,
+      createStore: () => new FakeStore('proj-unresolved', [], []),
+      createClient: () => makeFakeClient(),
+      delay: immediateDelay,
+    });
+
+    expect(engine.workerCrashReason).toBeNull();
+  });
+
+  it("forwards the crashed client's own crashReason once resolveEmbedder has run", () => {
+    const crashedClient = makeFakeClient({
+      crashed: true,
+      crashReason: "exited with code 1: Error: Cannot find module 'sharp'",
+    });
+    const engine = createEmbedEngine({
+      getDb: () => ({}) as unknown as Database.Database,
+      createStore: () => new FakeStore('proj-crashed', [], []),
+      createClient: () => crashedClient,
+      delay: immediateDelay,
+    });
+    const context = makeContext({ currentProjectId: 'proj-crashed', semanticEnabled: true });
+
+    // getEmbedder() is what populates the engine's client reference (it
+    // returns null itself, since a crashed client degrades the query path -
+    // see the sibling test above); workerCrashReason must still see it.
+    expect(engine.getEmbedder(context)).toBeNull();
+    expect(engine.workerCrashReason).toBe("exited with code 1: Error: Cannot find module 'sharp'");
+  });
+});
+
 describe('createEmbedEngine reconcile', () => {
   it('holds the existing client warm without disposing it when semantic is enabled and a project is open', () => {
     const client = makeFakeClient();
