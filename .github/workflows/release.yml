@@ -128,6 +128,22 @@ jobs:
       # Idempotent, so a re-run reuses whatever already exists. Titled without the
       # leading "v" to match what electron-builder's own createRelease() produces.
       #
+      # "A release exists for this tag" is three situations, not one, and the split
+      # is load-bearing. electron-builder uploads only into a DRAFT: handed a
+      # PUBLISHED release for the tag it logs `existing type not compatible with
+      # publishing type` and skips every artifact, while the build still exits 0.
+      # That is how v0.39.0 came to sit published and empty after its draft was
+      # published by hand mid-run, and the first thing to notice was a downstream
+      # gate whose error named the wrong cause. So a published-but-incomplete
+      # release fails HERE, in seconds, naming the recovery, rather than after
+      # three platform builds have run for nothing.
+      #
+      # A published and COMPLETE release is the opposite case and must stay green:
+      # that is the idempotent re-run this workflow supports on purpose (publish-npm
+      # carries the matching skip). verify-release-assets.js is the single
+      # definition of "complete" and is what publish-release already trusts, so it
+      # is called here rather than reimplemented as an asset count in bash.
+      #
       # Page 1 only, unlike scripts/verify-release-assets.js, which pages to 20.
       # The tag being created is by definition among the newest releases, so it
       # cannot have fallen off page 1 here. The deeper paging matters only in the
@@ -138,18 +154,52 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           tag="${{ steps.version.outputs.tag }}"
-          existing=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
-            --jq "[.[] | select(.tag_name == \"$tag\")] | length")
-          if [ "$existing" -gt 0 ]; then
-            echo "A release already exists for $tag; reusing it."
+          # `--arg tag`, not the tag spliced into the jq program text. A ref name may legally
+          # contain a double quote, which would close the jq string early and abort the step on
+          # a parse error instead of on anything meaningful. gh api's own --jq takes no --arg,
+          # so the filter runs in a separate jq, which is the form both upgrade gates use.
+          gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            | jq --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' > /tmp/tag-releases.json
+          existing=$(jq 'length' /tmp/tag-releases.json)
+          if [ "$existing" -eq 0 ]; then
+            gh release create "$tag" \
+              --draft \
+              --title "${tag#v}" \
+              --notes-file RELEASE_NOTES.md \
+              --repo "${{ github.repository }}"
+            echo "Created the draft release for $tag."
             exit 0
           fi
-          gh release create "$tag" \
-            --draft \
-            --title "${tag#v}" \
-            --notes-file RELEASE_NOTES.md \
-            --repo "${{ github.repository }}"
+          if [ "$(jq '[.[] | select(.draft)] | length' /tmp/tag-releases.json)" -gt 0 ]; then
+            echo "A draft release already exists for $tag; reusing it."
+            exit 0
+          fi
+          # On a failure the script prints its own trailer, "Refusing to publish. The release
+          # stays a draft." That is written for publish-release and is wrong here: this release
+          # is already published. The ::error:: lines below are the authoritative ones, and are
+          # what GitHub surfaces at the top of the run.
+          #
+          # Those lines name the three causes rather than asserting one, because a non-zero exit
+          # here does not identify which it was. `releasesForTag` runs `gh api` through
+          # execFileSync with no try/catch, so an unreachable API throws and exits 1 exactly like
+          # a verified-incomplete release does, and a tag resolving to SEVERAL release objects
+          # exits 1 too, where the fix is deleting the extras rather than this tag. A single
+          # message asserting "incomplete, so delete it" is confidently wrong in two of the three
+          # cases, and it is wrong in the direction that destroys a good release.
+          if node scripts/verify-release-assets.js "$tag" --repo "${{ github.repository }}"; then
+            echo "$tag is already published and carries every expected asset; re-running over a finished release."
+            exit 0
+          fi
+          echo "::error::$tag is already PUBLISHED and scripts/verify-release-assets.js did not pass on it."
+          echo "::error::Building into it is not an option either way: electron-builder uploads only into a draft, so it would skip every artifact with 'existing type not compatible with publishing type' while all three builds still reported success."
+          echo "::error::This step cannot tell the three causes apart, so read the verification output above before acting."
+          echo "::error::If it could not reach the GitHub API, re-run this workflow and delete nothing."
+          echo "::error::If it found more than one release object for $tag, consolidate the assets onto one and delete the EXTRAS, not $tag itself."
+          echo "::error::If it found one published release genuinely missing assets, run 'gh release delete $tag --yes' (the tag survives) and then re-run this entire workflow."
+          echo "::error::Never publish the draft by hand while the builds are running."
+          exit 1
 
   release:
     needs: [create-tag, create-draft-release]
@@ -357,15 +407,19 @@ jobs:
       # fail where a fresh install succeeds: file conflicts between versions,
       # scriptlet ordering, or a dependency only the old package pulled in.
       #
-      # `/releases/latest` returns the PREVIOUS release here - the one being built
-      # is still a draft at this point and the API skips drafts - so this upgrades
-      # from exactly what users are running today.
+      # The baseline is the newest published release that is NOT this build's own
+      # tag, so it upgrades from what users are running today. It read
+      # /releases/latest until v0.39.0, on the reasoning that the release being
+      # built is still a draft and that endpoint skips drafts. That is true only
+      # while nothing has published it, and both a re-run of a finished release and
+      # a hand publish mid-run break it - after which the gate upgraded a version
+      # from itself and passed without testing anything.
       #
-      # Skipping is deliberately narrow: only "there is no published release to
-      # upgrade FROM" skips, which happens once, on the first release ever. A
-      # baseline that exists but whose package cannot be downloaded FAILS,
-      # because the only ways that happens are an incomplete previous release or
-      # an artifact rename - and a gate that silently stops testing on a rename
+      # Skipping is deliberately narrow: only "there is no published release other
+      # than this one to upgrade FROM" skips, which happens once, on the first
+      # release ever. A baseline that exists but whose package cannot be downloaded
+      # FAILS, because the only ways that happens are an incomplete previous release
+      # or an artifact rename - and a gate that silently stops testing on a rename
       # is worse than no gate, since it still reads as coverage.
       - name: Verify rpm upgrades from the previous release
         if: matrix.platform == 'linux'
@@ -373,28 +427,54 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # What we just built is resolved FIRST, because the baseline lookup below
+          # has to exclude it by name.
+          #
+          # Assigned in two steps, not `basename "$(ls ...)"`: with the ls nested
+          # inside basename's argument the assignment carries BASENAME's exit
+          # status, so a zero-match glob sails past `set -e` with new_file empty
+          # and fails later as an opaque docker error. Direct assignment aborts
+          # here, matching the fresh-install steps above.
+          rpm_path=$(ls out/kangentic-*-1.x86_64.rpm)
+          new_file=$(basename "$rpm_path")
+          new_version=$(echo "$new_file" | sed -E 's/^kangentic-(.+)-1\.x86_64\.rpm$/\1/')
           # Authenticated, and branching on the HTTP status rather than on curl's
           # exit code. Unauthenticated api.github.com is 60 req/hour per runner IP
           # and shared with every other job on that host, so a bare `if curl` folds
-          # a 403 into the same empty-tag branch as "no release exists" and skips
-          # the gate while reporting green. Only a real 404 may skip.
-          status=$(curl -sSL -o /tmp/prev-release.json -w '%{http_code}' \
+          # a 403 into the same empty-list branch as "no release exists" and skips
+          # the gate while reporting green.
+          status=$(curl -sSL -o /tmp/releases.json -w '%{http_code}' \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
-          if [ "$status" = "404" ]; then
-            echo "No previously published release found; skipping rpm upgrade check."
-            exit 0
-          fi
+            "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100")
           if [ "$status" != "200" ]; then
-            echo "::error::GitHub API returned HTTP $status resolving the previous release."
+            echo "::error::GitHub API returned HTTP $status listing releases."
             echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
             exit 1
           fi
-          prev_tag=$(jq -r '.tag_name // empty' /tmp/prev-release.json)
+          # Excluding this build's OWN tag is the load-bearing part. This used to read
+          # /releases/latest, on the reasoning that the release under construction is
+          # still a draft and that endpoint skips drafts. The reasoning holds only
+          # until the release is published, which happens on a re-run of a finished
+          # release and happened once by a hand publish mid-run. Then the baseline
+          # resolves to this very version and the "upgrade" installs the same package
+          # twice and passes, which is the silent loss of coverage this gate exists
+          # to prevent. The list endpoint returns newest first.
+          prev_tag=$(jq -r --arg self "v$new_version" \
+            '[.[] | select(.draft == false and .prerelease == false and .tag_name != $self)][0].tag_name // empty' \
+            /tmp/releases.json)
+          # Narrow on purpose: only "there is no published release other than this
+          # one to upgrade FROM" skips. A baseline that exists but whose package
+          # cannot be downloaded still FAILS below.
           if [ -z "$prev_tag" ]; then
-            echo "::error::Release API returned HTTP 200 with no tag_name."
-            exit 1
+            # The total is printed because the filter matching nothing has two very different
+            # causes and this step cannot tell them apart: no baseline exists yet (correct, and
+            # true exactly once), or the filter is broken against a full release history. jq
+            # returns null for an unknown field rather than erroring, so a later typo in
+            # .draft / .prerelease / .tag_name would skip forever and still read as coverage.
+            # A count next to the skip line is what lets whoever reads the log see which it was.
+            echo "No published release other than v$new_version; skipping rpm upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
+            exit 0
           fi
           prev_version="${prev_tag#v}"
           prev_file="kangentic-${prev_version}-1.x86_64.rpm"
@@ -404,14 +484,6 @@ jobs:
             echo "::error::Either that release is incomplete, or the rpm artifact naming changed - which would also break the npx launcher (packages/launcher/bin/kangentic.js builds this exact filename)."
             exit 1
           fi
-          # Assigned in two steps, not `basename "$(ls ...)"`: with the ls nested
-          # inside basename's argument the assignment carries BASENAME's exit
-          # status, so a zero-match glob sails past `set -e` with new_file empty
-          # and fails later as an opaque docker error. Direct assignment aborts
-          # here, matching the fresh-install steps above.
-          rpm_path=$(ls out/kangentic-*-1.x86_64.rpm)
-          new_file=$(basename "$rpm_path")
-          new_version=$(echo "$new_file" | sed -E 's/^kangentic-(.+)-1\.x86_64\.rpm$/\1/')
           echo "Upgrading rpm $prev_version -> $new_version"
           # `rpm -q kangentic-$new_version` asks for that exact name-version rather
           # than grepping the full NVR, where an unanchored pattern would let the
@@ -425,24 +497,34 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Same status-code branching as the rpm step above: only a real 404 skips.
-          status=$(curl -sSL -o /tmp/prev-release.json -w '%{http_code}' \
+          # Built version first, then the baseline that excludes it - same ordering
+          # and same reasons as the rpm step above.
+          # Two-step assignment for the same set -e reason as the rpm step above.
+          deb_path=$(ls out/kangentic_*_amd64.deb)
+          new_file=$(basename "$deb_path")
+          new_version=$(echo "$new_file" | sed -E 's/^kangentic_(.+)_amd64\.deb$/\1/')
+          # Same status-code branching as the rpm step above: a transport failure
+          # fails rather than skipping.
+          status=$(curl -sSL -o /tmp/releases.json -w '%{http_code}' \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/latest")
-          if [ "$status" = "404" ]; then
-            echo "No previously published release found; skipping deb upgrade check."
-            exit 0
-          fi
+            "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100")
           if [ "$status" != "200" ]; then
-            echo "::error::GitHub API returned HTTP $status resolving the previous release."
+            echo "::error::GitHub API returned HTTP $status listing releases."
             echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
             exit 1
           fi
-          prev_tag=$(jq -r '.tag_name // empty' /tmp/prev-release.json)
+          # Excludes this build's own tag, so a published or re-run release cannot
+          # become its own upgrade baseline. See the rpm step for the full reasoning.
+          prev_tag=$(jq -r --arg self "v$new_version" \
+            '[.[] | select(.draft == false and .prerelease == false and .tag_name != $self)][0].tag_name // empty' \
+            /tmp/releases.json)
           if [ -z "$prev_tag" ]; then
-            echo "::error::Release API returned HTTP 200 with no tag_name."
-            exit 1
+            # Prints the total for the same reason as the rpm step above: an empty filter result
+            # means either "no baseline exists yet" or "the filter is broken", and only the log
+            # can tell them apart.
+            echo "No published release other than v$new_version; skipping deb upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
+            exit 0
           fi
           prev_version="${prev_tag#v}"
           prev_file="kangentic_${prev_version}_amd64.deb"
@@ -452,10 +534,6 @@ jobs:
             echo "::error::Either that release is incomplete, or the deb artifact naming changed - which would also break the npx launcher (packages/launcher/bin/kangentic.js builds this exact filename)."
             exit 1
           fi
-          # Two-step assignment for the same set -e reason as the rpm step above.
-          deb_path=$(ls out/kangentic_*_amd64.deb)
-          new_file=$(basename "$deb_path")
-          new_version=$(echo "$new_file" | sed -E 's/^kangentic_(.+)_amd64\.deb$/\1/')
           echo "Upgrading deb $prev_version -> $new_version"
           # -xF: whole-line fixed-string, so the installed version must equal the
           # new one rather than merely contain a regex that matches it.
