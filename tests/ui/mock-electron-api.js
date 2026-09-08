@@ -1913,6 +1913,7 @@
       },
       spawnTransient: async function (input) {
         var id = crypto.randomUUID();
+        var branch = input.branch || 'main';
         var session = {
           id: id,
           taskId: id,
@@ -1925,11 +1926,30 @@
           exitCode: null,
           resuming: false,
           transient: true,
+          // Main stamps the slot and the RESOLVED branch onto the session row, and
+          // the renderer re-pairs a surviving PTY to its window by that slot after
+          // a reload. Omitting them here would let a UI test pass against a row
+          // shape production never produces.
+          commandTerminalSlot: input.slot || null,
+          commandTerminalBranch: branch,
+          commandTerminalLabel: null,
           isolatedSwimlaneId: null,
           agentSessionId: null,
         };
         sessions.push(session);
-        return { session: session, branch: input.branch || 'main' };
+        return { session: session, branch: branch };
+      },
+      setTransientLabel: async function (sessionId, label) {
+        // Mirrors main: retained on the session row (first write wins) so a
+        // recovered terminal keeps its derived name. Trims and rejects a blank
+        // for the same reason main does - the store already trims before it
+        // calls, so a mock without this guard only diverges for a test that
+        // drives the API directly, which is exactly when the divergence lies.
+        var session = sessions.find(function (session) { return session.id === sessionId; });
+        var trimmed = (label || '').trim();
+        if (trimmed && session && session.transient && !session.commandTerminalLabel) {
+          session.commandTerminalLabel = trimmed;
+        }
       },
       killTransient: async function (sessionId) {
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });

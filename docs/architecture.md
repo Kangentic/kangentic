@@ -182,7 +182,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (37 channels)
+### Sessions (38 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -221,6 +221,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:getToolBreakdown` | invoke | Fetch live per-tool call breakdown for an active session (from the in-memory accumulator, not the DB) |
 | `session:spawnTransient` | invoke | Spawn ephemeral command terminal session (no task, no DB) |
 | `session:killTransient` | invoke | Kill a transient session and clean up session directory |
+| `session:setTransientLabel` | invoke | Record a Command Terminal's auto-derived name on its live registry row (first write wins). The renderer derives the name and has already applied it locally; main retains it purely so it survives a renderer reload, alongside the slot and branch that `toSession` carries. |
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
 
 ### Usage Stats (1 channel)

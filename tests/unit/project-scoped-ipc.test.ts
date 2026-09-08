@@ -74,6 +74,10 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_INJECT_SETTINGS',
   'SESSION_SPAWN_TRANSIENT',
   'SESSION_KILL_TRANSIENT',
+  // By-session-id, and it touches no DB at all: the transient session's derived
+  // name is retained on the in-memory registry row so it survives a renderer
+  // reload. A Command Terminal has no task and no project-scoped record.
+  'SESSION_SET_TRANSIENT_LABEL',
 ]);
 
 interface InvokeCall {
