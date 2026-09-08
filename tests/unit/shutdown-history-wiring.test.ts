@@ -98,6 +98,7 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
 
 import { syncShutdownCleanup } from '../../src/main/shutdown';
 import { destroyAllLanes } from '../../src/main/browser/browser-lane-manager';
+import { closeAll } from '../../src/main/db/database';
 
 // ---------------------------------------------------------------------------
 // Fixture factories
@@ -381,6 +382,65 @@ describe('syncShutdownCleanup history wire-up', () => {
 
     expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [4242], killedCount: 1 });
     expect(sessionManager.killAll).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The four steps at the very top of syncShutdownCleanup (clearPendingTimers,
+   * stopUpdaterTimers, stopAnnouncementTimers, stopMetricsSnapshotTimer) used to
+   * run with NO try/catch around them at all - not even the outer one that
+   * guards everything else in this function. A throw from any of them
+   * propagated straight out of syncShutdownCleanup, through performShutdown()
+   * in src/main/index.ts (which only assigns this function's return value and
+   * has no try/catch of its own), and into whichever caller invoked
+   * performShutdown(): the before-quit handler's `dependencies.performShutdown()`
+   * call has no try/catch either (see before-quit-drain-wiring.test.ts). That
+   * escape would have skipped the PTY kill, the drain, and the re-quit
+   * entirely, surfacing as an uncaught exception during Electron's own quit
+   * sequence instead of a logged, contained failure.
+   *
+   * Reverting one of these four calls to a bare `dependencies.clearPendingTimers();`
+   * is already caught by the AST scan below (it walks every top-level statement
+   * in the function, not only the ones inside the try block). What the scan
+   * cannot see is `runCleanupStep('clearPendingTimers', dependencies.clearPendingTimers())` -
+   * eager invocation passed as the argument expression, which still textually
+   * calls `runCleanupStep` and passes the scan, but runs the real work OUTSIDE
+   * the try/catch runCleanupStep provides. Only a throwing mock, driven through
+   * the real function, can catch that class of regression.
+   */
+  it('does not let a step before the try block escape uncaught and skip the PTY kill entirely', () => {
+    const dependencies = buildMockDependencies([], { pids: [4242], killedCount: 1 });
+    dependencies.clearPendingTimers.mockImplementation(() => {
+      throw new Error('timer already cleared');
+    });
+
+    let report: PtyKillReport | undefined;
+    expect(() => {
+      report = syncShutdownCleanup(dependencies);
+    }).not.toThrow();
+    expect(report).toEqual({ pids: [4242], killedCount: 1 });
+  });
+
+  /**
+   * Sentry DESKTOP-9: the global index DB can be read-only. Pre-diff,
+   * `deleteProjectFromIndex` and `closeAll()` were adjacent statements inside
+   * the one big try block (see the diff for src/main/shutdown.ts), so a throw
+   * from the former jumped straight to the outer catch and `closeAll()` was
+   * never reached - leaking the open SQLite handles that keep the libuv loop
+   * alive past a clean quit, until the 6s hard failsafe force-exits with code
+   * 1. docs/session-lifecycle.md's "Steps 7 and 8 are wrapped too" note names
+   * exactly this case. No existing test asserts the database `closeAll()`
+   * (imported from db/database) is ever called at all.
+   */
+  it('still closes database connections when deleting an ephemeral project from the index throws (Sentry DESKTOP-9: a read-only global index DB)', () => {
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 0 });
+    dependencies.isEphemeral = true;
+    dependencies.getCurrentProjectId.mockReturnValue('proj-ephemeral');
+    dependencies.deleteProjectFromIndex.mockImplementation(() => {
+      throw new Error('SQLITE_READONLY: attempt to write a readonly database');
+    });
+
+    expect(() => syncShutdownCleanup(dependencies)).not.toThrow();
+    expect(closeAll).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT call captureSessionMetrics for queued sessions (never spawned - nothing to capture)', () => {
