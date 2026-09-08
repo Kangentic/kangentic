@@ -2,16 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const setTagSpy = vi.fn();
+  const setContextSpy = vi.fn();
   return {
     electronMock: { app: { isPackaged: true } },
     setTagSpy,
+    setContextSpy,
     sentryMock: {
       init: vi.fn(),
       setUser: vi.fn(),
       captureException: vi.fn(),
       withScope: vi.fn(
-        (callback: (scope: { setTag: (key: string, value: string) => void }) => void) => {
-          callback({ setTag: setTagSpy });
+        (
+          callback: (scope: {
+            setTag: (key: string, value: string) => void;
+            setContext: (name: string, value: Record<string, unknown>) => void;
+          }) => void
+        ) => {
+          callback({ setTag: setTagSpy, setContext: setContextSpy });
         }
       ),
     },
@@ -103,6 +110,29 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(mocks.sentryMock.captureException).toHaveBeenCalledWith(error);
       expect(mocks.setTagSpy).toHaveBeenCalledWith('source', 'pty');
       expect(mocks.setTagSpy).toHaveBeenCalledWith('component', 'spawn');
+      // No context was given, so none is set: the SDK would otherwise show an
+      // empty block on every handled error.
+      expect(mocks.setContextSpy).not.toHaveBeenCalled();
+    });
+
+    it('sets each provided context on the scope alongside the tags (content goes in a context, never a tag)', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      const error = new Error('kangentic-embeddings worker exited repeatedly (exit code 1)');
+      errorReporting.reportHandledError(
+        error,
+        { source: 'utility_process' },
+        { utility_process: { exitCode: 1, stderrTail: "Error: Cannot find module 'sharp'" } }
+      );
+
+      expect(mocks.sentryMock.captureException).toHaveBeenCalledWith(error);
+      expect(mocks.setTagSpy).toHaveBeenCalledWith('source', 'utility_process');
+      expect(mocks.setTagSpy).toHaveBeenCalledTimes(1);
+      expect(mocks.setContextSpy).toHaveBeenCalledWith('utility_process', {
+        exitCode: 1,
+        stderrTail: "Error: Cannot find module 'sharp'",
+      });
     });
 
     it('makes ZERO Sentry calls when the module was never initialized (the opt-out promise gate)', async () => {

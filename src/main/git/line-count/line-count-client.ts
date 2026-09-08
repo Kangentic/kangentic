@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
+import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import type { LineCountEntry } from './line-count-worker';
 
 /** Per-request timeout; generous since the worker itself bounds each file's
@@ -88,7 +89,7 @@ export class LineCountClient {
     const workerPath = unpacked(path.join(__dirname, 'line-count-worker.js'));
     let child: UtilityProcess;
     try {
-      child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME });
+      child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
       // A fork that throws is a crash like any other, so it goes through the
       // policy rather than latching the cap directly - otherwise one transient
@@ -98,8 +99,13 @@ export class LineCountClient {
       return null;
     }
     this.child = child;
+    // stderr is piped and drained from the first tick: an undrained pipe
+    // blocks the worker, and the tail is what names a crash in the project
+    // log and the Sentry report (see stderr-tail.ts).
+    const stderrTail = new StderrTail();
+    captureWorkerStderr(child, stderrTail, !app.isPackaged);
     child.on('message', (message: unknown) => this.onWorkerMessage(message));
-    child.on('exit', (code: number) => this.onWorkerExit(child, code));
+    child.on('exit', (code: number) => this.onWorkerExit(child, code, stderrTail));
     return child;
   }
 
@@ -128,7 +134,7 @@ export class LineCountClient {
     }
   }
 
-  private onWorkerExit(child: UtilityProcess, exitCode?: number): void {
+  private onWorkerExit(child: UtilityProcess, exitCode?: number, stderrTail?: StderrTail): void {
     const intentional = this.intentionalShutdown;
     this.intentionalShutdown = false;
     // A killed worker's 'exit' arrives asynchronously, after a replacement may
@@ -142,7 +148,7 @@ export class LineCountClient {
     }
     this.pending.clear();
     // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode);
+    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode, stderrTail);
   }
 
   private armIdleShutdown(): void {

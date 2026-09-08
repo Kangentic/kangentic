@@ -57,6 +57,14 @@ Any step in the release path that exists to guarantee something must fail when i
   `production`, and `resolveSentryReleaseName` throws on a missing or empty `version` - both
   reached by calling the config module's default export directly (`defineConfig` returns it
   unchanged), since neither function is otherwise exported.
+- **Test (mechanical, CI):** `tests/unit/verify-unpacked-worker.test.ts` pins the packaged
+  embed-worker gate in `build/verify-unpacked-worker.js` (run from `build/afterPack.js`): it
+  throws with the child's stderr when the worker's externals do not load from the
+  `app.asar.unpacked` tree, it logs the verified branch on success, and its probe fences module
+  resolution to that tree, proven with a real child `node` against a dependency that exists only
+  above the root (the shape that would otherwise pass locally, where the repo's own `node_modules`
+  sits above `out/`, and fail on every install). 0.38.0 and 0.39.0 shipped a worker that exited 1
+  on every fork with no gate in the way.
 - **Review:** `/code-review` covers the parts that are judgement rather than shape, mainly whether a
   newly added step that can no-op says so.
 

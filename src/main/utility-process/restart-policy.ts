@@ -1,5 +1,6 @@
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
+import { summarizeStderrTail, type StderrSource } from './stderr-tail';
 
 /**
  * Restart policy shared by the utility processes we own
@@ -32,9 +33,11 @@ import { reportHandledError } from '../analytics/error-reporting';
  *
  * Telemetry follows the same volume/diagnostic split the spawn paths use: an
  * Aptabase counter on every crash answers "how often does this happen", and a
- * single Sentry report when the cap is reached answers "which service died, and
- * with what exit code". A crash the policy recovers from is not reported as an
- * issue, because it is not actionable on its own.
+ * single Sentry report when the cap is reached answers "which service died,
+ * with what exit code, and what it printed before dying". A crash the policy
+ * recovers from is not reported as an issue, because it is not actionable on
+ * its own; its stderr still goes to the main console (and so to the project
+ * log) so a local trail exists either way.
  */
 export interface UtilityRestartPolicyOptions {
   /** The `serviceName` passed to `utilityProcess.fork`, reused as the tag. */
@@ -70,6 +73,13 @@ export class UtilityRestartPolicy {
 
   private crashCount = 0;
   private lastCrashAt: number | null = null;
+  private lastExitCode: number | null = null;
+  /** The stderr of each crash in the current window, oldest first, bounded to
+   *  the cap. Held by reference and read lazily (`latestStderr`): the pipe can
+   *  still be draining when the `exit` that recorded a crash fires, and the
+   *  latch report comes two backoffs after the first crash, by which time the
+   *  text has long since landed. */
+  private stderrSources: StderrSource[] = [];
   /** One Sentry report per latch, not one per crash after the latch. */
   private reportedLatch = false;
 
@@ -108,10 +118,24 @@ export class UtilityRestartPolicy {
    * dispose, quit) must NOT be passed here - a recycle is not a crash, and
    * counting one would latch a perfectly healthy subsystem.
    */
-  recordCrash(exitCode: number | null | undefined): void {
+  recordCrash(exitCode: number | null | undefined, stderr?: StderrSource): void {
     this.decayIfQuiet();
     this.crashCount += 1;
     this.lastCrashAt = this.now();
+    this.lastExitCode = exitCode ?? null;
+    if (stderr) {
+      this.stderrSources.push(stderr);
+      while (this.stderrSources.length > this.maxCrashes) this.stderrSources.shift();
+    }
+
+    // Every crash leaves its stderr in the main console, which the log mirror
+    // persists (warn is never gated) to <project>/.kangentic/logs/<date>.log,
+    // so the text survives locally even with error reporting off.
+    const tail = this.latestStderr();
+    console.warn(
+      `[utility-process] ${this.service} exited with code ${exitCode ?? 'unknown'} (crash ${this.crashCount} of ${this.maxCrashes})`,
+      tail ? `\n${tail}` : '(no stderr captured)',
+    );
 
     trackEvent('utility_worker_crashed', {
       service: this.service,
@@ -133,8 +157,40 @@ export class UtilityRestartPolicy {
           exitCode: String(exitCode ?? 'unknown'),
           crashCount: String(this.crashCount),
         },
+        // The stderr is content, so it goes in a context, never a tag or the
+        // message: a tag would fragment grouping and a varying message would
+        // split the issue. This is what turns "exit code 1" into the module
+        // name or stack that explains it.
+        {
+          utility_process: {
+            service: this.service,
+            exitCode: exitCode ?? null,
+            crashCount: this.crashCount,
+            stderrTail: this.latestStderr() ?? '(no stderr captured)',
+          },
+        },
       );
     }
+  }
+
+  /** The newest crash's stderr that is non-empty at read time, or null. */
+  latestStderr(): string | null {
+    for (let index = this.stderrSources.length - 1; index >= 0; index -= 1) {
+      const snapshot = this.stderrSources[index].snapshot();
+      if (snapshot.length > 0) return snapshot;
+    }
+    return null;
+  }
+
+  /** One line describing the newest crash in the window, for the in-app
+   *  signal: `exited with code 1: Error: Cannot find module 'sharp'`. Null
+   *  when nothing has crashed, or once the window has decayed. */
+  get lastCrashDescription(): string | null {
+    this.decayIfQuiet();
+    if (this.crashCount === 0) return null;
+    const codeText = `exited with code ${this.lastExitCode ?? 'unknown'}`;
+    const summary = summarizeStderrTail(this.latestStderr() ?? '');
+    return summary ? `${codeText}: ${summary}` : codeText;
   }
 
   /** Forget the crash history. Called internally by `decayIfQuiet` once the
@@ -144,6 +200,8 @@ export class UtilityRestartPolicy {
   reset(): void {
     this.crashCount = 0;
     this.lastCrashAt = null;
+    this.lastExitCode = null;
+    this.stderrSources = [];
     this.reportedLatch = false;
   }
 

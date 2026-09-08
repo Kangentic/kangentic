@@ -127,7 +127,12 @@ in one Sentry org, one triage surface.
   `normalizePathsIntegration` rewrites stack-frame paths and URLs relative to the app root (the
   user's home directory never reaches Sentry for app code), `sendDefaultPii` stays `false`, and
   Sentry's server-side data scrubbing is on by default. Any further scrubbing rule belongs in the
-  Sentry UI (Advanced Data Scrubbing), not in a `beforeSend` here.
+  Sentry UI (Advanced Data Scrubbing), not in a `beforeSend` here. The one capture-site exception
+  is the utility worker's stderr tail (below): it is free text, not a stack frame, and Node's
+  `Require stack:` lines print absolute install paths under the user's profile, so
+  `src/main/utility-process/stderr-tail.ts` replaces the home directory with `~` before the text
+  goes anywhere. Same shape as the component-stack reduction above: data minimization at the
+  source, not a scrubbing rule.
 - **Filtering is a different concern and does live in code,** in `ignoreErrors`. Scrubbing removes
   data from an event we keep; filtering decides a whole class of event is un-actionable and should
   never become an issue. Three classes are filtered:
@@ -154,7 +159,12 @@ in one Sentry org, one triage surface.
   spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a
   `reason` tag), and a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, and `crashCount`) - send the real error
-  to Sentry so hidden issues are diagnosable, not just counted.
+  to Sentry so hidden issues are diagnosable, not just counted. The utility-worker report also
+  carries a `utility_process` context block with the last 8 KiB of the worker's stderr (home
+  directory redacted). Both workers are forked with stderr piped for this; with Electron's
+  `inherit` default, a packaged GUI build sent the worker's uncaught-exception dump nowhere, so
+  every DESKTOP-H event could only say "exit code 1". Content lives in the context, never in a
+  tag or the message, so grouping is unchanged.
 - **User-configuration errors are the one deliberate exclusion.** `reportHandledError`
   early-returns on a `UserConfigurationError` (`src/shared/user-configuration-error.ts`). A
   missing agent CLI (`AgentCliNotFoundError`) is the user's environment, not a defect we can ship
@@ -165,6 +175,11 @@ in one Sentry org, one triage surface.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
   restart cap produces a Sentry issue, and only once per latch; every crash increments the
   `utility_worker_crashed` counter. The same volume-versus-diagnostic split as `spawn_failed`.
+  Every crash does log its stderr tail to the main console as a
+  `[utility-process] <service> exited with code <n>` warning, which the log mirror persists to
+  `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether or not error
+  reporting is on. The Memory settings tab shows the same reason (exit code plus the first error
+  line) while semantic search is off because of it.
 - **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
   (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`
   handler, and sits deliberately AFTER `trackEvent('app_error')` so the "how often do update

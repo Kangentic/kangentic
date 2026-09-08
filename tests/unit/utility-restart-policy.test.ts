@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * UtilityRestartPolicy - the backoff / decay / reporting contract shared by the
@@ -55,9 +55,29 @@ function makePolicy(overrides: Partial<{ maxCrashes: number; decayMs: number }> 
   return { policy, clock };
 }
 
+/** A crash's stderr as the policy holds it: by reference, so a test can make
+ *  text land AFTER the crash was recorded, the way a still-draining pipe does. */
+function makeStderrSource(initial = ''): { snapshot: () => string; set: (text: string) => void } {
+  let text = initial;
+  return {
+    snapshot: () => text,
+    set: (next: string) => {
+      text = next;
+    },
+  };
+}
+
 describe('UtilityRestartPolicy', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    // Every crash logs its stderr; keep that out of the test output.
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
   });
 
   describe('backoff - the crash-burst guard', () => {
@@ -267,6 +287,111 @@ describe('UtilityRestartPolicy', () => {
 
       expect(policy.exhausted).toBe(false);
       expect(policy.maySpawn()).toBe(true);
+    });
+  });
+
+  describe('stderr capture - what turns "exit code 1" into a diagnosis', () => {
+    // DESKTOP-H: fourteen reports of `kangentic-embeddings worker exited
+    // repeatedly (exit code 1)` and not one of them could say why, because the
+    // worker's stderr was inherited into a GUI process with no console. The
+    // tail now rides along as a Sentry CONTEXT (content), while the tags,
+    // which drive grouping, stay exactly as they were.
+    it('attaches the newest non-empty stderr to the latch report as a context, leaving the tags untouched', () => {
+      const { policy, clock } = makePolicy();
+      policy.recordCrash(1, makeStderrSource("Error: Cannot find module 'sharp'"));
+      clock.advance(4_000);
+      policy.recordCrash(1, makeStderrSource(''));
+      clock.advance(4_000);
+      policy.recordCrash(1, makeStderrSource(''));
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [, tags, contexts] = mockReportHandledError.mock.calls[0];
+      expect(tags).toEqual({
+        source: 'utility_process',
+        service: 'kangentic-test-worker',
+        exitCode: '1',
+        crashCount: '3',
+      });
+      expect(contexts).toEqual({
+        utility_process: {
+          service: 'kangentic-test-worker',
+          exitCode: 1,
+          crashCount: 3,
+          stderrTail: "Error: Cannot find module 'sharp'",
+        },
+      });
+    });
+
+    it('reads the tail at report time, so bytes that land after the exit event still reach the report', () => {
+      // UtilityProcess has no 'close' event; its stderr pipe can still be
+      // draining when 'exit' fires. The latch report comes two backoffs later,
+      // so reading the source THEN, not at recordCrash, is what makes the
+      // capture race-free.
+      const { policy, clock } = makePolicy();
+      const lateSource = makeStderrSource('');
+      policy.recordCrash(1, lateSource);
+      clock.advance(4_000);
+      lateSource.set('late text');
+      policy.recordCrash(1, makeStderrSource(''));
+      clock.advance(4_000);
+      policy.recordCrash(1, makeStderrSource(''));
+
+      const [, , contexts] = mockReportHandledError.mock.calls[0];
+      expect(contexts.utility_process.stderrTail).toBe('late text');
+    });
+
+    it('reports a placeholder when no tail was ever captured (the fork-failure path)', () => {
+      const { policy, clock } = makePolicy();
+      for (let index = 0; index < 3; index++) {
+        policy.recordCrash(null);
+        clock.advance(4_000);
+      }
+
+      const [, , contexts] = mockReportHandledError.mock.calls[0];
+      expect(contexts.utility_process).toEqual({
+        service: 'kangentic-test-worker',
+        exitCode: null,
+        crashCount: 3,
+        stderrTail: '(no stderr captured)',
+      });
+    });
+
+    it('logs every crash with its stderr to console.warn, so the project log has the text even with reporting off', () => {
+      const { policy } = makePolicy();
+      policy.recordCrash(9, makeStderrSource('boom'));
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('kangentic-test-worker exited with code 9'),
+        expect.stringContaining('boom'),
+      );
+    });
+
+    it('describes the newest crash for the in-app signal, and forgets it on reset', () => {
+      const { policy } = makePolicy();
+      expect(policy.lastCrashDescription).toBeNull();
+
+      policy.recordCrash(
+        1,
+        makeStderrSource("node:internal/modules/cjs/loader:1228\n  throw err;\n\nError: Cannot find module 'sharp'\nRequire stack:"),
+      );
+      expect(policy.lastCrashDescription).toBe("exited with code 1: Error: Cannot find module 'sharp'");
+
+      policy.reset();
+      expect(policy.lastCrashDescription).toBeNull();
+    });
+
+    it('drops the description once the quiet window has decayed, along with the count', () => {
+      const { policy, clock } = makePolicy({ decayMs: 60_000 });
+      policy.recordCrash(1, makeStderrSource('Error: boom'));
+      clock.advance(60_000);
+
+      expect(policy.lastCrashDescription).toBeNull();
+    });
+
+    it('describes a crash with no stderr by its exit code alone', () => {
+      const { policy } = makePolicy();
+      policy.recordCrash(137);
+      expect(policy.lastCrashDescription).toBe('exited with code 137');
     });
   });
 });

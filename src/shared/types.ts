@@ -5533,6 +5533,10 @@ export interface MemoryStatus {
   /** When `semantic === 'lexical'`, the reason sqlite-vec failed to load (so the
    *  Memory tab can explain the degrade), or undefined if it simply is not loaded. */
   vecError?: string;
+  /** When `semantic === 'error'` because the embedding worker crashed past its
+   *  restart cap: its exit code plus the first error line of its stderr (home
+   *  directory redacted), so the Memory tab can say why. Undefined otherwise. */
+  workerError?: string;
 }
 
 interface SearchHitBase {

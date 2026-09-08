@@ -1,6 +1,7 @@
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 const fs = require('fs');
 const path = require('path');
+const { verifyUnpackedWorkerModules } = require('./verify-unpacked-worker');
 
 module.exports = async function afterPack(context) {
   const productFilename = context.packager.appInfo.productFilename;
@@ -24,6 +25,7 @@ module.exports = async function afterPack(context) {
     ? path.join(context.appOutDir, `${productFilename}.app`, 'Contents')
     : context.appOutDir;
   const resourcesDirName = platform === 'darwin' ? 'Resources' : 'resources';
+  const unpackedRoot = path.join(frameworkDir, resourcesDirName, 'app.asar.unpacked');
 
   // Strip cross-platform prebuilds and PDB debug symbols from node-pty
   const archMap = { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64' };
@@ -31,10 +33,7 @@ module.exports = async function afterPack(context) {
   if (!targetArch) {
     console.warn(`[afterPack] Unknown arch enum ${context.arch}, skipping prebuild stripping`);
   }
-  const prebuildsDir = path.join(
-    frameworkDir,
-    resourcesDirName, 'app.asar.unpacked', 'node_modules', 'node-pty', 'prebuilds'
-  );
+  const prebuildsDir = path.join(unpackedRoot, 'node_modules', 'node-pty', 'prebuilds');
   if (targetArch && fs.existsSync(prebuildsDir)) {
     for (const entry of fs.readdirSync(prebuildsDir)) {
       const entryPath = path.join(prebuildsDir, entry);
@@ -66,6 +65,11 @@ module.exports = async function afterPack(context) {
       }
     }
   }
+
+  // The packaged embed worker must be able to load its externals from the
+  // unpacked tree, or it exits 1 on every fork (DESKTOP-H). Throws on failure,
+  // which fails the package; see build/verify-unpacked-worker.js.
+  verifyUnpackedWorkerModules({ unpackedRoot });
 
   await flipFuses(electronBinaryPath, {
     version: FuseVersion.V1,
