@@ -698,9 +698,9 @@ describe('KillAll', () => {
     expect(manager.listSessions()).toHaveLength(0);
   });
 
-  it('returns the killed PTYs child pids, wired through killAllSessions for the before-quit exit-callback drain', async () => {
+  it('returns the PtyKillReport, wired through killAllSessions for the before-quit exit-callback drain', async () => {
     // Nothing else exercises this through the real SessionManager: session-shutdown-flow.test.ts
-    // pins killAllSessions's own pid-collection logic against a synthetic
+    // pins how killAllSessions builds the report against a synthetic
     // ShutdownContext, and shutdown-history-wiring.test.ts pins that
     // syncShutdownCleanup passes a mocked killAll's return value through -
     // neither calls the real SessionManager.killAll(), so a regression that
@@ -710,9 +710,9 @@ describe('KillAll', () => {
     const { mockPty: pty1 } = await spawnSession('task-ka-pid1');
     const { mockPty: pty2 } = await spawnSession('task-ka-pid2');
 
-    const killedPids = manager.killAll();
+    const killReport = manager.killAll();
 
-    expect(killedPids).toEqual([pty1.pid, pty2.pid]);
+    expect(killReport).toEqual({ pids: [pty1.pid, pty2.pid], killedCount: 2 });
   });
 
   it('kills all PTY processes', async () => {

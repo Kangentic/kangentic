@@ -1,6 +1,7 @@
 const PROCESS_START = performance.now();
 
 import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
+import type { Event as ElectronEvent } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
@@ -59,6 +60,7 @@ import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
 import { drainPtyExitCallbacks } from './pty/shutdown/exit-callback-drain';
+import type { PtyKillReport } from './pty/shutdown/session-shutdown';
 import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
@@ -1023,15 +1025,20 @@ const createWindow = () => {
   // before-quit / SIGINT/SIGTERM so a session killed by the OS still gets a
   // closing event instead of a stale one.
   //
+  // Electron on this event: "Once this event fires, there is no way to prevent
+  // the session from ending." So unlike the macOS/Linux powerMonitor path, this
+  // quit cannot be held for the PTY exit-callback drain, and the flag disarms
+  // it. That asymmetry is the whole reason the two routes are wired differently.
+  //
   // Attached HERE, per window, rather than once in the whenReady body: a
   // rebuilt window (activate, or a second-instance that found no window) would
   // otherwise have no session-end hook at all, so a later logout would leave
-  // osInitiatedShutdown false and the before-quit drain would hold the quit
-  // during an OS shutdown - the one thing .claude/rules/synchronous-shutdown.md
-  // says it never does.
+  // osShutdownCannotBeDelayed false and the before-quit drain would hold the
+  // quit during an OS shutdown - the one thing
+  // .claude/rules/synchronous-shutdown.md says it never does.
   if (process.platform === 'win32') {
     mainWindow.on('session-end', () => {
-      osInitiatedShutdown = true;
+      osShutdownCannotBeDelayed = true;
       performShutdown();
     });
   }
@@ -1586,10 +1593,26 @@ app.whenReady().then(async () => {
   // (Windows's equivalent is the BrowserWindow 'session-end' handler above).
   // Route it through the same flush so an abrupt OS shutdown still records a
   // closing event instead of leaving a stale last event.
+  //
+  // Unlike Windows session-end, Electron documents a preventDefault() here that
+  // asks the OS to delay shutdown so the app can exit cleanly, with the app
+  // expected to quit promptly afterwards. Taking it is what lets the following
+  // before-quit run the PTY exit-callback drain: without it, every reboot with
+  // a live PTY killed the children and then raced node-pty's exit callback
+  // against node::Stop() (Sentry DESKTOP-E). performShutdown() stays as the
+  // guaranteed flush rather than relying on app.quit() reaching before-quit,
+  // so a blocked quit cannot lose the closing event.
+  //
+  // Electron's typings declare this listener as () => void even though its docs
+  // document the event, so the parameter is declared here rather than inherited.
+  // It needs no assertion: an optional parameter already satisfies () => void,
+  // since assignability counts required parameters, not total ones. Optional-
+  // chained so a runtime that passes no event degrades to the undelayed path.
   if (process.platform !== 'win32') {
-    powerMonitor.on('shutdown', () => {
-      osInitiatedShutdown = true;
+    powerMonitor.on('shutdown', (event?: ElectronEvent) => {
+      event?.preventDefault?.();
       performShutdown();
+      app.quit();
     });
   }
 
@@ -1829,17 +1852,26 @@ function getShutdownDependencies() {
 }
 
 /**
- * Child pids of the PTYs the synchronous cleanup killed, consumed once by the
- * before-quit handler's exit-callback drain.
+ * What the synchronous cleanup killed, consumed once by the before-quit
+ * handler's exit-callback drain. Its killedCount, not just its pids, decides
+ * whether the drain runs: a killed PTY whose child pid was unreadable has an
+ * exit callback in flight with nothing to probe.
  */
-let killedPtyPids: number[] = [];
+let ptyKillReport: PtyKillReport = { pids: [], killedCount: 0 };
 /**
- * Set by the OS-initiated shutdown paths (Windows session-end, powerMonitor
- * 'shutdown'). A before-quit that follows one of those never holds the quit:
- * the OS is tearing the process down, and a prevented quit during logout is
- * not something worth risking for a drain the OS will cut short anyway.
+ * Set by an OS shutdown the app cannot ask to be delayed: Windows
+ * 'session-end', which Electron documents as "once this event fires, there is
+ * no way to prevent the session from ending". A before-quit that follows one
+ * never holds the quit, because the drain would be running against an OS that
+ * is not waiting.
+ *
+ * The macOS/Linux powerMonitor 'shutdown' path is deliberately NOT here.
+ * Electron documents a preventDefault() on that event which asks the OS to
+ * delay shutdown so the app can exit cleanly, so that path takes it and then
+ * drains normally. Leaving it disarmed meant every macOS or Linux reboot with
+ * live PTYs raced node-pty's exit callback against node::Stop().
  */
-let osInitiatedShutdown = false;
+let osShutdownCannotBeDelayed = false;
 
 /**
  * Shared synchronous shutdown flush: app quit (before-quit), SIGINT/SIGTERM,
@@ -1859,7 +1891,7 @@ function performShutdown(): boolean {
 
   // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)
-  killedPtyPids = syncShutdownCleanup(getShutdownDependencies());
+  ptyKillReport = syncShutdownCleanup(getShutdownDependencies());
   return true;
 }
 
@@ -1869,11 +1901,14 @@ function performShutdown(): boolean {
 // See pty/shutdown/exit-callback-drain.ts and
 // .claude/rules/synchronous-shutdown.md.
 app.on('before-quit', createBeforeQuitHandler({
-  performShutdown: () => {
-    performShutdown();
-  },
-  getKilledPtyPids: () => (osInitiatedShutdown ? [] : killedPtyPids),
-  drainPtyExitCallbacks: (pids) => drainPtyExitCallbacks({ pids, isProcessAlive }),
+  performShutdown: () => performShutdown(),
+  isOsInitiatedShutdown: () => osShutdownCannotBeDelayed,
+  getPtyKillReport: () => ptyKillReport,
+  drainPtyExitCallbacks: (report) => drainPtyExitCallbacks({
+    pids: report.pids,
+    killedCount: report.killedCount,
+    isProcessAlive,
+  }),
   hideAllWindows: () => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.hide();

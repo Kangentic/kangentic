@@ -117,6 +117,34 @@ export async function suspendAllSessions<S extends ShutdownSession>(
 }
 
 /**
+ * What the synchronous cleanup killed, handed to the before-quit exit-callback
+ * drain (exit-callback-drain.ts).
+ *
+ * A count as well as a pid list because the two can disagree. A PTY whose child
+ * pid is unreadable is still a kill whose exit callback can land after
+ * `node::Stop()`; it just cannot be probed, so the drain waits it out on a fixed
+ * budget instead. Reporting only the pids let such a kill skip the drain for the
+ * whole shutdown.
+ *
+ * Measured on node-pty 1.1.0 (Electron 41, ConPTY): no production path produces
+ * that disagreement. `pid` is a synchronous one-shot read at construction
+ * (`windowsPtyAgent.js:90` assigns `_innerPid` from `connect.pid` as the
+ * constructor's last statement; nothing reassigns it), so a PTY killed before its
+ * first data event still carries a real pid, and a spawn that fails throws rather
+ * than yielding a wrapper reading 0, which leaves a `pty: null` placeholder the
+ * loop below skips outright. So `killedCount` is a DEFENSIVE guard: it keeps the
+ * drain armed if a future path ever kills a PTY it cannot name, rather than
+ * covering one that exists today.
+ */
+export interface PtyKillReport {
+  /** Child pids of the killed PTYs; each is probed until it is gone. */
+  pids: number[];
+  /** Total PTYs killed, including any whose child pid was unreadable.
+   *  Always >= pids.length. */
+  killedCount: number;
+}
+
+/**
  * Synchronously kill every PTY and delete all session files.
  *
  * CRITICAL: must remain synchronous. This runs from Electron's
@@ -132,18 +160,21 @@ export async function suspendAllSessions<S extends ShutdownSession>(
  * flushing conversation state. For a true graceful suspend, call
  * suspendAllSessions first.
  *
- * Returns the child pid of every PTY it killed. The before-quit handler
- * feeds them to the exit-callback drain (exit-callback-drain.ts), which
- * holds the quit until those children are gone and node-pty's exit
- * callbacks have been dispatched while JS is still callable. A pid is
- * returned even when killPty reports the child was already dead: it
- * polls dead on the first tick, and the drain's settle ticks still cover
- * an exit callback that is queued but not yet dispatched.
+ * Returns a PtyKillReport. The before-quit handler feeds it to the
+ * exit-callback drain (exit-callback-drain.ts), which holds the quit until
+ * those children are gone and node-pty's exit callbacks have been dispatched
+ * while JS is still callable. A pid is reported even when killPty says the
+ * child was already dead: it polls dead on the first tick, and the drain's
+ * settle ticks still cover an exit callback that is queued but not yet
+ * dispatched. `killedCount` counts every kill, including one whose child pid
+ * was unreadable and so contributes no pid to probe; see PtyKillReport for why
+ * that is a guard rather than a live path.
  */
 export function killAllSessions<S extends ShutdownSession>(
   context: ShutdownContext<S>,
-): number[] {
-  const killedPtyPids: number[] = [];
+): PtyKillReport {
+  const pids: number[] = [];
+  let killedCount = 0;
   for (const session of context.sessions.values()) {
     if (session.pty) {
       writeExitSequence(session.pty, session.exitSequence);
@@ -152,7 +183,10 @@ export function killAllSessions<S extends ShutdownSession>(
       const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
       context.killPty(ptyRef);
-      if (Number.isInteger(childPid) && childPid > 0) killedPtyPids.push(childPid);
+      // Count the kill first, unconditionally. An unreadable pid means the drain
+      // has nothing to probe for this child, NOT that nothing was killed.
+      killedCount += 1;
+      if (Number.isInteger(childPid) && childPid > 0) pids.push(childPid);
     }
     // Detach our onData / onExit listeners so node-pty stops invoking the
     // callbacks on a later tick. Without this a final ConPTY chunk fires
@@ -175,5 +209,5 @@ export function killAllSessions<S extends ShutdownSession>(
   context.sessions.clear();
   context.sessionQueue.clear();
   context.firstOutputTracker.clear();
-  return killedPtyPids;
+  return { pids, killedCount };
 }
