@@ -659,6 +659,37 @@ describe('EmbedClient', () => {
       stderrWrite.mockRestore();
     }
   });
+
+  it('degrades to null and records the crash with no stderr tail when utilityProcess.fork() itself throws', async () => {
+    // Distinct from the exit-path test above: here fork() never returns a
+    // child at all (e.g. spawn ENOENT), so there is no stderr stream to
+    // capture. recordCrash must still be reachable through the catch block
+    // with a bare exit code and no third argument. Two independent
+    // regressions land here: trying to read stderr off the not-yet-assigned
+    // `child` throws (TypeError: Cannot read properties of undefined)
+    // instead of degrading, and passing a StderrTail anyway (skipping that
+    // dereference) still fails the toHaveBeenCalledWith(null) arity check
+    // below on its own. Both were confirmed red separately against a
+    // temporarily reintroduced StderrTail in this catch branch.
+    const forkError = new Error('spawn ENOENT');
+    mockFork.mockImplementationOnce(() => {
+      throw forkError;
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+    const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+    const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+    await expect(client.embed(['x'])).resolves.toBeNull();
+
+    expect(mockFork).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledWith(null);
+    // A single fork failure is one crash, not three - the client must not be
+    // latched off after it.
+    expect(client.crashed).toBe(false);
+    warnSpy.mockRestore();
+  });
 });
 
 describe('resolveDeviceChain', () => {
