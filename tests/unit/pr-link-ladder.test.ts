@@ -140,7 +140,12 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 function depsFor(
   task: Task,
-  opts: { updateSpy?: ReturnType<typeof vi.fn>; force?: boolean; preserveLinkOnNotFound?: boolean } = {},
+  opts: {
+    updateSpy?: ReturnType<typeof vi.fn>;
+    force?: boolean;
+    preserveLinkOnNotFound?: boolean;
+    defaultBaseBranch?: string;
+  } = {},
 ) {
   const update = opts.updateSpy ?? vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
   return {
@@ -149,6 +154,7 @@ function depsFor(
     onLinked: vi.fn(),
     force: opts.force ?? true, // ladder tests bypass the throttle unless they're testing it
     preserveLinkOnNotFound: opts.preserveLinkOnNotFound,
+    defaultBaseBranch: opts.defaultBaseBranch,
   };
 }
 
@@ -509,6 +515,22 @@ describe('linkPRForTask confidence ladder', () => {
     expect(queriedBranches()).toEqual(['real-branch']);
   });
 
+  it('tier 6: an empty base_branch falls through to resolved_base_branch, not a hardcoded default (|| not ??)', async () => {
+    // Same shape as the resolved_base_branch test above, but with base_branch set
+    // to '' instead of left null - the only input that distinguishes `||` from
+    // `??` for the baseBranch fallthrough. Under `??`, '' is not nullish and
+    // wins outright, so the bail below measures against '' instead of 'develop'
+    // and 'develop' gets queried as an ordinary candidate branch. Red-green:
+    // swapping that `||` chain to `??` flips this test to a query.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/develop', 'refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: '', resolved_base_branch: 'develop' });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches()).not.toContain('develop');
+    expect(queriedBranches()).toEqual(['real-branch']);
+  });
+
   it('tier 6: a recorded resolved_base_branch is enough to make the base known', async () => {
     // The companion to the bail above: with a base recorded, the tier is alive
     // for a task that chose no base explicitly and whose project config the
@@ -529,6 +551,22 @@ describe('linkPRForTask confidence ladder', () => {
     conn.byBranch = null;
     const task = makeTask({ base_branch: null });
     await linkPRForTask(task.id, depsFor(task));
+    expect(readRefs()).toHaveLength(0);
+  });
+
+  it('tier 6: an empty defaultBaseBranch does not count as a known base (|| not != null)', async () => {
+    // Same shape as the "unknown base" test above, but with the LAST layer set
+    // to '' instead of left undefined - the only input that distinguishes `||`
+    // from `!= null` for baseBranchIsKnown. Under `!= null`, '' reports the base
+    // as known, and tier 6 would then measure its bail against 'main', the
+    // hardcoded guess baseBranch itself falls through to when every real layer
+    // is absent. Red-green: reverting baseBranchIsKnown to `!= null` flips this
+    // test to a ref read.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: null });
+    await linkPRForTask(task.id, depsFor(task, { defaultBaseBranch: '' }));
     expect(readRefs()).toHaveLength(0);
   });
 
@@ -848,6 +886,51 @@ describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', ()
 
     expect(result.status).toBe('not-found');
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+    expect(result.task?.pr_number).toBeNull();
+  });
+});
+
+/**
+ * `linkPR`'s board-config-first base resolution:
+ *   defaultBaseBranch = boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+ *     || configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
+ * Every other `linkPR` test's context omits `boardConfigManager` entirely, so the
+ * property access throws inside the wrapper's try/catch and `defaultBaseBranch`
+ * is always undefined there - the board-wins ordering has never reached a real
+ * value. This proves it does by observing where it lands in the ladder: tier 6's
+ * base-tip bail, which only fires when the base it is handed actually matches a
+ * ref.
+ */
+describe('linkPR (IPC wrapper): board config default base branch wins over project config', () => {
+  it('the board config base branch reaches the ladder ahead of the project config default', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/develop'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'develop' ? resolved(555) : null);
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({
+      pr_number: null, base_branch: null, resolved_base_branch: null,
+      worktree_path: null, branch_name: null, head_sha: HEX_SHA,
+    });
+    repos.value = { tasks: { getById: () => task, update: updateSpy } as never };
+    const context = {
+      currentProjectId: 'proj-1',
+      projectRepo: { getById: () => ({ id: 'proj-1', path: '/repo' }) },
+      boardConfigManager: { getDefaultBaseBranchForPath: () => 'develop' },
+      configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      sessionManager: { getSessionProjectId: () => null },
+    } as never as IpcContext;
+
+    const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    // 'develop' is recognized as the base (the board config value, not 'main'),
+    // so tier 6's base-tip bail fires and never queries it as a candidate
+    // branch. Red-green: reverting the board-config-first expression to
+    // config-only leaves the base as 'main', the bail does not fire, 'develop'
+    // is queried, resolves to PR 555, and both assertions below fail.
+    expect(queriedBranches()).toEqual([]);
+    expect(result.status).toBe('not-found');
     expect(result.task?.pr_number).toBeNull();
   });
 });

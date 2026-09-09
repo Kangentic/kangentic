@@ -433,6 +433,12 @@ describe('readRefsPointingAtSha', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // `clearAllMocks` resets call history but KEEPS a set implementation, and
+    // the concurrency test below installs one that never resolves on its own.
+    // Every test here supplies its own `raw` behaviour, so resetting it costs
+    // nothing and stops that gate-holding implementation leaking into whatever
+    // test is appended after it.
+    mockGit.raw.mockReset();
   });
 
   it('returns remote branch names with the remote prefix stripped', async () => {

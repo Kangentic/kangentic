@@ -1,6 +1,7 @@
 /**
- * EMPIRICAL tests for the `tasks.worktree_skip_reason` column, run against a
- * REAL SQLite engine (node:sqlite) rather than a mocked repository.
+ * EMPIRICAL tests for the `tasks.worktree_skip_reason` and
+ * `tasks.resolved_base_branch` columns, run against a REAL SQLite engine
+ * (node:sqlite) rather than a mocked repository.
  *
  * Every existing spec that touches `setWorktreeSkipReason`
  * (task-move-git-churn-wiring.test.ts, task-move-complete-analytics.test.ts,
@@ -142,5 +143,35 @@ describeWithSqlite('worktree_skip_reason', () => {
     tasks.update({ id: task.id, title: 'Renamed' });
 
     expect(tasks.getById(task.id)!.worktree_skip_reason).toBe('disabled');
+  });
+});
+
+describeWithSqlite('resolved_base_branch', () => {
+  it('records the resolved base branch on a real creation', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/612', 'task-abcd1234', '612', 'develop');
+
+    expect(tasks.getById(task.id)!.resolved_base_branch).toBe('develop');
+  });
+
+  it('keeps the base an earlier real creation recorded when a later reattach omits it', () => {
+    // A reattach to a branch that already existed passes no start point, so
+    // `WorktreeManager.createWorktree` has no observed base and calls
+    // `recordWorktree` with the 5th argument omitted. That call must not erase
+    // the base an earlier real creation recorded, or the PR linker loses a
+    // known base it once had.
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/612', 'task-abcd1234', '612', 'develop');
+    expect(tasks.getById(task.id)!.resolved_base_branch).toBe('develop');
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/612', 'task-abcd1234', '612');
+
+    expect(tasks.getById(task.id)!.resolved_base_branch).toBe('develop');
   });
 });
