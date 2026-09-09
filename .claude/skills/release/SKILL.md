@@ -1,6 +1,6 @@
 ---
-description: Version bump, changelog, tag, and push release
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Agent
+description: Version bump, changelog, tag, push release, and mark the Sentry issues it fixes
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(curl:*), PowerShell, Agent
 argument-hint: [patch|minor|major]
 ---
 
@@ -241,8 +241,56 @@ run in seconds when it finds that state, but the recovery is still manual: `gh r
 vX.Y.Z --yes` (the tag survives), then a FULL re-run with `gh run rerun <runId>`. Not
 `--failed`, which re-runs only the failed job and leaves the other platforms' assets unbuilt.
 
+## Step 8 -- Mark the Sentry issues this release fixes
+
+Runs only after Step 7's end-state verification. The Sentry release `Kangentic@X.Y.Z` is created by
+the bundler plugin during the CI build, so it does not exist before then and nothing here can be
+done earlier.
+
+The marker must name the release that CARRIES the fix. Naming the release an issue was last seen on
+reopens it on exactly the builds that legitimately lack the fix. Read
+`.claude/skills/sentry/SKILL.md` and follow its "Auth" and "Resolution markers" sections for the
+token, the request bodies, and the traps; do not re-derive them here.
+
+1. **Derive the candidates:** Run
+   `git log <previousTag>..vX.Y.Z --grep="DESKTOP-" --format=%H%n%B`, where `<previousTag>` is the
+   value Step 0 captured and `vX.Y.Z` is the tag Step 5 created. Do NOT re-derive `<previousTag>`
+   here. Step 5 has already tagged this release, so `git describe --tags --abbrev=0` now returns
+   the NEW tag and the range comes back empty. That is the one silent failure this step has, and an
+   empty range reads exactly like a clean run. Collect every shortId the commit bodies name.
+2. **Judge each candidate.** The scan produces candidates, not answers, because a commit body
+   cites shortIds it does not fix. Read each candidate's current issue payload first, both its
+   `status` and its newest `set_resolved_in_release` activity entry: a commit body on its own
+   cannot tell you whether an issue is already resolved somewhere else. Then drop two kinds:
+   - An issue a commit mentions only as context or prior art.
+   - An issue already resolved against a release that genuinely carries its fix. This has bitten
+     once already: `b653463d` names DESKTOP-C, whose fix shipped in v0.39.0, so a blind re-mark to
+     the version being released would have recreated the bug this step exists to prevent.
+3. **Confirm the list with the user** as one numbered prompt before any write, showing each
+   shortId, the commit that fixes it, and the marker about to be set.
+4. **Mark each one** against `Kangentic@<the version just shipped>`. An already-resolved issue
+   needs a `{"status":"unresolved"}` PUT first or the write is silently a no-op, and the GitHub
+   integration resolves issues on PR merge, so expect that state rather than reading it as a
+   decision someone made.
+5. **Verify, then say which way it went.** Read each issue's newest `set_resolved_in_release`
+   activity entry back, because `statusDetails` alone cannot confirm a write landed. Then report
+   the outcome in one line, including the empty ones: "no Sentry shortIds in this range", or "403
+   on the resolve PUT, these issues are unmarked: ...". Per
+   `.claude/rules/release-gates-fail-loudly.md`, a step that guarantees something says which way
+   it went.
+
+**This step never fails the release.** It runs after the release is already published, so its only
+failure mode is a report. Do not stop the flow, do not retry in a loop, and do not roll anything
+back.
+
 ## Allowed Tools
 
-Use `Read`, `Glob`, `Grep`, `Bash` (for `git`, `npm`, and `npx` commands), `Write` (for commit message temp file), and `Edit` (for CHANGELOG.md).
+Use `Read`, `Glob`, `Grep`, `Bash` (for `git`, `npm`, `npx`, and `curl` commands), `Write` (for commit message temp file), and `Edit` (for CHANGELOG.md).
+
+Step 8 needs two more: `PowerShell`, for the sentry skill's Windows request pattern, which chains
+with `;` and so cannot go through `Bash` under `.claude/rules/bash-single-command.md`; and
+`Bash(curl:*)` for its macOS and Linux form. Without those grants Step 8 cannot make a single
+Sentry request. It reaches the sentry skill's instructions with `Read`, which is already granted,
+rather than by invoking the skill.
 
 **CRITICAL: No chained commands.** Every Bash call must contain exactly ONE command. Never use `&&`, `||`, `|`, or `;`. Use `git -C <path>` for git commands in another directory -- never `cd <path> && git ...`.
