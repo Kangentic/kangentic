@@ -235,6 +235,44 @@ async function settleFocusFrames(page: Page): Promise<void> {
   );
 }
 
+/**
+ * On a focus-assertion failure for an arriving terminal, print the arrival-focus
+ * arbiter's dev-only trace ring (exposed as `window.__kangenticTerminalTrace` by
+ * `DevtoolsBootstrap`, mounted unconditionally under Vite dev) plus the actual
+ * focused element's identity, via `console.log` so it lands directly in CI's
+ * `list`-reporter job log - the UI shard job uploads no report/trace artifact, so
+ * a `testInfo.attach()` would be invisible there.
+ *
+ * Diagnostic only: changes no wait and weakens no assertion. Added after the spec
+ * 3 CI failure below could not be reproduced locally (30/30 baseline runs; CDP
+ * CPU throttling broke the EARLIER veil-clear step instead of isolating this one,
+ * the wrong shape; 18/18 runs under real 30-core OS contention with 3 concurrent
+ * browsers) and static reading of the arbiter (`terminal-arrival-focus.ts`) found
+ * no invalidation path within this test's lifecycle - `ARRIVAL_CLAIM_TTL_MS` is
+ * already 30s specifically for this scenario class. Rather than guess at a fix
+ * for an unconfirmed cause, this captures the arbiter's own `{allow, reason}`
+ * decision (or its absence, which narrows to the rAF never running / the xterm
+ * ref being null at focus time) so the next occurrence resolves in one log line.
+ */
+async function logArrivalFocusFailure(page: Page, sessionId: string): Promise<void> {
+  const diagnostics = await page.evaluate((sid) => {
+    const traceReader = (window as unknown as { __kangenticTerminalTrace?: () => unknown[] }).__kangenticTerminalTrace;
+    const trace = (traceReader ? traceReader() : []) as Array<{ sessionId: string | null; event: string }>;
+    const relevant = trace.filter((entry) => entry.sessionId === sid || entry.event === 'arrival-focus');
+    const active = document.activeElement;
+    return {
+      relevantTrace: relevant,
+      activeElement: active && active !== document.body ? {
+        tag: active.tagName,
+        className: (active as HTMLElement).className ?? null,
+        paneSessionId: active.closest('[data-session-id]')?.getAttribute('data-session-id') ?? null,
+        testId: active.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+      } : null,
+    };
+  }, sessionId);
+  console.log(`[arrival-focus-diagnostics] session=${sessionId}`, JSON.stringify(diagnostics, null, 2));
+}
+
 test('a delayed background replay does not steal focus from a just-opened task detail', async () => {
   const { browser, page } = await launch();
   try {
@@ -384,7 +422,12 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
     await fallbackPane.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
     await expect(fallbackPane.locator('[data-testid="terminal-replay-veil"]')).toHaveCount(0, { timeout: STEP_TIMEOUT_MS });
 
-    await expect(fallbackPane.locator('.xterm-helper-textarea').first()).toBeFocused({ timeout: STEP_TIMEOUT_MS });
+    try {
+      await expect(fallbackPane.locator('.xterm-helper-textarea').first()).toBeFocused({ timeout: STEP_TIMEOUT_MS });
+    } catch (error) {
+      await logArrivalFocusFailure(page, SESSION_FALLBACK);
+      throw error;
+    }
   } finally {
     await browser.close();
   }
