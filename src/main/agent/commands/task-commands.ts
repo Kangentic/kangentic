@@ -132,6 +132,7 @@ function scheduleLinkTimeResolve(
   void linkPRForTask(taskId, {
     tasks: taskRepo,
     projectPath: context.getProjectPath(),
+    defaultBaseBranch: context.getDefaultBaseBranch?.(),
     force: true,
     preserveLinkOnNotFound: true,
     onLinked: (linked) => context.onTaskPrLinkChanged?.(linked),
@@ -628,6 +629,7 @@ export const handleLinkPr: CommandHandler = async (
     result = await linkPRForTask(task.id, {
       tasks: taskRepo,
       projectPath: context.getProjectPath(),
+      defaultBaseBranch: context.getDefaultBaseBranch?.(),
       force: true,
       onLinked: (linked) => context.onTaskUpdated(linked),
     });

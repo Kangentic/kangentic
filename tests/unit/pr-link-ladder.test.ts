@@ -18,6 +18,15 @@ const git = vi.hoisted(() => ({
   // beyond base. '0' = a branchless worktree on base's tip (Tier 3 skipped);
   // '1'+ = the task's own work (Tier 3 runs).
   aheadCount: '1',
+  /**
+   * `for-each-ref --points-at=<sha>` output: FULL refnames, one per line. Empty
+   * by default so every pre-existing test keeps its exact resolver call
+   * sequence - Tier 6 bails on an empty candidate set without touching a
+   * connector.
+   */
+  pointsAtRefs: [] as string[],
+  /** Every `raw` argv, so a test can assert a tier did NOT read the refs. */
+  rawCalls: [] as string[][],
 }));
 const conn = vi.hoisted(() => ({
   byNumber: null as unknown,
@@ -28,12 +37,30 @@ const conn = vi.hoisted(() => ({
   // Args the last call to each resolver received, so a test can assert which
   // branch/commit was queried (e.g. the live HEAD branch, not the stored slug).
   lastArgs: {} as Record<string, unknown[]>,
+  // Every call's args. Tier 6 can query more than one branch in a single
+  // resolve, so `lastArgs` alone cannot prove which names were asked about.
+  allArgs: {} as Record<string, unknown[][]>,
+  /**
+   * Whether the owning connector declares that its commit resolver proves
+   * ownership. True by default because both shipped connectors do; a test flips
+   * it to exercise the tightening a future connector would get by omission.
+   */
+  selfVerifiesCommits: true,
 }));
 
 vi.mock('simple-git', () => ({
   simpleGit: () => ({
     revparse: async (args: string[]) => (args.includes('--abbrev-ref') ? (git.branch ?? 'HEAD') : git.sha),
-    raw: async () => git.aheadCount,
+    raw: async (args: string[]) => {
+      git.rawCalls.push(args);
+      // Discriminate by VERB, not by arity: both reads go through `raw`, and a
+      // single catch-all string made the ref read indistinguishable from the
+      // commits-ahead-of-base count.
+      if (args[0] === 'for-each-ref') {
+        return git.pointsAtRefs.length > 0 ? `${git.pointsAtRefs.join('\n')}\n` : '';
+      }
+      return git.aheadCount;
+    },
   }),
 }));
 
@@ -72,9 +99,15 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   const make = (key: 'byNumber' | 'byBranch' | 'byCommit') => async (...args: unknown[]) => {
     conn.calls.push(key);
     conn.lastArgs[key] = args;
+    conn.allArgs[key] = [...(conn.allArgs[key] ?? []), args];
     const value = conn[key];
     if (value instanceof Error) throw value;
-    return value ?? null;
+    // A function stands in for a per-argument answer, which Tier 6 needs: it
+    // queries several branches in one resolve, and the whole point is that the
+    // stored slug misses while the pushed branch hits.
+    const answer = typeof value === 'function' ? (value as (...a: unknown[]) => unknown)(...args) : value;
+    if (answer instanceof Error) throw answer;
+    return answer ?? null;
   };
   return {
     PRResolverUnavailableError,
@@ -82,6 +115,7 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
     resolvePRByNumber: make('byNumber'),
     resolvePRForBranch: make('byBranch'),
     resolvePRByCommit: make('byCommit'),
+    commitAnchorSelfVerifies: async () => conn.selfVerifiesCommits,
     detectPR: () => conn.detect ?? null,
   };
 });
@@ -97,7 +131,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: `task-${idCounter}`, display_id: idCounter, title: 'T', description: '', swimlane_id: 'lane', position: 0,
     agent: null, session_id: null, worktree_path: '/wt', branch_name: 'slug', pr_number: null,
-    pr_url: null, pr_state: null, head_sha: null, external_id: null, external_source: null,
+    pr_url: null, pr_state: null, head_sha: null, pushed_branch: null, resolved_base_branch: null, external_id: null, external_source: null,
     external_url: null, base_branch: 'main', use_worktree: 1, labels: [], priority: 0,
     model_override: null, effort_override: null, agent_override: null, attachment_count: 0,
     archived_at: null, created_at: 't', updated_at: 't', ...overrides,
@@ -120,9 +154,21 @@ function depsFor(
 
 const resolved = (number: number, state = 'open') => ({ url: `u${number}`, number, state });
 
+/**
+ * A REAL object name. Tier 6's ref read refuses a non-hex sha unread, so the
+ * `sha-current` placeholder the older tests use skips that tier entirely - which
+ * is exactly why they kept their original call sequences when it was added.
+ */
+const HEX_SHA = '8eff97af1b3753bac423e2f225539f1e36dc12a6';
+const readRefs = () => git.rawCalls.filter((args) => args[0] === 'for-each-ref');
+/** Every branch name any tier asked the branch resolver about. */
+const queriedBranches = () => (conn.allArgs.byBranch ?? []).map((args) => args[1]);
+
 beforeEach(() => {
-  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = []; conn.lastArgs = {};
+  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = [];
+  conn.lastArgs = {}; conn.allArgs = {}; conn.selfVerifiesCommits = true;
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
+  git.pointsAtRefs = []; git.rawCalls = [];
   repos.value = {}; // no state leaks into the ladder tests, which never touch getProjectRepos
   recordPushSpy.mockClear(); // module-scope spy: a stale call would satisfy the wrong test
   trackFeatureUsedSpy.mockClear();
@@ -202,6 +248,288 @@ describe('linkPRForTask confidence ladder', () => {
     expect(conn.calls).not.toContain('byCommit');
     expect(result.status).toBe('not-found');
     expect(result.task?.pr_number).toBeNull();
+  });
+
+  it('tier 6: links via the REMOTE branch whose tip is the task HEAD when the pushed name diverges', async () => {
+    // The filed bug (my-repo #15). The local worktree branch is the Kangentic
+    // slug; the branch actually pushed, and used as the PR source, is
+    // `maint/adopt-central-package-management`. Nothing reconciled the two, so:
+    // tier 1 has no number, tiers 2/4 query the slug and miss, and tier 3 is
+    // gated off because the PR already merged into base (0 commits ahead).
+    git.branch = 'adopt-central-packag-f07d8383';
+    // A REAL object name: the ref read refuses a non-hex sha unread, so the
+    // placeholder the other tests use would skip this tier entirely.
+    git.sha = '8eff97af1b3753bac423e2f225539f1e36dc12a6';
+    git.aheadCount = '0';
+    git.pointsAtRefs = [
+      'refs/heads/adopt-central-packag-f07d8383',
+      'refs/remotes/origin/maint/adopt-central-package-management',
+    ];
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'maint/adopt-central-package-management' ? resolved(1369, 'merged') : null);
+    const task = makeTask({ branch_name: 'adopt-central-packag-f07d8383', base_branch: 'develop' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(1369);
+    // The load-bearing assertion: the PUSHED branch was queried, not the slug.
+    expect(conn.lastArgs.byBranch?.[1]).toBe('maint/adopt-central-package-management');
+    // And the identity is recorded, so the next resolve does not depend on the
+    // remote ref still pointing at exactly this sha.
+    expect(result.task?.pushed_branch).toBe('maint/adopt-central-package-management');
+  });
+
+  it('tier 6: bails when a REMOTE base points at the sha (fresh worktree on base tip)', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/develop', 'refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: 'develop' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    // Only tier 2's own query. The candidate at the base tip is never asked about.
+    expect(queriedBranches()).toEqual(['real-branch']);
+    expect(result.status).toBe('not-found');
+  });
+
+  it('tier 6: bails when the LOCAL base points at the sha (worktree cut from a stale local base)', async () => {
+    // Offline, `origin/<base>` has moved on and does not point at the sha, but
+    // refs/heads/<base> still does. Red-green for scanning refs/heads/ at all.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/heads/develop', 'refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: 'develop' });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches()).toEqual(['real-branch']);
+  });
+
+  it('tier 6: bails on a remote HEAD symref, and never queries `origin` or `HEAD` as a branch', async () => {
+    // `%(refname:short)` renders refs/remotes/origin/HEAD as the bare remote
+    // name, which is not a branch. It also proves the sha is the default
+    // branch's tip, whatever base_branch claims - here deliberately not 'main'.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/HEAD', 'refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: 'develop' });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches()).not.toContain('origin');
+    expect(queriedBranches()).not.toContain('HEAD');
+    expect(queriedBranches()).toEqual(['real-branch']);
+  });
+
+  it('tier 6: skips the branch tier 2 already tried, and dedupes one branch across two remotes', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = [
+      'refs/remotes/origin/real-branch', // tier 2 queried this already
+      'refs/remotes/origin/pushed-name',
+      'refs/remotes/upstream/pushed-name', // same branch, second remote
+    ];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'pushed-name' ? resolved(88) : null);
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(88);
+    expect(queriedBranches()).toEqual(['real-branch', 'pushed-name']);
+  });
+
+  it('tier 6: refuses an option-shaped branch name', async () => {
+    // git permits a leading dash in a ref name, and a resolver would parse it as
+    // an option rather than a branch.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/--output=pwned', 'refs/remotes/origin/ok-branch'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'ok-branch' ? resolved(89) : null);
+    const task = makeTask();
+    await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches()).not.toContain('--output=pwned');
+  });
+
+  it('tier 6: gives up rather than fanning out when more than two branches share the tip', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/a', 'refs/remotes/origin/b', 'refs/remotes/origin/c'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'real-branch' ? null : resolved(90));
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches()).toEqual(['real-branch']);
+    expect(result.status).toBe('not-found');
+  });
+
+  it('tier 6: two branches resolving to DIFFERENT PRs is ambiguous, so it does not guess', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/one', 'refs/remotes/origin/two'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'one' ? resolved(91) : branch === 'two' ? resolved(92) : null);
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('not-found');
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pushed_branch).toBeNull();
+  });
+
+  it('tier 6: two branches resolving to the SAME PR is not ambiguous and links', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/one', 'refs/remotes/origin/two'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'real-branch' ? null : resolved(93));
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(93);
+  });
+
+  it('tier 6: a degrade inside it still surfaces and preserves the existing link', async () => {
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/pushed-name'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'pushed-name' ? new PRResolverUnavailableError('gh CLI not found') : null);
+    const task = makeTask({ pr_number: 77, pr_url: 'u77', pr_state: 'open' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('resolver-unavailable');
+    expect(result.task?.pr_number).toBe(77);
+  });
+
+  it('tier 6: still records the branch it established when the resolver degrades', async () => {
+    // The identity is proven by LOCAL git state - a remote tip equal to HEAD,
+    // that tip is not base's, and the task has commits of its own - none of
+    // which a provider outage says anything about. Dropping it here loses it in
+    // exactly the window the capture rule exists for: `gh` comes back after the
+    // task has committed past the pushed tip, and by then no remote ref matches
+    // `head_sha` any more, so Tier 6 is quiet for good.
+    git.sha = HEX_SHA;
+    git.aheadCount = '1';
+    git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
+    conn.byBranch = new PRResolverUnavailableError('gh CLI not found');
+    const task = makeTask({ base_branch: 'main' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('resolver-unavailable');
+    expect(result.task?.pushed_branch).toBe('maint/pushed-name');
+  });
+
+  it('tier 6: records the pushed branch even when no PR exists yet, if the task has commits of its own', async () => {
+    // The agent pushes the branch BEFORE opening the PR. Waiting for a PR to
+    // appear loses the identity, because the task may commit past the pushed tip
+    // first and then no remote ref matches head_sha at all.
+    git.sha = HEX_SHA;
+    git.aheadCount = '1';
+    git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
+    conn.byBranch = null;
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('not-found');
+    expect(result.task?.pushed_branch).toBe('maint/pushed-name');
+  });
+
+  it('tier 6: never re-queries the branch tier 5 already tried', async () => {
+    // The `name !== task.pushed_branch` half of the candidate filter. Tier 5
+    // asks about the recorded branch and misses; without this half Tier 6 asks
+    // the provider the identical question a second time in the same resolve,
+    // which on Azure is a second one-second `az` cold start per sweep.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
+    conn.byBranch = null;
+    const task = makeTask({ pushed_branch: 'maint/pushed-name' });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches().filter((name) => name === 'maint/pushed-name')).toHaveLength(1);
+  });
+
+  it('tier 6: links from the one candidate that resolves when a second one does not', async () => {
+    // Two branches share the tip, only one carries a PR. The distinct-number
+    // check is over the HITS, not the candidates, so a single hit among several
+    // candidates is unambiguous and must link - and must record the branch that
+    // actually answered, not whichever the ref read listed first.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = [
+      'refs/remotes/origin/stale-mirror',
+      'refs/remotes/origin/maint/pushed-name',
+    ];
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'maint/pushed-name' ? resolved(97) : null);
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(97);
+    expect(result.task?.pushed_branch).toBe('maint/pushed-name');
+  });
+
+  it('tier 6: does NOT record a branch for a task with no commits of its own (follow-on task shape)', async () => {
+    // Task B cut from task A's branch with zero commits sits on A's tip.
+    // Recording A's branch on B would let tier 5 link A's PR to B permanently.
+    git.sha = HEX_SHA;
+    git.aheadCount = '0';
+    git.pointsAtRefs = ['refs/remotes/origin/task-a-branch'];
+    conn.byBranch = null;
+    const task = makeTask();
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pushed_branch).toBeNull();
+  });
+
+  it('tier 5: resolves from the recorded pushed branch without reading refs at all', async () => {
+    // The durable half. Once recorded it survives the task committing past the
+    // pushed tip, and the remote branch being deleted after the merge.
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'maint/pushed-name' ? resolved(94) : null);
+    const task = makeTask({ pushed_branch: 'maint/pushed-name' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(94);
+    expect(readRefs()).toHaveLength(0);
+  });
+
+  it('tier 6: never reads refs when a stronger tier already answered', async () => {
+    // Cost guard. The ref read is per-task on every sweep, so a tier-2 hit must
+    // not pay for it.
+    conn.byBranch = resolved(95);
+    const task = makeTask();
+    await linkPRForTask(task.id, depsFor(task));
+    expect(readRefs()).toHaveLength(0);
+  });
+
+  it('tier 6: never reads refs when there is no sha to anchor on', async () => {
+    const task = makeTask({ worktree_path: null, head_sha: null });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(readRefs()).toHaveLength(0);
+  });
+
+  it('tier 3: skips the commit anchor when the owning connector does not vouch for commit ownership', async () => {
+    // The linker's commits-ahead-of-base gate is a filter, not a proof: it
+    // measures against a base the task may never have recorded and cannot see a
+    // PR that merely INHERITED the commit. So the connector has to vouch, and a
+    // future one that omits the declaration loses the tier rather than silently
+    // relying on that gate. Red-green: with the tightening removed, byCommit is
+    // called and PR 704 is linked to a task no connector vouched for.
+    conn.selfVerifiesCommits = false;
+    conn.byCommit = resolved(704, 'merged');
+    const task = makeTask({ worktree_path: null, head_sha: 'sha-stored' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(conn.calls).not.toContain('byCommit');
+    expect(result.task?.pr_number).toBeNull();
+  });
+
+  it('tier 6: measures the base-tip bail against resolved_base_branch when no base was chosen', async () => {
+    // base_branch is NULL for most tasks (nothing infers it), so without the
+    // recorded resolution the bail would measure against the project default
+    // and `develop` would look like an ordinary candidate. Red-green: if the
+    // ladder ignores resolved_base_branch, `develop` gets queried as a PR
+    // source branch, which is the magnet this guard exists to stop.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/develop', 'refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: null, resolved_base_branch: 'develop' });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(queriedBranches()).not.toContain('develop');
+    expect(queriedBranches()).toEqual(['real-branch']);
+  });
+
+  it('tier 6: a recorded resolved_base_branch is enough to make the base known', async () => {
+    // The companion to the bail above: with a base recorded, the tier is alive
+    // for a task that chose no base explicitly and whose project config the
+    // caller did not supply.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'maint/pushed-name' ? resolved(96) : null);
+    const task = makeTask({ base_branch: null, resolved_base_branch: 'develop' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(96);
+  });
+
+  it('tier 6: bails when the base branch is unknown, since the base-tip guard cannot fire', async () => {
+    // Without a base, a fresh worktree on the base tip is indistinguishable from
+    // a task whose work was pushed elsewhere, so the tier declines to run.
+    git.sha = HEX_SHA;
+    git.pointsAtRefs = ['refs/remotes/origin/someone-elses-branch'];
+    conn.byBranch = null;
+    const task = makeTask({ base_branch: null });
+    await linkPRForTask(task.id, depsFor(task));
+    expect(readRefs()).toHaveLength(0);
   });
 
   it('clears a stale link when the resolver cleanly finds no PR (never leaves a stale merged)', async () => {

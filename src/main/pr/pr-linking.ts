@@ -1,12 +1,13 @@
 import { IPC } from '../../shared/ipc-channels';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
-import { readWorktreeHead, hasCommitsAheadOfBase } from '../git/worktree-head';
+import { readWorktreeHead, hasCommitsAheadOfBase, readRefsPointingAtSha } from '../git/worktree-head';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
   resolvePRForBranch,
   resolvePRByNumber,
   resolvePRByCommit,
+  commitAnchorSelfVerifies,
   detectPR,
   PRResolverUnavailableError,
   PRResolverTransientError,
@@ -97,12 +98,38 @@ export interface PRLinkDeps {
 type LinkedPR = { url: string; number: number; state: PRState | null };
 
 /**
+ * Told the moment Tier 6 establishes which remote branch a task's work lives
+ * on, rather than carried out on the return value.
+ *
+ * The ladder RETHROWS a deferred degrade when no tier resolved, and a return
+ * value dies with that throw. The branch identity does not depend on the
+ * provider at all - a remote tip equal to HEAD, that tip not being base's, and
+ * commits of the task's own are all local git state - so discarding it because
+ * `gh` was missing loses it in exactly the window the capture rule exists for:
+ * the CLI comes back after the task has committed past the pushed tip, and by
+ * then no remote ref matches `head_sha` any more.
+ */
+type RecordPushedBranch = (branchName: string) => void;
+
+/**
+ * How many remote branches may share the task's HEAD tip before Tier 6 gives up.
+ * The no-guess rule means every survivor has to be queried (short-circuiting on
+ * the first hit would silently pick one of several ambiguous PRs), so this is a
+ * hard multiplier on provider calls, and `az` is a Python CLI with a roughly one
+ * second cold start. Three or more branches on one tip is also ambiguous enough
+ * that the distinct-number check below would usually refuse to answer anyway.
+ */
+const MAX_TIP_BRANCH_CANDIDATES = 2;
+
+/**
  * The confidence ladder - resolve a task's PR via the strongest available anchor
  * first, short-circuiting on the first hit:
  *   1. pr_number  -> exact, branch-independent (best for refreshing state)
  *   2. worktree HEAD branch -> the real branch while actively worked
  *   3. commit SHA -> immutable, survives Done/worktree deletion and renames
  *   4. stored slug branch -> weak last resort when there is no worktree
+ *   5. stored pushed branch -> the recorded name when the push diverged
+ *   6. remote branch at the HEAD tip -> infers that name when nothing recorded it
  * A degrade error from any tier is REMEMBERED rather than propagated, so the
  * tiers below it still run; it is rethrown unchanged only if none of them
  * resolved, and the caller degrades then.
@@ -124,8 +151,18 @@ async function resolvePRViaLadder(args: {
   branch: string | null;
   effectiveSha: string | null;
   baseBranch: string;
+  baseBranchIsKnown: boolean;
+  recordPushedBranch: RecordPushedBranch;
 }): Promise<LinkedPR | null> {
-  const { task, cwd, projectPath, branch, effectiveSha, baseBranch } = args;
+  const { task, cwd, projectPath, branch, effectiveSha, baseBranch, baseBranchIsKnown, recordPushedBranch } = args;
+  /**
+   * The base to hand the branch resolvers for `disambiguate`'s base-match bonus.
+   * Deliberately NOT `baseBranch`: that one falls back to the project default
+   * and finally to 'main', and scoring a bonus against a guessed base would
+   * favour the wrong PR. Only an explicit choice or an observed resolution
+   * counts here; absent means no bonus, as before.
+   */
+  const knownBase = task.base_branch || task.resolved_base_branch || undefined;
 
   // A degrade at one tier must not discard the tiers below it. The registry now
   // throws when no connector OWNS the repo's remote, or when the owner has no
@@ -140,10 +177,25 @@ async function resolvePRViaLadder(args: {
     if (byNumber) return byNumber;
   }
   if (task.worktree_path && branch) {
-    const byBranch = await degrade.attempt(() => resolvePRForBranch(cwd, branch, task.base_branch ?? undefined));
+    const byBranch = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase));
     if (byBranch) return byBranch;
   }
-  if (effectiveSha && (await hasCommitsAheadOfBase(projectPath ?? cwd, baseBranch, effectiveSha))) {
+  // Kept lazy, and its answer remembered for Tier 6's capture rule: computing it
+  // eagerly would make every Tier-1/2 hit pay for a git read it never needs.
+  const hasOwnCommits = effectiveSha
+    ? await hasCommitsAheadOfBase(projectPath ?? cwd, baseBranch, effectiveSha)
+    : false;
+  // The commit tier runs only when BOTH gates agree. `hasOwnCommits` is the
+  // linker's cheap early-out; `commitAnchorSelfVerifies` is the connector's own
+  // declaration that a hit means the commit is that PR's work rather than
+  // history it inherited. The second gate can only ever TIGHTEN the first: a
+  // connector that does not declare it (or a future one that forgets) loses the
+  // commit tier instead of silently relying on a base-relative check that
+  // cannot see a mislink. Evaluated second so the common skip costs no
+  // remote read, and given the SAME repoCwd as the dispatch it gates: the
+  // remote cache keys on that path, so the two share one read rather than
+  // deciding ownership from two different vantage points.
+  if (effectiveSha && hasOwnCommits && (await commitAnchorSelfVerifies(projectPath ?? cwd))) {
     // Run from the main repo (projectPath) so it works even when the worktree is
     // gone. Pass the known branch as a hint so a commit shared by several PRs
     // ties back to this task (ambiguous matches resolve to null, not a guess).
@@ -158,11 +210,97 @@ async function resolvePRViaLadder(args: {
     if (byCommit) return byCommit;
   }
   if (!task.worktree_path && branch) {
-    const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, task.base_branch ?? undefined));
+    const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase));
     if (bySlug) return bySlug;
   }
+  // Tier 5: the branch we already established this task's work was PUSHED to,
+  // when that differs from the local one. Free (no git read) and, unlike Tier 6,
+  // it keeps working after the task commits past what it pushed and after the
+  // remote branch is deleted, because a PR keeps its source branch name.
+  if (task.pushed_branch && task.pushed_branch !== branch) {
+    const byPushed = await degrade.attempt(() =>
+      resolvePRForBranch(cwd, task.pushed_branch as string, knownBase),
+    );
+    if (byPushed) return byPushed;
+  }
+  // Tier 6: a REMOTE branch whose tip is EXACTLY this task's HEAD commit.
+  //
+  // The shape every tier above misses: the local worktree branch is the
+  // Kangentic slug, the branch pushed as the PR source carries a team-convention
+  // name, and nothing reconciled them. Tiers 2 and 4 query the slug and miss;
+  // Tier 3 is gated off once the PR merged into base, because `rev-list --count
+  // <base>..<sha>` is 0 by then. Platform-agnostic, and it is the only tier that
+  // can rescue an ACTIVE Azure PR whose worktree is gone, since Azure records
+  // commit associations only at completion.
+  //
+  // LAST on purpose, and not because a tip match is weak. It is strictly more
+  // selective than Tier 3's containment match, but it is far less DEFENDED:
+  // `resolvePRForBranch` hands `disambiguate` a branchHint that every returned
+  // item already matches by construction, so its ambiguity escape hatch can
+  // never fire, and there is no per-candidate base-history filter like the
+  // commit tier's. A hit at any tier suppresses the confident-not-found clear
+  // permanently, so the least-guarded tier is the one that must only ever turn a
+  // not-found into a link, never displace a stronger tier's answer.
+  if (effectiveSha && baseBranchIsKnown) {
+    // From the MAIN repo, like the commit tier: refs/remotes lives in the common
+    // ref store, so this still answers after the worktree is reclaimed on Done.
+    const pointingAt = await readRefsPointingAtSha(projectPath ?? cwd, effectiveSha, baseBranch);
+    // The sha is a base tip, so a fresh worktree is sitting on it and every
+    // branch there belongs to whatever last landed on base. Same magnet the
+    // Tier-3 guard exists to prevent, but this form keeps working after the PR
+    // merges: it asks "is my sha base's TIP", not "is my sha contained in base".
+    const candidates = pointingAt.pointsAtBaseTip
+      ? []
+      // Tiers 2, 4, and 5 already tried these; re-querying spends a round trip
+      // on an answer we have.
+      : pointingAt.remoteBranches.filter((name) => name !== branch && name !== task.pushed_branch);
+    if (candidates.length > 0 && candidates.length <= MAX_TIP_BRANCH_CANDIDATES) {
+      const hits: Array<{ candidate: string; pr: LinkedPR }> = [];
+      for (const candidate of candidates) {
+        const hit = await degrade.attempt(() =>
+          resolvePRForBranch(cwd, candidate, knownBase),
+        );
+        if (hit) hits.push({ candidate, pr: hit });
+      }
+      // Every survivor is queried rather than short-circuiting on the first hit:
+      // two branches on one tip carrying two different PRs is ambiguous, and a
+      // wrong link here is permanent. Same rule `disambiguate` applies when
+      // nothing ties the candidates back to this task.
+      if (new Set(hits.map((hit) => hit.pr.number)).size === 1) {
+        recordPushedBranch(hits[0].candidate);
+        return hits[0].pr;
+      }
+      // No PR yet, but the identity is still worth recording: the agent pushes
+      // the branch BEFORE opening the PR, and if we wait for a PR to appear the
+      // task may commit past the pushed tip first, after which no remote ref
+      // matches head_sha and this tier goes quiet for good.
+      //
+      // `hasOwnCommits` guards THIS path only, not the link above it. It
+      // excludes the follow-on shape, where a task cut from another task's
+      // branch with zero commits sits on that branch's tip and would otherwise
+      // record its neighbour's branch. The link path has no such gate: it is
+      // guarded by `pointsAtBaseTip` alone, so a zero-commit task sitting on a
+      // neighbour branch that already MERGED (by squash or rebase, so its tip
+      // is contained in base without being base's tip) can still link that
+      // neighbour's PR. That is the residual in docs/pr-integration.md, and it
+      // is not closable by hoisting this condition up: reaching Tier 6 at all
+      // requires `hasOwnCommits` false, which for a neighbour branch MEANS it
+      // merged, so every discriminator built from "commits ahead of base" or
+      // "is the PR merged" is already true in exactly the bad case. Reviewers
+      // keep proposing that hoist. It buys nothing and costs the merged-PR
+      // rescue this tier exists for.
+      //
+      // The condition is also only as sound as `baseBranch`, which is why the
+      // base is recorded at worktree creation.
+      if (hits.length === 0 && candidates.length === 1 && hasOwnCommits) {
+        recordPushedBranch(candidates[0]);
+      }
+    }
+  }
   // Nothing resolved: a tier that could not CHECK outranks the tiers that
-  // merely missed, so the caller degrades instead of clearing the link.
+  // merely missed, so the caller degrades instead of clearing the link. Note
+  // this throws PAST any return value, which is why the branch identity above
+  // is reported through `recordPushedBranch` rather than returned.
   const pendingDegrade = degrade.pending();
   if (pendingDegrade) throw pendingDegrade;
   return null;
@@ -214,7 +352,20 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     }
     const branch = worktreeBranch ?? task.branch_name;
     const effectiveSha = freshSha ?? task.head_sha;
-    const baseBranch = task.base_branch ?? deps.defaultBaseBranch ?? 'main';
+    // `resolved_base_branch` sits between the user's explicit choice and the
+    // project default on purpose: it is the base this task's worktree was
+    // OBSERVED to be cut from, so it is right where `base_branch` is null (most
+    // tasks) and the project default would otherwise be a guess. That guess is
+    // what made the commits-ahead-of-base guard unsound for a worktree cut from
+    // a long-lived integration branch.
+    // `||` all the way down, matching `resolveEffectiveBaseBranch`. `??` would
+    // let an empty string from any layer win, and an empty base silently
+    // disables the base-tip bail: none of its three ref forms can match
+    // `refs/heads/` or `refs/remotes/<remote>/` with nothing after the prefix,
+    // so a fresh worktree on base's tip would stop bailing and Tier 6 would
+    // magnet onto whatever last landed on base. No writer produces `''` today;
+    // this is here so none can.
+    const baseBranch = task.base_branch || task.resolved_base_branch || deps.defaultBaseBranch || 'main';
 
     // Nothing to resolve from at all. Mirrors `autoLinkPRForTask`'s gate: a task
     // with no stored number and no git state has no anchor, whatever its
@@ -241,10 +392,36 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
      * never-rejects contract.
      */
     let resolveFailed = false;
+    /** Branch identity Tier 6 established, persisted alongside `head_sha`. */
+    let discoveredPushedBranch: string | null = null;
 
     try {
-      const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch });
-      if (resolved) next = { url: resolved.url, number: resolved.number, state: resolved.state };
+      const found = await resolvePRViaLadder({
+        task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch,
+        // Deliberately WIDER than `knownBase` above, which refuses the project
+        // default. The two answer different questions. `knownBase` decides
+        // whether to SCORE a base-match bonus, where a guess actively favours
+        // the wrong PR; this decides whether the base-tip bail has anything at
+        // all to measure against, where a guess that is right (one base named
+        // `main`, which is the overwhelming majority) makes the bail work and a
+        // guess that is wrong leaves it no worse than not running.
+        //
+        // Do NOT narrow this to match `knownBase`. It reads like the obviously
+        // consistent thing to do and it makes the whole tier inert: the task
+        // this was written for (my-repo #15) has `base_branch` NULL and predates
+        // `resolved_base_branch`, so it would never reach Tier 6 at all. The
+        // residual that narrowing would close is documented in
+        // docs/pr-integration.md and is not closable this way, because a task
+        // sitting on a long-lived branch's tip is byte-identical in git to one
+        // sitting on its own pushed tip.
+        baseBranchIsKnown: task.base_branch != null
+          || task.resolved_base_branch != null
+          || deps.defaultBaseBranch != null,
+        // Assigned as Tier 6 discovers it, so a deferred degrade rethrown out of
+        // the ladder still leaves the identity here to persist below.
+        recordPushedBranch: (branchName) => { discoveredPushedBranch = branchName; },
+      });
+      if (found) next = { url: found.url, number: found.number, state: found.state };
     } catch (error) {
       if (error instanceof PRResolverUnavailableError || error instanceof PRResolverTransientError) {
         degradeStatus = error instanceof PRResolverTransientError ? 'transient-error' : 'resolver-unavailable';
@@ -294,9 +471,14 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     }
     const shaChanged = freshSha != null && freshSha !== task.head_sha;
     if (shaChanged) patch.head_sha = freshSha;
+    // Never cleared here, only corrected: a resolve that simply did not reach
+    // Tier 6 (a Tier-1 hit, a base-tip bail) says nothing about whether the
+    // recorded branch is still right. Cleanup paths null it with `branch_name`.
+    const pushedBranchChanged = discoveredPushedBranch != null && discoveredPushedBranch !== task.pushed_branch;
+    if (pushedBranchChanged) patch.pushed_branch = discoveredPushedBranch;
 
     let updatedTask = task;
-    if (prChanged || prCleared || shaChanged) {
+    if (prChanged || prCleared || shaChanged || pushedBranchChanged) {
       updatedTask = deps.tasks.update(patch);
     }
     if (prChanged && next) {
@@ -362,7 +544,21 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
   let defaultBaseBranch: string | undefined;
   try {
-    defaultBaseBranch = projectPath ? context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch : undefined;
+    // Board default first, then the effective config, matching
+    // `resolveEffectiveBaseBranch` (ipc/helpers/task-git.ts), which is what
+    // decides the base a worktree is actually cut from. Reading the config
+    // alone reported `main` for a project whose kangentic.json says `develop`,
+    // so the linker measured against a base no worktree here was ever cut from.
+    // Only reachable for a task with neither `base_branch` nor
+    // `resolved_base_branch`, since both outrank this.
+    // `||`, not `??`, to match `resolveEffectiveBaseBranch` exactly: an empty
+    // string in either layer has to fall through to the next one. Under `??` it
+    // would win, and an empty base defeats the base-tip bail outright, since
+    // none of its three ref forms can match `refs/heads/` or `refs/remotes/*/`.
+    defaultBaseBranch = projectPath
+      ? context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+        || context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
+      : undefined;
   } catch {
     defaultBaseBranch = undefined;
   }

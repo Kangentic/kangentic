@@ -26,8 +26,9 @@ vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => mockGit),
 }));
 
-import { readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase, isShaContainedInRef } from '../../src/main/git/worktree-head';
+import { readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase, isShaContainedInRef, readRefsPointingAtSha } from '../../src/main/git/worktree-head';
 import { viaGitRead } from '../../src/main/git/git-read-queue';
+import { simpleGit } from 'simple-git';
 
 describe('readWorktreeHead', () => {
   beforeEach(() => {
@@ -412,5 +413,185 @@ describe('git read queue wiring', () => {
     // Clean up so the shared queue starts the next test empty.
     for (const release of blockerGates) release();
     await Promise.all(blockerJobs);
+  });
+});
+
+/**
+ * readRefsPointingAtSha answers "which REMOTE branches have this exact commit as
+ * their tip, and is that commit also a base tip?" in ONE `for-each-ref`. It is
+ * the last tier of the PR ladder, which rescues a task whose pushed PR branch
+ * differs from its local worktree slug - the shape every other tier misses.
+ *
+ * Three contract points these tests pin: local refs are a BAIL SIGNAL ONLY and
+ * never candidates; `refs/remotes/<remote>/HEAD` is dropped as a candidate AND
+ * promoted to a bail signal; and the strict `refs/remotes/` prefix requirement,
+ * which is what stops an unparseable line becoming a branch name.
+ */
+describe('readRefsPointingAtSha', () => {
+  const SHA = 'abc1234def5678abc1234def5678abc1234def56';
+  const output = (...refs: string[]) => `${refs.join('\n')}\n`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns remote branch names with the remote prefix stripped', async () => {
+    mockGit.raw.mockResolvedValue(output(
+      'refs/remotes/origin/maint/adopt-central-package-management',
+      'refs/remotes/origin/feature/x',
+    ));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.remoteBranches).toEqual(['maint/adopt-central-package-management', 'feature/x']);
+    expect(result.pointsAtBaseTip).toBe(false);
+  });
+
+  it('asks for full refnames over both refs/heads/ and refs/remotes/ in one call', async () => {
+    mockGit.raw.mockResolvedValue('');
+
+    await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(mockGit.raw).toHaveBeenCalledTimes(1);
+    expect(mockGit.raw).toHaveBeenCalledWith(
+      ['for-each-ref', '--format=%(refname)', `--points-at=${SHA}`, 'refs/heads/', 'refs/remotes/'],
+    );
+  });
+
+  it('never promotes a LOCAL branch to a candidate (a sibling worktree slug is not a PR source)', async () => {
+    // Linked worktrees share the ref store, so several other tasks' slug
+    // branches routinely sit on the same tip.
+    mockGit.raw.mockResolvedValue(output(
+      'refs/heads/some-other-task-1234abcd',
+      'refs/heads/and-another-5678efgh',
+      'refs/remotes/origin/real-branch',
+    ));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.remoteBranches).toEqual(['real-branch']);
+  });
+
+  it('signals a base tip when the LOCAL base points at the sha (worktree cut from a stale local base)', async () => {
+    // Offline, origin/<base> has moved on and does not point at the sha.
+    // Red-green: fails if refs/heads/ is dropped from the query.
+    mockGit.raw.mockResolvedValue(output('refs/heads/develop', 'refs/remotes/origin/sibling'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.pointsAtBaseTip).toBe(true);
+  });
+
+  it('signals a base tip when a REMOTE base points at the sha', async () => {
+    mockGit.raw.mockResolvedValue(output('refs/remotes/origin/develop'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.pointsAtBaseTip).toBe(true);
+    expect(result.remoteBranches).toEqual([]);
+  });
+
+  it('accepts a base stored remote-qualified (origin/develop)', async () => {
+    mockGit.raw.mockResolvedValue(output('refs/remotes/origin/develop'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'origin/develop');
+
+    expect(result.pointsAtBaseTip).toBe(true);
+  });
+
+  it('drops a remote HEAD symref as a candidate AND treats it as a base tip', async () => {
+    // `%(refname:short)` of refs/remotes/origin/HEAD is the literal string
+    // "origin", which is not a branch. It also means the sha is the default
+    // branch's tip, whatever the caller's base claims.
+    mockGit.raw.mockResolvedValue(output('refs/remotes/origin/HEAD', 'refs/remotes/origin/sibling'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.remoteBranches).toEqual(['sibling']);
+    expect(result.pointsAtBaseTip).toBe(true);
+  });
+
+  it('dedupes a branch that exists on two remotes', async () => {
+    mockGit.raw.mockResolvedValue(output('refs/remotes/origin/x', 'refs/remotes/upstream/x'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.remoteBranches).toEqual(['x']);
+  });
+
+  it('drops an option-shaped branch name', async () => {
+    // git permits a leading dash in a ref name, and a resolver CLI would parse
+    // it as an option rather than a branch.
+    mockGit.raw.mockResolvedValue(output('refs/remotes/origin/--output=pwned', 'refs/remotes/origin/ok'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result.remoteBranches).toEqual(['ok']);
+  });
+
+  it('ignores a line that is not a refs/ path, and a bare remote with no branch', async () => {
+    // Load-bearing, not defensive: several unit suites mock simple-git's `raw`
+    // with a single catch-all string, so a lenient parser would read "0" as a
+    // branch name and spend a provider round trip on it.
+    mockGit.raw.mockResolvedValue(output('0', 'not-a-ref', 'refs/tags/v1', 'refs/remotes/origin'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result).toEqual({ remoteBranches: [], pointsAtBaseTip: false });
+  });
+
+  it('returns the empty result when git throws (fails safe, so the caller skips the tier)', async () => {
+    mockGit.raw.mockRejectedValue(new Error('fatal: not a git repository'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result).toEqual({ remoteBranches: [], pointsAtBaseTip: false });
+  });
+
+  it('resolves rather than rejects when the simpleGit factory itself throws', async () => {
+    // simpleGit(baseDir) throws synchronously when baseDir does not exist (a
+    // relocated project, a reclaimed worktree). Red-green: a rejection escaping
+    // here reaches pr-linking.ts as a non-PRResolver error, which suppresses its
+    // confident-not-found clear. Same contract as isShaContainedInRef.
+    vi.mocked(simpleGit).mockImplementationOnce(() => { throw new Error('fatal: cwd does not exist'); });
+
+    await expect(readRefsPointingAtSha('/mock/missing', SHA, 'develop'))
+      .resolves.toEqual({ remoteBranches: [], pointsAtBaseTip: false });
+    expect(mockGit.raw).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-hex sha without touching git', async () => {
+    const result = await readRefsPointingAtSha('/mock/repo', '--output=pwned', 'develop');
+
+    expect(result).toEqual({ remoteBranches: [], pointsAtBaseTip: false });
+    expect(mockGit.raw).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty sha without touching git', async () => {
+    const result = await readRefsPointingAtSha('/mock/repo', '', 'develop');
+
+    expect(result).toEqual({ remoteBranches: [], pointsAtBaseTip: false });
+    expect(mockGit.raw).not.toHaveBeenCalled();
+  });
+
+  it('caps concurrent jobs at the queue concurrency (2)', async () => {
+    // Red-green: fails (4 gates instead of 2) if viaGitRead is ever unwrapped.
+    const gates: Array<() => void> = [];
+    mockGit.raw.mockImplementation(() => new Promise<string>((resolve) => {
+      gates.push(() => resolve(''));
+    }));
+
+    const jobs = Array.from({ length: 4 }, () => readRefsPointingAtSha('/mock/repo', SHA, 'develop'));
+
+    await expect.poll(() => gates.length).toBe(2);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(gates.length).toBe(2);
+
+    while (gates.length > 0) {
+      gates.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const results = await Promise.all(jobs);
+    expect(results).toHaveLength(4);
   });
 });
