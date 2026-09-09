@@ -26,9 +26,26 @@ import { StringDecoder } from 'node:string_decoder';
  */
 
 /** stdio for both Kangentic utility processes: stdin must be `ignore`
- *  (Electron supports nothing else there), stdout keeps the `inherit`
- *  default, stderr is piped so `captureWorkerStderr` can drain it. */
-export const UTILITY_PROCESS_STDIO: Array<'pipe' | 'ignore' | 'inherit'> = ['ignore', 'inherit', 'pipe'];
+ *  (Electron supports nothing else there), stderr is piped so
+ *  `captureWorkerStderr` can drain it, and stdout must NOT be `inherit`.
+ *
+ *  Never mix `inherit` with a real handle across the stdout/stderr slots. On
+ *  Windows, Electron gives `inherit` no branch at all, so that slot's handle
+ *  stays null, and it hands both to `ServiceProcessHost` regardless. Electron's
+ *  patch to `child_process_launcher_helper_win.cc` arms the child's inherit
+ *  list when EITHER handle is valid, then fills the null slot from
+ *  `GetStdHandle(STD_OUTPUT_HANDLE)`, which is NULL in a packaged GUI build
+ *  with no console. `SetHandleInformation(NULL, ...)` then fails a PCHECK in
+ *  `launch_win.cc` and takes the whole main process down (DESKTOP-S, 0.39.1).
+ *
+ *  All-`inherit` is safe (the list is never built) and all-real is safe; only
+ *  the mix is fatal. Passing no `stdio` at all is the all-`inherit` case, which
+ *  is why `['ignore', 'inherit', 'pipe']` looked like it was keeping a default
+ *  it was in fact replacing. Since stderr has to be piped, stdout goes to
+ *  `ignore` (a real `NUL` handle on Windows, `/dev/null` elsewhere). Nothing is
+ *  lost: a packaged build had no console for `inherit` to reach anyway, and
+ *  neither worker writes to stdout. */
+export const UTILITY_PROCESS_STDIO: Array<'pipe' | 'ignore' | 'inherit'> = ['ignore', 'ignore', 'pipe'];
 
 export const DEFAULT_STDERR_TAIL_BYTES = 8 * 1024;
 

@@ -297,7 +297,7 @@ describe('LineCountClient', () => {
     }
   });
 
-  it('forks the worker with stderr piped (stdin ignored, stdout inherited), the same shape as the embed worker', async () => {
+  it('forks the worker with stderr piped and stdin/stdout ignored, the same shape as the embed worker', async () => {
     const client = new LineCountClient();
     const promise = client.countFiles(['/mock/a.txt']);
     lastChild().emit('message', { type: 'result', id: 1, entries: [] });
@@ -308,7 +308,7 @@ describe('LineCountClient', () => {
       [],
       expect.objectContaining({
         serviceName: 'kangentic-line-count',
-        stdio: ['ignore', 'inherit', 'pipe'],
+        stdio: ['ignore', 'ignore', 'pipe'],
       }),
     );
     client.dispose();

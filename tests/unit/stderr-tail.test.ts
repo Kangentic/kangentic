@@ -197,7 +197,23 @@ describe('captureWorkerStderr', () => {
 });
 
 describe('UTILITY_PROCESS_STDIO', () => {
-  it('pipes stderr only, with stdin ignored as Electron requires and stdout left inherited', () => {
-    expect(UTILITY_PROCESS_STDIO).toEqual(['ignore', 'inherit', 'pipe']);
+  it('pipes stderr only, with stdin and stdout ignored', () => {
+    expect(UTILITY_PROCESS_STDIO).toEqual(['ignore', 'ignore', 'pipe']);
+  });
+
+  it('never mixes inherit with a real handle in the stdout/stderr slots (DESKTOP-S)', () => {
+    // Electron leaves an `inherit` slot's Windows handle null and passes both
+    // to ServiceProcessHost anyway. Electron's own patch to
+    // child_process_launcher_helper_win.cc (not stock Chromium) arms the
+    // child's inherit list when EITHER handle is valid, then fills the null
+    // slot from GetStdHandle(), which is NULL in a packaged GUI process with no
+    // console. SetHandleInformation on that null handle then fails a PCHECK in
+    // launch_win.cc and kills the main process. All-inherit is safe (the list
+    // is never built) and all-real is safe, so this checks the mix rather than
+    // banning `inherit` outright.
+    const [stdin, ...outputs] = UTILITY_PROCESS_STDIO;
+    expect(stdin).toBe('ignore'); // Electron supports nothing else here.
+    const inheritCount = outputs.filter((mode) => mode === 'inherit').length;
+    expect(inheritCount === 0 || inheritCount === outputs.length).toBe(true);
   });
 });

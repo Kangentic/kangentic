@@ -143,6 +143,20 @@ The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/*
 
 The embed worker's closure is the one that bites: the worker is forked from `app.asar.unpacked`, and Node resolution from a real directory never looks inside the asar, so a package the worker reaches only transitively (transformers.js requires `onnxruntime-common` and `sharp` at module scope) must be unpacked too, or the worker exits 1 at module load on every fork. 0.38.0 and 0.39.0 shipped that way (Sentry DESKTOP-6, DESKTOP-H). `build/afterPack.js` now runs `build/verify-unpacked-worker.js` after packing: it loads `@huggingface/transformers` from the unpacked tree in a child `node` whose module resolution is fenced to that tree (an unfenced probe would find the repo's own `node_modules` above `out/` and pass), and fails the package with the child's stderr when anything is missing. `npm run package` runs it too, so the gate holds locally, not only on the release matrix.
 
+Separately, how the embed and line-count workers are forked bites on Windows too.
+`UTILITY_PROCESS_STDIO` in
+`src/main/utility-process/stderr-tail.ts` must never mix `inherit` with a real handle (`pipe` or
+`ignore`) across the stdout and stderr slots. Electron gives an `inherit` slot no Windows branch,
+so its handle stays null, and it passes both handles to `ServiceProcessHost` anyway. Electron's
+patch to `child_process_launcher_helper_win.cc` arms the child's inherit list when either handle
+is valid, then fills the null slot from `GetStdHandle(STD_OUTPUT_HANDLE)`, which is NULL in a
+packaged GUI build because there is no console. `SetHandleInformation` on that null handle fails a
+`PCHECK` in `launch_win.cc` and kills the main process outright. 0.39.1 shipped
+`['ignore', 'inherit', 'pipe']` and crashed that way (Sentry DESKTOP-S); the array is now
+`['ignore', 'ignore', 'pipe']`. All-`inherit` (what passing no `stdio` gives you) and all-real are
+both safe. `npm start` cannot catch this, because a dev terminal hands the process a valid stdout
+handle. `tests/unit/stderr-tail.test.ts` guards the mixing rule.
+
 ### Bridge Script Unpacking
 
 Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asarUnpack` names them individually, alongside `embed-worker.js`, `line-count-worker.js`, and `plugins/**` (unpacked for the retrieval and embedding subsystem rather than for the hook bridges). Only those five entries under `.vite/build/` are extracted to `app.asar.unpacked/`; the rest of the directory stays inside the archive. The `resolveBridgeScript()` function in `src/main/agent/shared/bridge-utils.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
