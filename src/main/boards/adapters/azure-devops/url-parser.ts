@@ -25,6 +25,34 @@ export function parseAzureDevOpsUrl(url: string): { repository: string } {
   throw new Error('Invalid Azure DevOps URL. Expected format: https://dev.azure.com/org/project');
 }
 
+const LEGACY_HOST_SUFFIX = '.visualstudio.com';
+
+/**
+ * Decide whether a download URL's host should receive our Azure DevOps bearer
+ * token. Covers the modern `dev.azure.com` host and the legacy
+ * `{org}.visualstudio.com` spelling this adapter still imports from.
+ *
+ * A substring test is not enough. Inline image URLs come out of user-authored
+ * work item HTML, so `https://attacker.example/x.png?ref=dev.azure.com` and
+ * `https://dev.azure.com.attacker.example/x.png` would both pass one and send
+ * the token to a host the attacker controls. Never throws: a malformed or
+ * relative URL is simply not authed.
+ */
+export function isAzureDevOpsAuthedDownloadUrl(url: string): boolean {
+  let hostname: string;
+  try {
+    // hostname, not host: `host` carries the port, so a `dev.azure.com:443`
+    // URL would fail the comparison and silently lose its token.
+    hostname = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  if (hostname === 'dev.azure.com') return true;
+  // The leading dot rejects `evilvisualstudio.com`, the length check rejects a
+  // bare `.visualstudio.com` with no org label.
+  return hostname.endsWith(LEGACY_HOST_SUFFIX) && hostname.length > LEGACY_HOST_SUFFIX.length;
+}
+
 /** Build a human-readable label for an Azure DevOps source. */
 export function buildAzureDevOpsLabel(repository: string): string {
   if (repository.includes('::')) {
