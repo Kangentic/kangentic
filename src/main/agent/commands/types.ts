@@ -17,6 +17,14 @@ export interface CommandContext {
    */
   getDevServerPortRange: () => { rangeStart?: number; rangeEnd?: number };
   /**
+   * This project's configured default base branch, for the PR linker's
+   * base-relative guards. Without it `linkPRForTask` falls back to the hardcoded
+   * 'main', so on a project based on `develop` the commits-ahead-of-base guard
+   * measured against the wrong branch and the remote-branch tier could not tell
+   * a base tip from a task's own work. Optional so a test context can omit it.
+   */
+  getDefaultBaseBranch?: () => string | undefined;
+  /**
    * This project's Board Profiles, read from `kangentic.json`. Profiles are
    * config-only (no DB table), so `getProjectDb` cannot reach them.
    *
