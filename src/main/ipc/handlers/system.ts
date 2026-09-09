@@ -19,6 +19,7 @@ import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
 import { capClipboardImage, pruneClipboardTempDir } from '../helpers/clipboard-image';
+import { openPathBounded } from '../helpers/open-path';
 import type {
   NotificationInput,
   AgentCommand,
@@ -532,8 +533,10 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   // Normalize so a path the renderer joined with forward slashes (git paths use
   // '/') opens correctly on Windows, which needs native backslash separators -
-  // matching the SHELL_SHOW_ITEM_IN_FOLDER handler below.
-  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => shell.openPath(path.normalize(dirPath)));
+  // matching the SHELL_SHOW_ITEM_IN_FOLDER handler below. Bounded because a
+  // raw shell.openPath can outlive this invoke on Linux, where it waits on
+  // xdg-open, and Electron then raises "reply was never sent" in the renderer.
+  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => openPathBounded(path.normalize(dirPath)));
   // shell.openExternal is ShellExecute on Windows and will launch any
   // registered protocol handler, so this is a process trust boundary -
   // reject anything outside the allowlist instead of passing it straight to
