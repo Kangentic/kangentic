@@ -587,6 +587,10 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
       worktreePath: '/some/project/.kangentic/worktrees/460',
       branchName: 'kangentic/fix-login-flow',
       worktreeFolder: '460',
+      // Deliberately NOT the project default: the base a worktree is actually
+      // cut from is the whole reason this value is recorded, and a fixture that
+      // used the default could not tell the two apart.
+      baseBranch: 'develop',
     });
   });
 
@@ -615,13 +619,14 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
     expect(options.signal).toBe(controller.signal);
     expect(options.onProgress).toBe(onProgress);
 
-    // Success path persists path, branch, and the write-once folder name
-    // together, in one transaction.
+    // Success path persists path, branch, the write-once folder name, and the
+    // base the worktree was actually cut from, together in one transaction.
     expect(taskRepo.recordWorktree).toHaveBeenCalledWith(
       task.id,
       '/some/project/.kangentic/worktrees/460',
       'kangentic/fix-login-flow',
       '460',
+      'develop',
     );
 
     // And the IN-MEMORY task is refreshed from the row, not just the DB.

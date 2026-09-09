@@ -565,7 +565,7 @@ export class TransitionEngine {
       return;
     }
 
-    this.taskRepo.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder);
+    this.taskRepo.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder, result.baseBranch);
     // Refresh the in-memory task, as ensureTaskWorktree does after the same
     // write. executeTransition hands ONE task object to every action in the
     // chain with no re-read between them, so a `create_worktree` followed by
@@ -614,6 +614,8 @@ export class TransitionEngine {
         id: task.id,
         worktree_path: null,
         branch_name: null,
+        pushed_branch: null,
+        resolved_base_branch: null,
       });
     }
   }

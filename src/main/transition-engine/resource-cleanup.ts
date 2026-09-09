@@ -219,7 +219,7 @@ async function cleanBacklogTaskResources(
 
     // Clear DB fields
     if (hasStaleDbFields) {
-      taskRepo.update({ id: task.id, worktree_path: null, branch_name: null, session_id: null });
+      taskRepo.update({ id: task.id, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null, session_id: null });
     }
     cleaned++;
   }

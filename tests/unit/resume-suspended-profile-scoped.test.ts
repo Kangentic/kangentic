@@ -388,7 +388,7 @@ describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing bra
 
     await runResume();
 
-    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null });
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
     expect(taskRepoSetWorktreeSkipReasonMock).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
     // The record itself is still retired (unresumable cwd), regardless of
     // the task-level fallback.

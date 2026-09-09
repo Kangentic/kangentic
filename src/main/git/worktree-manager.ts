@@ -130,6 +130,27 @@ export interface WorktreeCreateResult {
   worktreePath: string;
   branchName: string;
   worktreeFolder: string;
+  /**
+   * The base branch this worktree was ACTUALLY cut from, after
+   * `resolveWorktreeBase` picked it against the repo's real refs. Callers
+   * persist it (`tasks.resolved_base_branch`) because `tasks.base_branch` is
+   * only ever set when a user names one explicitly, so most tasks record no
+   * base at all and every base-relative guard downstream falls back to the
+   * project default. That is what made the PR linker's commits-ahead-of-base
+   * guard unsound for a worktree cut from a long-lived integration branch.
+   *
+   * NULL when the worktree attached to a branch that ALREADY EXISTED. That path
+   * passes no start point to `git worktree add`, so the branch keeps whatever
+   * base it was originally cut from and the resolved value describes a
+   * creation that did not happen. Reporting it anyway would be worse than
+   * reporting nothing: `resolved_base_branch` is what promotes a base from a
+   * guess to a KNOWN one, and the linker treats a known base as licence to run
+   * Tier 6 and to score `disambiguate`'s base-match bonus. A task attached to a
+   * long-lived `feature/x` and stamped with `main` would sit on `feature/x`'s
+   * tip, fail the base-tip bail against the wrong branch, and magnet onto
+   * `feature/x`'s own PR - the exact mislink that bail exists to prevent.
+   */
+  baseBranch: string | null;
 }
 
 /**
@@ -1023,7 +1044,15 @@ export class WorktreeManager {
       }
     }
 
-    return { worktreePath, branchName, worktreeFolder: folderName };
+    // `branchExists` took the no-start-point form of `worktree add` above, so
+    // `baseBranch` describes a cut that never happened. Report nothing rather
+    // than a guess (see `WorktreeCreateResult.baseBranch`).
+    return {
+      worktreePath,
+      branchName,
+      worktreeFolder: folderName,
+      baseBranch: branchExists ? null : baseBranch,
+    };
   }
 
   /**

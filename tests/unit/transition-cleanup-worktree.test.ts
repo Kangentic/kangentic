@@ -135,6 +135,8 @@ describe('executeCleanupWorktree', () => {
       id: 'task-cleanup-1',
       worktree_path: null,
       branch_name: null,
+      pushed_branch: null,
+      resolved_base_branch: null,
     });
   });
 

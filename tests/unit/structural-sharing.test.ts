@@ -1,9 +1,51 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   applyStructuralSharing,
   applySwimlaneStructuralSharing,
 } from '../../src/renderer/stores/board-store/structural-sharing';
 import type { Task, Swimlane } from '../../src/shared/types';
+
+const REPO_ROOT = path.resolve(__dirname, '../..');
+const TYPES_SOURCE = fs.readFileSync(path.join(REPO_ROOT, 'src/shared/types.ts'), 'utf8');
+const SHARING_SOURCE = fs.readFileSync(
+  path.join(REPO_ROOT, 'src/renderer/stores/board-store/structural-sharing.ts'),
+  'utf8',
+);
+
+/**
+ * Top-level property names declared on an interface in `src/shared/types.ts`.
+ *
+ * Property lines sit at exactly two spaces of indent; doc-comment lines inside
+ * the body start with three spaces and a star, so the indent alone separates
+ * them. Neither interface this is used on nests an object literal, and a nested
+ * one would need this revisited rather than silently mis-parsed - hence the
+ * assertion in each caller that the list is non-empty and plausible.
+ */
+function declaredInterfaceFields(interfaceName: string): string[] {
+  const start = TYPES_SOURCE.indexOf(`export interface ${interfaceName} {`);
+  if (start < 0) throw new Error(`Could not find "export interface ${interfaceName}" in types.ts`);
+  const end = TYPES_SOURCE.indexOf('\n}', start);
+  if (end < 0) throw new Error(`Could not find the end of interface ${interfaceName}`);
+  const body = TYPES_SOURCE.slice(start, end);
+  const fields = [...body.matchAll(/^ {2}(\w+)\??:/gm)].map((match) => match[1]);
+  if (fields.length < 5) throw new Error(`Parsed only ${fields.length} fields off ${interfaceName}; the parser needs revisiting`);
+  return fields;
+}
+
+/**
+ * Property names a comparator function reads off its `previous` argument. This
+ * catches both the `previous.x !== next.x` compares and the `previous.labels ??
+ * []` array special-case, so a field handled either way counts as covered.
+ */
+function comparedFields(functionName: string): string[] {
+  const start = SHARING_SOURCE.indexOf(`function ${functionName}(`);
+  if (start < 0) throw new Error(`Could not find "function ${functionName}" in structural-sharing.ts`);
+  const end = SHARING_SOURCE.indexOf('\n}', start);
+  const body = SHARING_SOURCE.slice(start, end);
+  return [...new Set([...body.matchAll(/\bprevious\.(\w+)\b/g)].map((match) => match[1]))];
+}
 
 /**
  * `applyStructuralSharing` is our narrow port of TanStack Query's default
@@ -30,6 +72,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     pr_url: null,
     pr_state: null,
     head_sha: null,
+    pushed_branch: null,
     base_branch: null,
     use_worktree: null,
     labels: [],
@@ -173,28 +216,38 @@ describe('applyStructuralSharing', () => {
   });
 
   // Guard against silent drift: when a new field is added to the Task
-  // interface, taskContentsMatch must be updated to compare it. Otherwise the
-  // equality check will reuse a stale reference and React.memo will miss
-  // the change. The assertion below fails if Task acquires a new field
-  // not covered by the equality check.
+  // interface, taskContentsMatch must compare it. Otherwise the equality check
+  // reuses a stale reference and React.memo misses the change.
   //
-  // How to update when this fails: read the list of fields in
-  // `src/renderer/stores/board-store/structural-sharing.ts` taskContentsMatch,
-  // add the new field there, then update TASK_FIELD_COUNT below to match.
-  //
-  // Known limitation: this counts the LOCAL FIXTURE's keys, not the real
-  // `Task` interface's - `makeTask()` above already omits several required
-  // Task fields (profile_id, model_override, effort_override, agent_override,
-  // permission_mode, auto_command, detail_view_state, external_id,
-  // external_source, external_url) that `tsconfig.json` never typechecks
-  // (tests/** is outside its `include`), so the guard cannot fire for a field
-  // missing from the fixture itself, only for one present in the fixture but
-  // uncounted. Keep `run_mode` represented here so the guard is at least
-  // honest for this field.
+  // This reads the REAL interface out of src/shared/types.ts rather than
+  // counting a local fixture's keys. The count form could not fire for a field
+  // the fixture itself omitted, and the fixture omitted ten of them - so a new
+  // Task field added to neither passed silently. `tests/**` is outside
+  // tsconfig's `include`, so the compiler will not catch it either; this scan is
+  // the only thing that can.
   it('guards against Task-interface field drift', () => {
-    const TASK_FIELD_COUNT = 25; // keep in sync with taskContentsMatch
-    const sample = makeTask();
-    expect(Object.keys(sample)).toHaveLength(TASK_FIELD_COUNT);
+    const declared = declaredInterfaceFields('Task');
+    const compared = comparedFields('taskContentsMatch');
+    const missing = declared.filter((field) => !compared.includes(field));
+    expect(
+      missing,
+      `taskContentsMatch does not compare these Task fields, so a change to one of them `
+      + `reuses the stale object and the card never re-renders: ${missing.join(', ')}`,
+    ).toEqual([]);
+    // The interface is the source of truth, so a compared field that no longer
+    // exists is dead weight worth deleting.
+    const extra = compared.filter((field) => !declared.includes(field));
+    expect(extra, `taskContentsMatch compares fields Task no longer declares: ${extra.join(', ')}`).toEqual([]);
+  });
+
+  it('guards against Swimlane-interface field drift, by the same derivation', () => {
+    const declared = declaredInterfaceFields('Swimlane');
+    const compared = comparedFields('swimlaneContentsMatch');
+    const missing = declared.filter((field) => !compared.includes(field));
+    expect(
+      missing,
+      `swimlaneContentsMatch does not compare these Swimlane fields: ${missing.join(', ')}`,
+    ).toEqual([]);
   });
 
   it('handles absent labels defensively', () => {
@@ -292,16 +345,8 @@ describe('applySwimlaneStructuralSharing', () => {
     expect(result[1]).toBe(previous[1]);
   });
 
-  // Guard against silent drift: when a new field is added to the Swimlane
-  // interface, swimlaneContentsMatch must be updated to compare it, otherwise a
-  // stale reference is reused and the column memo misses the change.
-  //
-  // How to update when this fails: read the field list in
-  // `structural-sharing.ts` swimlaneContentsMatch, add the new field there, then
-  // update SWIMLANE_FIELD_COUNT below to match.
-  it('guards against Swimlane-interface field drift', () => {
-    const SWIMLANE_FIELD_COUNT = 20; // keep in sync with swimlaneContentsMatch
-    const sample = makeSwimlane();
-    expect(Object.keys(sample)).toHaveLength(SWIMLANE_FIELD_COUNT);
-  });
+  // The Swimlane counterpart of the Task drift guard above lives beside it, so
+  // both read their interface out of types.ts by the same derivation. The
+  // fixture-count form this replaced was passing while swimlaneContentsMatch
+  // silently omitted `auto_command_mode`.
 });

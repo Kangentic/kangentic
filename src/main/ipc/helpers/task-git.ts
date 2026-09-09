@@ -451,7 +451,7 @@ export async function ensureTaskWorktree(
     void surfaceWorktreeBaseDrift(context, task, resolvedProjectPath, options?.signal, options?.projectId, probeGeneration);
     return;
   }
-  tasks.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder);
+  tasks.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder, result.baseBranch);
   Object.assign(task, tasks.getById(task.id));
 }
 

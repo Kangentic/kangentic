@@ -235,6 +235,8 @@ describe('cleanupStaleResources', () => {
       id: 'bbbb2222-0000-0000-0000-000000000000',
       worktree_path: null,
       branch_name: null,
+      pushed_branch: null,
+      resolved_base_branch: null,
       session_id: null,
     });
 
