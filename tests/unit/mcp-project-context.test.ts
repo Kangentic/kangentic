@@ -220,6 +220,77 @@ describe('buildCommandContextForProject', () => {
 });
 
 // ---------------------------------------------------------------------------
+// getDefaultBaseBranch
+//
+// Board default first, `||` fallback to the effective config's
+// `git.defaultBaseBranch`, wrapped so an unreadable config never fails the
+// tool call it feeds. The empty-string case is the one that proves the `||`:
+// an empty board default must fall through, which a `??` would not do.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - getDefaultBaseBranch', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeBaseBranchContext(options: {
+    boardDefault?: string;
+    boardThrows?: boolean;
+    configDefault?: string;
+  }) {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const getDefaultBaseBranchForPath = vi.fn(() => {
+      if (options.boardThrows) throw new Error('board config unreadable');
+      return options.boardDefault;
+    });
+    const getEffectiveConfig = vi.fn(() => ({
+      git: { defaultBaseBranch: options.configDefault },
+    }));
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      boardConfigManager: { getDefaultBaseBranchForPath },
+      configManager: { getEffectiveConfig },
+    } as unknown as IpcContext;
+    return { ipcContext, getDefaultBaseBranchForPath, getEffectiveConfig };
+  }
+
+  it('prefers the board default over a different effective-config value', () => {
+    const { ipcContext } = makeBaseBranchContext({ boardDefault: 'develop', configDefault: 'main' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(context!.getDefaultBaseBranch!()).toBe('develop');
+  });
+
+  it('falls back to the effective config when the board has no default', () => {
+    const { ipcContext } = makeBaseBranchContext({ configDefault: 'release' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(context!.getDefaultBaseBranch!()).toBe('release');
+  });
+
+  it('falls through an empty-string board default to the effective config', () => {
+    const { ipcContext } = makeBaseBranchContext({ boardDefault: '', configDefault: 'qa' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(context!.getDefaultBaseBranch!()).toBe('qa');
+  });
+
+  it('returns undefined instead of throwing when the board config manager throws', () => {
+    const { ipcContext } = makeBaseBranchContext({ boardThrows: true, configDefault: 'main' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    expect(() => context!.getDefaultBaseBranch!()).not.toThrow();
+    expect(context!.getDefaultBaseBranch!()).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // onSwimlaneUpdated write-back
 //
 // Regression lock: an MCP update_column edits a swimlane row and fires
