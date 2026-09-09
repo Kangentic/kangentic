@@ -46,7 +46,19 @@ This command does NOT use `/merge-back`. The release flow is fundamentally diffe
 2. **Verify clean tree:** Run `git status --porcelain`. Must be empty. If not, stop with an error: "Working tree must be clean before releasing. Commit or stash changes first."
 3. **Fetch latest:** Run `git fetch origin main`
 4. **Verify up-to-date:** Run `git diff HEAD origin/main --stat`. Must be empty. If not, stop with: "Local main is behind origin/main. Run `git pull` first."
-5. **Install dependencies:** Run `npm ci`. This ensures `node_modules` matches the lockfile exactly, preventing typecheck/test failures from stale or missing packages. The `postinstall` script automatically rebuilds native modules for Electron. If it fails with EBUSY, stop with: "A file in node_modules is locked by a running process. Close the Kangentic dev server (`npm start`) and retry."
+5. **Verify dependencies:** Run `node scripts/verify-node-modules.js`. It compares
+   `node_modules/.package-lock.json` against `package-lock.json` and prints which way it went.
+   Act on its exit code with no judgment call and no prompt to the user:
+   - **Exit 0:** the tree already matches the lockfile. Nothing to install. Continue.
+   - **Exit 1 or 2:** the tree is stale or was never installed. Run `npm ci`, then re-run the
+     verifier. If `npm ci` fails with EBUSY, stop with: "A file in node_modules is locked by a
+     running process. Close the Kangentic dev server (`npm start`) and retry."
+
+   Do not run `npm ci` unconditionally. It deletes `node_modules`, and the team dogfoods
+   Kangentic from `npm start`, so on most releases the live dev server is running Electron out of
+   the directory `npm ci` is about to remove. That made the step either fail with EBUSY or break
+   the dev server, and turned a gate into a question the operator had to answer mid-release. The
+   verifier answers the same question in milliseconds and writes nothing.
 6. **Verify the Sentry symbol-upload secret:** Run `gh secret list --repo Kangentic/kangentic`.
    `KANGENTIC_SENTRY_TOKEN` must be listed. If it is not, stop with: "KANGENTIC_SENTRY_TOKEN is
    not set on the repo, so this release would ship with no sourcemaps and no native debug files.
