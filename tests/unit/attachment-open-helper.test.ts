@@ -24,7 +24,8 @@ const { mockShell } = vi.hoisted(() => {
 
 vi.mock('electron', () => ({ shell: mockShell }));
 
-import { openAttachmentFile, OPEN_PATH_TIMEOUT_MS } from '../../src/main/ipc/helpers/attachment-open';
+import { openAttachmentFile } from '../../src/main/ipc/helpers/attachment-open';
+import { OPEN_PATH_TIMEOUT_MS } from '../../src/main/ipc/helpers/open-path';
 import { attachmentDiskName } from '../../src/shared/attachment-filename';
 
 let tmpRoot: string;
