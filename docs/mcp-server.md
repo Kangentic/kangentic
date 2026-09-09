@@ -1034,7 +1034,7 @@ Tool categories (16 tools):
 - **Interact:** `kangentic_browser_click`, `kangentic_browser_type`, `kangentic_browser_keypress`, `kangentic_browser_drag`
 - **Eval:** `kangentic_browser_eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
 
-### Opening and closing a pane
+### kangentic_browser_open_pane
 
 `kangentic_browser_open_pane` opens the Browser pane for the **caller's own task** and loads a URL, so an agent that hits `no-pane-open` can get itself unstuck instead of stopping to ask the user. It takes no `sessionId` / `taskId`: naming another task is exactly the cross-project hole the caller-scoping work closed, so the target is always the caller's own task and there is no argument that can widen it.
 
@@ -1054,6 +1054,8 @@ Behavior worth knowing:
 - **The pane it returns carries `visibility`**, the same field [`kangentic_browser_list_panes`](#kangentic_browser_list_panes) reports (`showing` / `hidden` / `parked`, or `offscreen` for a lane). Every value is driveable; it tells you whether the user can currently see what you are doing. On a warm call this is a snapshot taken BEFORE the re-surface push is applied, so a pane that was hidden or parked can still report that here even though it is being shown. Call `list_panes` afterwards if you need the settled value.
 - **It carries the `navigate` capability tier**, since it always loads a URL. Turning off "Allow navigation" in the Agent Browser settings therefore disables this tool too. The tier is checked before anything happens, so a gated-off call never opens a window or seeds a URL first.
 - Refusals it can return besides the shared ones: `no-caller-task` (the connection is not bound to a task, e.g. a Command Terminal), `project-not-open` (the caller's project is not the one currently open in Kangentic, so no window can be mounted for its tasks), `browser-pane-disabled` (the project has the Browser pane turned off), `task-not-found`, `no-url`, `app-not-ready` (Kangentic is still starting, or its window is gone - also reachable from `close_pane`), and `url-seed-failed` (the URL could not be persisted before the pane was opened).
+
+### kangentic_browser_close_pane
 
 `kangentic_browser_close_pane` discards panes exactly as the user's Close browser control does (the Browser pill only hides, keeping the guest alive for you). It closes the pane, never the task-detail window hosting it.
 

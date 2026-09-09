@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.40.0] - 2026-09-09
+
+### Fixes
+- Ship the embed worker's whole dependency closure unpacked (3071140c)
+- Guard the second-instance handler against a destroyed window (193ef4fe)
+- Abandon a lane whose sweep ran while it was opening (b4291e46)
+- Route post-await window pushes through the per-window capture (e350b53d)
+- Drain the OS-shutdown route and count kills the drain cannot probe (b653463d)
+- Filter foreign native crashes, attribute dumps to the build that crashed (cae281ae)
+- Bound shell:openPath so the invoke is always answered (865a4524)
+- Re-pair surviving PTYs from main's own slot record (71d74de7)
+- Deliver run duration and board shape, widen usage coverage (ab9dbe1c)
+- Never build into a published release, never upgrade from self (a863703e)
+- Retry the first-window wait instead of failing the launch outright (d88cd385)
+
+### Other
+- Verify node_modules instead of deleting it (96b1c654)
+- Resolve against the release that carries the fix (375aa37c)
+- List DESKTOP-Q as the third foreign-minidump source (33051569)
+- Guard the attachment openPath timeout forwarding deterministically (7cc85b3f)
+- Cover the three adoption signals that had no assertions (4e4a627d)
+- Pin the analytics string cap and the failsafe exit callback (deaac380)
+- Pin the setTransientLabel handler registration and argument order (e1805f2a)
+- Cover the adopt-path label, the auto-name guard, and the label mirror (a76297b8)
+- Cover the two runCleanupStep boundaries and the Windows skip order (c1e7bf17)
+- Cover the macOS install root and the attachment discriminator (a9a0a54c)
+- Correct the native_crash context description (a3dccddf)
+- Record the window-close lane sweep, and pin two gaps the scans missed (04343023)
+- Cover the afterPack wiring and the fork-throw path (33c34fc6)
+- Pin the Memory tab's worker-error note (5777ac35)
+- Stop telling the reader to withhold the draft (e8bde095)
+
 ## [v0.39.0] - 2026-09-07
 
 ### Features
