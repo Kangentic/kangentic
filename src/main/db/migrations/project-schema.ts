@@ -149,6 +149,29 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN head_sha TEXT DEFAULT NULL');
   }
 
+  // Migration: add 'pushed_branch' column - the branch the task's work was
+  // actually pushed to when it differs from the local branch_name. Agents push
+  // under a team convention while the worktree stays on the Kangentic slug, and
+  // every branch-keyed PR anchor then looks up a branch no PR was opened from.
+  // Separate from branch_name because that one names the LOCAL branch a restore
+  // re-attaches to.
+  const hasPushedBranchColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'pushed_branch');
+  if (!hasPushedBranchColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN pushed_branch TEXT DEFAULT NULL');
+  }
+
+  // Migration: add 'resolved_base_branch' column - the base a task's worktree
+  // was ACTUALLY cut from, as resolved against the repo's real refs. Separate
+  // from 'base_branch' (the user's explicit choice, NULL for most tasks)
+  // because ensureTaskBranchCheckout treats a NULL base_branch as "nothing to
+  // check out"; backfilling that column would change spawn behavior.
+  const hasResolvedBaseBranchColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'resolved_base_branch');
+  if (!hasResolvedBaseBranchColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN resolved_base_branch TEXT DEFAULT NULL');
+  }
+
   // Migration: add 'use_worktree' column for per-task worktree override
   const hasUseWorktreeColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .some((col) => col.name === 'use_worktree');

@@ -69,11 +69,16 @@ export function applySwimlaneStructuralSharing(
  * false negatives from property-order differences. The `labels` array is
  * compared element-by-element; everything else is primitive-or-null.
  *
+ * EXHAUSTIVE over the `Task` interface, deliberately. It used to compare a
+ * subset and lean on `updated_at` to catch the rest, which held only because
+ * the generic `update()` always bumps it - so the fields written by the bespoke
+ * no-bump setters (`setDetailViewState`, `recordAutoCommandOutcome`) could
+ * change with the stale reference reused. Comparing everything removes that
+ * reasoning step entirely; the cost is a few more primitive compares per task.
+ *
  * When a new field is added to the `Task` interface in `src/shared/types.ts`,
- * add it here too. `tests/unit/structural-sharing.test.ts` asserts on
- * `Object.keys(task).length` as a drift guard - if that test fails after a
- * Task change, update the field list below to match before touching the
- * guard count.
+ * add it here too. `tests/unit/structural-sharing.test.ts` derives the expected
+ * field list FROM that interface and fails naming the missing field.
  */
 function taskContentsMatch(previous: Task, next: Task): boolean {
   if (previous === next) return true;
@@ -91,14 +96,30 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.worktree_skip_reason !== next.worktree_skip_reason ||
     previous.branch_name !== next.branch_name ||
     previous.base_branch !== next.base_branch ||
+    previous.resolved_base_branch !== next.resolved_base_branch ||
     previous.use_worktree !== next.use_worktree ||
     previous.pr_number !== next.pr_number ||
     previous.pr_url !== next.pr_url ||
     previous.pr_state !== next.pr_state ||
     previous.head_sha !== next.head_sha ||
+    previous.pushed_branch !== next.pushed_branch ||
+    previous.external_id !== next.external_id ||
+    previous.external_source !== next.external_source ||
+    previous.external_url !== next.external_url ||
     previous.priority !== next.priority ||
+    previous.model_override !== next.model_override ||
+    previous.effort_override !== next.effort_override ||
+    previous.agent_override !== next.agent_override ||
+    previous.permission_mode !== next.permission_mode ||
+    previous.auto_command !== next.auto_command ||
+    previous.profile_id !== next.profile_id ||
     previous.attachment_count !== next.attachment_count ||
     previous.run_mode !== next.run_mode ||
+    previous.auto_command_state !== next.auto_command_state ||
+    previous.auto_command_text !== next.auto_command_text ||
+    previous.auto_command_error !== next.auto_command_error ||
+    previous.auto_command_at !== next.auto_command_at ||
+    previous.detail_view_state !== next.detail_view_state ||
     previous.archived_at !== next.archived_at ||
     previous.created_at !== next.created_at ||
     previous.updated_at !== next.updated_at
@@ -138,6 +159,7 @@ function swimlaneContentsMatch(previous: Swimlane, next: Swimlane): boolean {
     previous.permission_mode === next.permission_mode &&
     previous.auto_spawn === next.auto_spawn &&
     previous.auto_command === next.auto_command &&
+    previous.auto_command_mode === next.auto_command_mode &&
     previous.plan_exit_target_id === next.plan_exit_target_id &&
     previous.agent_override === next.agent_override &&
     previous.model_override === next.model_override &&
