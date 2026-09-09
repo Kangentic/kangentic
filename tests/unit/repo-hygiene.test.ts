@@ -43,19 +43,29 @@ describe('CODE_OF_CONDUCT.md', () => {
     ).toBe(true);
   });
 
-  it('names the reporting address instead of the Covenant placeholder', () => {
-    const source = readFileSync(codeOfConductPath, 'utf8');
-
+  it('does not ship the Covenant placeholder', () => {
     expect(
-      source,
-      `The Code of Conduct must route reports to ${CONTACT_ADDRESS}.`,
-    ).toContain(CONTACT_ADDRESS);
-
-    expect(
-      source,
+      readFileSync(codeOfConductPath, 'utf8'),
       'The Contributor Covenant placeholder was never filled in.',
     ).not.toContain('INSERT CONTACT METHOD');
   });
+});
+
+/**
+ * Three files route reports to the same role address, and this diff put it in
+ * two of them. A stale address in any one sends a report nowhere, and none of
+ * the three is read often enough for that to surface on its own.
+ */
+describe('report routing', () => {
+  it.each(['CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md'])(
+    '%s routes reports to the role address',
+    (fileName) => {
+      expect(
+        readFileSync(join(REPO_ROOT, fileName), 'utf8'),
+        `${fileName} must route reports to ${CONTACT_ADDRESS}.`,
+      ).toContain(CONTACT_ADDRESS);
+    },
+  );
 });
 
 describe('.github/dependabot.yml', () => {
@@ -85,6 +95,15 @@ describe('.github/dependabot.yml', () => {
     expect(
       lines.some((line) => /^\s*groups:\s*$/.test(line)),
       'Keep the `groups:` block: ungrouped action bumps open a PR each, and each one runs the whole CI gate.',
+    ).toBe(true);
+
+    // `groups:` on its own is satisfied by a group that matches nothing. The
+    // catch-all pattern is what actually collapses every bump into one PR, so
+    // narrowing it puts the unmatched remainder back on the gate one PR at a
+    // time while the assertion above stays green.
+    expect(
+      lines.some((line) => /^\s*-\s*["']?\*["']?\s*$/.test(line)),
+      'Keep the catch-all `- "*"` pattern under `groups:`. A narrowed pattern list leaves every action it does not match opening its own PR.',
     ).toBe(true);
   });
 });
@@ -117,6 +136,36 @@ describe('.github/workflows/codeql.yml', () => {
       prTrigger,
       'CodeQL must not run on pull requests. It would add 2 jobs to a PR gate already at the documented 21-job ceiling (see the concurrency-budget block in ci.yml). Scanning runs on push to main and weekly instead.',
     ).toBeUndefined();
+  });
+
+  /**
+   * The same 23-job breach as the guard above, through a different door.
+   *
+   * A `push:` trigger with no `branches:` filter fires on every topic-branch
+   * push, and this repo pushes topic branches that already have an open PR as a
+   * matter of course. Such a push runs ci.yml's 21-job PR gate and these two
+   * Analyze jobs at the same time, so deleting one line here costs exactly what
+   * adding a `pull_request:` trigger costs. The guard above stays green through
+   * it, and so does the one below: `push:` is still present either way.
+   */
+  it('scopes the push trigger to main', () => {
+    const lines = stripComments(readFileSync(codeqlPath, 'utf8'));
+    const branchFilter = lines.find((line) => /^\s*branches:/.test(line));
+
+    expect(
+      branchFilter,
+      'The push trigger must keep its `branches:` filter. Without it CodeQL runs on every topic-branch push, stacking 2 Analyze jobs on top of the 21-job PR gate in ci.yml.',
+    ).toBeDefined();
+
+    expect(
+      branchFilter ?? '',
+      'Keep the push trigger scoped to main. A wildcard branch pattern fires CodeQL on every topic-branch push.',
+    ).toMatch(/\bmain\b/);
+
+    expect(
+      branchFilter ?? '',
+      'Keep the push trigger scoped to main. A wildcard branch pattern fires CodeQL on every topic-branch push.',
+    ).not.toMatch(/\*/);
   });
 
   it('still runs on push to main and on a schedule', () => {
