@@ -13,8 +13,9 @@ import type { ErrorEvent } from '@sentry/electron/main';
  * 1. On macOS a task's mach exception ports are inherited across exec, so a
  *    process spawned from a Kangentic PTY writes ITS crashes into our database
  *    and we report them as ours. DESKTOP-K is Homebrew ffmpeg's `ffprobe`
- *    failing to start; DESKTOP-N is a Puppeteer `chrome-headless-shell`. Neither
- *    loaded a single Kangentic image.
+ *    failing to start; DESKTOP-N is a Puppeteer `chrome-headless-shell`;
+ *    DESKTOP-Q is `/usr/local/share/dotnet/dotnet`. None loaded a single
+ *    Kangentic image.
  * 2. A dump uploaded after an upgrade wears the UPLOADING build's release tag and
  *    scope. DESKTOP-M crashed on 0.38.0 and is filed under 0.39.0, with
  *    breadcrumbs from a launch 21 minutes after the crash.
