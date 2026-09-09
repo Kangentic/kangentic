@@ -570,3 +570,53 @@ describe('describeUnresolvableBase - message formatting', () => {
     expect(message).not.toContain('Branches found:');
   });
 });
+
+/**
+ * What `createWorktree` REPORTS as the base, which `TaskRepository.recordWorktree`
+ * persists to `tasks.resolved_base_branch` and the PR linker then treats as a
+ * KNOWN base rather than a guess.
+ *
+ * The distinction is the whole value of the column. A known base makes the
+ * linker run Tier 6 and hand `disambiguate` a base-match bonus; a guess must
+ * do neither. Real git here, because the claim being pinned is which form of
+ * `git worktree add` ran.
+ */
+describe('WorktreeManager.ensureWorktree - the base it reports back', () => {
+  it('reports the resolved base when it actually cut the branch from it', async () => {
+    const repo = tempRepoPath('reports-cut-base');
+    initRepo(repo, 'develop');
+    commit(repo, 'init');
+
+    const worktreeManager = new WorktreeManager(repo);
+    const result = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-cccccccc' }),
+      baseGitConfig({ defaultBaseBranch: 'develop' }),
+    );
+
+    expect(result).toHaveProperty('baseBranch', 'develop');
+  });
+
+  it('reports NO base when it attached to a branch that already existed', async () => {
+    // `git worktree add <path> <branch>` takes no start point, so the branch
+    // keeps whatever base it was originally cut from and the resolved default
+    // describes a cut that never happened. Recording it would stamp `main` on a
+    // task living on `feature/x`: the task then sits on `feature/x`'s tip, the
+    // base-tip bail checks `main` and does not fire, and Tier 6 magnets onto
+    // `feature/x`'s own PR - the exact mislink that bail exists to prevent.
+    const repo = tempRepoPath('reports-no-base-when-attaching');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    run(repo, ['branch', 'feature/long-lived']);
+
+    const worktreeManager = new WorktreeManager(repo);
+    const result = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-dddddddd', branch_name: 'feature/long-lived' }),
+      baseGitConfig({ defaultBaseBranch: 'main' }),
+    );
+
+    // The worktree is still created and still checks out that branch; only the
+    // base claim is withheld.
+    expect(result).toHaveProperty('branchName', 'feature/long-lived');
+    expect(result).toHaveProperty('baseBranch', null);
+  });
+});

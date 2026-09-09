@@ -386,11 +386,53 @@ export interface Task {
   pr_state: PRState | null;
   /** Last-captured worktree HEAD commit SHA. Immutable anchor for resolving the PR after the worktree is reclaimed (Done) or the branch is renamed. null until captured. */
   head_sha: string | null;
+  /**
+   * The branch this task's work was actually PUSHED to, when that differs from
+   * the local `branch_name`. Agents push under a team convention
+   * (`maint/adopt-central-package-management`) while the worktree stays on the
+   * Kangentic slug, and nothing else reconciles the two, so every branch-keyed
+   * PR anchor looks up a branch no PR was opened from.
+   *
+   * Captured opportunistically by the PR linker from a remote branch whose tip
+   * is this task's HEAD, and read back as a PR anchor. Deliberately NOT
+   * `branch_name`: that names the LOCAL branch a restore re-attaches to, and
+   * `WorktreeManager.createWorktree` verifies it with `rev-parse --verify`,
+   * which does not resolve a remote-only branch. Writing a pushed-only name
+   * there would fork a fresh branch off base and orphan the work.
+   */
+  pushed_branch: string | null;
   /** External origin, carried through when this task was promoted from an imported backlog item. Lets import dedup stay aware of promoted (and archived) tasks. null for tasks created directly. */
   external_id: string | null;
   external_source: string | null;
   external_url: string | null;
+  /**
+   * The base branch a user explicitly chose for this task. NULL for most tasks,
+   * because nothing ever infers it. Prefer {@link Task.resolved_base_branch}
+   * when you need "what base is this task's work actually relative to".
+   */
   base_branch: string | null;
+  /**
+   * The base branch this task's worktree was ACTUALLY cut from, recorded by
+   * `recordWorktree` from `createWorktree`'s resolution. Where `base_branch` is
+   * the user's explicit choice (usually absent), this is the observed answer.
+   *
+   * It exists because every base-relative guard in PR linking measured against
+   * `base_branch ?? defaultBaseBranch ?? 'main'`, so a worktree cut from a
+   * long-lived integration branch was compared against the wrong branch: the
+   * commits-ahead-of-base guard found hundreds of commits and let the commit
+   * anchor run on work that was not the task's. Deliberately a separate column
+   * rather than a backfill of `base_branch`: `ensureTaskBranchCheckout` treats a
+   * NULL `base_branch` as "nothing to check out" and returns early, so
+   * populating it would push non-worktree spawns into a fetch-and-checkout path
+   * they skip today.
+   *
+   * NULL means "not recorded", never "the default". Only a real observation is
+   * written: `createWorktree` reports no base when it attached to a branch that
+   * already existed, since that path passes no start point and the resolved
+   * value would describe a cut that never happened. Reading it as a KNOWN base
+   * is what the PR linker does, so a guess here is worse than an absence.
+   */
+  resolved_base_branch: string | null;
   use_worktree: number | null;
   labels: string[];
   priority: number;
@@ -3540,7 +3582,11 @@ export interface TaskUpdateInput {
   pr_url?: string | null;
   pr_state?: PRState | null;
   head_sha?: string | null;
+  /** The branch the work was pushed to when it differs from `branch_name` (see `Task.pushed_branch`). */
+  pushed_branch?: string | null;
   base_branch?: string | null;
+  /** The base the worktree was actually cut from (see `Task.resolved_base_branch`). */
+  resolved_base_branch?: string | null;
   use_worktree?: number | null;
   labels?: string[];
   priority?: number;

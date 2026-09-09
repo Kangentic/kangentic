@@ -235,7 +235,7 @@ export async function cleanupTaskResources(
     // Guard against concurrent delete: the task row may already be gone
     // by the time removeWorktree resolves. Update is idempotent.
     if (removed && tasks.getById(task.id)) {
-      tasks.update({ id: task.id, worktree_path: null, branch_name: null });
+      tasks.update({ id: task.id, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
     }
   }
 }

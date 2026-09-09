@@ -181,17 +181,36 @@ export class TaskRepository {
   }
 
   /**
-   * Persist a freshly created worktree: its path, its branch, and the directory
-   * name that must never change again.
+   * Persist a freshly created worktree: its path, its branch, the directory
+   * name that must never change again, and the base it was actually cut from.
    *
    * Atomic on purpose. Written as two statements, a crash in between would leave
    * `worktree_path` set with `worktree_folder` still null; the
    * `basename(worktree_path)` fallback would mask that until the task reached
    * Done, which nulls the path and would lose the folder permanently.
+   *
+   * `resolvedBaseBranch` is the observed base, not the user's choice, and is the
+   * only point that can record it: by the time any consumer asks, the resolution
+   * is gone. It goes to `resolved_base_branch`, never `base_branch` - see
+   * `Task.resolved_base_branch` for why backfilling that one changes spawn
+   * behavior.
    */
-  recordWorktree(id: string, worktreePath: string, branchName: string, worktreeFolder: string): void {
+  recordWorktree(
+    id: string,
+    worktreePath: string,
+    branchName: string,
+    worktreeFolder: string,
+    resolvedBaseBranch?: string | null,
+  ): void {
     this.db.transaction(() => {
-      this.update({ id, worktree_path: worktreePath, branch_name: branchName });
+      this.update({
+        id,
+        worktree_path: worktreePath,
+        branch_name: branchName,
+        // Omitted rather than nulled when absent, so a caller that cannot supply
+        // it never erases a base an earlier creation did record.
+        ...(resolvedBaseBranch ? { resolved_base_branch: resolvedBaseBranch } : {}),
+      });
       this.setWorktreeFolder(id, worktreeFolder);
       // A task that once fell back to the shared checkout and now has a
       // worktree must not keep claiming otherwise. Inside the transaction so
@@ -296,10 +315,12 @@ export class TaskRepository {
       pr_url: null,
       pr_state: null,
       head_sha: null,
+      pushed_branch: null,
       external_id: input.externalId ?? null,
       external_source: input.externalSource ?? null,
       external_url: input.externalUrl ?? null,
       base_branch: input.baseBranch || null,
+      resolved_base_branch: null,
       use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
       labels,
       priority,
@@ -346,9 +367,9 @@ export class TaskRepository {
     const updated: Task = { ...merged, ...applyProfileExclusivity(merged, input) };
 
     this.db.prepare(`
-      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, updated_at = ?
+      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, head_sha = ?, pushed_branch = ?, base_branch = ?, resolved_base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, updated_at = ?
       WHERE id = ?
-    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.updated_at, updated.id);
+    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.updated_at, updated.id);
 
     return updated;
   }

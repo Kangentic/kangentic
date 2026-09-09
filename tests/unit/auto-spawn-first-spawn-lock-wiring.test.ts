@@ -187,7 +187,7 @@ describe('autoSpawnTasks: stale worktree_path fallback', () => {
 
     await runAutoSpawn();
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null });
+    expect(mockTaskUpdate).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
     expect(mockSetWorktreeSkipReason).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
     expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
     const prepareInput = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as { cwd: string };

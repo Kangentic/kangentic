@@ -347,7 +347,7 @@ describe('cleanupTaskResources', () => {
     // waiting at USER on the project's git queue.
     expect(withLockOptions[0]).toEqual({ label: 'cleanup-worktree:task-10', priority: 10 });
     expect(mockRemoveWorktree).toHaveBeenCalledWith(task.worktree_path, { removalProfile: 'moderate' });
-    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-10', worktree_path: null, branch_name: null });
+    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-10', worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
 
     // autoCleanup is false: prune/removeBranch must NOT run even though the
     // task has a branch_name and the removal succeeded.
@@ -380,7 +380,7 @@ describe('cleanupTaskResources', () => {
     // - they are gated on `removed` inside that same callback).
     expect(callOrder).toEqual(['prepare', 'withLock', 'pruneWorktrees', 'removeBranch']);
     expect(mockRemoveBranch).toHaveBeenCalledWith('feature-11');
-    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-11', worktree_path: null, branch_name: null });
+    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-11', worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
   });
 
   it('does not prune or remove the branch when removeWorktree fails, even with autoCleanup enabled', async () => {
