@@ -1,0 +1,36 @@
+# Dependabot is scoped to GitHub Actions only, deliberately.
+#
+# npm is NOT covered. Several dependencies are pinned exact because a floating
+# range has broken the app before (electron 41.1.1, recharts 3.9.2), so npm
+# bumps need a human deciding when to take them. Add the npm ecosystem here
+# later if that changes, with its own grouping.
+#
+# `groups` is load-bearing, not cosmetic. Every Dependabot PR fires the full CI
+# gate (21 concurrent jobs) and GitHub Free caps concurrent jobs at ~20
+# ACCOUNT-wide, so ungrouped bumps would queue against each other and against
+# any real PR running at the same time. One grouped weekly PR is at most one
+# gate run per week. See the concurrency-budget block in workflows/ci.yml.
+#
+# `commit-message` produces `chore(deps): bump ...`, matching the conventional
+# format the commit-msg hook enforces and the `deps` scope already in history.
+#
+# dependabot[bot] is allowlisted in workflows/cla.yml, so these PRs do not stall
+# on the CLA check.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      # Tuesday, not Monday: codeql.yml's weekly cron runs Monday 04:27 UTC, and
+      # a Dependabot PR fires the full 21-job gate. Overlapping them would put
+      # the account over the ~20-job concurrent cap on a day nobody is watching.
+      day: "tuesday"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

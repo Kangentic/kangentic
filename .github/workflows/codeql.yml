@@ -1,0 +1,80 @@
+# CodeQL code scanning.
+#
+# THERE IS NO `pull_request:` TRIGGER, AND THAT IS DELIBERATE. Do not add one
+# without re-reading the concurrency-budget block at the top of ci.yml.
+#
+# The PR gate already runs 19 shards + `checks` + the CLA workflow = 21
+# concurrent jobs against GitHub Free's ~20-job ACCOUNT-wide cap. ci.yml
+# documents that 21 is a ceiling, not a target: at 22+ the earliest slot
+# releaser becomes a ~70s unit shard, so a queued UI shard starts that late and
+# blows past the ~226s pole that sets the whole run's wall clock. The two
+# Analyze jobs below would take every PR to 23.
+#
+# So scanning runs after the merge instead of before it. `main` is PR-gated, so
+# nothing reaches it unreviewed, and findings land within minutes of a merge
+# plus a weekly sweep that catches newly published queries against unchanged
+# code. The cost of the trade is real and worth naming: while there is no PR
+# trigger, CodeQL can never be a required status check.
+#
+# The push-to-main run overlaps ci.yml's own push run (21 + 2 = 23), so it
+# queues briefly. Nobody waits on that run - the PR check was the gate - so the
+# delay is accepted here and NOT on the PR path.
+#
+# This lives in its own workflow file rather than as jobs inside ci.yml on
+# purpose: tests/unit/ci-required-checks.test.ts asserts an exact job count for
+# ci.yml and cross-checks it against main's branch protection, so a job added
+# there would need both that snapshot and the protection rule updated.
+# tests/unit/repo-hygiene.test.ts pins the missing pull_request trigger.
+#
+# Default setup (the repo-settings toggle) is the other way to get scanning. It
+# was rejected for exactly one reason: it always adds its Analyze jobs to PRs
+# and offers no way to turn that off.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays, 04:27 UTC. Off the hour so it does not land in the cron rush.
+    - cron: "27 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # security-events: write is what uploads the SARIF results. The other two
+      # are the documented minimum for the analyze step on a public repo.
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # `javascript-typescript` is one language covering both .js and .ts, not
+        # two. `actions` scans the workflow files in this directory.
+        language: [actions, javascript-typescript]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # Both languages are interpreted, so there is nothing to compile.
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
