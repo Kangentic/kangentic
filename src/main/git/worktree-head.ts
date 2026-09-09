@@ -132,3 +132,153 @@ export async function isShaContainedInRef(repoCwd: string, ref: string, sha: str
     }
   });
 }
+
+/** Which refs, if any, have a given commit as their exact tip. */
+export interface RefsPointingAtSha {
+  /**
+   * REMOTE branch names whose tip is exactly the sha, remote prefix stripped and
+   * deduped across remotes. Never contains `HEAD`, never an option-shaped name,
+   * never the base branch. Local branches are deliberately absent.
+   */
+  remoteBranches: string[];
+  /**
+   * True when the sha is also a BASE tip: `refs/heads/<base>`, any remote's
+   * `<base>`, or a remote's `HEAD` symref points at it. Callers bail on this,
+   * because a sha that is a base tip belongs to whatever last landed on base,
+   * never to the task sitting on it.
+   */
+  pointsAtBaseTip: boolean;
+}
+
+/** A value git will accept as an object name. Anything else is refused unread. */
+const HEX_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
+const LOCAL_REF_PREFIX = 'refs/heads/';
+const REMOTE_REF_PREFIX = 'refs/remotes/';
+
+/**
+ * The remote branches whose TIP is exactly `sha`, plus whether `sha` is also a
+ * base tip. Both come from ONE `for-each-ref`, so the bail signal costs no extra
+ * subprocess on the refresh sweep's hot path.
+ *
+ * This is the anchor for the PR ladder's last tier: a task whose local worktree
+ * branch is the Kangentic slug while the branch actually PUSHED as the PR source
+ * carries a team-convention name. Nothing reconciles the two, so the branch tiers
+ * query the slug and miss, and the commit tier is gated off once the PR has
+ * merged into base (`rev-list --count <base>..<sha>` is 0 by then).
+ *
+ * LOCAL refs are read but NEVER returned as candidates. Linked worktrees share
+ * this repo's ref store, so several other tasks' slug branches routinely sit on
+ * the same tip (measured: five local branches point at HEAD in a fresh Kangentic
+ * worktree). None of them is a PR source branch, and querying one spends a
+ * provider round trip on a guaranteed miss. They matter only for the base
+ * signal, which is what a worktree cut OFFLINE from a stale local base produces:
+ * there `origin/<base>` has moved on and does not point at the sha, but
+ * `refs/heads/<base>` still does.
+ *
+ * `refs/remotes/<remote>/HEAD` is dropped as a candidate because
+ * `%(refname:short)` renders it as the bare remote name (`origin`), which is not
+ * a branch. It is promoted to a base signal instead, since a sha at the default
+ * branch's tip is a base tip whatever `base_branch` claims.
+ *
+ * The `refs/remotes/` prefix requirement is load-bearing, not defensive. Several
+ * unit suites mock simple-git's `raw` with a single catch-all string
+ * (`pr-remote-gate-no-wipe.test.ts`, `pr-link-degrade-hints.test.ts`), and a
+ * lenient parser would read `'0'` as a branch name and spend a provider call on
+ * it. Real `for-each-ref` output is always full refnames, and git forbids
+ * whitespace and control characters in a ref name, so splitting on newlines is
+ * exact.
+ *
+ * Fails SAFE and NEVER throws, the same contract as {@link isShaContainedInRef}:
+ * an empty result skips the tier. The outer try wraps `simpleGit()` itself,
+ * which throws synchronously when `repoCwd` does not exist (a relocated project,
+ * a reclaimed worktree); a rejection escaping here would reach pr-linking.ts as
+ * a non-PRResolver error and suppress its confident-not-found clear.
+ *
+ * `pointsAtBaseTip` is a two-state answer to a three-state question, and it is
+ * only safe because of one invariant: EVERY path that could not read the refs
+ * returns `remoteBranches: []` alongside it. `false` therefore never means
+ * "could not tell" in any way a caller can act on, since the caller drives the
+ * tier off the branch list and consults the flag only to EMPTY a list that was
+ * genuinely read. Keep that pairing. A future failure path that returned some
+ * branches with `pointsAtBaseTip: false` would turn the base-tip bail into a
+ * fail-open, which is the fresh-worktree magnet this whole tier is guarded
+ * against. The five failure cases in `worktree-head.test.ts` assert the whole
+ * object rather than one field, so breaking the pairing goes red.
+ *
+ * Queued through the global read cap (`viaGitRead`), same as the helpers above.
+ */
+export async function readRefsPointingAtSha(
+  repoCwd: string,
+  sha: string,
+  baseBranch: string,
+): Promise<RefsPointingAtSha> {
+  const empty: RefsPointingAtSha = { remoteBranches: [], pointsAtBaseTip: false };
+  // `sha` comes from tasks.head_sha, which a pasted value or a future writer
+  // could make option-shaped. `--points-at=<value>` is a single argv token so
+  // git cannot reparse it as an option, but refusing a non-hex value unread
+  // keeps the guard local and costs no subprocess. Same guard class as
+  // isShaContainedInRef above.
+  if (!sha || !HEX_SHA_PATTERN.test(sha)) return empty;
+
+  return viaGitRead(async () => {
+    try {
+      const git = simpleGit(repoCwd);
+      // A sha with no refs pointing at it, or an object gc has already dropped,
+      // exits 0 with empty output rather than erroring.
+      const output = await git.raw([
+        'for-each-ref',
+        '--format=%(refname)',
+        `--points-at=${sha}`,
+        LOCAL_REF_PREFIX,
+        REMOTE_REF_PREFIX,
+      ]);
+
+      const seen = new Set<string>();
+      const remoteBranches: string[] = [];
+      let pointsAtBaseTip = false;
+
+      for (const line of output.split('\n')) {
+        const refname = line.trim();
+        if (!refname) continue;
+
+        // Local refs are a base signal only, never a candidate.
+        if (refname.startsWith(LOCAL_REF_PREFIX)) {
+          if (refname === `${LOCAL_REF_PREFIX}${baseBranch}`) pointsAtBaseTip = true;
+          continue;
+        }
+        if (!refname.startsWith(REMOTE_REF_PREFIX)) continue;
+
+        // A base stored remote-qualified ("origin/develop") matches here.
+        if (refname === `${REMOTE_REF_PREFIX}${baseBranch}`) {
+          pointsAtBaseTip = true;
+          continue;
+        }
+
+        const withoutPrefix = refname.slice(REMOTE_REF_PREFIX.length);
+        const separator = withoutPrefix.indexOf('/');
+        // `refs/remotes/<remote>` on its own names no branch.
+        if (separator < 0) continue;
+        const name = withoutPrefix.slice(separator + 1);
+
+        // The default-branch symref: not a branch, and proof of a base tip.
+        if (name === 'HEAD') {
+          pointsAtBaseTip = true;
+          continue;
+        }
+        // A base stored bare ("develop"), matched on ANY remote.
+        if (name === baseBranch) {
+          pointsAtBaseTip = true;
+          continue;
+        }
+        if (!name || name.startsWith('-')) continue;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        remoteBranches.push(name);
+      }
+
+      return { remoteBranches, pointsAtBaseTip };
+    } catch {
+      return empty;
+    }
+  });
+}

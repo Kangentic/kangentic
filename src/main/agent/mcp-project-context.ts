@@ -41,6 +41,28 @@ export function buildCommandContextForProject(
       const devServer = ipcContext.configManager.getEffectiveConfig(projectPath).devServer;
       return { rangeStart: devServer?.portRangeStart, rangeEnd: devServer?.portRangeEnd };
     },
+    // Board default FIRST, matching `resolveEffectiveBaseBranch` in
+    // ipc/helpers/task-git.ts, which is what actually decides the base a
+    // worktree gets cut from. `defaultBaseBranch` is team-shared through
+    // kangentic.json and overlays the effective config, so reading the config
+    // alone reports `main` for a project whose board says `develop` - and the
+    // linker would then measure a task against a base its worktree was never
+    // cut from. The ForPath variant is required, not incidental: an MCP tool
+    // call routinely targets a project that is not the active board.
+    getDefaultBaseBranch: () => {
+      try {
+        // `||`, not `??`: an empty string in either layer falls through, exactly
+        // as `resolveEffectiveBaseBranch` does it. Under `??` an empty base
+        // would win and defeat the linker's base-tip bail, whose three ref forms
+        // can none of them match an empty branch name.
+        return ipcContext.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+          || ipcContext.configManager.getEffectiveConfig(projectPath).git?.defaultBaseBranch;
+      } catch {
+        // An unreadable config must not fail the tool call; it just leaves the
+        // linker on its 'main' fallback.
+        return undefined;
+      }
+    },
     // Explicit path, not the active project: a cross-project tool call must
     // resolve its profile selector against the board it is targeting. The same
     // reason applies to the write - an agent syncing profiles between projects
