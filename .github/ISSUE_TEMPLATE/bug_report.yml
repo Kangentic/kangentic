@@ -33,9 +33,18 @@ body:
     id: kangentic-version
     attributes:
       label: Kangentic Version
-      placeholder: e.g. 0.6.0
+      placeholder: e.g. 0.39.0
     validations:
       required: true
+
+  - type: input
+    id: last-known-good-version
+    attributes:
+      label: Last Known Good Version
+      description: The most recent version where this worked. Leave blank if it never worked, or if you do not know.
+      placeholder: e.g. 0.38.0
+    validations:
+      required: false
 
   - type: input
     id: claude-cli-version
