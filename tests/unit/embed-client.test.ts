@@ -611,10 +611,12 @@ describe('EmbedClient', () => {
     client.dispose();
   });
 
-  it('forks the worker with stderr piped (stdin ignored, stdout inherited) so a crash can be explained', async () => {
+  it('forks the worker with stderr piped and stdin/stdout ignored so a crash can be explained', async () => {
     // DESKTOP-H: with Electron's default `inherit`, a packaged GUI build sent
     // the worker's uncaught-exception dump nowhere, and every report could
     // only say "exit code 1". Dropping `pipe` silently kills the diagnostic.
+    // DESKTOP-S: putting `inherit` back in the stdout slot alongside that pipe
+    // kills the main process outright on packaged Windows (see stderr-tail.ts).
     const client = new EmbedClient(TEST_MODEL);
     await embedAfterReady(client, ['x']);
 
@@ -623,7 +625,7 @@ describe('EmbedClient', () => {
       [],
       expect.objectContaining({
         serviceName: 'kangentic-embeddings',
-        stdio: ['ignore', 'inherit', 'pipe'],
+        stdio: ['ignore', 'ignore', 'pipe'],
       }),
     );
     client.dispose();
