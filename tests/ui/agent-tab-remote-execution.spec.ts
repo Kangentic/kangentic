@@ -60,14 +60,39 @@ async function openAgentSettingsTabAs(page: Page, agentId: string): Promise<void
 
   // Switch the project default agent via the mock API, then resync the
   // renderer's project store so AgentTab's effectiveAgent picks up it.
+  //
+  // Both preconditions below used to fail silently (`return` / a skipped
+  // `if`). A CI run confirmed the real flake: `selectOption` on
+  // execution-mode-opencode timed out at the FULL 15s test timeout with
+  // "Target page, context or browser has been closed" - the wording
+  // Playwright's own timeout teardown produces when a locator action is
+  // still in flight, not a symptom of a slow mount. `selectOption` already
+  // retries on actionability for the whole timeout, so 15s of never finding
+  // the element means it never rendered at all: `currentProject.default_agent`
+  // silently stayed on the fallback agent (never resynced to the one this
+  // test asked for), so AgentTab rendered a DIFFERENT agent's row all along -
+  // one whose `AgentExecutionFields` returns null for a non-capable agent.
+  // Asserting the resync landed, right here, turns that into a fast, named
+  // failure instead of a 15s timeout with a misleading error.
   await page.evaluate(async (agent: string) => {
     const projects = await window.electronAPI.projects.list();
-    if (projects.length === 0) return;
+    if (projects.length === 0) {
+      throw new Error(`openAgentSettingsTabAs: projects.list() returned no projects while switching to "${agent}"`);
+    }
     await window.electronAPI.projects.setDefaultAgent(projects[0].id, agent);
     const projectStore = (window as unknown as {
-      __zustandStores?: { project?: { getState: () => { loadCurrent: () => Promise<void> } } };
+      __zustandStores?: {
+        project?: { getState: () => { currentProject: { default_agent?: string } | null; loadCurrent: () => Promise<void> } };
+      };
     }).__zustandStores?.project;
-    if (projectStore) await projectStore.getState().loadCurrent();
+    if (!projectStore) {
+      throw new Error('openAgentSettingsTabAs: __zustandStores.project is unavailable to resync after setDefaultAgent');
+    }
+    await projectStore.getState().loadCurrent();
+    const resolvedAgent = projectStore.getState().currentProject?.default_agent;
+    if (resolvedAgent !== agent) {
+      throw new Error(`openAgentSettingsTabAs: expected default_agent "${agent}" after loadCurrent(), got "${String(resolvedAgent)}"`);
+    }
   }, agentId);
 
   await page.locator('[data-testid="settings-button"]').click();
@@ -78,6 +103,22 @@ async function openAgentSettingsTabAs(page: Page, agentId: string): Promise<void
 async function closeSettings(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 2000 });
+}
+
+/**
+ * Select an Execution mode for `agentId`. The real fix for the CI flake
+ * lives in `openAgentSettingsTabAs` (it now asserts the store actually
+ * resynced to the requested agent before this ever runs); this helper is a
+ * secondary, cheap settle so a call site never resolves the select's
+ * element handle mid-paint, right after the "Agent" tab click. Every caller
+ * in this file targets an agent whose Execution mode select always renders
+ * (opencode), so waiting for visibility here is safe and agent-generic - it
+ * never hangs on a non-capable agent because no test calls this for one.
+ */
+async function selectExecutionMode(page: Page, agentId: string, mode: 'local' | 'remote'): Promise<void> {
+  const modeSelect = page.locator(`[data-testid="execution-mode-${agentId}"]`);
+  await expect(modeSelect).toBeVisible();
+  await modeSelect.selectOption(mode);
 }
 
 test.describe('AgentTab - Remote Execution fields', () => {
@@ -109,7 +150,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
     ({ browser, page } = await launch());
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
 
     await expect(page.locator('[data-testid="execution-server-url-opencode"]')).toBeVisible();
     await expect(page.locator('[data-testid="execution-server-username-opencode"]')).toBeVisible();
@@ -128,7 +169,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
     ({ browser, page } = await launch());
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
     await page.locator('[data-testid="execution-server-url-opencode"]').fill('http://10.0.0.5:4096');
     await page.locator('[data-testid="execution-test-connection-opencode"]').click();
 
@@ -145,7 +186,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
     });
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
     await page.locator('[data-testid="execution-server-url-opencode"]').fill('http://10.0.0.5:4096');
     await page.locator('[data-testid="execution-test-connection-opencode"]').click();
 
@@ -163,7 +204,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
     ({ browser, page } = await launch());
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
     await page.locator('[data-testid="execution-server-url-opencode"]').fill('http://10.0.0.5:4096');
     await page.locator('[data-testid="execution-test-connection-opencode"]').click();
 
@@ -195,7 +236,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
     });
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
     await page.locator('[data-testid="execution-server-url-opencode"]').fill('http://10.0.0.5:4096');
     await page.locator('[data-testid="execution-test-connection-opencode"]').click();
 
@@ -210,7 +251,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
     ({ browser, page } = await launch());
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
 
     const serverUrlRow = page.locator('[data-testid="setting-row-agent.executionServerUrl"]');
     await expect(serverUrlRow.getByText('Server URL')).toBeVisible();
@@ -231,10 +272,10 @@ test.describe('AgentTab - Remote Execution fields', () => {
     ({ browser, page } = await launch());
     await openAgentSettingsTabAs(page, 'opencode');
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
     await expect(page.locator('[data-testid="execution-server-url-opencode"]')).toBeVisible();
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('local');
+    await selectExecutionMode(page, 'opencode', 'local');
     await expect(page.locator('[data-testid="execution-server-url-opencode"]')).toHaveCount(0);
 
     await closeSettings(page);
@@ -249,7 +290,7 @@ test.describe('AgentTab - Remote Execution fields', () => {
       page.getByText('The server is the authority for providers, models, and MCP tools in remote mode.'),
     ).toHaveCount(0);
 
-    await page.locator('[data-testid="execution-mode-opencode"]').selectOption('remote');
+    await selectExecutionMode(page, 'opencode', 'remote');
 
     // Mock fixture's remoteExecution.remoteModeCaveat (mock-electron-api.js) -
     // asserting the mock's string, not the real OpenCodeAdapter's fuller copy,
