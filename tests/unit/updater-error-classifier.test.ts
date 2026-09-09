@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRequire } from 'node:module';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 vi.mock('electron', () => ({
   app: { isPackaged: false },
@@ -19,7 +21,11 @@ vi.mock('@aptabase/electron/main', () => ({
   trackEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { isTransientUpdaterError, hasTransientNetworkCause } from '../../src/main/updater';
+import {
+  isTransientUpdaterError,
+  hasTransientNetworkCause,
+  isElevationDeniedError,
+} from '../../src/main/updater';
 
 /**
  * The DESKTOP-F message, copied from the real Sentry event payload rather than
@@ -330,5 +336,185 @@ describe('against errors built by the real builder-util-runtime', () => {
 
   it.each([400, 401, 403, 404, 410])('keeps a real %s feed chain loud', (statusCode) => {
     expect(hasTransientNetworkCause(buildRealWrappedFeedError(statusCode))).toBe(false);
+  });
+});
+
+/**
+ * DESKTOP-R. The five names are LinuxUpdater.determineSudoCommand's four PATH
+ * probes plus its sudo fallback, and the message is BaseUpdater.spawnSyncLog's
+ * template verbatim. The upstream-format guard at the bottom of this file is
+ * what keeps both of those true.
+ */
+const ELEVATION_FRONT_ENDS = ['pkexec', 'gksudo', 'kdesudo', 'beesu', 'sudo'];
+
+describe('isElevationDeniedError', () => {
+  describe('A denied elevation prompt is suppressed', () => {
+    it.each(ELEVATION_FRONT_ENDS)('catches a dismissed dialog under %s (126)', (frontEnd) => {
+      expect(isElevationDeniedError(
+        makeError({ message: `Command ${frontEnd} exited with code 126` }),
+      )).toBe(true);
+    });
+
+    it.each(ELEVATION_FRONT_ENDS)('catches a failed authentication under %s (127)', (frontEnd) => {
+      expect(isElevationDeniedError(
+        makeError({ message: `Command ${frontEnd} exited with code 127` }),
+      )).toBe(true);
+    });
+
+    it('catches the exact DESKTOP-R message', () => {
+      // Copied from the Sentry event, not reconstructed.
+      expect(isElevationDeniedError(
+        makeError({ message: 'Command pkexec exited with code 126' }),
+      )).toBe(true);
+    });
+
+    it('needs no code property, because the real error has none', () => {
+      const real = makeError({ message: 'Command pkexec exited with code 126' });
+      expect((real as NodeJS.ErrnoException).code).toBeUndefined();
+      expect(isElevationDeniedError(real)).toBe(true);
+    });
+  });
+
+  describe('A real install failure stays loud', () => {
+    // The case that actually reaches production alongside DESKTOP-R: pkexec
+    // authorized fine and the package manager underneath it failed, so pkexec
+    // handed back that program's own exit code.
+    it.each([1, 2, 100])(
+      'reports a package manager failure propagated through pkexec (code %s)',
+      (exitCode) => {
+        expect(isElevationDeniedError(
+          makeError({ message: `Command pkexec exited with code ${exitCode}` }),
+        )).toBe(false);
+      },
+    );
+
+    // Running as root skips elevation entirely and passes the package manager
+    // itself as the command name.
+    it.each([
+      'Command dpkg exited with code 1',
+      'Command dpkg exited with code 2',
+      'Command apt-get exited with code 100',
+      'Command rpm exited with code 1',
+      'Command pacman exited with code 1',
+    ])('reports %s', (message) => {
+      expect(isElevationDeniedError(makeError({ message }))).toBe(false);
+    });
+
+    it.each([
+      'Neither dpkg nor apt command found. Cannot install .deb package.',
+      'Package manager foo not supported',
+      "No update filepath provided, can't quit and install",
+    ])('reports the other bare-Error message %s', (message) => {
+      expect(isElevationDeniedError(makeError({ message }))).toBe(false);
+    });
+  });
+
+  describe('The deliberate exit-1 gap', () => {
+    // sudo(8) exits 1 for an authentication failure, a permission problem, OR a
+    // command it could not execute, and gksudo/kdesudo exit 1 when cancelled.
+    // Exit 1 is therefore indistinguishable from a command that ran and failed,
+    // so these declines are NOT suppressed. This is a decision, not an
+    // oversight: pkexec is what determineSudoCommand picks on any current
+    // desktop, and it has distinct codes.
+    it.each(['sudo', 'gksudo', 'kdesudo'])(
+      'still reports a cancelled %s prompt, which is indistinguishable at exit 1',
+      (frontEnd) => {
+        expect(isElevationDeniedError(
+          makeError({ message: `Command ${frontEnd} exited with code 1` }),
+        )).toBe(false);
+      },
+    );
+  });
+
+  describe('Boundaries', () => {
+    it.each([
+      'Command pkexec exited with code 1267',
+      'Command pkexec exited with code 12',
+      'Command pkexec exited with code 26',
+      'Command pkexec exited with code 1126',
+    ])('does not match %s', (message) => {
+      expect(isElevationDeniedError(makeError({ message }))).toBe(false);
+    });
+
+    it('does not match a front-end name that merely starts the same way', () => {
+      expect(isElevationDeniedError(
+        makeError({ message: 'Command pkexecutor exited with code 126' }),
+      )).toBe(false);
+    });
+
+    it('tolerates an empty message', () => {
+      expect(isElevationDeniedError(makeError({}))).toBe(false);
+    });
+
+    // The pattern is unanchored on purpose. Nothing wraps this message today,
+    // but a future upstream reword that adds a prefix must not silently disarm
+    // the filter, which is the DESKTOP-F failure mode.
+    it('survives a hypothetical upstream prefix and suffix', () => {
+      expect(isElevationDeniedError(makeError({
+        message: 'Install failed: Command pkexec exited with code 126 (stderr: ...)',
+      }))).toBe(true);
+    });
+  });
+
+  describe('Precedence against the other two classifiers', () => {
+    const desktopR = makeError({ message: 'Command pkexec exited with code 126' });
+
+    it('is the only classifier that claims it, so the Aptabase count survives', () => {
+      // isTransientUpdaterError returns ABOVE trackEvent, so if it matched, the
+      // "how often is an update declined" volume view would silently vanish.
+      expect(isTransientUpdaterError(desktopR)).toBe(false);
+      expect(hasTransientNetworkCause(desktopR)).toBe(false);
+      expect(isElevationDeniedError(desktopR)).toBe(true);
+    });
+
+    it('does not claim a transient feed failure', () => {
+      expect(isElevationDeniedError(makeError({ message: DESKTOP_F_MESSAGE }))).toBe(false);
+    });
+  });
+});
+
+/**
+ * isElevationDeniedError matches a third-party message template by hand, so it
+ * goes quietly blind if electron-updater rewords that template or grows a new
+ * sudo front-end. Every hand-written test above would stay green through either
+ * change. These two read the installed package and fail instead, which is the
+ * same trap the DESKTOP-F fix documented and the reason that fix drives the real
+ * builder-util-runtime above.
+ */
+describe('against the installed electron-updater source', () => {
+  const updaterOutDir = path.dirname(requireFromTest.resolve('electron-updater'));
+
+  it('still throws the message template the pattern matches', () => {
+    const baseUpdaterSource = fs.readFileSync(
+      path.join(updaterOutDir, 'BaseUpdater.js'),
+      'utf-8',
+    );
+    expect(baseUpdaterSource).toContain('`Command ${cmd} exited with code ${status}`');
+  });
+
+  it('still probes exactly the four sudo front-ends the pattern names', () => {
+    const linuxUpdaterSource = fs.readFileSync(
+      path.join(updaterOutDir, 'LinuxUpdater.js'),
+      'utf-8',
+    );
+    const sudoListMatch = /const sudos = \[([^\]]*)\]/.exec(linuxUpdaterSource);
+    expect(sudoListMatch).not.toBeNull();
+
+    // Match each name independently rather than the bracketed literal: a patch
+    // bump can reformat the array with no semantic change, and a literal match
+    // would go red for nothing. The length assertion is what still catches a
+    // fifth front-end being added.
+    const probedFrontEnds = (sudoListMatch as RegExpExecArray)[1]
+      .split(',')
+      .map((entry) => entry.trim().replace(/^["']|["']$/g, ''))
+      .filter((entry) => entry.length > 0);
+    expect(probedFrontEnds).toHaveLength(4);
+    for (const frontEnd of ['gksudo', 'kdesudo', 'pkexec', 'beesu']) {
+      expect(probedFrontEnds).toContain(frontEnd);
+    }
+    // Plus the fallback when none of the four is on PATH. Quote-agnostic for
+    // the same reason as above: the compiled output's quote style is not a
+    // semantic change.
+    expect(linuxUpdaterSource).toMatch(/return ['"]sudo['"]/);
   });
 });
