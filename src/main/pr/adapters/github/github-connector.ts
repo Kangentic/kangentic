@@ -191,6 +191,13 @@ const SCAN_WINDOW = 4096;
 
 export const gitHubPRConnector: PRConnector = {
   name: 'GitHub',
+  // `gh api commits/<sha>/pulls` returns every PR whose head branch CONTAINS
+  // the commit, so ownership is not free here - it is established client-side,
+  // by the `mergeCommitOid` check and `dropCandidatesSharingBaseHistory` below.
+  // The KNOWN GAP documented on that filter (a kept-undetermined lone survivor)
+  // is a narrowing of this claim, not a refutation: it needs an un-fetched base
+  // ref, and it degrades to the `branchHint` rule rather than to no check.
+  verifiesCommitOwnership: true,
 
   /**
    * Any host label containing `github`, not the literal `github.com`, so a
