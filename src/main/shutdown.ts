@@ -247,10 +247,20 @@ function logActiveHandlesAtShutdown(): void {
  * Start the hard failsafe timer. If Electron's normal shutdown hangs (e.g.
  * GPU process won't terminate), this guarantees process termination. On Windows,
  * uses taskkill /T to kill the entire process tree including Chromium children.
+ *
+ * `onFired` runs right before the kill, synchronously, so the caller can leave
+ * a record that this run ended by force rather than cleanly (the run-uptime
+ * exit record read by the next launch's app_launch). It must not throw and
+ * must not do network; a throw is swallowed so the kill always proceeds.
  */
-export function startHardShutdownFailsafe(): void {
+export function startHardShutdownFailsafe(onFired?: () => void): void {
   setTimeout(() => {
     console.error('[SHUTDOWN] hard-failsafe:fired');
+    try {
+      onFired?.();
+    } catch {
+      // The record is best-effort; the kill below is the point.
+    }
     if (process.platform === 'win32') {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports

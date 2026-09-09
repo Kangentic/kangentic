@@ -10,7 +10,14 @@
  *
  * Must be run from inside a .kangentic/worktrees/ directory.
  *
- * Usage: node scripts/worktree-preview.js
+ * Usage: node scripts/worktree-preview.js [--fresh] [--env KEY=VALUE]...
+ *
+ * `--env` forwards a variable into the dev server's environment. It has to
+ * be spliced into the terminal command itself: the launcher hands the command
+ * to wt.exe (or the platform's terminal), and a new tab inherits the terminal
+ * HOST's environment, not this process's, so a variable merely set here never
+ * reaches dev.js. That is how the analytics rig (docs/analytics.md, "Local
+ * verification") silently lost its variables before this flag existed.
  */
 
 const { spawn, execSync } = require('child_process');
@@ -156,11 +163,67 @@ async function findAvailablePort(startPort) {
 // Command builder
 // ---------------------------------------------------------------------------
 
-function buildCommand(worktreeDir, port, { fresh = false } = {}) {
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Characters that would break out of, or be expanded inside, the quoting
+// below: quotes and newlines on every platform, plus cmd's operators and
+// percent expansion. Rejected up front with a clear message rather than
+// producing a command that fails, or runs, in surprising ways.
+const ENV_VALUE_FORBIDDEN = /["'\r\n&|<>^%]/;
+
+/**
+ * Collect every `--env KEY=VALUE` / `--env=KEY=VALUE` from argv, in order.
+ * Throws on a malformed entry so a typo never launches a preview that silently
+ * lacks the variable.
+ */
+function parseEnvArgs(argv) {
+  const env = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    let assignment = null;
+    if (arg === '--env') {
+      assignment = argv[index + 1];
+      index += 1;
+    } else if (arg.startsWith('--env=')) {
+      assignment = arg.slice('--env='.length);
+    } else {
+      continue;
+    }
+    const separator = typeof assignment === 'string' ? assignment.indexOf('=') : -1;
+    if (separator <= 0) {
+      throw new Error(`--env expects KEY=VALUE, got ${JSON.stringify(assignment ?? '')}`);
+    }
+    const key = assignment.slice(0, separator);
+    const value = assignment.slice(separator + 1);
+    if (!ENV_KEY_PATTERN.test(key)) {
+      throw new Error(`--env key ${JSON.stringify(key)} is not a valid environment variable name`);
+    }
+    if (ENV_VALUE_FORBIDDEN.test(value)) {
+      throw new Error(`--env value for ${key} may not contain quotes, newlines, or the characters & | < > ^ %`);
+    }
+    env.push({ key, value });
+  }
+  return env;
+}
+
+/**
+ * The shell prefix that sets `env` for the command that follows it, per
+ * platform: `set "KEY=VALUE"&& ` for cmd.exe (the quoted form keeps trailing
+ * spaces and cmd operators out of the value), `KEY='VALUE' ` for the POSIX
+ * shells the macOS and Linux launchers run.
+ */
+function envPrefix(env, platform = process.platform) {
+  if (env.length === 0) return '';
+  if (platform === 'win32') {
+    return env.map(({ key, value }) => `set "${key}=${value}"&& `).join('');
+  }
+  return env.map(({ key, value }) => `${key}='${value}' `).join('');
+}
+
+function buildCommand(worktreeDir, port, { fresh = false, env = [], platform = process.platform } = {}) {
   const devScript = path.join(worktreeDir, 'scripts', 'dev.js');
   const flags = [`--port=${port}`, '--ephemeral'];
   if (fresh) flags.push('--fresh');
-  return `node "${devScript}" ${flags.join(' ')}`;
+  return `${envPrefix(env, platform)}node "${devScript}" ${flags.join(' ')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +354,11 @@ function stopFilePathFor(worktreeDir, port) {
   return path.join(worktreeDir, '.kangentic', `preview-${port}.stop`);
 }
 
+/** How long --stop waits for dev.js to exit on its own before force-killing.
+ *  Sized for a graceful Electron quit plus the ephemeral cleanup that follows
+ *  it (see the comment at the wait loop). */
+const STOP_GRACE_MS = 45000;
+
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -355,15 +423,22 @@ async function stopPreview(worktreeDir, requestedPort) {
     console.log(`[preview] Port ${port}: requesting graceful stop of PID ${pid}...`);
     fs.writeFileSync(stopFilePathFor(worktreeDir, port), String(Date.now()));
 
-    // dev.js polls for the stop file every 500ms; give it a generous window
-    // to close Vite/Electron and clean up before falling back to force.
-    const deadline = Date.now() + 10000;
+    // dev.js polls for the stop file every 500ms, asks Electron to quit
+    // through its real quit path (up to 8s), and then removes the worktree's
+    // .kangentic/, which holds two full clones of the repo. That removal alone
+    // takes longer than the old 10s window on Windows once Electron has
+    // exited cleanly and nothing holds the files, which is how a graceful stop
+    // read as "no graceful exit" and got force-killed mid-removal, leaving a
+    // half-deleted tree behind. The kill path used to fit in 10s only because
+    // the killed Electron's children kept the clones locked and the removal
+    // failed at once.
+    const deadline = Date.now() + STOP_GRACE_MS;
     while (Date.now() < deadline && isProcessAlive(pid)) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
     if (isProcessAlive(pid)) {
-      console.log(`[preview] Port ${port}: no graceful exit within 10s, force-killing PID ${pid}`);
+      console.log(`[preview] Port ${port}: no graceful exit within ${STOP_GRACE_MS / 1000}s, force-killing PID ${pid}`);
       forceKill(pid);
       removeStalePidFile(worktreeDir, port);
     } else {
@@ -504,6 +579,7 @@ async function main() {
   const isWait = process.argv.includes('--wait');
   const portFlag = process.argv.find((arg) => arg.startsWith('--port='));
   const requestedPort = portFlag ? parseInt(portFlag.split('=')[1], 10) : null;
+  const env = parseEnvArgs(process.argv);
 
   const rootDir = findRootProject(worktreeDir);
   if (!rootDir) {
@@ -543,10 +619,13 @@ async function main() {
   const port = await findAvailablePort(5174);
   removeStalePidFile(worktreeDir, port);
   clearExitRecord(worktreeDir, port);
-  const command = buildCommand(worktreeDir, port, { fresh: isFresh });
+  const command = buildCommand(worktreeDir, port, { fresh: isFresh, env });
 
   console.log(`[preview] Opening preview terminal...`);
   console.log(`[preview]   Port:    ${port}`);
+  if (env.length > 0) {
+    console.log(`[preview]   Env:     ${env.map(({ key, value }) => `${key}=${value}`).join(' ')}`);
+  }
   console.log(`[preview]   Command: ${command}`);
 
   const ok = openTerminal(worktreeDir, command);
@@ -566,7 +645,14 @@ async function main() {
   console.log(`[preview]   Watch:   node scripts/worktree-preview.js --wait --port=${port} ${NO_ACTIVITY_HOLD_FLAG}`);
 }
 
-main().catch((err) => {
-  console.error('Error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+}
+
+// Exported for tests/unit/worktree-preview-env.test.ts, which pins the shell
+// quoting of --env: a quoting bug here is silent (the preview launches, the
+// variable is simply wrong or missing), so it needs a mechanical guard.
+module.exports = { buildCommand, envPrefix, parseEnvArgs };

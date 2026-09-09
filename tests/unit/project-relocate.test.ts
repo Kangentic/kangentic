@@ -174,6 +174,7 @@ function makeContext(options: ContextOptions = {}) {
       kill: vi.fn(async () => { callOrder.push('kill'); }),
     },
     recoveredProjects: new Set<string>(['project-1']),
+    snapshottedProjects: new Set<string>(['project-1']),
     currentProjectId: options.currentProjectId ?? null,
     currentProjectPath: options.currentProjectId ? OLD_PATH : null,
     boardConfigManager: { detach: vi.fn(() => { callOrder.push('detach'); }) },

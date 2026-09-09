@@ -6,7 +6,6 @@ import simpleGit from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { fetchIfStale } from '../../git/fetch-throttle';
-import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
@@ -147,7 +146,9 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       rows: input.rows,
     });
 
-    trackEvent('transient_session_spawn', { agent: adapter.name });
+    // Volume for these sessions comes from session_spawn (isTransient: true),
+    // adoption from this feature; the old transient_session_spawn event was a
+    // third answer to the same question and was removed rather than renamed.
     trackFeatureUsed('command_terminal');
     return { session, branch, checkoutError };
   });

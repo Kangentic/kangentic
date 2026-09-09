@@ -122,6 +122,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
       retrievalService.reconcileEmbedWorker(context);
     }
     context.recoveredProjects.delete(projectId);
+    context.snapshottedProjects.delete(projectId);
     return;
   }
 
@@ -248,6 +249,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     retrievalService.reconcileEmbedWorker(context);
   }
   context.recoveredProjects.delete(projectId);
+  context.snapshottedProjects.delete(projectId);
 
   console.log(`[PROJECT_DELETE] Cleaned up project at ${projectPath}`);
 }
@@ -443,7 +445,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     throw new Error(`Project path does not exist: ${normalized}`);
   }
 
+  let created = false;
   if (!project) {
+    created = true;
     // Create a new project. overrides comes from the Add project dialog
     // (editable name, chosen default agent); falls back to the folder's
     // basename and detection-order resolution when absent (e.g. the
@@ -461,6 +465,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     // Clone settings from the last modified project (or global defaults if none).
     const defaults = getLastProjectOverrides(context.projectRepo, context.configManager, normalized);
     context.configManager.saveProjectOverrides(normalized, defaults);
+    // Adding a folder from the sidebar or the Welcome screen lands here, not
+    // in PROJECT_CREATE, so without these two calls the most common way to
+    // create a project counted nothing and the onboarding funnel's first
+    // step under-reported.
+    trackEvent('project_create');
+    trackMilestone('first_project');
   }
 
   // Skip full recovery on warm reopens: any project we've already recovered
@@ -495,6 +505,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // Enable transcript capture for cross-agent handoffs
   context.sessionManager.setTranscriptRepository(new TranscriptRepository(getProjectDb(project.id)));
 
+  // A project seeded milliseconds ago reads as a constant (the default lanes,
+  // no tasks, no profiles) and project_create already counts it, so its first
+  // real view snapshots instead: nothing is marked, so a later switch back or
+  // the next launch's auto-open sends it.
+  if (!created) scheduleBoardSnapshot(context, project);
+
   if (!isWarmReopen) {
     // Stays synchronous: guards a rapid double-open from re-running recovery.
     context.recoveredProjects.add(project.id);
@@ -525,6 +541,50 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   }
 
   return project;
+}
+
+/**
+ * Fire the board_snapshot analytics event once per project per app run, the
+ * first time the user VIEWS that project: the boot auto-open (openProjectByPath)
+ * or a sidebar switch (PROJECT_OPEN). Keyed on its own set rather than
+ * `recoveredProjects`, because recovery is also marked by the background
+ * activation of every other project: keyed on it, the boot project never
+ * snapshotted (already warm from openProjectByPath by the time the renderer
+ * could open it) and a later sidebar switch never did either (already warm
+ * from activateAllProjects), which is why the event sat far below app_launch.
+ * activateAllProjects deliberately does not call this: background activation
+ * is not the user looking at a board, and snapshotting every registered
+ * project per launch would cost more budget than the signal is worth.
+ *
+ * Counts only: names and content never leave the machine, and the task count
+ * is bucketed so no exact figure is sent. Deferred off the open path. The id
+ * stays marked when the read fails, so a broken DB is tried once per run and
+ * warns rather than being retried, silently, on every switch.
+ */
+function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
+  if (context.snapshottedProjects.has(project.id)) return;
+  context.snapshottedProjects.add(project.id);
+  setImmediate(() => {
+    if (isShuttingDown()) return;
+    runWithProjectLogContext(project.name, () => {
+      try {
+        const db = getProjectDb(project.id);
+        const lanes = new SwimlaneRepository(db).list();
+        const defaultNames = new Set<string>(DEFAULT_SWIMLANES.map((lane) => lane.name));
+        const taskCount = new TaskRepository(db).countAll();
+        trackEvent('board_snapshot', {
+          columns: lanes.length,
+          customColumns:
+            lanes.length !== DEFAULT_SWIMLANES.length ||
+            lanes.some((lane) => !defaultNames.has(lane.name)),
+          taskBucket: bucketTaskCount(taskCount),
+          profiles: context.boardConfigManager.getBoardProfiles(project.path).length,
+        });
+      } catch (error) {
+        console.warn('[ANALYTICS] board_snapshot failed:', error);
+      }
+    });
+  });
 }
 
 /**
@@ -682,6 +742,10 @@ export function registerProjectHandlers(context: IpcContext): void {
     // finalize hooks attached here on first open.
     retrievalService.startForProject(context, project);
 
+    // Before the recovery block so its deferred read is queued ahead of the
+    // recovery one; independent of isWarmReopen (see scheduleBoardSnapshot).
+    scheduleBoardSnapshot(context, project);
+
     if (!isWarmReopen) {
       // Stays synchronous: guards a rapid double-open from re-running recovery.
       context.recoveredProjects.add(id);
@@ -700,26 +764,6 @@ export function registerProjectHandlers(context: IpcContext): void {
           const taskRepo = new TaskRepository(db);
           const sessionRepo = new SessionRepository(db);
           const swimlaneRepo = new SwimlaneRepository(db);
-
-          // Analytics: one board-shape snapshot per cold open (the
-          // recoveredProjects guard above makes this once per project per app
-          // run). Counts only - names and content never leave the machine;
-          // the task count is bucketed so no exact figure is sent.
-          try {
-            const lanes = swimlaneRepo.list();
-            const defaultNames = new Set<string>(DEFAULT_SWIMLANES.map((lane) => lane.name));
-            const taskCount = taskRepo.countAll();
-            trackEvent('board_snapshot', {
-              columns: lanes.length,
-              customColumns:
-                lanes.length !== DEFAULT_SWIMLANES.length ||
-                lanes.some((lane) => !defaultNames.has(lane.name)),
-              taskBucket: bucketTaskCount(taskCount),
-              profiles: context.boardConfigManager.getBoardProfiles(project.path).length,
-            });
-          } catch {
-            // Snapshot must never interfere with recovery below
-          }
 
           // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
           // completes before session recovery reads the DB; the slow

@@ -16,8 +16,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  *   - a crash burst CANNOT happen (backoff blocks the immediate respawn),
  *   - the latch is not permanent (decay), and
  *   - exactly ONE Sentry report is produced per latch, not one per crash,
- *     while EVERY crash still increments the Aptabase counter. That split is
- *     what keeps the volume signal without an un-actionable issue.
+ *     while Aptabase sees at most TWO events per service per app run: the
+ *     first crash (installs affected) and the latch (installs whose subsystem
+ *     gave up). It used to tick on every crash, which read as "71 crashes a
+ *     day" when it was a handful of installs looping.
  */
 
 const { mockTrackEvent, mockReportHandledError } = vi.hoisted(() => ({
@@ -30,7 +32,10 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: mockReportHandledError,
 }));
 
-import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+import {
+  UtilityRestartPolicy,
+  resetUtilityCrashTelemetryForTests,
+} from '../../src/main/utility-process/restart-policy';
 
 /** A controllable clock, so no test depends on wall time. */
 function makeClock(start = 1_000) {
@@ -72,6 +77,8 @@ describe('UtilityRestartPolicy', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The Aptabase phase latches are per RUN (module scope), not per policy.
+    resetUtilityCrashTelemetryForTests();
     // Every crash logs its stderr; keep that out of the test output.
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
@@ -208,21 +215,22 @@ describe('UtilityRestartPolicy', () => {
     });
   });
 
-  describe('telemetry split - counter every crash, issue once per latch', () => {
-    it('counts every crash in Aptabase with the service and exit code', () => {
+  describe('telemetry split - two Aptabase events per service per run, issue once per latch', () => {
+    it('sends the first crash once, with the service, exit code, and phase, and not the second', () => {
       const { policy, clock } = makePolicy();
       policy.recordCrash(9);
       clock.advance(4_000);
       policy.recordCrash(9);
 
-      expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+      expect(mockTrackEvent).toHaveBeenCalledTimes(1);
       expect(mockTrackEvent).toHaveBeenCalledWith('utility_worker_crashed', {
         service: 'kangentic-test-worker',
         exitCode: 9,
+        phase: 'first',
       });
     });
 
-    it('reports a recoverable crash to the counter but NOT to Sentry', () => {
+    it('reports a recoverable crash to Aptabase but NOT to Sentry', () => {
       const { policy } = makePolicy();
       policy.recordCrash(1);
 
@@ -233,7 +241,7 @@ describe('UtilityRestartPolicy', () => {
       expect(mockReportHandledError).not.toHaveBeenCalled();
     });
 
-    it('reports exactly once at the latch, naming the service and exit code', () => {
+    it('reports exactly once at the latch, naming the service and exit code, and sends the latched phase at the same moment', () => {
       const { policy, clock } = makePolicy();
       for (let index = 0; index < 3; index++) {
         policy.recordCrash(137);
@@ -252,16 +260,26 @@ describe('UtilityRestartPolicy', () => {
         exitCode: '137',
         crashCount: '3',
       });
+
+      // The Aptabase side: `first` on crash one, `latched` on crash three, and
+      // nothing for crash two. The crash count is not on the event because it
+      // is a constant per phase; the Sentry tag above carries it.
+      expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+      expect(mockTrackEvent).toHaveBeenLastCalledWith('utility_worker_crashed', {
+        service: 'kangentic-test-worker',
+        exitCode: 137,
+        phase: 'latched',
+      });
     });
 
-    it('does not re-report on further crashes after the latch', () => {
+    it('does not re-report on further crashes after the latch, on either surface', () => {
       const { policy, clock } = makePolicy();
       for (let index = 0; index < 6; index++) {
         policy.recordCrash(1);
         clock.advance(4_000);
       }
       expect(mockReportHandledError).toHaveBeenCalledTimes(1);
-      expect(mockTrackEvent).toHaveBeenCalledTimes(6);
+      expect(mockTrackEvent).toHaveBeenCalledTimes(2);
     });
 
     it('records a fork failure (no exit code) without throwing', () => {
@@ -270,6 +288,46 @@ describe('UtilityRestartPolicy', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith('utility_worker_crashed', {
         service: 'kangentic-test-worker',
         exitCode: -1,
+        phase: 'first',
+      });
+    });
+
+    it('a decay re-arms the Sentry latch but never the Aptabase phases: the cap is per run, not per window', () => {
+      // Without this, a worker that crashes once every ten minutes would send
+      // a "first crash" every ten minutes, which is the tick the reshape
+      // exists to remove.
+      const { policy, clock } = makePolicy({ decayMs: 300_000 });
+      for (let index = 0; index < 3; index++) {
+        policy.recordCrash(1);
+        clock.advance(4_000);
+      }
+      clock.advance(300_000);
+      expect(policy.exhausted).toBe(false);
+      for (let index = 0; index < 3; index++) {
+        policy.recordCrash(1);
+        clock.advance(4_000);
+      }
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(2);
+      expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+    });
+
+    it('two policy instances for the same service share the per-run cap; a different service does not', () => {
+      // The embed client builds a fresh policy on every model change and
+      // project switch, so a per-instance latch would re-fire on each one.
+      const first = makePolicy();
+      first.policy.recordCrash(1);
+      const second = makePolicy();
+      second.policy.recordCrash(1);
+      expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+
+      const other = new UtilityRestartPolicy({ service: 'kangentic-other-worker', maxCrashes: 3 });
+      other.recordCrash(1);
+      expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+      expect(mockTrackEvent).toHaveBeenLastCalledWith('utility_worker_crashed', {
+        service: 'kangentic-other-worker',
+        exitCode: 1,
+        phase: 'first',
       });
     });
   });

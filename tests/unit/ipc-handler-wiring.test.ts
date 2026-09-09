@@ -244,6 +244,7 @@ function makeContext(overrides: Partial<{
       submitKeystrokes: vi.fn(),
     },
     recoveredProjects: new Set<string>(),
+    snapshottedProjects: new Set<string>(),
     mcpServerHandle: null,
     projectRepo: {
       list: vi.fn(() => []),

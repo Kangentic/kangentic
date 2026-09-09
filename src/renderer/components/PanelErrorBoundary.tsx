@@ -55,7 +55,6 @@ export class PanelErrorBoundary extends React.Component<
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'panel',
       panel: this.props.label,
-      componentStack: info.componentStack ?? undefined,
     });
   }
 

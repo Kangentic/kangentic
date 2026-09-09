@@ -227,6 +227,20 @@ async function handleRequest(
     });
   }
 
+  // Graceful quit for tooling. scripts/dev.js posts here when a stop file asks
+  // it to shut a preview down, so Electron runs its real quit path (before-quit,
+  // the synchronous cleanup, the PTY exit-callback drain) instead of being
+  // force-killed with its PTY children orphaned, its session records left
+  // 'running', and the run reading as abrupt on the next launch. No CDP needed,
+  // so it sits above the attach gate. Responds first and quits on the next
+  // tick, so the caller has its acknowledgement before before-quit tears this
+  // server down.
+  if (route === 'POST /quit') {
+    respondJson(response, 200, { ok: true });
+    setImmediate(() => app.quit());
+    return;
+  }
+
   // CDP-backed endpoints from this point on need a main window AND an
   // attached debugger. The debugger can be externally detached at any
   // time (most commonly: the user opened DevTools, which steals the

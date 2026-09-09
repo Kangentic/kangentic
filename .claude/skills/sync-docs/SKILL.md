@@ -31,7 +31,7 @@ Each doc file and the source files that are its authority:
 | `mobile-bridge.md` | `src/main/mobile-bridge/**` (identity, pairing, capability router, transport, push), `packages/protocol/src/**` |
 | `adapter-session-history.md` | `src/main/agent/adapters/*/session-history-parser.ts`, `src/main/pty/readers/session-history-reader.ts`, `src/main/agent/handoff/session-history-reference.ts` |
 | `transcript-pipeline-audit.md` | `src/main/agent/transcript-service.ts`, `src/main/agent/transcript-cache.ts`, `src/main/agent/shared/transcript-truncation.ts`, `src/main/agent/adapters/*/transcript-parser.ts`, `src/shared/transcript-format.ts` |
-| `analytics.md` | `src/main/analytics/analytics.ts`, `src/main/agent/commands/analytics-commands.ts` |
+| `analytics.md` | `src/main/analytics/analytics.ts`, `src/main/analytics/usage.ts` (ANALYTICS_FEATURES, ONBOARDING_MILESTONES), `src/main/analytics/run-uptime.ts`, `src/main/analytics/settings-snapshot.ts` (SETTINGS_SNAPSHOT_ALLOWLIST) |
 | `deployment.md` | `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js`, `src/main/updater.ts`, `src/main/updater-release-notes.ts` |
 | `installation.md` | `packages/launcher/**`, `electron-builder.yml`, `README.md` |
 | `release-checklist.md` | `.claude/skills/release/SKILL.md`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js` |
@@ -300,6 +300,9 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 
 - `src/main/ipc/handlers/**`
   WHY: handler files register IPC channels, emit event payloads, and define handler-level behavior. A new handler that registers a channel without changing ipc-channels.ts (e.g., event-only ipcMain.on) would slip through the channel-constants anchor. Currently 17 files; glob avoids list-rot.
+
+- `src/main/analytics/**`
+  WHY: analytics.md tabulates every event name, every property, and the closed vocabularies behind them (usage.ts's ANALYTICS_FEATURES and ONBOARDING_MILESTONES, settings-snapshot.ts's SETTINGS_SNAPSHOT_ALLOWLIST, run-uptime.ts's exit kinds and uptime buckets). An added event or a renamed property is a docs-affecting event with no other mechanical check. The allowlist in particular is a privacy control the doc enumerates for users, so drift there is worse than stale: user-guide.md and configuration.md's Privacy paragraphs describe the same collection.
 
 If any anchor source files appear in the changed-file list:
 

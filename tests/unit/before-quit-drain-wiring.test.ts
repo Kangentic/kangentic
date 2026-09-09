@@ -40,7 +40,11 @@ const INDEX_SOURCE = fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 
  * because the text is not there.
  *
  * Ignores brace characters inside single, double, or template-literal quotes
- * so a string containing a brace cannot desynchronize the depth count.
+ * so a string containing a brace cannot desynchronize the depth count, and
+ * skips `//` and `/* ... *\/` comments entirely: an apostrophe in a comment
+ * ("Electron's") would otherwise open a phantom string that never closes, and
+ * the scan would run off the end of the file reporting unbalanced braces for
+ * a region whose braces are fine.
  */
 function sliceBalancedBlock(source: string, searchFromIndex: number): string {
   const openBraceIndex = source.indexOf('{', searchFromIndex);
@@ -59,6 +63,20 @@ function sliceBalancedBlock(source: string, searchFromIndex: number): string {
       } else if (character === activeQuoteCharacter) {
         activeQuoteCharacter = null;
       }
+      continue;
+    }
+
+    if (character === '/' && source[characterIndex + 1] === '/') {
+      const lineEnd = source.indexOf('\n', characterIndex);
+      if (lineEnd === -1) break;
+      characterIndex = lineEnd;
+      continue;
+    }
+
+    if (character === '/' && source[characterIndex + 1] === '*') {
+      const commentEnd = source.indexOf('*/', characterIndex + 2);
+      if (commentEnd === -1) break;
+      characterIndex = commentEnd + 1;
       continue;
     }
 
@@ -431,5 +449,35 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
   it('keeps the signal path synchronous (SIGINT/SIGTERM exit without running the loop)', () => {
     const signalBlock = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM'] as const)"), INDEX_SOURCE.length);
     expect(signalBlock).toContain('if (performShutdown()) process.exit(0);');
+  });
+
+  /**
+   * Rule 3 of synchronous-shutdown.md, pinned mechanically: the only analytics
+   * in the quit path is a synchronous disk write. app_close used to be fired
+   * from here and landed on nothing, because every route exits before the
+   * SDK's request can complete; the next launch's app_launch reports the run
+   * instead, from the record this write leaves.
+   */
+  it('records the run exit on disk in performShutdown and sends nothing over the network from there', () => {
+    const start = INDEX_SOURCE.indexOf('function performShutdown(');
+    expect(start, 'performShutdown must exist in src/main/index.ts').toBeGreaterThan(-1);
+    // The body carries an apostrophe inside a comment; the balanced slice
+    // skips comments, so that cannot desynchronize it.
+    const region = sliceBalancedBlock(INDEX_SOURCE, start);
+    expect(
+      region,
+      'the region must span the whole body, proven by reaching its last statement',
+    ).toContain('return true;');
+    expect(
+      region,
+      'the clean exit must be recorded synchronously before the cleanup, so the next launch can report this run',
+    ).toContain("recordRunExit('clean')");
+    expect(
+      region,
+      'the hard failsafe must overwrite the clean record, or a force-killed quit reports as clean',
+    ).toContain("startHardShutdownFailsafe(() => recordRunExit('failsafe'))");
+    expect(region, 'no event may be fired from the quit path: it cannot land').not.toContain('trackEvent(');
+    expect(region, 'no heartbeat may be fired from the quit path: it cannot land').not.toContain('trackHeartbeat(');
+    expect(region, 'performShutdown must stay synchronous').not.toContain('await ');
   });
 });
