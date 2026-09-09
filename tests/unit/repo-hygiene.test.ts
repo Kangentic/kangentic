@@ -145,8 +145,10 @@ describe('.github/workflows/codeql.yml', () => {
    * push, and this repo pushes topic branches that already have an open PR as a
    * matter of course. Such a push runs ci.yml's 21-job PR gate and these two
    * Analyze jobs at the same time, so deleting one line here costs exactly what
-   * adding a `pull_request:` trigger costs. The guard above stays green through
-   * it, and so does the one below: `push:` is still present either way.
+   * adding a `pull_request:` trigger costs. Both of the other guards stay green
+   * through that deletion: no `pull_request:` trigger appears, and `push:`
+   * itself is still there. Deleting the whole trigger is a different edit, and
+   * the guard below is the one that catches that.
    */
   it('scopes the push trigger to main', () => {
     const lines = stripComments(readFileSync(codeqlPath, 'utf8'));
