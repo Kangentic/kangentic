@@ -32,19 +32,29 @@
  *      open). The route's own request-shape validation and 200 envelope are
  *      covered separately in cookie-jar-routes.test.ts; these two tests pin
  *      only the dispatcher-level wiring around it.
+ *   5. POST /quit - reachable with no main window (same no-CDP-needed shape as
+ *      cookie-jar-list above) and actually calls app.quit(). The route's other
+ *      invariant, that it responds BEFORE quitting (so scripts/dev.js gets its
+ *      acknowledgement before before-quit tears this server down), is a
+ *      source-order guarantee a real HTTP round trip cannot assert without
+ *      racing two independent socket completions against each other, so it is
+ *      pinned as a static source check instead - see that test's own comment.
  *
- * Mocks `electron` because inspection-server.ts imports `app.getVersion()`.
- * The `attachDebugger` function in cdp.ts also calls `debugger.attach()`,
- * `debugger.on()`, and fires `Console.enable` / `DOM.enable` etc. via
- * `sendCommand` - all silenced by the stub.
+ * Mocks `electron` because inspection-server.ts imports `app.getVersion()`
+ * and (for POST /quit) `app.quit()`. The `attachDebugger` function in cdp.ts
+ * also calls `debugger.attach()`, `debugger.on()`, and fires `Console.enable`
+ * / `DOM.enable` etc. via `sendCommand` - all silenced by the stub.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
+import * as path from 'node:path';
 
 // electron mock must come before any devtools imports that transitively
-// pull in electron (app.getVersion(), type BrowserWindow, etc.)
+// pull in electron (app.getVersion(), type BrowserWindow, etc.). `quit` is a
+// spy so the POST /quit tests below can assert it is (or is not yet) called.
 vi.mock('electron', () => ({
-  app: { getVersion: vi.fn(() => '0.0.0') },
+  app: { getVersion: vi.fn(() => '0.0.0'), quit: vi.fn() },
 }));
 
 import {
@@ -52,7 +62,7 @@ import {
   stopInspectionServer,
 } from '../../src/devtools/main/inspection-server';
 import { attachDebugger } from '../../src/devtools/main/cdp';
-import type { BrowserWindow } from 'electron';
+import { app, type BrowserWindow } from 'electron';
 
 // ---------------------------------------------------------------------------
 // Helpers: fake debugger + fake BrowserWindow
@@ -613,5 +623,118 @@ describe('inspection-server handler behaviors', () => {
         serverPort = restoredPort!;
       }
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // 5. POST /quit - reachable with no CDP, actually calls app.quit()
+  // -------------------------------------------------------------------------
+
+  describe('POST /quit', () => {
+    afterEach(() => {
+      vi.mocked(app.quit).mockClear();
+    });
+
+    it('responds 200 ok:true and calls app.quit()', async () => {
+      const response = await httpRequest(serverPort, { method: 'POST', path: '/quit' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+      // app.quit() runs on the next tick (setImmediate) after the response is
+      // sent, so this polls rather than asserting immediately after the
+      // response resolves - the STRICT ordering guarantee (respond, THEN
+      // quit) is a source-order property, not something a real HTTP round
+      // trip can assert without racing two independent socket completions
+      // against each other; it is pinned separately below as a static check.
+      await vi.waitFor(() => {
+        expect(app.quit).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('is reachable with no main window at all, because it needs no CDP round trip and sits above the attach gate', async () => {
+      stopInspectionServer();
+      let noWindowPort: number | null = null;
+      try {
+        noWindowPort = await startInspectionServer({
+          getMainWindow: () => null,
+          getEvalEnabled: () => true,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        expect(noWindowPort).not.toBeNull();
+
+        // A 503 no-main-window here would mean the route had fallen through to
+        // the CDP-attached gate below it - the exact regression that would
+        // make a --stop's graceful quit fall back to a force-kill whenever the
+        // main window is not ready yet.
+        const response = await httpRequest(noWindowPort!, { method: 'POST', path: '/quit' });
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ ok: true });
+
+        await vi.waitFor(() => {
+          expect(app.quit).toHaveBeenCalledTimes(1);
+        }, { timeout: 2000 });
+      } finally {
+        stopInspectionServer();
+        const restoredPort = await startInspectionServer({
+          getMainWindow: () => fakeWindow,
+          getEvalEnabled: () => true,
+          getSessionManager: () => null,
+          getProjectRoot: () => null,
+          getIpcContext: () => null,
+          getProjectId: () => null,
+        });
+        serverPort = restoredPort!;
+      }
+    });
+  });
+});
+
+/**
+ * POST /quit's "respond before quitting" guarantee (so scripts/dev.js's
+ * graceful-stop request gets its HTTP acknowledgement before before-quit
+ * tears this same server down) is a source-ORDER property between two
+ * statements in the same synchronous block. A real HTTP round trip cannot
+ * assert it without racing the client's socket-read completion against the
+ * server's own setImmediate callback - two independent event-loop
+ * completions with no causal ordering between them, which is exactly the
+ * kind of racy assertion that must not ship. `handleRequest` is not exported
+ * (only reachable through the real server started above), so this is a
+ * static source-text check instead, mirroring the established pattern in
+ * tests/unit/before-quit-drain-wiring.test.ts.
+ */
+describe('POST /quit: respondJson runs before setImmediate(app.quit)', () => {
+  const REPO_ROOT = path.resolve(__dirname, '../..');
+  const INSPECTION_SERVER_SOURCE = fs.readFileSync(
+    path.join(REPO_ROOT, 'src/devtools/main/inspection-server.ts'),
+    'utf-8',
+  );
+
+  it('the route responds immediately before scheduling app.quit()', () => {
+    // Both substrings are unique in the file (checked by these very
+    // assertions): a second `setImmediate(() => app.quit())` elsewhere, or
+    // the two statements landing out of order, both fail here.
+    const quitScheduleIndex = INSPECTION_SERVER_SOURCE.indexOf('setImmediate(() => app.quit());');
+    expect(quitScheduleIndex, 'setImmediate(() => app.quit()) must exist exactly as written').toBeGreaterThan(-1);
+
+    const respondBeforeQuitPattern = /respondJson\(response, 200, \{ ok: true \}\);\s*\n\s*setImmediate\(\(\) => app\.quit\(\)\);/;
+    expect(
+      respondBeforeQuitPattern.test(INSPECTION_SERVER_SOURCE),
+      'the /quit route must call respondJson(...) on the line immediately before setImmediate(() => app.quit()), '
+        + 'so the caller has its acknowledgement before before-quit tears this server down',
+    ).toBe(true);
+  });
+
+  it('the /quit route is registered before the CDP-attached gate, so it never needs a live debugger', () => {
+    const quitRouteIndex = INSPECTION_SERVER_SOURCE.indexOf("if (route === 'POST /quit')");
+    const cdpGateCommentIndex = INSPECTION_SERVER_SOURCE.indexOf('CDP-backed endpoints from this point on');
+    expect(quitRouteIndex, "the literal \"if (route === 'POST /quit')\" must exist").toBeGreaterThan(-1);
+    expect(cdpGateCommentIndex, 'the CDP-attached gate comment must exist').toBeGreaterThan(-1);
+    expect(
+      quitRouteIndex,
+      'POST /quit must be dispatched before the CDP-attached gate, or a --stop request would 503 '
+        + 'whenever no debugger is attached (e.g. DevTools closed, or before the main window exists)',
+    ).toBeLessThan(cdpGateCommentIndex);
   });
 });

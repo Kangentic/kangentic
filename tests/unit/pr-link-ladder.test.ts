@@ -53,6 +53,12 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: ()
 const recordPushSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/diagnostics/ipc-recorder', () => ({ recordPush: recordPushSpy }));
 
+// The pull_request adoption signal, so a describe block below can assert it
+// fires on a real link only, not on the automatic sweeps this file already
+// exercises (a cleared stale link, or an unchanged re-resolve).
+const trackFeatureUsedSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/usage', () => ({ trackFeatureUsed: trackFeatureUsedSpy }));
+
 vi.mock('../../src/main/pr/pr-registry', async () => {
   // Re-export the REAL error classes rather than redeclaring them. The ladder
   // now defers a degrade at one tier so later tiers still run, and that
@@ -119,6 +125,7 @@ beforeEach(() => {
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
   repos.value = {}; // no state leaks into the ladder tests, which never touch getProjectRepos
   recordPushSpy.mockClear(); // module-scope spy: a stale call would satisfy the wrong test
+  trackFeatureUsedSpy.mockClear();
 });
 
 describe('linkPRForTask confidence ladder', () => {
@@ -614,5 +621,45 @@ describe('linkPR (IPC wrapper): onLinked notifies quietly and is recorded', () =
 
     expect(send).not.toHaveBeenCalled();
     expect(recordPushSpy).toHaveBeenCalledWith(IPC.TASK_PR_LINK_CHANGED, ['proj-1'], { dropped: true });
+  });
+});
+
+/**
+ * The `pull_request` adoption signal fires only on a REAL link (`prChanged &&
+ * next`), never on the automatic sweeps that return early with no match, and
+ * never on the stale-link clear that runs in the same function. Each case
+ * below reuses a scenario already proven above by its status/write
+ * assertions, so this only has to add the analytics assertion.
+ */
+describe('linkPRForTask: pull_request adoption signal fires on a real link only', () => {
+  it('fires once when a PR is newly linked', async () => {
+    conn.byNumber = resolved(10);
+    const task = makeTask({ pr_number: 99, head_sha: 'sha' });
+
+    const result = await linkPRForTask(task.id, depsFor(task));
+
+    expect(result.status).toBe('linked');
+    expect(trackFeatureUsedSpy).toHaveBeenCalledTimes(1);
+    expect(trackFeatureUsedSpy).toHaveBeenCalledWith('pull_request');
+  });
+
+  it('never fires when a stale link is cleared (the sweep noticing its own housekeeping)', async () => {
+    conn.byNumber = null;
+    const task = makeTask({ pr_number: 99, pr_url: 'u99', pr_state: 'merged', worktree_path: null, head_sha: null, branch_name: null });
+
+    const result = await linkPRForTask(task.id, depsFor(task));
+
+    expect(result.status).toBe('not-found');
+    expect(trackFeatureUsedSpy).not.toHaveBeenCalled();
+  });
+
+  it('never fires when the resolved PR is already current (no write at all)', async () => {
+    conn.byNumber = resolved(50, 'open');
+    const task = makeTask({ pr_number: 50, pr_url: 'u50', pr_state: 'open', worktree_path: null });
+
+    const result = await linkPRForTask(task.id, depsFor(task));
+
+    expect(result.status).toBe('unchanged');
+    expect(trackFeatureUsedSpy).not.toHaveBeenCalled();
   });
 });
