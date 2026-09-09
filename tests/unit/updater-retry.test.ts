@@ -14,10 +14,15 @@
  *          counting, so its gate sits BETWEEN the two reporters. Moving that gate above
  *          trackEvent would delete the volume signal; moving it below reportHandledError
  *          would do nothing at all. Both regressions are pinned here.
- *       4. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
- *          called, gated identically (reportHandledError sits after the same two early
- *          returns, so a regression that moves it above either guard would page Sentry
- *          for a transient or in-flight-retry error)
+ *       4. isElevationDeniedError - trackEvent YES, reportHandledError NO. The same split as
+ *          branch 3, for the Linux install path: the user dismissed the polkit prompt
+ *          (DESKTOP-R), which is their own choice rather than a defect, so it is counted but
+ *          never filed. Its gate sits directly below branch 3's, between the two reporters,
+ *          and the same two position regressions are pinned here.
+ *       5. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
+ *          called, gated identically (reportHandledError sits after the same three early
+ *          returns, so a regression that moves it above any guard would page Sentry
+ *          for a transient, declined, or in-flight-retry error)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -336,6 +341,48 @@ describe("autoUpdater.on('error') listener", () => {
     );
 
     consoleLogSpy.mockRestore();
+  });
+
+  it('counts a denied elevation prompt but does NOT report it to Sentry', () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mocks.sanitizeErrorMessage.mockReturnValue('sanitized elevation failure');
+
+    const errorListener = getRegisteredListener('error');
+    // DESKTOP-R's shape, verbatim from the Sentry event. BaseUpdater.spawnSyncLog
+    // throws a BARE Error here, so no code argument: the predicate has nothing
+    // but the message to work with.
+    const declined = makeError('Command pkexec exited with code 126');
+    errorListener(declined);
+
+    // The volume view survives: "how often is a Linux update declined".
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.trackEvent).toHaveBeenCalledWith('app_error', {
+      source: 'updater',
+      message: 'sanitized elevation failure',
+    });
+    // But it never becomes an issue - the user dismissed the polkit prompt.
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[UPDATER] Counting but not reporting a denied elevation prompt:'),
+      expect.any(String),
+    );
+
+    consoleLogSpy.mockRestore();
+  });
+
+  it('still reports an install failure that came back through the same front-end', () => {
+    const errorListener = getRegisteredListener('error');
+    // Same front-end name, different exit code: pkexec authorized fine and the
+    // package manager underneath it failed, so pkexec handed back that
+    // program's own code. The exit-code restriction is what has to do the work
+    // here, since the name alone matches. This is the case the gate must NOT
+    // swallow.
+    const installFailure = makeError('Command pkexec exited with code 1');
+    errorListener(installFailure);
+
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' });
   });
 
   it('still reports a feed error with no transient cause (a real broken feed)', () => {

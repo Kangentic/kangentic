@@ -268,6 +268,28 @@ in one Sentry org, one triage surface.
   message, so the check reads the message, and requires BOTH a feed wrapper (by code or by the
   literal phrase the wrapper writes) and a transient shape in the text. A genuinely malformed feed
   carries no transient shape and stays reportable.
+- **A denied elevation prompt is counted, not reported.** `isElevationDeniedError`
+  (`src/main/updater.ts`) gates the same `reportHandledError` call from the same position, one
+  branch below the one above. A Linux user on a `.deb` or `.rpm` install who presses "Restart to
+  update" and then dismisses the polkit dialog has declined the update, which is their own choice
+  and not a defect. The `app_error` counter still fires, so "how often is a Linux update declined"
+  stays answerable.
+
+  It is a message pattern rather than a `UserConfigurationError` subclass, against that class's own
+  advice, because the throw site is third-party: `BaseUpdater.spawnSyncLog` throws a bare
+  ``Error(`Command ${cmd} exited with code ${status}`)`` with no `code` and no `cause`, so the
+  message is all there is to test. Only exit 126 and 127 are suppressed, and pkexec(1) is what
+  makes those two safe. It exits 126 when the user dismissed the dialog and 127 when the user is
+  not authorized or authentication failed, both meaning the elevated command never ran; when the
+  command does run, pkexec returns that program's own value, and `dpkg` exits 1 or 2 while `rpm`
+  exits 1. A genuine install failure therefore never wears either code.
+
+  One gap is deliberate. `sudo` exits 1 for an authentication failure and `gksudo` / `kdesudo`
+  exit 1 when cancelled, which is indistinguishable from a command that ran and failed, so those
+  declines still report. `LinuxUpdater.determineSudoCommand` picks `pkexec` on any current GNOME
+  or KDE desktop, which is the case that ships. Because the pattern hand-matches a third-party
+  template, `tests/unit/updater-error-classifier.test.ts` reads the installed
+  `electron-updater` and fails if that template is reworded or a fifth sudo front-end appears.
 - **Affected-install counts:** the same anonymous, non-reversible `clientId` documented under
   "Unique Installs" is attached as the Sentry user id, so an issue's Users column means
   "installs affected." It contains no personal data and shares the same kill switches.

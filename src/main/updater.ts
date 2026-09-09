@@ -124,6 +124,48 @@ export function hasTransientNetworkCause(error: Error): boolean {
   return TRANSIENT_CAUSE_PATTERNS.some((pattern) => pattern.test(errorMessage));
 }
 
+/**
+ * The five values electron-updater can pass as the command name when it
+ * elevates: the four LinuxUpdater.determineSudoCommand probes for on PATH,
+ * plus the sudo fallback it returns when none is found.
+ */
+const ELEVATION_DENIED_PATTERN =
+  /\bCommand (?:pkexec|gksudo|kdesudo|beesu|sudo) exited with code 12[67]\b/;
+
+/**
+ * True when a Linux install failed because the elevation prompt was denied,
+ * rather than because the package manager itself failed.
+ *
+ * DebUpdater and RpmUpdater shell out to the system package manager through a
+ * sudo front-end, and BaseUpdater.spawnSyncLog turns any non-zero exit into a
+ * bare `Command <cmd> exited with code <n>` Error. That object carries no
+ * `code` and no `cause`, so its message is the only thing there is to test.
+ * That is also why this is a message pattern rather than a
+ * UserConfigurationError subclass, against that class's own advice to extend
+ * it instead: the throw site is third-party, so there is nothing to extend.
+ *
+ * Only 126 and 127 count, and pkexec(1) is what makes those two safe. It exits
+ * 126 when the user dismissed the authentication dialog, and 127 when the user
+ * is not authorized or authentication failed. Both mean the elevated command
+ * never ran. When it does run, pkexec returns that program's own value, and
+ * dpkg exits 1 or 2 while rpm exits 1, so a genuine install failure never
+ * wears either code and stays reportable.
+ *
+ * Deliberate gap: sudo exits 1 on an authentication failure, and gksudo and
+ * kdesudo exit 1 when cancelled, which is indistinguishable from a command
+ * that ran and failed. Those declines are not suppressed. determineSudoCommand
+ * resolves to pkexec on any current GNOME or KDE desktop, which is the case
+ * that actually ships and the one this was written for.
+ *
+ * The pattern is unanchored for the reason benign-renderer-errors.ts
+ * documents. Nothing is appended to this message today, so anchoring would
+ * work, but the word boundaries survive an upstream reword that adds a prefix
+ * or a suffix while still refusing to match `code 1267`.
+ */
+export function isElevationDeniedError(error: Error): boolean {
+  return ELEVATION_DENIED_PATTERN.test(error.message ?? '');
+}
+
 /** @internal Exported for testing. */
 export async function checkWithRetry(): Promise<void> {
   try {
@@ -292,6 +334,16 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     // reportHandledError. Below the call it would do nothing at all.
     if (hasTransientNetworkCause(error)) {
       console.log('[UPDATER] Counting but not reporting a transient feed failure:',
+        error.message.slice(0, 80));
+      return;
+    }
+    // Same split, same reason, for the Linux install path: the user hit
+    // "Restart to update" and then dismissed the polkit prompt. Counted, so
+    // "how often is an update declined" stays answerable, but never filed,
+    // because the user's own choice is not a defect we can ship a fix for.
+    // This gate's position matters for exactly the reason above.
+    if (isElevationDeniedError(error)) {
+      console.log('[UPDATER] Counting but not reporting a denied elevation prompt:',
         error.message.slice(0, 80));
       return;
     }
