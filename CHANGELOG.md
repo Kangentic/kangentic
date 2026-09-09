@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
-## [v0.40.0] - 2026-09-09
+## [v0.39.1] - 2026-09-09
 
 ### Fixes
 - Ship the embed worker's whole dependency closure unpacked (3071140c)
