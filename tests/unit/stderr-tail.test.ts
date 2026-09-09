@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   StderrTail,
   DEFAULT_STDERR_TAIL_BYTES,
@@ -215,5 +217,54 @@ describe('UTILITY_PROCESS_STDIO', () => {
     expect(stdin).toBe('ignore'); // Electron supports nothing else here.
     const inheritCount = outputs.filter((mode) => mode === 'inherit').length;
     expect(inheritCount === 0 || inheritCount === outputs.length).toBe(true);
+  });
+});
+
+describe('utilityProcess.fork call sites', () => {
+  it('every utilityProcess.fork call passes the shared UTILITY_PROCESS_STDIO constant, never an inline literal', () => {
+    // The value-level tests above (and the ones in embed-client.test.ts /
+    // line-count-client.test.ts) only pin what UTILITY_PROCESS_STDIO equals -
+    // they use deep equality, so a call site that inlines its own literal
+    // array matching today's value would pass them silently. That defeats the
+    // "one place this is decided" invariant this constant exists for: the
+    // NEXT time it changes for a good reason, a duplicated literal is exactly
+    // how DESKTOP-S (or its next variant) comes back at a call site nobody
+    // remembered to update. This scans source text for the identifier itself.
+    const repoRoot = path.resolve(__dirname, '../..');
+    const scanRoot = path.join(repoRoot, 'src/main');
+    const offenders: string[] = [];
+
+    function collectSourceFiles(directory: string): string[] {
+      const files: string[] = [];
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const fullPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...collectSourceFiles(fullPath));
+        } else if (fullPath.endsWith('.ts') && !fullPath.endsWith('.d.ts')) {
+          files.push(fullPath);
+        }
+      }
+      return files;
+    }
+
+    for (const filePath of collectSourceFiles(scanRoot)) {
+      const relPath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+      const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+      lines.forEach((line, index) => {
+        if (!/utilityProcess\.fork\s*\(/.test(line)) return;
+        // A small window past the call line covers a fork() options object
+        // that wraps onto following lines, not just the single-line form both
+        // current call sites use.
+        const window = lines.slice(index, index + 4).join('\n');
+        if (!/stdio:\s*UTILITY_PROCESS_STDIO\b/.test(window)) {
+          offenders.push(`${relPath}:${index + 1}`);
+        }
+      });
+    }
+
+    expect(
+      offenders,
+      `Every utilityProcess.fork call must pass stdio: UTILITY_PROCESS_STDIO, never an inline array - see stderr-tail.ts for why the stdout/stderr slots must never mix inherit with a real handle (DESKTOP-S). Offenders:\n${offenders.join('\n')}`,
+    ).toEqual([]);
   });
 });
