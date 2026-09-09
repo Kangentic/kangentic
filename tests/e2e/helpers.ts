@@ -261,16 +261,46 @@ export async function launchApp(options?: {
     args.push('--no-sandbox');
   }
 
-  // Retry electron.launch() with backoff - Windows can transiently fail
-  // to attach the debugger pipe under resource pressure or AV scans.
+  // Retry the whole launch-AND-first-window sequence with backoff. Two distinct
+  // transients land here and they need the same handling:
+  //
+  //  - electron.launch() THROWS. Windows fails to attach the debugger pipe
+  //    under resource pressure or AV scans. Fast, so retrying is cheap.
+  //  - launch() RESOLVES but the window never arrives. On a loaded CI runner
+  //    (8 electron workers per shard) the app can take longer to open its first
+  //    window than firstWindow() will wait.
+  //
+  // firstWindow() used to sit outside this loop on its Playwright default of
+  // 30s, so the second case got no retry at all: one slow window failed the
+  // whole hook, which is the observed flake (grok-activity-detection, CI run
+  // 34301585231, "Timeout 30000ms exceeded while waiting for event window",
+  // alongside a cluster of 25s close force-kills on the same shard).
+  //
+  // The killAppProcess() on the failure path is belt-and-braces, not the fix:
+  // Playwright does dispose the app at worker teardown, so a launched-but-
+  // windowless process is not orphaned for the whole run (measured - the
+  // janitor reports zero leaks either way). Killing it here just releases the
+  // process now instead of at worker teardown, which is worth doing when the
+  // reason we are retrying at all is that the runner is short on capacity.
+  //
+  // Budget: this runs in beforeAll, which gets the electron project's 45s test
+  // timeout, and the rest of this function can spend ~15s of it on
+  // waitForSelector. So cap each window wait well under the old 30s and stop
+  // retrying once the launch phase has eaten launchPhaseBudgetMs, rather than
+  // letting three long attempts blow the hook's budget by themselves.
   const maxLaunchAttempts = 3;
-  const baseRetryDelayMs = 2000;
+  const baseRetryDelayMs = 1500;
+  const firstWindowTimeoutMs = 12_000;
+  const launchPhaseBudgetMs = 26_000;
+  const launchStartedAt = Date.now();
   let app: ElectronApplication | undefined;
+  let page: Page | undefined;
   let lastLaunchError: Error | undefined;
 
   for (let attempt = 1; attempt <= maxLaunchAttempts; attempt++) {
+    let pendingApp: ElectronApplication | undefined;
     try {
-      app = await electron.launch({
+      pendingApp = await electron.launch({
         args,
         env: {
           ...process.env,
@@ -283,22 +313,34 @@ export async function launchApp(options?: {
         },
         colorScheme: 'dark',
       });
+      page = await pendingApp.firstWindow({ timeout: firstWindowTimeoutMs });
+      app = pendingApp;
       break;
     } catch (error) {
       lastLaunchError = error as Error;
-      if (attempt < maxLaunchAttempts) {
+      // If launch() resolved and firstWindow() was what failed, that process is
+      // still running. Release it now rather than at worker teardown. Skip the
+      // graceful close: an app with no window is the case whose close() hangs.
+      if (pendingApp) await killAppProcess(pendingApp);
+
+      const elapsedMs = Date.now() - launchStartedAt;
+      const budgetLeft = elapsedMs < launchPhaseBudgetMs;
+      if (attempt < maxLaunchAttempts && budgetLeft) {
         const retryDelayMs = baseRetryDelayMs * attempt;
-        console.error(`electron.launch() attempt ${attempt} failed, retrying in ${retryDelayMs}ms: ${lastLaunchError.message}`);
+        console.error(`electron launch attempt ${attempt} failed after ${elapsedMs}ms, retrying in ${retryDelayMs}ms: ${lastLaunchError.message}`);
         await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        continue;
       }
+      if (!budgetLeft) {
+        console.error(`electron launch attempt ${attempt} failed after ${elapsedMs}ms, out of launch-phase budget: ${lastLaunchError.message}`);
+      }
+      break;
     }
   }
 
-  if (!app) {
+  if (!app || !page) {
     throw new Error(`electron.launch() failed after ${maxLaunchAttempts} attempts: ${lastLaunchError?.message}`);
   }
-
-  const page = await app.firstWindow();
 
   // When HEADED=1 (user-invoked), maximize so the user can watch.
   // Otherwise (CI/automated), just let it run at default size.
@@ -386,6 +428,20 @@ export async function closeApp(app: ElectronApplication | undefined): Promise<vo
       `${CLOSE_TIMEOUT_MS}ms - force-killing Electron process`,
   );
 
+  await killAppProcess(app);
+}
+
+/**
+ * Kill the Electron process behind `app` immediately, skipping the graceful
+ * `app.close()` race.
+ *
+ * closeApp() waits CLOSE_TIMEOUT_MS before reaching for this, which is right at
+ * teardown but far too slow inside launchApp's retry loop: an app that never
+ * produced a window is exactly the app whose close() hangs, so waiting the full
+ * race there would spend the hook's whole timeout budget on a process we have
+ * already given up on.
+ */
+async function killAppProcess(app: ElectronApplication): Promise<void> {
   // `process()` THROWS rather than returning undefined once Playwright has torn
   // down its handle, which is exactly what happens when the app died on its own
   // while `app.close()` was still hanging - the case this force-kill path exists
