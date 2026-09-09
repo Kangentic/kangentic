@@ -21,7 +21,7 @@
  */
 
 import type { PRConnector, DetectedPR, ResolvedPR } from './shared/pr-connector';
-import { dispatchResolve, type ResolveKind } from './shared/pr-dispatch';
+import { dispatchResolve, selectOwningConnectors, type ResolveKind } from './shared/pr-dispatch';
 import { readRemoteUrls } from '../git/git-remotes';
 import { gitHubPRConnector } from './adapters/github/github-connector';
 import { azureDevOpsPRConnector } from './adapters/azure-devops/azure-devops-connector';
@@ -107,6 +107,35 @@ export async function resolvePRForBranch(
 /** Resolve a PR by number via the connectors that own this repo's remote. */
 export async function resolvePRByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
   return resolveVia(repoCwd, 'resolveByNumber', (connector) => connector.resolveByNumber!(repoCwd, prNumber));
+}
+
+/**
+ * Can the commit anchor be TRUSTED for this repo? True only when every owning
+ * connector that implements `resolveByCommit` declares
+ * `verifiesCommitOwnership`, so a repo owned by a connector that does not (or
+ * that forgot to say) keeps the commit tier switched off rather than leaning on
+ * the linker's cheap base-relative gate to catch a mislink it cannot see.
+ *
+ * Conservative on every uncertain path: unreadable remotes, no owning
+ * connector, and no commit-capable owner all answer false. NEVER THROWS, unlike
+ * the resolvers - a degrade here would be indistinguishable from "the commit
+ * tier is not available", and the tiers below it must still run. That rests on
+ * `readRemoteUrls` never rejecting and `matchesRemote` being synchronous and
+ * pure; both are pinned in `git-remotes.test.ts` and `pr-connector-gate.test.ts`.
+ *
+ * Call it with the SAME `repoCwd` the commit dispatch will use, and select
+ * owners the same way `dispatchResolve` does for `resolveByCommit`
+ * (`allowSecondaryFallback: true`). A gate that judged a different repo path or
+ * a different owner set would answer about connectors the tier never reaches.
+ * Sharing the path also makes it free: `readRemoteUrls` caches on the resolved
+ * path, so the gate warms the entry `resolvePRByCommit` reads a line later.
+ */
+export async function commitAnchorSelfVerifies(repoCwd: string): Promise<boolean> {
+  const remoteUrls = await readRemoteUrls(repoCwd);
+  if (!remoteUrls) return false;
+  const owners = selectOwningConnectors(connectors, remoteUrls, { allowSecondaryFallback: true });
+  const capable = owners.filter((connector) => connector.resolveByCommit);
+  return capable.length > 0 && capable.every((connector) => connector.verifiesCommitOwnership === true);
 }
 
 /** Resolve the PR associated with a commit SHA via the connectors that own this repo's remote. */
