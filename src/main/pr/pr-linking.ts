@@ -414,9 +414,17 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         // docs/pr-integration.md and is not closable this way, because a task
         // sitting on a long-lived branch's tip is byte-identical in git to one
         // sitting on its own pushed tip.
-        baseBranchIsKnown: task.base_branch != null
-          || task.resolved_base_branch != null
-          || deps.defaultBaseBranch != null,
+        // Falsy, not nullish, so this agrees with `baseBranch` above on what
+        // counts as a base. Under `!= null` an empty string at any layer would
+        // report the base as KNOWN while `baseBranch` itself fell through to the
+        // hardcoded 'main', and Tier 6 would then measure its bail against a
+        // branch nothing here was cut from. Same reason that line is `||`: no
+        // writer produces '' today, and this keeps the two from disagreeing if
+        // one ever does. It does NOT narrow the three layers, which the note
+        // above forbids.
+        baseBranchIsKnown: Boolean(
+          task.base_branch || task.resolved_base_branch || deps.defaultBaseBranch,
+        ),
         // Assigned as Tier 6 discovers it, so a deferred degrade rethrown out of
         // the ladder still leaves the identity here to persist below.
         recordPushedBranch: (branchName) => { discoveredPushedBranch = branchName; },

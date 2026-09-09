@@ -117,6 +117,7 @@ function makeContext(overrides: Partial<CommandContext> = {}): CommandContext {
     onTasksReordered: vi.fn(),
     onSwimlaneUpdated: vi.fn(),
     onSwimlaneDeleted: vi.fn(),
+    getDefaultBaseBranch: vi.fn(() => 'develop'),
     ...overrides,
   };
 }
@@ -522,7 +523,7 @@ describe('link-time PR resolve', () => {
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
-      expect.objectContaining({ force: true, preserveLinkOnNotFound: true }),
+      expect.objectContaining({ force: true, preserveLinkOnNotFound: true, defaultBaseBranch: 'develop' }),
     );
   });
 
@@ -532,7 +533,7 @@ describe('link-time PR resolve', () => {
 
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
-      expect.objectContaining({ force: true, preserveLinkOnNotFound: true }),
+      expect.objectContaining({ force: true, preserveLinkOnNotFound: true, defaultBaseBranch: 'develop' }),
     );
   });
 
@@ -612,6 +613,10 @@ describe('link-time PR resolve', () => {
     expect(mockLinkPRForTask).toHaveBeenCalledWith(
       'task-uuid-1',
       expect.not.objectContaining({ preserveLinkOnNotFound: true }),
+    );
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ defaultBaseBranch: 'develop' }),
     );
   });
 
