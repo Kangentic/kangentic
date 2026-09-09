@@ -116,8 +116,16 @@ itself the signal that the defaults are right.
 `source` discriminates the failure path: `uncaughtException`, `unhandledRejection`,
 `render-process-gone` (extras: `reason`, `exitCode`), `error_boundary` (extras: `boundary`,
 `panel`), `updater`, `pty_spawn` (extras: `shell`, `shellArgs`, `cwdExists`,
-`shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`), and
-`secondInstanceNoWindow`.
+`shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`),
+`secondInstanceNoWindow`, `duplicateCreateWindow`, `createWindowBeforeMcpSettled`,
+`globalDbUnreadable`, and `startupFailure`.
+
+The last four are all startup-path faults in `src/main/index.ts`.
+`duplicateCreateWindow` fires when `createWindow` is called while a live main window already
+exists, and `createWindowBeforeMcpSettled` when it runs before `startMcpHttpServer` settled;
+both report an ordering bug rather than a user-visible failure.
+`globalDbUnreadable` carries the sanitized open error when the global database cannot be read,
+and `startupFailure` the sanitized error from any other throw in the startup body.
 
 `secondInstanceNoWindow` is the window-lifecycle fault: a second launch hit the single-instance
 lock and found the running process alive with no main window, which off macOS means a browser
@@ -202,8 +210,9 @@ in one Sentry org, one triage surface.
     (`filterNativeCrashEvent`) rather than in `ignoreErrors`. On macOS a task's mach exception ports
     are inherited across exec, so a process spawned from a Kangentic PTY writes ITS crashes into our
     Crashpad database and the SDK uploads them as ours. DESKTOP-K was Homebrew ffmpeg's `ffprobe`
-    failing to start, ten fatal events; DESKTOP-N was a Puppeteer `chrome-headless-shell`. Neither
-    loaded a single Kangentic image. This class cannot go in `ignoreErrors`, which is the
+    failing to start, ten fatal events; DESKTOP-N was a Puppeteer `chrome-headless-shell`;
+    DESKTOP-Q was `/usr/local/share/dotnet/dotnet`, ten more. None loaded a single Kangentic
+    image. This class cannot go in `ignoreErrors`, which is the
     `eventFiltersIntegration` and matches only an event's message and its exception type and value:
     a minidump event has none of those, so the matcher sees an empty candidate list and does
     nothing. It also cannot key off the SDK's `event.process` tag, because that reads `unknown` for

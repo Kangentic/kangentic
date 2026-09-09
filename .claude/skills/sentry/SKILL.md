@@ -64,6 +64,8 @@ The endpoints that matter:
 | All events for the issue | `GET /api/0/organizations/kangentic/issues/<ISSUE_ID>/events/` |
 | Search issues (e.g. new unresolved desktop issues) | `GET /api/0/organizations/kangentic/issues/?project=4511996066660352&query=is:unresolved&statsPeriod=14d` |
 | Assign an issue (the triage marker, see below) | `PUT /api/0/organizations/kangentic/issues/<ISSUE_ID>/` body `{"assignedTo":"user:<USER_ID>"}` |
+| Resolve an issue against a release (see Resolution markers) | `PUT /api/0/organizations/kangentic/issues/<ISSUE_ID>/` body `{"status":"resolved","statusDetails":{...}}` |
+| Releases in the project, newest first (which versions Sentry knows) | `GET /api/0/organizations/kangentic/releases/?project=4511996066660352` |
 | Org members (read `user.id` for the actor above) | `GET /api/0/organizations/kangentic/members/` |
 
 The latest-event payload is large; extract what you need rather than dumping it: `entries`
@@ -136,10 +138,14 @@ Reading a native event, in order of what trips people up:
   left to mislead. Breadcrumbs on an event tagged `exit.reason` are trustworthy: that tag marks
   the two SDK paths that report a crash the running session watched happen.
 - **A crash in a process Kangentic merely spawned no longer arrives at all.** On macOS, mach
-  exception ports are inherited across exec, so an agent shelling out to ffmpeg or a headless
-  browser used to file its crashes as ours (DESKTOP-K, DESKTOP-N). Those are dropped before
-  upload now and counted as Aptabase `foreign_minidump_dropped` instead. If a native issue looks
-  like someone else's binary, check that counter rather than expecting a Sentry issue.
+  exception ports are inherited across exec, so an agent shelling out to ffmpeg, a headless
+  browser, or a dotnet tool used to file its crashes as ours. Three sources have been seen:
+  DESKTOP-K (Homebrew ffmpeg's `ffprobe`), DESKTOP-N (a Puppeteer `chrome-headless-shell`), and
+  DESKTOP-Q (`/usr/local/share/dotnet/dotnet`, ten events). One filter covers all three, since it
+  keys off whether the dump loaded a Kangentic image rather than off any binary's name. Task #604
+  tracks DESKTOP-Q, though no commit names it. Those are dropped before upload now and counted as
+  Aptabase `foreign_minidump_dropped` instead. If a native issue looks like someone else's binary,
+  check that counter rather than expecting a Sentry issue.
 - **Scope persists with a 500 ms write throttle**, so on any event the last half-second of
   breadcrumbs before the crash is missing. An entire quit sequence fits in that gap.
 
@@ -186,9 +192,58 @@ says a human has looked at this and it has a home. Rules:
   is only useful if it is complete.
 - Never assign an issue with no board task, and never assign dev/preview rig noise. An unassigned
   issue must keep meaning "nobody has dealt with this".
-- Resolve nothing. Assignment leaves the issue in the unresolved stream where a recurrence is
-  still visible, which is the whole point: a fix that does not hold shows up as new events on an
-  assigned issue rather than disappearing.
+- Resolve nothing here. Assignment leaves the issue in the unresolved stream where a recurrence
+  is still visible, which is the whole point: a fix that does not hold shows up as new events on
+  an assigned issue rather than disappearing. That holds until the fix actually ships, so
+  resolution is a release-time act, not a triage one. See Resolution markers below.
+
+## Resolution markers
+
+Resolution is a release-time act. The marker names the release that CARRIES THE FIX, never the one
+the issue was last seen on. Which release that is depends on where you are standing. From triage,
+before the fix has shipped, the newest release is always the wrong answer, because it predates the
+fix. From `/release` Step 8, after the build is published, the version just shipped is the carrier
+and is the right answer. Step 8 is where this normally happens; do it by hand only to correct a
+marker that is already wrong.
+
+Sentry keeps two resolution types, and they reopen an issue on different events:
+
+- `in_release` against X: an event on X itself reopens the issue, and only releases older than X
+  stay suppressed. Naming the current release therefore reopens the issue on exactly the builds
+  that legitimately lack the fix.
+- `in_next_release` against X: events on X and older stay suppressed, and anything newer reopens.
+  That is what "fixed in the release after X" means.
+
+Which body to send:
+
+| Situation | Body of the resolve PUT |
+|---|---|
+| The release carrying the fix exists in Sentry | `{"status":"resolved","statusDetails":{"inRelease":"Kangentic@X.Y.Z"}}` |
+| It does not exist yet (the normal case before that release builds) | `{"status":"resolved","statusDetails":{"inNextRelease":true}}` |
+
+Use the `Kangentic@X.Y.Z` form, not the `vX.Y.Z` git tag. Each release object is created by the
+bundler plugin during its own CI build (`scripts/build.js`, `vite.config.mts`), so the version a
+pending fix will ship in does not exist yet, and `inRelease` on it fails with a 400 and
+"Unable to find a release with the given version."
+
+Four things bite:
+
+1. **A resolve PUT against an already-resolved issue is silently a no-op.** It returns 200 with the
+   full group payload and changes nothing. To correct a marker, PUT `{"status":"unresolved"}`
+   first, then PUT the resolution. Both writes, in that order, every time.
+2. **The read-back cannot tell the two types apart.** `statusDetails` renders
+   `inRelease: Kangentic@0.39.0` both for a real `in_release` against 0.39.0 and for an
+   `in_next_release` recorded against it, so it cannot confirm a write landed. Verify with the
+   issue payload's own `activity` array: the newest `set_resolved_in_release` entry carries a
+   populated `version` for an in-release resolution, and an empty `version` plus
+   `current_release_version` for an in-next-release one.
+3. **The GitHub integration resolves issues without being asked.** Merging a PR whose body names a
+   shortId writes a `set_resolved_in_pull_request` entry, and commit-to-release association can
+   follow it with a `set_resolved_in_release` naming whichever release was current then. DESKTOP-J
+   carried a wrong marker from that path, not from a hand action. So expect an issue to arrive at
+   the release step already resolved, and correct it rather than assuming a human chose it.
+4. **A 403 on the resolve PUT means the token is read-only or CI-scoped.** Report which issues went
+   unmarked and carry on. Never retry in a loop, and never let it block a release.
 
 ## Boundaries
 
@@ -198,6 +253,9 @@ says a human has looked at this and it has a home. Rules:
   description.
 - Assigning an issue you just filed a task for is sanctioned and expected, no separate ask
   needed. It is the one write this skill makes on its own.
-- Do not resolve/archive issues in Sentry unless explicitly asked (needs `event:write`).
+- Do not resolve/archive issues in Sentry unless explicitly asked (needs `event:write`). Resolving
+  belongs to `/release` Step 8, which marks the issues a release fixes once that release exists;
+  from here, resolve only to correct a marker that names the wrong release. Either way follow
+  Resolution markers above.
 - Never paste the token or a full raw event dump into a task, commit, or reply; quote the
   frames and fields that carry the diagnosis.
