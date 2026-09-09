@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const esbuild = require('esbuild');
 const rendererOptimizeDeps = require('./renderer-optimize-deps.json');
 const { copyExternalScripts } = require('./copy-external-scripts');
@@ -48,11 +49,69 @@ try {
 const stopWatcher = setInterval(() => {
   if (fs.existsSync(stopFilePath)) {
     console.log('[dev] Stop requested via stop file - shutting down');
-    cleanup(0);
+    clearInterval(stopWatcher);
+    // Ask Electron to quit through its own quit path first; cleanup() kills
+    // whatever is still running once that has either finished or timed out.
+    requestGracefulElectronQuit().finally(() => cleanup(0));
   }
 }, 500);
 // Never keep the process alive just to watch for stops.
 stopWatcher.unref();
+
+// A kill (TerminateProcess on Windows) skips Electron's before-quit entirely:
+// the synchronous cleanup never runs, PTY children are orphaned, session
+// records stay 'running', and the run reads as abrupt on the next launch. The
+// dev-only inspection bridge (loopback, port in the lockfile it writes)
+// exposes POST /quit, which runs app.quit() and so the whole real quit path.
+// Bounded: the app's own hard failsafe fires at 6s and the launcher's --stop
+// force-kills at 45s (STOP_GRACE_MS in worktree-preview.js), so 8s covers a
+// normal quit (under 2s, with a live PTY drain at most 1.5s more) and still
+// yields before the launcher escalates.
+const GRACEFUL_QUIT_DEADLINE_MS = 8000;
+
+function requestGracefulElectronQuit() {
+  return new Promise((resolve) => {
+    if (!electronProc) {
+      resolve(false);
+      return;
+    }
+    let port = null;
+    try {
+      const lockfile = JSON.parse(fs.readFileSync(path.join(projectDir, '.kangentic', 'preview.lock'), 'utf-8'));
+      port = lockfile.port;
+    } catch {
+      // No inspection bridge (setting off, or not started yet): fall back to the kill.
+    }
+    if (typeof port !== 'number') {
+      console.log('[dev] No inspection bridge to ask for a graceful quit; killing Electron');
+      resolve(false);
+      return;
+    }
+    // Electron's 'close' fires cleanup(code) on its own (see the spawn below),
+    // which exits this process; the timer only matters when the quit stalls.
+    const timer = setTimeout(() => {
+      console.warn(`[dev] Electron did not quit within ${GRACEFUL_QUIT_DEADLINE_MS}ms of the graceful request; killing it`);
+      resolve(false);
+    }, GRACEFUL_QUIT_DEADLINE_MS);
+    electronProc.once('close', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    const request = http.request(
+      { host: '127.0.0.1', port, method: 'POST', path: '/quit', headers: { 'content-length': 0 } },
+      (response) => {
+        response.resume();
+        console.log(`[dev] Asked Electron to quit through the inspection bridge (HTTP ${response.statusCode})`);
+      },
+    );
+    request.on('error', (error) => {
+      clearTimeout(timer);
+      console.warn('[dev] Graceful quit request failed; killing Electron:', error.message);
+      resolve(false);
+    });
+    request.end();
+  });
+}
 
 // Detect Electron executable path per-platform
 const electronExe = process.platform === 'win32'
@@ -361,6 +420,10 @@ function cleanup(exitCode) {
   // while cleaning up) re-enter and write a SECOND, contradictory exit record.
   if (cleaningUp) return;
   cleaningUp = true;
+  // Written synchronously: stdout to a pipe is asynchronous on Windows, so a
+  // console.log this close to process.exit() can be dropped, which is how the
+  // cleanup's own progress lines went missing from every captured log.
+  logSync(`[dev] cleanup:start exitCode=${exitCode}`);
 
   // FIRST action, with nothing but the re-entrancy guard above it: the
   // ephemeral cleanup below removes the worktree's entire .kangentic/
@@ -398,16 +461,29 @@ function cleanup(exitCode) {
       const kanDir = path.join(projectDir, '.kangentic');
       const viteDir = path.join(projectDir, '.vite');
       for (const dir of [kanDir, viteDir]) {
+        const removeStartedAt = Date.now();
         try {
           fs.rmSync(dir, { recursive: true, force: true });
-          console.log(`[dev] Ephemeral cleanup: removed ${dir}`);
-        } catch {
-          // Best-effort cleanup
+          logSync(`[dev] Ephemeral cleanup: removed ${dir} in ${Date.now() - removeStartedAt}ms`);
+        } catch (removeError) {
+          // Best-effort, but say so: a silent miss here left a stale
+          // .kangentic/ behind with no trace of why.
+          logSync(`[dev] Ephemeral cleanup: could not remove ${dir}: ${removeError.message}`);
         }
       }
     }
   }
+  logSync('[dev] cleanup:done');
   process.exit(exitCode);
+}
+
+/** Synchronous stdout write for the lines that precede process.exit(). */
+function logSync(line) {
+  try {
+    fs.writeSync(1, `${line}\n`);
+  } catch {
+    // stdout is gone (terminal closed): nothing to say it to.
+  }
 }
 
 process.on('SIGINT', () => cleanup(0));

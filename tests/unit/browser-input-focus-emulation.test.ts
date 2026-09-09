@@ -35,6 +35,7 @@ import {
   typeText,
   dispatchMouseEvent,
   clickAtCenterOfSelector,
+  dragFromTo,
 } from '../../src/main/browser/cdp/cdp';
 
 interface SentCommand {
@@ -295,6 +296,128 @@ describe('input payloads', () => {
 
     expect(ok).toBe(false);
     expect(sent.some((entry) => entry.method === 'Input.dispatchMouseEvent')).toBe(false);
+    detachDebugger(guest);
+  });
+
+  /** A guest that never acknowledges a mouse move, the way a hidden window
+   *  behaves until Chromium's fallback timer fires seconds later. */
+  function guestWithheldMoveAcks(quad: number[]) {
+    const fake = fakeGuest(resolvableNode(quad));
+    const fakeDebugger = (fake.guest as unknown as { debugger: { sendCommand: (method: string, params?: Record<string, unknown>) => Promise<unknown> } }).debugger;
+    const answerEverythingElse = fakeDebugger.sendCommand;
+    fakeDebugger.sendCommand = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseMoved') {
+        fake.sent.push({ method, params });
+        return new Promise(() => {});
+      }
+      return answerEverythingElse(method, params);
+    };
+    return fake;
+  }
+
+  it('clickAtCenterOfSelector bounds its wait for the mouseMoved acknowledgement, which a hidden window withholds', async () => {
+    // Chromium queues a mouse move until the next animation frame, and a
+    // minimized or fully occluded window (where a preview an agent drives
+    // usually sits) produces none, so the move's reply waits on a fallback
+    // timer. Measured on Electron 41 with the window minimized: 5.0s per
+    // selector click, every one reported as a timeout at the MCP layer even
+    // though each landed, while a coordinate click (no move) took 1-3ms. The
+    // move stays queued and precedes the press when the press flushes the
+    // queue; only the wait for its reply is capped. This fake never answers
+    // the move at all, so the old fully awaited form hangs here.
+    const { guest, sent } = guestWithheldMoveAcks([10, 20, 110, 20, 110, 40, 10, 40]);
+    attachDebugger(guest);
+
+    const clicked = clickAtCenterOfSelector(guest, '#target');
+    const ok = await Promise.race([
+      clicked,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('the click waited on the mouseMoved reply')), 1000);
+      }),
+    ]);
+
+    expect(ok).toBe(true);
+    const mouse = sent.filter((entry) => entry.method === 'Input.dispatchMouseEvent');
+    expect(mouse.map((entry) => (entry.params as { type: string }).type))
+      .toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+    detachDebugger(guest);
+  });
+
+  it('dragFromTo bounds the wait on every intermediate move, so a hidden window does not cost seconds per step', async () => {
+    // Same mechanism as the click, multiplied by the step count: a ten-step
+    // drag in a minimized window took 50s. Three withheld steps must finish
+    // well inside a second, and the release must still follow every move.
+    const { guest, sent } = guestWithheldMoveAcks([10, 20, 110, 20, 110, 40, 10, 40]);
+    attachDebugger(guest);
+
+    const dragged = dragFromTo(guest, '#from', '#to', { steps: 3 });
+    const ok = await Promise.race([
+      dragged,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('the drag waited on a mouseMoved reply')), 1500);
+      }),
+    ]);
+
+    expect(ok).toBe(true);
+    const mouse = sent.filter((entry) => entry.method === 'Input.dispatchMouseEvent');
+    expect(mouse.map((entry) => (entry.params as { type: string }).type))
+      .toEqual(['mousePressed', 'mouseMoved', 'mouseMoved', 'mouseMoved', 'mouseReleased']);
+    detachDebugger(guest);
+  });
+
+  it('dragFromTo re-resolves the source after the target, because DOM.getDocument re-issues every node id', async () => {
+    // A node id is valid only until the next DOM.getDocument, and a CSS resolve
+    // calls it each time. Holding the source id across the target's resolve
+    // made every two-selector drag fail as "selector did not match": the stale
+    // id's box read as null. This fake re-issues ids per getDocument and
+    // rejects any command that names an id from an older generation, the way
+    // Chromium does.
+    const fromQuad = [10, 20, 110, 20, 110, 40, 10, 40];
+    const toQuad = [10, 220, 110, 220, 110, 240, 10, 240];
+    const sent: SentCommand[] = [];
+    let generation = 0;
+    const issued = new Map<number, number>();
+    const guest = {
+      isDestroyed: () => false,
+      debugger: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        sendCommand: vi.fn((method: string, params?: Record<string, unknown>) => {
+          sent.push({ method, params });
+          if (method === 'DOM.getDocument') {
+            generation += 1;
+            return Promise.resolve({ root: { nodeId: generation * 100 } });
+          }
+          if (method === 'DOM.querySelector') {
+            const nodeId = generation * 100 + (params?.selector === '#from' ? 1 : 2);
+            issued.set(nodeId, generation);
+            return Promise.resolve({ nodeId });
+          }
+          if (method === 'DOM.scrollIntoViewIfNeeded' || method === 'DOM.getBoxModel') {
+            const nodeId = params?.nodeId as number;
+            if (issued.get(nodeId) !== generation) {
+              return Promise.reject(new Error(`Could not find node with given id ${nodeId}`));
+            }
+            const content = nodeId % 100 === 1 ? fromQuad : toQuad;
+            return Promise.resolve({ model: { content, width: 100, height: 20 } });
+          }
+          return Promise.resolve({});
+        }),
+        on: () => {},
+        removeListener: () => {},
+      },
+    } as unknown as WebContents;
+    attachDebugger(guest);
+
+    const ok = await dragFromTo(guest, '#from', '#to', { steps: 2 });
+
+    expect(ok).toBe(true);
+    const mouse = sent
+      .filter((entry) => entry.method === 'Input.dispatchMouseEvent')
+      .map((entry) => entry.params as { type: string; x: number; y: number });
+    expect(mouse.map((entry) => entry.type)).toEqual(['mousePressed', 'mouseMoved', 'mouseMoved', 'mouseReleased']);
+    expect(mouse[0]).toMatchObject({ x: 60, y: 30 });
+    expect(mouse[3]).toMatchObject({ x: 60, y: 230 });
     detachDebugger(guest);
   });
 

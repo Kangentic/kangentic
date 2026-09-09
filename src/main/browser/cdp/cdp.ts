@@ -700,6 +700,44 @@ export async function dispatchMouseEvent(
 }
 
 /**
+ * How long a mouse move waits for its acknowledgement before the sequence
+ * carries on. Chromium queues a mouse move until the next animation frame, so
+ * a visible window acknowledges it within one frame (16ms at 60Hz) and this
+ * bound never fires there: the move still precedes the press by a frame and a
+ * hover-gated element still renders open before the press lands, exactly as
+ * before. A hidden window (minimized, or fully occluded, which is where a
+ * preview an agent is driving usually sits) produces no frames, and the
+ * acknowledgement then waits on a fallback timer instead. Measured on
+ * Electron 41 with the window minimized: 5.0s per selector click, every one
+ * reported as a timeout at the MCP layer even though each landed, while a
+ * coordinate click (no move) took 1-3ms; a drag paid the same 5s per
+ * intermediate step. The move stays queued after the bound and is dispatched
+ * in order when the press or release flushes the queue, so nothing is lost.
+ *
+ * A bounded wait rather than no wait at all: un-awaited moves sent back to
+ * back arrive inside one frame, where Chromium coalesces consecutive moves
+ * into one, which would change what a drag-and-drop library sees in a VISIBLE
+ * window. The bound leaves the visible case byte-identical.
+ */
+const MOUSE_MOVE_ACK_TIMEOUT_MS = 100;
+
+async function dispatchMouseMoveBounded(webContents: WebContents, x: number, y: number): Promise<void> {
+  // The catch is required: a move whose acknowledgement outlives the bound
+  // can still reject later (the window closing mid-sequence), and by then
+  // nothing awaits it, so it would surface as an unhandled rejection in main.
+  const acknowledged = dispatchMouseEvent(webContents, { type: 'mouseMoved', x, y }).catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, MOUSE_MOVE_ACK_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([acknowledged, bounded]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Bring an element into the viewport before it is measured or clicked.
  *
  * REQUIRED, not an optimization. `Input.dispatchMouseEvent` takes coordinates
@@ -760,7 +798,7 @@ export async function clickAtCenterOfSelector(
   // Without it a page never sees `mouseover` / `mouseenter`, so hover-gated UI
   // (dropdown menus, hover-revealed action buttons, tooltips) is not open when
   // the press arrives and the click hits whatever is underneath instead.
-  await dispatchMouseEvent(webContents, { type: 'mouseMoved', x: point.x, y: point.y });
+  await dispatchMouseMoveBounded(webContents, point.x, point.y);
   await dispatchMouseEvent(webContents, { type: 'mousePressed', x: point.x, y: point.y });
   await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: point.x, y: point.y });
   return true;
@@ -777,13 +815,24 @@ export async function dragFromTo(
   // silently does nothing. Source first, then target, because scrolling to the
   // target can move the source - so the source is re-measured last, once the
   // page has settled where the drag will actually run.
-  const fromNodeId = await resolveSelector(webContents, fromSelector);
+  //
+  // A node id is only valid until the next `DOM.getDocument`, which re-issues
+  // every id, and a CSS resolve calls it each time. So the source id is
+  // resolved twice: once to scroll it, and again after the target has been
+  // resolved and scrolled, right before it is measured. Holding the first id
+  // across the target's resolve made every two-selector drag fail with
+  // "selector did not match" (the stale id's box read as null), which the
+  // caller could not tell apart from a real miss.
+  const scrolledFromNodeId = await resolveSelector(webContents, fromSelector);
+  if (!scrolledFromNodeId) return false;
+  await scrollNodeIntoView(webContents, scrolledFromNodeId);
   const toNodeId = await resolveSelector(webContents, toSelector);
-  if (!fromNodeId || !toNodeId) return false;
-  await scrollNodeIntoView(webContents, fromNodeId);
+  if (!toNodeId) return false;
   await scrollNodeIntoView(webContents, toNodeId);
-  const fromBox = await getBoundingBoxByNodeId(webContents, fromNodeId);
   const toBox = await getBoundingBoxByNodeId(webContents, toNodeId);
+  const fromNodeId = await resolveSelector(webContents, fromSelector);
+  if (!fromNodeId) return false;
+  const fromBox = await getBoundingBoxByNodeId(webContents, fromNodeId);
   const source = fromBox ? contentCentroid(fromBox) : null;
   const target = toBox ? contentCentroid(toBox) : null;
   if (!source || !target) return false;
@@ -796,11 +845,13 @@ export async function dragFromTo(
   await dispatchMouseEvent(webContents, { type: 'mousePressed', x: sourceX, y: sourceY });
   for (let stepIndex = 1; stepIndex <= steps; stepIndex++) {
     const fraction = stepIndex / steps;
-    await dispatchMouseEvent(webContents, {
-      type: 'mouseMoved',
-      x: sourceX + (targetX - sourceX) * fraction,
-      y: sourceY + (targetY - sourceY) * fraction,
-    });
+    // Bounded per step (see MOUSE_MOVE_ACK_TIMEOUT_MS): a ten-step drag in a
+    // hidden window took 50s with each step awaiting its frame.
+    await dispatchMouseMoveBounded(
+      webContents,
+      sourceX + (targetX - sourceX) * fraction,
+      sourceY + (targetY - sourceY) * fraction,
+    );
   }
   await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: targetX, y: targetY });
   return true;

@@ -40,6 +40,13 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { getBySessionType: () => undefined },
 }));
 
+// The semantic_memory adoption signal fires only when the query actually
+// embedded; a spy so the degradation cases below can assert it stayed silent.
+const mockTrackFeatureUsed = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackFeatureUsed: mockTrackFeatureUsed,
+}));
+
 import { searchConversationMemory } from '../../src/main/retrieval/memory-search';
 
 // --- Deterministic fake embedder -------------------------------------------
@@ -226,6 +233,44 @@ function singleProjectConfig(): FakeDbConfig {
 }
 
 const PROJECT_A = makeProject({ id: 'project-A', name: 'Proj A' });
+
+describe('searchConversationMemory - semantic_memory adoption signal', () => {
+  it('fires once per search when the query embedded', async () => {
+    mockTrackFeatureUsed.mockClear();
+    const getDb = makeGetDb({ 'project-A': singleProjectConfig() });
+
+    await searchConversationMemory({
+      query: 'idle bug',
+      projects: [PROJECT_A],
+      embedder: new DeterministicFakeEmbedder('ok'),
+      getDb,
+    });
+
+    expect(mockTrackFeatureUsed).toHaveBeenCalledTimes(1);
+    expect(mockTrackFeatureUsed).toHaveBeenCalledWith('semantic_memory');
+  });
+
+  it('stays silent when the search fell back to lexical: no embedder, a null embed, or a throw', async () => {
+    mockTrackFeatureUsed.mockClear();
+    const getDb = makeGetDb({ 'project-A': singleProjectConfig() });
+
+    await searchConversationMemory({ query: 'idle bug', projects: [PROJECT_A], getDb });
+    await searchConversationMemory({
+      query: 'idle bug',
+      projects: [PROJECT_A],
+      embedder: new DeterministicFakeEmbedder('null'),
+      getDb,
+    });
+    await searchConversationMemory({
+      query: 'idle bug',
+      projects: [PROJECT_A],
+      embedder: new DeterministicFakeEmbedder('throw'),
+      getDb,
+    });
+
+    expect(mockTrackFeatureUsed).not.toHaveBeenCalled();
+  });
+});
 
 describe('searchConversationMemory - lexical-only degradation', () => {
   it('with NO embedder, returns lexical hits from the scripted FTS rows', async () => {

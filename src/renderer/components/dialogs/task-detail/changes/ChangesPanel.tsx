@@ -386,6 +386,18 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
 
+  // Adoption signal, once per mount. Every host gates this component on a
+  // state the user put it in (TaskDetailBody's changesPresent,
+  // CommandTerminalWindow's changesOpen, the standalone dialog's own open
+  // state, the existence of the pop-out window), so a mount is always a real
+  // open, including the one a restore replays. That matters because main
+  // dedups BOTH events this sends: feature_used once per UTC day, and
+  // feature_first_use once per INSTALL, which a mount with no real open behind
+  // it would burn for good. One effect covers all four hosts.
+  useEffect(() => {
+    window.electronAPI?.analytics?.trackFeatureUsed('changes_panel');
+  }, []);
+
   // Fetch file list + branch context + the Uncommitted-row count on mount, and
   // re-fetch whenever the scope, base branch, or commit selection changes.
   useEffect(() => {

@@ -12,6 +12,7 @@ import { detectHardware, selectTier } from './hardware/detect-hardware';
 import { listEngineInfos, selectEngine, type SelectedEngine } from './engines/engine-registry';
 import { ensureModel, isModelInstalled, listInstalledModels } from './models/model-manager';
 import { finalCapableModels, isOfflineModel, liveCapableModels, modelLanguages, type ModelDef } from './models/model-registry';
+import { trackFeatureUsed } from '../analytics/usage';
 import type {
   ResolvedModel,
   TranscriptionEngine,
@@ -345,6 +346,10 @@ export class TranscriptionService extends EventEmitter {
       this.maybeDisposeEngine(entry.engine);
     }
     this.emit('final', dictationSessionId, text);
+    // Adoption signal for a completed utterance; the two early returns above
+    // (no session, cancelled mid-drain) never count. Main dedups to once per
+    // day.
+    trackFeatureUsed('dictation');
     return text;
   }
 

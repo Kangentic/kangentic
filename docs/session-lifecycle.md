@@ -1092,7 +1092,8 @@ mounts before recovery runs adopts an unpaired live PTY for its slot rather than
 1. Remove the session from `SessionManager` (kills PTY)
 2. Delete the session directory from disk (best-effort cleanup)
 
-Transient sessions are tracked with a `transient_session_spawn` analytics event.
+Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
+(volume) and by `feature_used: command_terminal` (adoption); see [analytics.md](analytics.md).
 
 ## AbortSignal Pattern
 

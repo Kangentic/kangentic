@@ -115,24 +115,16 @@ vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
 // is invisible here (this suite only counts registrations, it never invokes a
 // handler) but throws "is not a function" the moment a test calls one.
 //
-// `summarizeComponentStack` is deliberately NOT importOriginal'd here: the real
-// analytics.ts module-level-imports `@aptabase/electron/main`, a real node_modules
-// package whose own internal `from 'electron'` import is externalized by vitest
-// (bypasses the `vi.mock('electron', ...)` above entirely) and resolves to the
-// real 'electron' npm shim, which has no named exports outside a real Electron
+// Not importOriginal'd: the real analytics.ts module-level-imports
+// `@aptabase/electron/main`, a real node_modules package whose own internal
+// `from 'electron'` import is externalized by vitest (bypasses the
+// `vi.mock('electron', ...)` above entirely) and resolves to the real
+// 'electron' npm shim, which has no named exports outside a real Electron
 // process - importOriginal here throws "Named export 'ipcMain' not found" for
-// EVERY test in this file, not just the new ones. So it stays a stub, but a
-// deliberately non-constant one: it returns a fixed non-empty trail only when
-// handed a non-empty string, so the TRACK_RENDERER_ERROR handler's
-// `if (components) props.components = ...` conditional is exercised truthfully
-// in both directions without duplicating the real regex coverage already
-// pinned in tests/unit/summarize-component-stack.test.ts.
+// EVERY test in this file.
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
   sanitizeErrorMessage: vi.fn((message: string) => message),
-  summarizeComponentStack: vi.fn((stack: string | undefined) =>
-    typeof stack === 'string' && stack.length > 0 ? 'Foo < Bar' : ''
-  ),
   MAX_ANALYTICS_STRING_LENGTH: 180,
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
@@ -475,7 +467,7 @@ describe('registerAllIpc idempotency', () => {
       return entry[1] as TrackRendererErrorCallback;
     }
 
-    it('sends boundary, panel, and a real component trail when full context is provided', async () => {
+    it('sends boundary and panel when full context is provided, and nothing else', async () => {
       const { registerAllIpc } = await import('../../src/main/ipc/register-all');
       const { trackEvent } = await import('../../src/main/analytics/analytics');
       registerAllIpc(makeMockWindow(1));
@@ -484,22 +476,22 @@ describe('registerAllIpc idempotency', () => {
       callback({}, 'Cannot read properties of undefined (reading split)', {
         boundary: 'panel',
         panel: 'Changes panel',
-        componentStack: '    at Foo (x)\n    at Bar (y)',
       });
 
-      // `components` is produced by the REAL summarizeComponentStack (see the
-      // importOriginal mock above), not a stub - this would go red if the
-      // trail-building logic broke, not just if the call were dropped.
+      // Exactly these four: the `components` trail was removed (a minified
+      // bundle made it unreadable and Sentry owns the real stack), so a
+      // regression that reintroduced a fifth property would fail here.
       expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('app_error', {
         source: 'error_boundary',
         message: 'Cannot read properties of undefined (reading split)',
         boundary: 'panel',
         panel: 'Changes panel',
-        components: 'Foo < Bar',
       });
+      const [, props] = vi.mocked(trackEvent).mock.calls[0];
+      expect(Object.keys(props ?? {}).sort()).toEqual(['boundary', 'message', 'panel', 'source']);
     }, 30000);
 
-    it('omits boundary, panel, and components when no context argument is given', async () => {
+    it('omits boundary and panel when no context argument is given', async () => {
       const { registerAllIpc } = await import('../../src/main/ipc/register-all');
       const { trackEvent } = await import('../../src/main/analytics/analytics');
       registerAllIpc(makeMockWindow(1));
@@ -528,10 +520,11 @@ describe('registerAllIpc idempotency', () => {
       const callback = getTrackRendererErrorCallback();
       // RendererErrorContext is erased at the IPC boundary: a renderer could
       // send a payload that violates the compile-time type at runtime.
-      // `panel` as a number and `componentStack` as an object are exactly the
-      // shapes that would throw inside `.slice()` / `.split()` without the
-      // per-field typeof guards - a throw here silently drops the error
-      // report (the global uncaughtException handler swallows it).
+      // `panel` as a number is exactly the shape that would throw inside
+      // `.slice()` without the per-field typeof guard - a throw here silently
+      // drops the error report (the global uncaughtException handler swallows
+      // it). The extra field is a stale renderer still sending the retired
+      // component stack; it must be ignored, not forwarded.
       const malformedContext = {
         boundary: 'panel',
         panel: 42,

@@ -12,6 +12,7 @@ import {
   PRResolverTransientError,
 } from './pr-registry';
 import { createDeferredDegrade } from './shared/pr-dispatch';
+import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
@@ -300,6 +301,10 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     }
     if (prChanged && next) {
       console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}) to "${task.title}": ${next.url}`);
+      // Adoption signal on a real link only: the automatic sweeps that return
+      // early above and the stale-link clear below are not uses. Main dedups
+      // to once per day.
+      trackFeatureUsed('pull_request');
       deps.onLinked(updatedTask);
     } else if (prCleared) {
       console.log(`[pr-linking] Cleared stale PR link from "${task.title}" (no PR resolves for its branch)`);

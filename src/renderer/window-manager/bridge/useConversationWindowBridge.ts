@@ -43,6 +43,10 @@ export function useConversationWindowBridge(): void {
     }
     const windowStore = useWindowStore.getState();
 
+    // Adoption signal for the viewer, whichever entry point raised the signal;
+    // main dedups to once per day.
+    window.electronAPI?.analytics?.trackFeatureUsed('conversation_viewer');
+
     // Focus an existing conversation window for this session instead of duplicating.
     const existing = Object.values(windowStore.windows).find(
       (candidate) => candidate.kind === 'conversation' && candidate.anchor === conversationSessionId,

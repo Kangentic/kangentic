@@ -166,18 +166,20 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { startForProject: vi.fn(), stop: vi.fn(), reconcileEmbedWorker: vi.fn() },
 }));
 
-// The board_snapshot analytics block (registerProjectHandlers' PROJECT_OPEN
-// cold-open) is the ONE place in this file's exercised code paths that calls
-// swimlaneRepo.list() / taskRepo.countAll() directly rather than merely
-// passing the repo instance to an already-mocked function - every other
-// consumer (pruneOrphanedWorktreeTasks, cleanupStaleResourcesAsync,
+// The board_snapshot analytics callback (scheduleBoardSnapshot, reached from
+// openProjectByPath and the PROJECT_OPEN handler) is the ONE place in this
+// file's exercised code paths that calls swimlaneRepo.list() /
+// taskRepo.countAll() directly rather than merely passing the repo instance
+// to an already-mocked function - every other consumer
+// (pruneOrphanedWorktreeTasks, cleanupStaleResourcesAsync,
 // resumeSuspendedSessions, autoSpawnTasks) is itself mocked and never invokes
 // a method on the repo it's handed. Left as the REAL trivial-constructor
 // class (per the file header's rationale), swimlaneRepo.list()/
 // taskRepo.countAll() would call `db.prepare(...)` against the fake `{}` db
-// object from the database mock above and throw, silently swallowed by the
-// snapshot block's own try/catch - which is exactly why trackEvent has never
-// been asserted to receive a 'board_snapshot' call in this file until now.
+// object from the database mock above and throw, caught by the snapshot's
+// own try/catch (which warns rather than swallowing) - which is exactly why
+// trackEvent has never been asserted to receive a 'board_snapshot' call in
+// this file until now.
 const mockSwimlaneList = vi.fn(() => [] as Array<{ name: string }>);
 const mockTaskCountAll = vi.fn(() => 0);
 
@@ -198,11 +200,13 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 // ---------------------------------------------------------------------------
 
 import { trackEvent } from '../../src/main/analytics/analytics';
+import { isShuttingDown } from '../../src/main/shutdown-state';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   registerProjectHandlers,
   openProjectByPath,
   activateAllProjects,
+  cleanupProject,
 } from '../../src/main/ipc/handlers/projects';
 import { ensureGitignore } from '../../src/main/ipc/helpers';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -251,6 +255,7 @@ interface MockContext {
   currentProjectId: string | null;
   currentProjectPath: string | null;
   recoveredProjects: Set<string>;
+  snapshottedProjects: Set<string>;
   mainWindow: { isDestroyed: ReturnType<typeof vi.fn>; webContents: { send: ReturnType<typeof vi.fn> } };
   mcpServerHandle: null;
 }
@@ -275,6 +280,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     currentProjectId: null,
     currentProjectPath: null,
     recoveredProjects: new Set<string>(),
+    snapshottedProjects: new Set<string>(),
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     mcpServerHandle: null,
     ...overrides,
@@ -456,14 +462,23 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2b. board_snapshot analytics (fired once per cold open, inside the same
-  //     deferred setImmediate block, BEFORE pruneOrphanedTasksAndNotify).
+  // 2b. board_snapshot analytics (fired once per project per run from its own
+  //     deferred setImmediate callback, queued BEFORE the recovery block's, so
+  //     it has run by the time recovery reaches autoSpawnTasks).
   // -------------------------------------------------------------------------
 
   function getBoardSnapshotProps(): Record<string, string | number | boolean> {
     const call = vi.mocked(trackEvent).mock.calls.find((args) => args[0] === 'board_snapshot');
     if (!call) throw new Error('board_snapshot was never tracked');
     return call[1] as Record<string, string | number | boolean>;
+  }
+
+  function countEvents(eventName: string): number {
+    return vi.mocked(trackEvent).mock.calls.filter((args) => args[0] === eventName).length;
+  }
+
+  function countBoardSnapshots(): number {
+    return countEvents('board_snapshot');
   }
 
   it('reports customColumns:false for the exact default 7-lane board', async () => {
@@ -535,6 +550,215 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     // full-row scan countAll replaced) or dropping the countAll() call
     // entirely would leave taskCount at 0 and this at '0' instead of '10-49'.
     expect(getBoardSnapshotProps().taskBucket).toBe('10-49');
+  });
+
+  // -------------------------------------------------------------------------
+  // 2c. board_snapshot fires the first time a project is VIEWED, keyed on its
+  //     own set. Before this, it was keyed on recoveredProjects, which the boot
+  //     auto-open and the background activation of every other project also
+  //     mark, so the boot project never snapshotted and a later sidebar switch
+  //     to any other project never did either. Each case below is red on that
+  //     code.
+  // -------------------------------------------------------------------------
+
+  it('snapshots a project that recovery already marked warm (the production gap: warm from activateAllProjects, then clicked)', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.recoveredProjects.add(project.id);
+
+    await registerAndOpen(context, project);
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(1);
+    // Warm: the recovery block itself did not run.
+    expect(state.callOrder).toEqual([]);
+  });
+
+  it('openProjectByPath (the boot auto-open) snapshots an existing project', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(1);
+    expect(context.snapshottedProjects.has(project.id)).toBe(true);
+
+    // Let the cold-open recovery chain settle so it does not leak.
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  });
+
+  it('the boot auto-open followed by a sidebar open of the same project snapshots exactly once', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await registerAndOpen(context, project);
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(1);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  });
+
+  it('activateAllProjects never snapshots: background activation is not the user viewing a board', async () => {
+    const context = createMockContext();
+    const projectA = makeProject({ id: 'project-A', path: path.join(PROJECT_PATH, 'a') });
+    const projectB = makeProject({ id: 'project-B', path: path.join(PROJECT_PATH, 'b') });
+    context.projectRepo.list.mockReturnValue([projectA, projectB]);
+    state.existingPaths.add(projectA.path);
+    state.existingPaths.add(projectB.path);
+
+    await activateAllProjects(asIpcContext(context));
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(0);
+    expect(context.snapshottedProjects.size).toBe(0);
+    // Both were recovered, which is what used to poison the later click.
+    expect(context.recoveredProjects.has(projectA.id)).toBe(true);
+    expect(context.recoveredProjects.has(projectB.id)).toBe(true);
+  });
+
+  it('a just-created project is neither snapshotted nor marked, so its first real view sends it', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    // No registered project at this path: openProjectByPath creates one.
+    context.projectRepo.list.mockReturnValue([]);
+    context.projectRepo.create.mockReturnValue(project);
+    Object.assign(context.configManager, {
+      loadProjectOverrides: vi.fn(() => null),
+      getProjectOverridableDefaults: vi.fn(() => ({})),
+      saveProjectOverrides: vi.fn(),
+    });
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path, { defaultAgent: 'claude' });
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(0);
+    expect(context.snapshottedProjects.has(project.id)).toBe(false);
+    // The creation itself is counted here: adding a folder is the common way
+    // to create a project and it never reaches PROJECT_CREATE.
+    expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('project_create');
+
+    // The next open (the same id, now registered) is the first real view.
+    context.projectRepo.list.mockReturnValue([project]);
+    await openProjectByPath(asIpcContext(context), project.path);
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(1);
+    // Exactly once across BOTH opens. The creation branch is the only place
+    // that counts, and it is gated on the path lookup above missing, so
+    // reopening the same folder must not count a second project.
+    expect(countEvents('project_create')).toBe(1);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  });
+
+  it('a failing lane read warns, sends nothing, stays marked, and leaves the recovery order unchanged', async () => {
+    mockSwimlaneList.mockImplementation(() => {
+      throw new Error('SQLITE_IOERR');
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const context = createMockContext();
+    const project = makeProject();
+    await registerAndOpen(context, project);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+
+    expect(countBoardSnapshots()).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith('[ANALYTICS] board_snapshot failed:', expect.any(Error));
+    // One attempt per run: a broken DB is not retried on every switch.
+    expect(context.snapshottedProjects.has(project.id)).toBe(true);
+    expect(state.callOrder).toEqual([
+      'pruneOrphanedWorktreeTasks',
+      'cleanupStaleResourcesAsync',
+      'resumeSuspendedSessions',
+      'autoSpawnTasks',
+    ]);
+    warnSpy.mockRestore();
+  });
+
+  it('a snapshot scheduled just before quit is skipped rather than reopening a database', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.recoveredProjects.add(project.id);
+
+    await registerAndOpen(context, project);
+    vi.mocked(isShuttingDown).mockReturnValue(true);
+    await flushSetImmediate();
+    vi.mocked(isShuttingDown).mockReturnValue(false);
+
+    expect(countBoardSnapshots()).toBe(0);
+  });
+
+  it('opening two different projects as real views in the same run snapshots each exactly once, keyed by id', async () => {
+    // The closest existing case ("the boot auto-open followed by a sidebar
+    // open of the same project snapshots exactly once") only ever exercises
+    // one project id, so it would still pass if snapshottedProjects were
+    // collapsed to a single run-wide boolean instead of a per-project Set.
+    // This case is red on that collapse: project B's open would find the
+    // guard already tripped by project A and never snapshot.
+    const context = createMockContext();
+    const projectA = makeProject({ id: 'project-A', path: path.join(PROJECT_PATH, 'a') });
+    const projectB = makeProject({ id: 'project-B', path: path.join(PROJECT_PATH, 'b') });
+
+    await registerAndOpen(context, projectA);
+    await registerAndOpen(context, projectB);
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(2);
+    expect(context.snapshottedProjects.has(projectA.id)).toBe(true);
+    expect(context.snapshottedProjects.has(projectB.id)).toBe(true);
+
+    // Drain both projects' deferred recovery chains so they do not leak into
+    // the next test.
+    await vi.waitFor(() => {
+      expect(state.callOrder.filter((call) => call === 'autoSpawnTasks').length).toBe(2);
+    }, { timeout: 2000 });
+  });
+
+  it('cleanupProject clears the id from snapshottedProjects, so a project closed and reopened in the same run snapshots again', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    // cleanupProject calls boardConfigManager.detach() unconditionally; the
+    // shared mock context does not define it.
+    Object.assign(context.boardConfigManager, { detach: vi.fn() });
+    context.snapshottedProjects.add(project.id);
+    state.existingPaths.add(project.path);
+    // The mocked TaskRepository only defines countAll (see the module mock
+    // above), so cleanupProject's own taskRepo.list() read throws and is
+    // caught internally, logging an error this test does not care about.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await cleanupProject(asIpcContext(context), project.id, project.path);
+
+    expect(context.snapshottedProjects.has(project.id)).toBe(false);
+    errorSpy.mockRestore();
+
+    // The behavior that actually matters to a user: closing a project and
+    // reopening it in the same run snapshots it a second time.
+    await registerAndOpen(context, project);
+    await flushSetImmediate();
+
+    expect(countBoardSnapshots()).toBe(1);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
   });
 });
 

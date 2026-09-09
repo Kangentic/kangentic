@@ -85,7 +85,10 @@ expose live engine + renderer state (`/engine-state`, `/renderer-state`,
 `/store-state`), serve screenshots + DOM (`/screenshot`, `/dom`,
 `/query-all`, `/bounding-box`, `/bounding-box-all`, etc.), and accept
 interaction commands (`/click`, `/type`, `/keypress`, `/drag`, `/wait`,
-`/script`, `/eval`).
+`/script`, `/eval`). `POST /quit` runs Electron's real quit path; it is what
+`scripts/dev.js` calls when a stop file asks it to shut a preview down, so a
+`worktree-preview.js --stop` no longer force-kills the app past its
+synchronous cleanup.
 
 ### CDP wrapper (`main/cdp.ts`)
 

@@ -105,6 +105,8 @@ function createMonitorStore() {
 
     open: () => {
       set({ monitorOpen: true });
+      // Adoption signal; main dedups to once per day (fire-and-forget).
+      window.electronAPI?.analytics?.trackFeatureUsed('agent_monitor');
       void get().attach();
     },
     close: () => {

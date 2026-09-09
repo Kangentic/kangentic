@@ -1,23 +1,43 @@
 import { app } from 'electron';
 import { initialize as aptabaseInit, trackEvent as aptabaseTrack } from '@aptabase/electron/main';
 
-const APTABASE_APP_KEY = 'A-US-7825295071';
+/**
+ * The production app key. `KANGENTIC_APTABASE_APP_KEY` overrides it so a local
+ * run can point the whole event stream at a throwaway sink instead of the
+ * production project: the SDK picks its host from the key's middle segment,
+ * and an `A-DEV-<digits>` key routes to http://localhost:3000. That is the
+ * verification rig for anything in the quit path or the once-per-run events
+ * (scripts/aptabase-sink.mjs; docs/analytics.md, "Local verification"). An
+ * env var rather than a source edit, so the rig never needs a change that
+ * could be committed by accident.
+ */
+const DEFAULT_APTABASE_APP_KEY = 'A-US-7825295071';
+
+function resolveAppKey(): string {
+  const override = process.env.KANGENTIC_APTABASE_APP_KEY?.trim();
+  return override ? override : DEFAULT_APTABASE_APP_KEY;
+}
 
 let enabled = false;
 
-/** The anonymous client id (see setAnalyticsClientId). Attached only to the
- *  `app_launch` event, not merged into every event - see getAnalyticsClientId. */
+/** The anonymous client id (see setAnalyticsClientId). Attached explicitly to
+ *  the three install-counting events, not merged into every event - see
+ *  getAnalyticsClientId. */
 let analyticsClientId: string | undefined;
 
 /**
  * Record the anonymous client id, resolved once at startup (see
  * analytics/client-id.ts). Read it back with getAnalyticsClientId and attach
- * it explicitly to app_launch, the one authoritative per-launch install
- * signal, so unique installs can be rolled up ourselves as
- * COUNT(DISTINCT clientId) over that event. Aptabase's own identity model
- * rotates daily and cannot do this; it is deliberately NOT merged into every
+ * it explicitly to the events that count installs: app_launch, the one
+ * authoritative per-launch install signal (unique installs roll up as
+ * COUNT(DISTINCT clientId) over it), and the two lifetime-once events,
+ * feature_first_use and onboarding_milestone, where it turns "N first uses"
+ * into "N installs reached this step" at negligible cost because each fires
+ * at most once per install for all time. Aptabase's own identity model
+ * rotates daily and cannot do this. It is deliberately NOT merged into every
  * event, to avoid inflating high-cardinality string-prop volume on events
- * (like app_heartbeat) where it adds no install-counting value.
+ * (like app_heartbeat or the daily feature_used) where it adds no
+ * install-counting value.
  */
 export function setAnalyticsClientId(clientId: string): void {
   analyticsClientId = clientId;
@@ -37,6 +57,25 @@ export function getAnalyticsClientId(): string | undefined {
 export function shouldEmitHeartbeat(counts: { active: number }): boolean {
   return counts.active > 0;
 }
+
+/**
+ * Period of the app_heartbeat interval: 55 minutes, deliberately INSIDE the
+ * SDK's session window rather than at it. @aptabase/electron starts a new
+ * session id when the gap since the previous event exceeds 3600 whole seconds
+ * (`Math.floor(gapMs / 1000) > 3600`), so an interval of exactly 60 minutes
+ * sits on that boundary and a timer that fires one second late would open a
+ * fresh dashboard session on every heartbeat. The lateness that matters on
+ * this main process is a stall (sync git, SQLite, a migration), not timer
+ * jitter, so the margin is sized in minutes, not seconds.
+ *
+ * Widened from 30 minutes on purpose and never to be shortened for "better
+ * usage data": the heartbeat SAMPLES session counts that session_spawn and
+ * session_exit already record exactly, so its one job is drift correction
+ * after a lost exit event, which needs no finer resolution. At 30 minutes it
+ * was 35% of all event volume. Run duration comes from app_launch's
+ * previous-run properties (run-uptime.ts), not from here.
+ */
+export const HEARTBEAT_INTERVAL_MS = 55 * 60_000;
 
 /**
  * Determine whether analytics should be enabled.
@@ -62,7 +101,7 @@ export function initAnalytics(): void {
 
   // Fire-and-forget: the SDK internally queues any trackEvent calls
   // made before initialization completes, then flushes them once ready.
-  aptabaseInit(APTABASE_APP_KEY).catch((error) => {
+  aptabaseInit(resolveAppKey()).catch((error) => {
     console.error('[ANALYTICS] Failed to initialize analytics:', error);
     enabled = false;
   });
@@ -99,51 +138,3 @@ export function sanitizeErrorMessage(message: string): string {
  * what we send is what lands.
  */
 export const MAX_ANALYTICS_STRING_LENGTH = 180;
-
-/**
- * Reduce a React componentStack to a PII-free trail of component names,
- * innermost first (e.g. "BrowserPane < WindowContent < App").
- *
- * The raw stack is NOT sent. A production frame reads
- * `at BrowserPane (file:///C:/Users/dev/.../index-abc.js:1:2)`, so it carries the
- * user's home directory in a URL form that sanitizeErrorMessage only partly
- * catches. Keeping just the identifier after `at` / `in` is PII-free by
- * construction rather than by pattern-matching.
- *
- * KNOW THIS BEFORE RELYING ON THE OUTPUT: React derives frame names from
- * `fn.name`, and the production renderer bundle is minified with name mangling,
- * so a packaged build yields mangled names ("t < Yn < Ao") rather than readable
- * ones. Since telemetry is gated on `app.isPackaged`, that is the ONLY build this
- * ever runs in. The value is still real (mangled names are stable within a build,
- * so distinct trails mean distinct code paths, and a matching build's sourcemap
- * resolves them) but it is not human-readable on arrival. `boundary` and `panel`
- * are the fields that read directly, because a string literal and a prop both
- * survive minification. Making this readable would need name preservation turned
- * on for the renderer build, which is a bundle-size tradeoff, not a free switch.
- */
-export function summarizeComponentStack(
-  stack: string | null | undefined,
-  maxFrames = 6
-): string {
-  if (!stack) return '';
-  const names: string[] = [];
-  for (const line of stack.split('\n')) {
-    const match = /^\s*(?:at|in)\s+([A-Za-z0-9_$.]+)/.exec(line);
-    if (!match) continue;
-    names.push(match[1]);
-    if (names.length >= maxFrames) break;
-  }
-  return names.join(' < ').slice(0, MAX_ANALYTICS_STRING_LENGTH);
-}
-
-/**
- * Track an event and return its delivery promise. Use this when the caller
- * needs to await delivery (e.g. during shutdown) rather than fire-and-forget.
- */
-export function trackEventAsync(
-  eventName: string,
-  props?: Record<string, string | number | boolean>
-): Promise<void> {
-  if (!enabled) return Promise.resolve();
-  return aptabaseTrack(eventName, props ?? {}).catch(() => {});
-}
