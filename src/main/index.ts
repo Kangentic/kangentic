@@ -27,9 +27,11 @@ import { isShuttingDown, setShuttingDown } from './shutdown-state';
 import { decideSecondInstanceAction, isStartupComplete, markStartupComplete, shouldCreateWindowOnActivate } from './startup-gate';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
-import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
+import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
+import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
+import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
 // Whether this launch found an existing global config.json. Read at module
@@ -687,6 +689,7 @@ let mcpServerHandle: McpHttpServerHandle | null = null;
 // and only repairs itself if some later call passes a truthy handle.
 let mcpServerSettled = false;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let runUptimeCheckpointInterval: ReturnType<typeof setInterval> | null = null;
 
 // Parse --cwd=<path> from command line args
 function getCwdArg(): string | null {
@@ -1545,6 +1548,17 @@ app.whenReady().then(async () => {
   initUsageAnalytics(path.join(PATHS.configDir, 'analytics-usage.json'));
   trackUpdateOutcome(app.getVersion());
 
+  // The previous run's uptime and exit kind, read now and reported on
+  // app_launch below; this run's record starts at zero and is checkpointed
+  // every minute from here (analytics/run-uptime.ts says why it is its own
+  // file and why every write is synchronous). unref'd so the interval never
+  // holds the loop at quit, and cleared in clearPendingTimers regardless so no
+  // tick fires mid-shutdown. Started before the awaited client-id resolution
+  // below so a slow lookup cannot delay the first checkpoint.
+  initRunUptimeTracking(path.join(PATHS.configDir, 'analytics-run.json'), appLaunchTime);
+  runUptimeCheckpointInterval = setInterval(() => checkpointRunUptime(), RUN_UPTIME_CHECKPOINT_INTERVAL_MS);
+  runUptimeCheckpointInterval.unref();
+
   // This span MUST stay one unbroken synchronous block. createWindow() calls
   // mainWindow.loadURL() internally, so the renderer starts loading before
   // initUpdater/initAnnouncements have registered their channels; only the
@@ -1582,17 +1596,22 @@ app.whenReady().then(async () => {
   // System suspend fixes the stale-last-event case where the process is
   // killed while asleep before it can flush anything: emit one heartbeat
   // (gated the same as the periodic one, so an idle app going to sleep sends
-  // nothing) right before the system goes down. Not a close event; the app
-  // keeps running once the system resumes. Registered before the awaited
-  // client-id resolution below so a slow lookup can never delay it.
+  // nothing) right before the system goes down, and checkpoint this run's
+  // uptime so a machine that never wakes (a dead battery, a forced power-off
+  // while asleep) still reports the run's duration on the next launch. Not a
+  // close event; the app keeps running once the system resumes. Registered
+  // before the awaited client-id resolution below so a slow lookup can never
+  // delay it.
   powerMonitor.on('suspend', () => {
     trackHeartbeat();
+    checkpointRunUptime();
   });
 
   // OS-initiated shutdown/reboot bypasses before-quit entirely on Linux/macOS
   // (Windows's equivalent is the BrowserWindow 'session-end' handler above).
-  // Route it through the same flush so an abrupt OS shutdown still records a
-  // closing event instead of leaving a stale last event.
+  // Route it through the same flush so an OS shutdown still suspends the
+  // sessions and records this run's clean exit (the run-uptime record the next
+  // launch reports) instead of leaving the run to read as abrupt.
   //
   // Unlike Windows session-end, Electron documents a preventDefault() here that
   // asks the OS to delay shutdown so the app can exit cleanly, with the app
@@ -1601,7 +1620,7 @@ app.whenReady().then(async () => {
   // a live PTY killed the children and then raced node-pty's exit callback
   // against node::Stop() (Sentry DESKTOP-E). performShutdown() stays as the
   // guaranteed flush rather than relying on app.quit() reaching before-quit,
-  // so a blocked quit cannot lose the closing event.
+  // so a blocked quit cannot lose the exit record.
   //
   // Electron's typings declare this listener as () => void even though its docs
   // document the event, so the parameter is declared here rather than inherited.
@@ -1629,10 +1648,22 @@ app.whenReady().then(async () => {
 
   // Fire app_launch event (analytics initialized before app.whenReady above).
   // trackEvent is a no-op if analytics is disabled, so no guard needed here.
-  // clientId is attached here only - the one authoritative per-launch install
-  // signal - not merged into every event (see analytics.ts).
-  trackEvent('app_launch', { platform: process.platform, arch: process.arch, clientId });
-  heartbeatInterval = setInterval(trackHeartbeat, 30 * 60 * 1000);
+  // clientId is attached explicitly here (the one authoritative per-launch
+  // install signal) and on the two lifetime-once events, never merged into
+  // every event (see analytics.ts). The previous run's uptime and exit kind
+  // ride along: there is no close event, because nothing sent from the quit
+  // path can land (see analytics/run-uptime.ts).
+  trackEvent('app_launch', {
+    platform: process.platform,
+    arch: process.arch,
+    clientId,
+    ...previousRunLaunchProps(),
+  });
+  // Once per run: which global settings differ from their defaults. Reads the
+  // global config only, never a project's overrides, since there may be no
+  // project open at all; the manager idiom matches the other readers here.
+  trackSettingsSnapshot(getOptionalIpcContext()?.configManager ?? windowConfigManager);
+  heartbeatInterval = setInterval(trackHeartbeat, HEARTBEAT_INTERVAL_MS);
 
   // Load React DevTools extension in development (fire-and-forget, after window is visible)
   if (!app.isPackaged) {
@@ -1777,26 +1808,6 @@ function trackHeartbeat(): void {
   });
 }
 
-/**
- * Fire-and-forget shutdown analytics. Attempts a final heartbeat (skipped by
- * the shouldEmitHeartbeat gate when no session is active, which is the common
- * idle-at-quit case), then always sends the app_close event. Aptabase's
- * "Avg. Duration" metric (time between first and last event in a session) is
- * still covered by app_close's own durationSeconds even when the heartbeat is
- * skipped.
- *
- * Wrapped in try-catch so analytics failures never prevent syncShutdownCleanup.
- */
-function trackShutdownAnalytics(): void {
-  try {
-    trackHeartbeat();
-    const durationSeconds = Math.round((Date.now() - appLaunchTime) / 1000);
-    trackEvent('app_close', { durationSeconds });
-  } catch {
-    // Analytics must never block shutdown cleanup
-  }
-}
-
 /** Build the shutdown dependencies from current module-level state. */
 function getShutdownDependencies() {
   return {
@@ -1818,6 +1829,13 @@ function getShutdownDependencies() {
       if (heartbeatInterval) {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
+      }
+      // The run-uptime checkpoint is .unref()'d, but a tick that fired after
+      // the exit record would be a no-op anyway; clear it so nothing runs
+      // mid-shutdown at all.
+      if (runUptimeCheckpointInterval) {
+        clearInterval(runUptimeCheckpointInterval);
+        runUptimeCheckpointInterval = null;
       }
       // Stop the background PR-refresh timer (also .unref()'d, but clear it
       // explicitly so no tick fires mid-shutdown).
@@ -1884,10 +1902,17 @@ function performShutdown(): boolean {
   if (isShuttingDown()) return false;
   setShuttingDown();
 
-  // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything
-  startHardShutdownFailsafe();
+  // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything.
+  // It overwrites the clean exit recorded below, so a quit that had to be
+  // force-killed reports as `failsafe` on the next launch, not `clean`.
+  startHardShutdownFailsafe(() => recordRunExit('failsafe'));
 
-  trackShutdownAnalytics();
+  // The only analytics in the quit path is this synchronous disk write: the
+  // next launch's app_launch reports this run's duration and that it ended
+  // cleanly. No network send from here can land (synchronous-shutdown.md rule
+  // 3; app_close used to be fired here and never arrived). Never throws, which
+  // matters because a throw would skip the cleanup that kills the PTYs.
+  recordRunExit('clean');
 
   // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)

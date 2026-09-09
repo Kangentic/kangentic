@@ -21,7 +21,12 @@ synchronous.
    (better-sqlite3 is synchronous).
 2. Do NOT call `event.preventDefault()`, with exactly one sanctioned exception: the bounded PTY
    exit-callback drain described below. Nothing else may hold the quit.
-3. Fire-and-forget analytics. Never `await` a network call during shutdown.
+3. No network analytics at all from the quit path. Every route exits before the SDK's request
+   can complete, so an event fired here never lands (`app_close` was fired on every quit and
+   arrived on none). The quit path's only analytics is `recordRunExit('clean')`, a synchronous
+   disk write the next launch reports on `app_launch` (`src/main/analytics/run-uptime.ts`).
+   `tests/unit/before-quit-drain-wiring.test.ts` pins that `performShutdown` contains it and no
+   `trackEvent(` or `trackHeartbeat(`.
 4. Set a hard failsafe timer (`taskkill /T /F` on Windows, `SIGKILL` of the process group
    elsewhere) as a backstop.
 

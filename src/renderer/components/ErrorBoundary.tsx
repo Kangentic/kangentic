@@ -29,7 +29,6 @@ export class ErrorBoundary extends React.Component<Props, State> {
     reportBoundaryError(error);
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'root',
-      componentStack: info.componentStack ?? undefined,
     });
   }
 

@@ -1,13 +1,15 @@
 import { promises as fsPromises, readFileSync } from 'node:fs';
-import { trackEvent } from './analytics';
+import { trackEvent, getAnalyticsClientId } from './analytics';
 
 /**
- * The curated feature vocabulary for adoption tracking. Deliberately small:
+ * The curated feature vocabulary for adoption tracking. Deliberately curated:
  * each feature adds up to one `feature_used` event per user per day, so the
  * list is a budget decision, not a free enum (see docs/analytics.md's event
- * budget). Renderer-reported features arrive over IPC and are validated
+ * budget; at the measured rate each entry costs roughly twelve events a day
+ * fleet-wide). Renderer-reported features arrive over IPC and are validated
  * against this list, so a compromised or drifted renderer cannot invent
- * event vocabulary.
+ * event vocabulary. The Command Terminal is `command_terminal`; there is no
+ * separate transient-session event.
  */
 export const ANALYTICS_FEATURES = [
   'command_terminal',
@@ -20,6 +22,14 @@ export const ANALYTICS_FEATURES = [
   'usage_dashboard',
   'quick_find',
   'settings',
+  'agent_monitor',
+  'semantic_memory',
+  'dictation',
+  'backlog',
+  'changes_panel',
+  'conversation_viewer',
+  'board_integration',
+  'pull_request',
 ] as const;
 
 export type AnalyticsFeature = (typeof ANALYTICS_FEATURES)[number];
@@ -77,6 +87,17 @@ function currentUtcDay(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** The install id for the two lifetime-once events (see setAnalyticsClientId):
+ *  it turns "N first uses" into "N installs reached this step". Omitted while
+ *  unresolved: startup loads these flags before it awaits the client-id
+ *  resolver, so a lifetime event in that window (only startup recovery's
+ *  first_spawn, which a brand-new install cannot have) goes out without it.
+ *  Never merged into the daily feature_used. */
+function lifetimeEventProps(): { clientId?: string } {
+  const clientId = getAnalyticsClientId();
+  return clientId ? { clientId } : {};
+}
+
 /** Serializes flag writes: two milestones landing in the same tick would
  *  otherwise race unordered writeFile calls on one path and can leave the
  *  file holding the OLDER state (or interleaved garbage). The chain keeps
@@ -129,9 +150,10 @@ export function initUsageAnalytics(flagsFilePath: string): void {
 
 /**
  * Record one use of a curated feature. Emits `feature_used` at most once per
- * feature per UTC day, and `feature_first_use` at most once per install.
- * Fire-and-forget from any main-process call site; renderer surfaces reach
- * this through the analytics:trackFeatureUsed IPC funnel.
+ * feature per UTC day, and `feature_first_use` (carrying the install id) at
+ * most once per install. Fire-and-forget from any main-process call site;
+ * renderer surfaces reach this through the analytics:trackFeatureUsed IPC
+ * funnel.
  */
 export function trackFeatureUsed(feature: AnalyticsFeature): void {
   const day = currentUtcDay();
@@ -141,19 +163,20 @@ export function trackFeatureUsed(feature: AnalyticsFeature): void {
   }
   if (usageFlags && !usageFlags.featureFirstUse[feature]) {
     usageFlags.featureFirstUse[feature] = true;
-    trackEvent('feature_first_use', { feature });
+    trackEvent('feature_first_use', { feature, ...lifetimeEventProps() });
     persistUsageFlags();
   }
 }
 
 /**
- * Record an onboarding funnel step, at most once per install. No-op until
+ * Record an onboarding funnel step, at most once per install, carrying the
+ * install id so the funnel reads as installs per step. No-op until
  * initUsageAnalytics has loaded the lifetime flags.
  */
 export function trackMilestone(step: OnboardingMilestone): void {
   if (!usageFlags || usageFlags.milestones[step]) return;
   usageFlags.milestones[step] = true;
-  trackEvent('onboarding_milestone', { step });
+  trackEvent('onboarding_milestone', { step, ...lifetimeEventProps() });
   persistUsageFlags();
 }
 

@@ -5,10 +5,12 @@ import path from 'node:path';
 
 const mocks = vi.hoisted(() => ({
   trackEvent: vi.fn(),
+  clientId: undefined as string | undefined,
 }));
 
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: mocks.trackEvent,
+  getAnalyticsClientId: () => mocks.clientId,
 }));
 
 import {
@@ -28,6 +30,7 @@ let flagsPath: string;
 
 beforeEach(() => {
   mocks.trackEvent.mockClear();
+  mocks.clientId = undefined;
   resetUsageAnalyticsForTests();
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-usage-'));
   flagsPath = path.join(tempDir, 'analytics-usage.json');
@@ -147,6 +150,41 @@ describe('trackFeatureUsed', () => {
 
     const eventNames = mocks.trackEvent.mock.calls.map((call) => call[0]);
     expect(eventNames).toEqual(['feature_used']);
+  });
+});
+
+describe('lifetime-once events carry the install id', () => {
+  it('attaches clientId to feature_first_use and onboarding_milestone, never to the daily feature_used', () => {
+    mocks.clientId = 'deadbeef';
+    initUsageAnalytics(flagsPath);
+
+    trackFeatureUsed('quick_find');
+    trackMilestone('first_task');
+
+    expect(mocks.trackEvent).toHaveBeenCalledWith('feature_used', { feature: 'quick_find' });
+    expect(mocks.trackEvent).toHaveBeenCalledWith('feature_first_use', {
+      feature: 'quick_find',
+      clientId: 'deadbeef',
+    });
+    expect(mocks.trackEvent).toHaveBeenCalledWith('onboarding_milestone', {
+      step: 'first_task',
+      clientId: 'deadbeef',
+    });
+    // The daily event must stay install-blind: it is the high-volume one.
+    const featureUsedCall = mocks.trackEvent.mock.calls.find((call) => call[0] === 'feature_used');
+    expect(Object.keys(featureUsedCall?.[1] as Record<string, unknown>)).toEqual(['feature']);
+  });
+
+  it('omits the key entirely while the id is unresolved, rather than sending undefined', () => {
+    // Startup loads the flags before it awaits the client-id resolver, so a
+    // lifetime event in that window goes out without the id. A key present
+    // with an undefined value would still be serialized by the SDK.
+    initUsageAnalytics(flagsPath);
+
+    trackMilestone('first_project');
+
+    const milestoneCall = mocks.trackEvent.mock.calls.find((call) => call[0] === 'onboarding_milestone');
+    expect(Object.keys(milestoneCall?.[1] as Record<string, unknown>)).toEqual(['step']);
   });
 });
 

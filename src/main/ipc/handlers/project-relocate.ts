@@ -240,7 +240,7 @@ export async function relocateProject(
     context.currentProjectPath = resolved;
   }
 
-  trackEvent(mode === 'move' ? 'project_move' : 'project_relocate');
+  trackEvent('project_relocate', { mode });
   console.log(`[PROJECT_RELOCATE] ${project.name} (${mode}): ${storedOldPath} -> ${resolved}`);
   return { project: updated, warnings };
 }

@@ -4540,9 +4540,6 @@ export interface RendererErrorContext {
   boundary: 'root' | 'panel' | 'unhandled_rejection';
   /** `PanelErrorBoundary`'s static `label` prop ("Changes", "Monitor"). */
   panel?: string;
-  /** React's `info.componentStack`. Main reduces it to component names before
-   *  sending; the raw value never leaves the process. */
-  componentStack?: string;
 }
 
 export interface ElectronAPI {

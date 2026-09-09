@@ -25,6 +25,13 @@ vi.mock('which', () => ({
   },
 }));
 
+// The board_integration adoption signal fires from requireStable, the one
+// funnel every import fetch and execute goes through.
+const mockTrackFeatureUsed = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/usage', () => ({
+  trackFeatureUsed: mockTrackFeatureUsed,
+}));
+
 import { boardRegistry } from '../../src/main/boards';
 import type { ExternalSource } from '../../src/shared/types';
 
@@ -39,6 +46,22 @@ const EXPECTED_PROVIDERS: ExternalSource[] = [
 ];
 
 describe('boardRegistry', () => {
+  it('requireStable reports board_integration for a stable adapter and nothing for a stub', () => {
+    mockTrackFeatureUsed.mockClear();
+    const stable = boardRegistry.list().find((adapter) => adapter.status !== 'stub');
+    expect(stable).toBeDefined();
+
+    expect(boardRegistry.requireStable(stable!.id)).toBe(stable);
+    expect(mockTrackFeatureUsed).toHaveBeenCalledTimes(1);
+    expect(mockTrackFeatureUsed).toHaveBeenCalledWith('board_integration');
+
+    const stub = boardRegistry.list().find((adapter) => adapter.status === 'stub');
+    if (stub) {
+      expect(() => boardRegistry.requireStable(stub.id)).toThrow();
+      expect(mockTrackFeatureUsed).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('registers all 7 supported providers', () => {
     expect(boardRegistry.list().length).toBe(EXPECTED_PROVIDERS.length);
     for (const id of EXPECTED_PROVIDERS) {

@@ -7,49 +7,69 @@ the same kill switch (below).
 
 ## What We Collect (Aptabase)
 
-Nineteen event types are tracked, all on critical-path actions only:
+Seventeen event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
-| `app_launch` | App starts (when analytics is enabled) | platform, arch, clientId |
-| `app_heartbeat` | Every 30 minutes while at least one agent session is active; skipped when idle. Also fires once right before system sleep if a session is active | activeSessions, suspendedSessions, queuedSessions, totalSessions |
-| `app_close` | Graceful quit, Ctrl+C, SIGTERM, or OS shutdown/reboot/log-off | durationSeconds |
+| `app_launch` | App starts (when analytics is enabled) | platform, arch, clientId; from the second launch on, the previous run's lastRunUptimeSeconds, lastRunUptime (`<1m` / `1-5m` / `5-30m` / `30m-2h` / `2-8h` / `8h+`), lastRunExit (`clean` / `failsafe` / `abrupt`) |
+| `settings_snapshot` | Once per app run, right after `app_launch` | one key per global setting that differs from its default (see below), plus deviations (`0` / `1` / `2` / `3-5` / `6+`) |
+| `app_heartbeat` | Every 55 minutes while at least one agent session is active; skipped when idle. Also fires once right before system sleep if a session is active | activeSessions, suspendedSessions, queuedSessions, totalSessions |
 | `app_error` | Uncaught exception, unhandled rejection, renderer crash, React ErrorBoundary, updater failure, or PTY spawn failure | source, message (sanitized); see per-source extras below |
-| `project_create` | User creates a project | (none) |
-| `project_move` | User relocates a project folder via the Locate Folder dialog (move mode) | (none) |
-| `project_relocate` | Same dialog, relocate mode | (none) |
+| `project_create` | User creates a project, through the New Project dialog or by adding a folder | (none) |
+| `project_relocate` | User re-points a project at another folder, either through the Locate Folder dialog (`repoint`) or the one-step Move in Project Settings > General (`move`) | mode (`repoint` / `move`) |
 | `task_complete` | Task moves to Done | agent, model, permissionMode, durationSeconds, costUsd, inputTokens, outputTokens, toolCalls |
-| `session_spawn` | Agent session reaches running state (board or transient) | agent, isTransient, permissionMode, worktree |
+| `session_spawn` | Agent session reaches running state (board or transient; a Command Terminal session is `isTransient: true`) | agent, isTransient, permissionMode, worktree |
 | `session_exit` | Agent session finishes | exitCode, durationSeconds, agent, model, costUsd, toolCalls, intentional |
-| `transient_session_spawn` | Transient session launched from command bar | agent |
-| `onboarding_milestone` | Once per install per funnel step | step (`first_project`, `first_task`, `first_spawn`, `first_task_complete`) |
-| `feature_first_use` | Once per install per curated feature | feature |
+| `onboarding_milestone` | Once per install per funnel step | step (`first_project`, `first_task`, `first_spawn`, `first_task_complete`), clientId |
+| `feature_first_use` | Once per install per curated feature | feature, clientId |
 | `feature_used` | Once per curated feature per UTC day | feature |
-| `board_snapshot` | Once per project per app run, on cold project open | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
+| `board_snapshot` | Once per project per app run, the first time the user views it (the boot auto-open or a sidebar switch); background activation of other projects does not count, and neither does the open that creates a project, whose board is still the default | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
-| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit) | service (`kangentic-embeddings`, `kangentic-line-count`), exitCode (see below) |
+| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`), exitCode (see below), phase (`first` / `latched`) |
 | `foreign_minidump_dropped` | A native crash dump reached us from a process that is not ours, and was filtered out before upload (see "Error Reporting" below) | module (the crashing executable's file name, never a path) |
+
+There is no close event. Every quit path exits before a network send can complete, so
+`app_close` fired on every quit and landed on none of them; the run's duration is instead
+checkpointed to `<configDir>/analytics-run.json` once a minute and reported by the NEXT launch as
+`lastRunUptimeSeconds` (Aptabase averages numeric properties, which is what replaces the
+dashboard's own Avg. Duration) and the `lastRunUptime` bucket. `lastRunExit` says how that run
+ended: `clean` (the quit path ran: window close, Cmd+Q, Ctrl+C, SIGTERM, an OS shutdown or log-off
+that reached the app, an update install), `failsafe` (the quit path ran but Electron's teardown
+hung and the hard failsafe force-killed the process), or `abrupt` (nothing was recorded: a crash, a
+kill, a power loss). Uptime is wall-clock and includes time asleep. Aptabase's own session
+duration is coarse by comparison, since heartbeats are the only events a long agent run emits.
 
 `utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
 reports, so it is NOT comparable across platforms (POSIX derives it from `waitpid`, Windows from
 `GetExitCodeProcess`). Group by `service` and platform before reading it. The value `-1` is a
 sentinel meaning "the fork itself threw, so no process ever started and there is no exit code",
 which a real exit code cannot collide with. The matching Sentry tag spells that same case
-`unknown` rather than `-1`.
+`unknown` rather than `-1`. `phase` says which of the two per-run events it is: `first` counts the
+installs that hit a crash at all, `latched` counts the installs whose subsystem gave up (the same
+moment the Sentry issue is filed). The event used to tick on every crash, which with three crashes
+per five-minute decay window read as "71 crashes a day" when it was a handful of installs looping,
+and could not tell those apart. The per-run cap is held per service across policy instances, since
+the embed client rebuilds its policy on every model change and project switch.
 
 The curated `feature` vocabulary is `ANALYTICS_FEATURES` in `src/main/analytics/usage.ts`:
 `command_terminal`, `worktree_session`, `board_profile`, `popout_window`, `browser_pane`,
-`mcp_server`, `mobile_bridge`, `usage_dashboard`, `quick_find`, `settings`. Each feature adds at
-most one `feature_used` event per user per day, so the list is a budget decision, not a free
-enum. Renderer-reported features cross one IPC channel (`analytics:trackFeatureUsed`) and are
-re-validated against this list in the main process. Onboarding milestones and feature first-use
-flags persist in `<configDir>/analytics-usage.json`, alongside the last-run version that powers
-`update_outcome`.
+`mcp_server`, `mobile_bridge`, `usage_dashboard`, `quick_find`, `settings`, `agent_monitor`,
+`semantic_memory`, `dictation`, `backlog`, `changes_panel`, `conversation_viewer`,
+`board_integration`, `pull_request`. Each feature adds at most one `feature_used` event per user
+per day, so the list is a budget decision, not a free enum. Renderer-reported features cross one
+IPC channel (`analytics:trackFeatureUsed`) and are re-validated against this list in the main
+process. Onboarding milestones and feature first-use flags persist in
+`<configDir>/analytics-usage.json`, alongside the last-run version that powers `update_outcome`;
+the run-duration checkpoint lives beside it in `analytics-run.json`, in its own file because it is
+rewritten once a minute and a torn write must never blank the lifetime flags. `semantic_memory`
+counts only a search whose query actually embedded (a lexical fallback is not a use),
+`board_integration` counts an import fetch or execute through any provider, and `pull_request`
+counts a PR actually linked to a task, never the automatic sweeps that find nothing.
 
 `agent` is the adapter id from a fixed allowlist (`claude`, `codex`, `gemini`, `qwen`, `opencode`, `aider`, `cursor`, `warp`, `copilot`, `kimi`, `droid`, `ollama`, `grok`, `antigravity`). `model` is the CLI-level model identifier the agent itself reports through its status output (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`).
 
-`model` is only present on events fired *after* the agent has emitted at least one status update, which means it is omitted on `session_spawn` and `transient_session_spawn` (model is unknown at spawn time) and may also be omitted on `session_exit` / `task_complete` for very short sessions that exited before the agent reported a model.
+`model` is only present on events fired *after* the agent has emitted at least one status update, which means it is omitted on `session_spawn` (model is unknown at spawn time) and may also be omitted on `session_exit` / `task_complete` for very short sessions that exited before the agent reported a model.
 
 For Claude sessions, `model` is normalized to its base id via `parseModelId` (`src/shared/model-id.ts`) before being attached, so the 1M-context opt-in suffix and a dated pin no longer fragment the model breakdown: `claude-opus-4-8[1m]` -> `claude-opus-4-8`, `claude-haiku-4-5-20251001` -> `claude-haiku-4-5`. This is a display-layer grouping only - the exact spawnable id is unaffected.
 
@@ -62,18 +82,40 @@ spot.
 
 `costUsd`, `inputTokens`, `outputTokens`, and `toolCalls` are cumulative session metrics, omitted when not yet available (e.g. a session that exited before any usage was recorded). `session_exit` carries `costUsd`/`toolCalls` only, since its token counts would otherwise be a point-in-time context-window snapshot rather than a cumulative total; `task_complete` is the source for cumulative token counts.
 
-The `app_launch` event also carries `clientId`, an anonymous id Kangentic generates and attaches (see "Unique Installs" below). It is attached only to `app_launch` (the one authoritative per-launch install signal), not to every event, to avoid inflating high-cardinality string-prop volume on events like `app_heartbeat` where it adds no install-counting value.
+The `app_launch` event also carries `clientId`, an anonymous id Kangentic generates and attaches (see "Unique Installs" below). It rides `app_launch` (the one authoritative per-launch install signal) and the two lifetime-once events, `feature_first_use` and `onboarding_milestone`, where it turns "N first uses" into "N installs reached this step" at negligible cost since each fires at most once per install for all time. It is not attached to every event, to avoid inflating high-cardinality string-prop volume on events like `app_heartbeat` or the daily `feature_used` where it adds no install-counting value.
 
 `board_snapshot` sends counts only: the number of columns, whether the board deviates from the
 seeded default (compared against `DEFAULT_SWIMLANES` in `src/main/db/migrations/default-data.ts`
 by count and name-set), a bucketed task count (never the exact figure), and the number of Board
 Profiles. Column names and task content never leave the machine.
 
+`settings_snapshot` answers "what are people actually running with", the question that changes a
+default; a stream of setting-changed events would only say what was touched. It carries only the
+settings that differ from their default, from a fixed allowlist of fifteen global settings
+(`SETTINGS_SNAPSHOT_ALLOWLIST` in `src/main/analytics/settings-snapshot.ts`): `memory.indexingEnabled`,
+`memory.semanticEnabled`, `memory.embeddingModel`, `memory.acceleration`,
+`agent.maxConcurrentSessions` (bucketed `1-3` / `4-7` / `9-12` / `13-16` / `17+`),
+`agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`, `agent.idleTimeoutMinutes` (bucketed
+`1-15` / `16-60` / `61+`), `browserAutomation.enabled`, `browserAutomation.allowEval`,
+`browserAutomation.restrictNavigationToLocalhost` (sent as `browserAutomation.localhostOnly`,
+since Aptabase rejects the whole event for a key over 40 characters), `mobileBridge.relayMode`,
+`dictation.language`, `windowLightDismiss`, and `animationsEnabled`. Property keys are the
+settings-registry ids. Every listed setting is global-scoped, so there is always a value to read
+with no project open; `agent.executionMode` is project-scoped and deliberately absent. The
+allowlist is a security control before it is a budget one: the global config also holds server
+URLs and auth, relay URLs, CLI paths, init scripts, and shortcuts, none of which can be read by
+the snapshot, and a listed key can only leave through a closed shape (a boolean, an enum drawn
+from a fixed set, a bucketed number, or a short pattern-checked string). A stored value outside
+that shape is sent as the literal `other`, never verbatim. Cosmetic settings and settings already
+carried by other events (permission mode, worktrees, and the default agent and model on
+`session_spawn`) stay out. An all-defaults run still sends the event with `deviations: 0`, which is
+itself the signal that the defaults are right.
+
 ### app_error sources
 
 `source` discriminates the failure path: `uncaughtException`, `unhandledRejection`,
 `render-process-gone` (extras: `reason`, `exitCode`), `error_boundary` (extras: `boundary`,
-`panel`, `components`), `updater`, `pty_spawn` (extras: `shell`, `shellArgs`, `cwdExists`,
+`panel`), `updater`, `pty_spawn` (extras: `shell`, `shellArgs`, `cwdExists`,
 `shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`), and
 `secondInstanceNoWindow`.
 
@@ -84,23 +126,20 @@ never fired. The handler rebuilds the window either way; the event is what keeps
 leak visible instead of being absorbed by the recovery. It is not sent on macOS, where an app
 outliving its window is the ordinary lifecycle rather than a fault.
 
-Renderer errors (`source: error_boundary`) carry three extra properties that say *where* the error
+Renderer errors (`source: error_boundary`) carry two extra properties that say *where* the error
 happened, since a message alone is rarely enough to locate one. `boundary` is `root`, `panel`, or
 `unhandled_rejection` and identifies which of the three reporters caught it; `panel` is the
-failing panel's static label; `components` is a trail of React component names, innermost first.
-The raw component stack is never sent to Aptabase: a production stack frame embeds a `file://`
-URL containing the user's home directory, so main reduces it to component names, which cannot
-contain a path. (Sentry receives the real stack instead, with paths normalized - see Error
-Reporting below.)
+failing panel's static label. Both read directly, because a string literal and a prop survive
+minification. The React component stack never crosses IPC: a production stack frame embeds a
+`file://` URL containing the user's home directory, and a trail of component names reduced from it
+arrived mangled anyway (React takes frame names from `fn.name` and the packaged renderer bundle is
+minified), so that property was dropped. Sentry receives the real, symbolicated stack instead, with
+paths normalized (see Error Reporting below); `boundary` is the field to reach for first on the
+Aptabase side.
 
-`boundary` and `panel` read directly. `components` does not: React takes frame names from
-`fn.name` and the packaged renderer bundle is minified, so the trail arrives mangled. It still
-distinguishes one code path from another, but Sentry is now the place to read a symbolicated
-stack; `boundary` is the field to reach for first on the Aptabase side.
-
-Aptabase truncates any string property at 180 characters server-side, so `message`, `panel`, and
-`components` are all capped at that length locally (`MAX_ANALYTICS_STRING_LENGTH`) rather than
-sending text that would be silently cut.
+Aptabase truncates any string property at 180 characters server-side, so `message` and `panel`
+are capped at that length locally (`MAX_ANALYTICS_STRING_LENGTH`) rather than sending text that
+would be silently cut.
 
 `boundary` classifies only `source: error_boundary` events. The other `app_error` sources
 (all raised in the main process)
@@ -199,8 +238,9 @@ in one Sentry org, one triage surface.
   "how often are users hitting a missing CLI" stays answerable. A future user-config error opts
   itself out by extending that class rather than by adding a message pattern to a filter list.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
-  restart cap produces a Sentry issue, and only once per latch; every crash increments the
-  `utility_worker_crashed` counter. The same volume-versus-diagnostic split as `spawn_failed`.
+  restart cap produces a Sentry issue, and only once per latch; Aptabase sees at most two
+  `utility_worker_crashed` events per service per app run, the first crash and the latch. The same
+  volume-versus-diagnostic split as `spawn_failed`.
   Every crash does log its stderr tail to the main console as a
   `[utility-process] <service> exited with code <n>` warning, which the log mirror persists to
   `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether or not error
@@ -315,6 +355,42 @@ All telemetry egress happens in the main process. Renderer errors reach it over 
 `analytics:trackRendererError` funnel for Aptabase, the Sentry SDK's internal IPC transport for
 error reports); the renderer never opens a network path of its own.
 
+Nothing is sent from the quit path. The `before-quit` handler is synchronous by rule
+(`.claude/rules/synchronous-shutdown.md`), the SDK issues one HTTP request per event with no flush
+hook, and every shutdown route exits before that request can complete, so any event fired there
+is lost. That is why run duration is reported by the next launch (above) rather than by a close
+event.
+
+### Local verification
+
+Aptabase publishes an ingestion API only, so what production received can only be read off the
+dashboard by a person. To see the event stream directly, point it at a local sink instead: the SDK
+picks its host from the middle segment of the app key, and an `A-DEV-<digits>` key routes every
+event to `http://localhost:3000`. `KANGENTIC_APTABASE_APP_KEY` overrides the key so no source edit
+is needed.
+
+```
+node scripts/aptabase-sink.mjs
+```
+
+Then start Kangentic with `KANGENTIC_TELEMETRY=1`, `KANGENTIC_APTABASE_APP_KEY=A-DEV-0000000000`,
+and `KANGENTIC_ERROR_REPORTING=0` in its environment (the last one because error reporting
+inherits the telemetry switch, and a dev build should not start sending real errors to Sentry just
+to watch analytics). For a worktree preview, pass them through the launcher, which splices them
+into the terminal command it opens (a new terminal tab does not inherit the calling shell's
+environment, so setting them on the launcher's own process is not enough):
+
+```
+node scripts/worktree-preview.js --env KANGENTIC_TELEMETRY=1 --env KANGENTIC_APTABASE_APP_KEY=A-DEV-0000000000 --env KANGENTIC_ERROR_REPORTING=0
+```
+
+Each event prints at the sink as it is posted, with its properties, at zero cost against the
+production budget. This is the acceptance test for anything near the quit path
+(quit each way and confirm the next launch's `app_launch` reports `lastRunExit: clean`; kill the
+process and confirm `abrupt`), for the once-per-run events (`settings_snapshot`, one per launch;
+`board_snapshot`, once per project viewed, and not on the open that creates one), and for
+confirming a removed event stays gone.
+
 ## Environment Variables
 
 `KANGENTIC_TELEMETRY` is the superset kill switch (it predates error reporting and its
@@ -329,6 +405,7 @@ Sentry). `KANGENTIC_ERROR_REPORTING` controls Sentry alone:
 | `KANGENTIC_ERROR_REPORTING` | `0` or `false` | Error reporting disabled; analytics unaffected, except `foreign_minidump_dropped`, which fires from the Sentry `beforeSend` hook and so never installs |
 | `KANGENTIC_ERROR_REPORTING` | `1` or `true` | Error reporting enabled, even in dev builds (unless `KANGENTIC_TELEMETRY=0`) |
 | `KANGENTIC_ERROR_REPORTING` | *(unset)* | Inherits the `KANGENTIC_TELEMETRY` behavior |
+| `KANGENTIC_APTABASE_APP_KEY` | an Aptabase app key | Replaces the production key; an `A-DEV-*` key routes every event to `http://localhost:3000` (see "Local verification") |
 
 ### Opt-out examples
 

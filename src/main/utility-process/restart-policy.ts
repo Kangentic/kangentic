@@ -31,13 +31,17 @@ import { summarizeStderrTail, type StderrSource } from './stderr-tail';
  * calls the worker again, so a success-triggered reset could never fire and
  * would be dead code.
  *
- * Telemetry follows the same volume/diagnostic split the spawn paths use: an
- * Aptabase counter on every crash answers "how often does this happen", and a
- * single Sentry report when the cap is reached answers "which service died,
- * with what exit code, and what it printed before dying". A crash the policy
- * recovers from is not reported as an issue, because it is not actionable on
- * its own; its stderr still goes to the main console (and so to the project
- * log) so a local trail exists either way.
+ * Telemetry follows the same volume/diagnostic split the spawn paths use, with
+ * the Aptabase side shaped as at most two events per service per app run: one
+ * on the FIRST crash (how many installs hit this) and one when the cap
+ * latches (how many installs' subsystem gave up), each carrying `phase`. It
+ * used to tick on every crash, which with three crashes per five-minute decay
+ * window read as "71 crashes a day" when it was a handful of installs looping,
+ * and could not tell those two apart. The single Sentry report at the latch
+ * answers "which service died, with what exit code, and what it printed before
+ * dying". A crash the policy recovers from is not reported as an issue,
+ * because it is not actionable on its own; its stderr still goes to the main
+ * console (and so to the project log) so a local trail exists either way.
  */
 export interface UtilityRestartPolicyOptions {
   /** The `serviceName` passed to `utilityProcess.fork`, reused as the tag. */
@@ -63,6 +67,25 @@ const DEFAULT_MAX_CRASHES = 3;
  */
 const DEFAULT_BACKOFF_MS: readonly number[] = [1_000, 5_000, 15_000];
 const DEFAULT_DECAY_MS = 5 * 60_000;
+
+type CrashPhase = 'first' | 'latched';
+
+/**
+ * The Aptabase phases already sent this app run, keyed by service. Module
+ * scope rather than a field on the policy, deliberately: the embed client
+ * builds a fresh policy in its constructor and the engine rebuilds that client
+ * on every model or acceleration change and whenever warm-hold drops (a
+ * project switch, semantic search turned off), so a per-instance latch would
+ * re-fire "first crash" on every switch. The cap the event promises is two per
+ * service per RUN, and a run is the process. `reportedLatch` stays per
+ * instance and re-arms per decay window, since Sentry dedups on its side.
+ */
+const trackedCrashPhases = new Map<string, Set<CrashPhase>>();
+
+/** Forget the per-run phase latches (vitest shares module instances). */
+export function resetUtilityCrashTelemetryForTests(): void {
+  trackedCrashPhases.clear();
+}
 
 export class UtilityRestartPolicy {
   private readonly service: string;
@@ -137,13 +160,13 @@ export class UtilityRestartPolicy {
       tail ? `\n${tail}` : '(no stderr captured)',
     );
 
-    trackEvent('utility_worker_crashed', {
-      service: this.service,
-      exitCode: exitCode ?? -1,
-    });
+    this.trackCrashOnce('first', exitCode);
 
     if (this.crashCount >= this.maxCrashes && !this.reportedLatch) {
       this.reportedLatch = true;
+      // The same moment as the Sentry report, so the two surfaces stay aligned
+      // on when a subsystem gave up.
+      this.trackCrashOnce('latched', exitCode);
       // Reported from here rather than from the SDK's app-level
       // `child-process-gone` listener because only this side knows the service
       // name, the exit code, and that the exit was unintentional. The SDK's own
@@ -171,6 +194,25 @@ export class UtilityRestartPolicy {
         },
       );
     }
+  }
+
+  /** Send the Aptabase event for `phase` once per service per app run. The
+   *  exit code rides along (with -1 for a fork that threw, so no process ever
+   *  started); the crash count does not, because it is a constant per phase
+   *  (1 on `first`, the cap on `latched`) and already lives on the Sentry tag. */
+  private trackCrashOnce(phase: CrashPhase, exitCode: number | null | undefined): void {
+    let phases = trackedCrashPhases.get(this.service);
+    if (!phases) {
+      phases = new Set<CrashPhase>();
+      trackedCrashPhases.set(this.service, phases);
+    }
+    if (phases.has(phase)) return;
+    phases.add(phase);
+    trackEvent('utility_worker_crashed', {
+      service: this.service,
+      exitCode: exitCode ?? -1,
+      phase,
+    });
   }
 
   /** The newest crash's stderr that is non-empty at read time, or null. */

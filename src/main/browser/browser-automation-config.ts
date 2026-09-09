@@ -1,4 +1,5 @@
 import type { ConfigManager } from '../config/config-manager';
+import type { AppConfig } from '../../shared/types';
 
 /**
  * Resolved (defaults applied) snapshot of the global `AppConfig.browserAutomation`
@@ -14,9 +15,29 @@ export interface ResolvedBrowserAutomationConfig {
 }
 
 /**
- * Read the global browser-automation policy. Defaults: everything on except
- * eval (off) and the localhost-navigation restriction (off, i.e. any http(s)
- * is allowed). A stored value always wins. Never throws.
+ * Apply the defaults to a stored `browserAutomation` block. Defaults:
+ * everything on except eval (off) and the localhost-navigation restriction
+ * (off, i.e. any http(s) is allowed). A stored value always wins. These
+ * defaults live here and NOT in DEFAULT_CONFIG, so this pure resolver is the
+ * single source for them: the MCP gate reads it through
+ * readBrowserAutomationConfig, and the settings_snapshot analytics event
+ * reads it directly to decide what counts as a deviation.
+ */
+export function resolveBrowserAutomationConfig(
+  stored: AppConfig['browserAutomation'] | undefined,
+): ResolvedBrowserAutomationConfig {
+  return {
+    enabled: stored?.enabled ?? true,
+    allowInteraction: stored?.allowInteraction ?? true,
+    allowNavigation: stored?.allowNavigation ?? true,
+    allowEval: stored?.allowEval ?? false,
+    restrictNavigationToLocalhost: stored?.restrictNavigationToLocalhost ?? false,
+  };
+}
+
+/**
+ * Read the global browser-automation policy with defaults applied. Never
+ * throws.
  */
 export function readBrowserAutomationConfig(
   configManager: ConfigManager,
@@ -27,11 +48,5 @@ export function readBrowserAutomationConfig(
   } catch {
     stored = undefined;
   }
-  return {
-    enabled: stored?.enabled ?? true,
-    allowInteraction: stored?.allowInteraction ?? true,
-    allowNavigation: stored?.allowNavigation ?? true,
-    allowEval: stored?.allowEval ?? false,
-    restrictNavigationToLocalhost: stored?.restrictNavigationToLocalhost ?? false,
-  };
+  return resolveBrowserAutomationConfig(stored);
 }
