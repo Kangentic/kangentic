@@ -79,6 +79,36 @@ describe('openAttachmentFile', () => {
     expect(result).toBe('');
   });
 
+  // The deliberate guard on this helper FORWARDING its caller's timeoutMs to
+  // openPathBounded rather than letting the shared default apply. The tests
+  // above pass a timeoutMs too, but they await on real timers, so dropping the
+  // forward makes them fail by 5000ms runner timeout rather than by assertion:
+  // slow, silent about the actual cause, and lost entirely if anyone ever
+  // raises testTimeout (which is exactly what that timeout's own error message
+  // advises). Asserting the tick keeps the guard independent of the runner's
+  // deadline, and of OPEN_PATH_TIMEOUT_MS happening to equal it.
+  it('honors an explicit timeoutMs rather than the shared default', async () => {
+    vi.useFakeTimers();
+    mockShell.openPath.mockReturnValue(new Promise<string>(() => { /* never settles */ }));
+
+    const resultPromise = openAttachmentFile(makeAttachment(), {
+      platform: 'linux',
+      tempDirRoot: tmpRoot,
+      timeoutMs: 20,
+    });
+    let settled = false;
+    void resultPromise.then(() => { settled = true; });
+
+    // One tick short of the override: still pending. A dropped forward would
+    // arm the 5000ms default here instead, and fail the next assertion at once.
+    await vi.advanceTimersByTimeAsync(19);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    expect(await resultPromise).toBe('');
+  });
+
   it('still reveals the file if openPath eventually reports an error after the timeout', async () => {
     let resolveOpen: (value: string) => void = () => {};
     mockShell.openPath.mockReturnValue(new Promise<string>((resolve) => { resolveOpen = resolve; }));
