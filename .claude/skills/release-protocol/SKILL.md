@@ -52,7 +52,10 @@ tag sequences never collide.
 2. **Verify clean tree:** Run `git status --porcelain`. Must be empty. If not, stop.
 3. **Fetch latest:** Run `git fetch origin main`.
 4. **Verify up-to-date:** Run `git diff HEAD origin/main --stat`. Must be empty. If not, stop with: "Local main is behind origin/main. Run `git pull` first."
-5. **Install dependencies:** Run `npm ci`.
+5. **Verify dependencies:** Run `node scripts/verify-node-modules.js`. Exit 0 means the installed
+   tree already matches `package-lock.json`, so continue. On exit 1 or 2, run `npm ci` and re-run
+   the verifier. Do not run `npm ci` unconditionally: it deletes `node_modules`, which the live
+   dev server is usually running Electron out of.
 6. **Verify changelog parity across the whole tag sequence.** This step exists because the
    sequence has already drifted once: eight versions reached npm with no entry, because the tags
    were hand-created on feature commits instead of through this skill, and Step 3 only ever
