@@ -10,10 +10,22 @@
  *
  * TIER COVERAGE, which differs from GitHub in one way worth knowing: Azure
  * records a PR's commit associations at COMPLETION, so `resolveByCommit`
- * matches completed PRs only. A task with an ACTIVE PR whose worktree is gone
- * and whose stored branch is not the PR's source branch cannot be resolved by
- * any tier. That is narrow (active PRs normally still have a live worktree) but
- * real, and it is a property of the Azure API, not of this code.
+ * matches completed PRs only. A task with an ACTIVE PR whose stored branch is
+ * not the PR's source branch therefore gets nothing from the commit tier. That
+ * is a property of the Azure API, not of this code.
+ *
+ * An earlier version of this note called that gap narrow because "active PRs
+ * normally still have a live worktree". That was wrong twice over. A live
+ * worktree rescues the branch tier only when the live branch IS the PR's source
+ * branch, which is exactly what fails when an agent pushes under a team
+ * convention while the worktree stays on the Kangentic slug. And a task reaches
+ * Done with its PR still open routinely: `deleteTaskWorktree` nulls
+ * `worktree_path` on that move, and `pr-refresh.ts` treats linked-but-worktree-
+ * less as an ordinary refresh case.
+ *
+ * The ladder's last tier closes most of it without any help from this connector:
+ * it finds the remote branch whose tip is the task's HEAD and resolves it BY
+ * BRANCH, which Azure supports, instead of by commit, which it does not.
  */
 
 import PQueue from 'p-queue';
@@ -156,6 +168,12 @@ const SCAN_WINDOW = 4096;
 
 export const azureDevOpsPRConnector: PRConnector = {
   name: 'Azure DevOps',
+  // Free here, unlike GitHub: `pullrequestquery` matches only a PR's OWN source
+  // commits, so the API answers the ownership question server-side. Probed
+  // against a merge product and against a base tip it returns nothing, which is
+  // why `resolveByCommit` below ports neither of GitHub's filters - they would
+  // be dead weight, not a missing guard.
+  verifiesCommitOwnership: true,
 
   matchesRemote(remoteUrls: readonly string[]): boolean {
     return firstAzureRemote(remoteUrls) !== null;

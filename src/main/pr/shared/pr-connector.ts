@@ -85,4 +85,27 @@ export interface PRConnector {
    * `PRResolverUnavailableError` when the CLI is unavailable.
    */
   resolveByCommit?(repoCwd: string, commitSha: string, branchHint?: string): Promise<ResolvedPR | null>;
+
+  /**
+   * Does `resolveByCommit` prove the commit is the returned PR's OWN work,
+   * rather than history it merely inherited from its base?
+   *
+   * This is the question the linker cannot answer for itself. Its
+   * commits-ahead-of-base gate is a cheap early-out measured against a base the
+   * task may not have recorded, so it can only ever be a filter, never a proof.
+   * The proof has to come from the connector, and how it gets there is
+   * platform-specific: GitHub filters client-side (a merge-commit check plus a
+   * per-candidate base-history probe), while Azure's `pullrequestquery` matches
+   * only a PR's own source commits server-side and needs no filter at all.
+   *
+   * Declare it explicitly. A connector that omits it is treated as NOT
+   * self-verifying and the linker SKIPS the commit tier for that repo entirely,
+   * which is the safe direction: a missing declaration costs a link that another
+   * tier will usually still make, where a wrong one costs a mislink that no
+   * later resolve can clear (a hit suppresses the confident-not-found clear
+   * permanently). `tests/unit/pr-connector-gate.test.ts` fails on a registered
+   * connector that implements `resolveByCommit` without declaring this, so the
+   * choice cannot be made by omission.
+   */
+  verifiesCommitOwnership?: boolean;
 }
