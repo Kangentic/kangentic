@@ -16,14 +16,17 @@
 # code. The cost of the trade is real and worth naming: while there is no PR
 # trigger, CodeQL can never be a required status check.
 #
-# The push-to-main run overlaps ci.yml's own push run (21 + 2 = 23), so it
-# queues briefly. Nobody waits on that run - the PR check was the gate - so the
-# delay is accepted here and NOT on the PR path.
+# The push-to-main run overlaps ci.yml's own push run. That run is 20 jobs, not
+# the PR path's 21: cla.yml is a pull_request_target workflow and never fires on
+# a push. So the overlap is 20 + 2 = 22, still past the ceiling, and it queues
+# briefly. Nobody waits on that run - the PR check was the gate - so the delay
+# is accepted here and NOT on the PR path.
 #
 # This lives in its own workflow file rather than as jobs inside ci.yml on
 # purpose: tests/unit/ci-required-checks.test.ts asserts an exact job count for
-# ci.yml and cross-checks it against main's branch protection, so a job added
-# there would need both that snapshot and the protection rule updated.
+# ci.yml and checks it against a captured snapshot of main's branch protection
+# (it does not re-read the API), so a job added there would need both that
+# snapshot and the protection rule updated.
 # tests/unit/repo-hygiene.test.ts pins the missing pull_request trigger.
 #
 # Default setup (the repo-settings toggle) is the other way to get scanning. It

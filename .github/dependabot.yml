@@ -8,8 +8,12 @@
 # `groups` is load-bearing, not cosmetic. Every Dependabot PR fires the full CI
 # gate (21 concurrent jobs) and GitHub Free caps concurrent jobs at ~20
 # ACCOUNT-wide, so ungrouped bumps would queue against each other and against
-# any real PR running at the same time. One grouped weekly PR is at most one
-# gate run per week. See the concurrency-budget block in workflows/ci.yml.
+# any real PR running at the same time. Grouping collapses that into one PR per
+# week instead of one per action. It is not a weekly CEILING on gate runs:
+# rebase-strategy defaults to `auto`, so an open grouped PR re-runs the gate
+# every time main moves under it, and open-pull-requests-limit lets a security
+# update sit alongside it. Merging the weekly PR promptly is what keeps the
+# count near one. See the concurrency-budget block in workflows/ci.yml.
 #
 # `commit-message` produces `chore(deps): bump ...`, matching the conventional
 # format the commit-msg hook enforces and the `deps` scope already in history.
