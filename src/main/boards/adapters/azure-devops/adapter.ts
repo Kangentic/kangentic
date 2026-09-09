@@ -17,18 +17,18 @@ import {
   extractInlineImageUrls,
 } from '../../shared';
 import { AzureDevOpsImporter } from './client';
-import { parseAzureDevOpsUrl, buildAzureDevOpsLabel } from './url-parser';
+import { parseAzureDevOpsUrl, buildAzureDevOpsLabel, isAzureDevOpsAuthedDownloadUrl } from './url-parser';
 
 registerSourceUrlParser('azure_devops', { parse: parseAzureDevOpsUrl, buildLabel: buildAzureDevOpsLabel });
-
-const AZURE_DEVOPS_HOST = 'dev.azure.com';
 
 /**
  * Board adapter for Azure DevOps work items.
  *
  * Downloads inline images with bearer token auth for Azure DevOps URLs
- * (comment screenshots are hosted on dev.azure.com and require authentication).
- * Adds authenticated file attachment downloading for Azure DevOps AttachedFile relations.
+ * (comment screenshots are hosted on the org's own host and require
+ * authentication). Adds authenticated file attachment downloading for Azure
+ * DevOps AttachedFile relations. Both download paths gate the token on
+ * `isAzureDevOpsAuthedDownloadUrl` so it never reaches a third-party host.
  */
 export class AzureDevOpsAdapter implements BoardAdapter {
   readonly id: ExternalSource = 'azure_devops';
@@ -96,7 +96,7 @@ export class AzureDevOpsAdapter implements BoardAdapter {
       return { attachments: [], skippedCount: 0 };
     }
 
-    const needsAuth = imageUrls.some((image) => image.url.includes(AZURE_DEVOPS_HOST));
+    const needsAuth = imageUrls.some((image) => isAzureDevOpsAuthedDownloadUrl(image.url));
     const authHeaders = needsAuth
       ? { Authorization: `Bearer ${await this.azure.getAccessToken()}` }
       : undefined;
@@ -108,9 +108,10 @@ export class AzureDevOpsAdapter implements BoardAdapter {
       const batch = imageUrls.slice(batchStart, batchStart + DOWNLOAD_CONCURRENCY);
       const results = await Promise.allSettled(
         batch.map((imageInfo) => {
-          // Only attach the bearer token to dev.azure.com URLs - sending it
-          // to external image hosts would leak credentials.
-          const headers = imageInfo.url.includes(AZURE_DEVOPS_HOST) ? authHeaders : undefined;
+          // Only attach the bearer token when the URL's host is an Azure DevOps
+          // host - image URLs come from user-authored work item bodies, so
+          // sending it to an external host would leak credentials.
+          const headers = isAzureDevOpsAuthedDownloadUrl(imageInfo.url) ? authHeaders : undefined;
           return downloadFile(imageInfo.url, imageInfo.filename, headers ? { headers } : undefined);
         }),
       );
@@ -134,8 +135,10 @@ export class AzureDevOpsAdapter implements BoardAdapter {
       return { attachments: [], skippedCount: 0 };
     }
 
-    const token = await this.azure.getAccessToken();
-    const authHeaders = { Authorization: `Bearer ${token}` };
+    const needsAuth = attachments.some((attachment) => isAzureDevOpsAuthedDownloadUrl(attachment.url));
+    const authHeaders = needsAuth
+      ? { Authorization: `Bearer ${await this.azure.getAccessToken()}` }
+      : undefined;
 
     const downloadedAttachments: DownloadedAttachment[] = [];
     let skippedCount = 0;
@@ -143,7 +146,13 @@ export class AzureDevOpsAdapter implements BoardAdapter {
     for (let batchStart = 0; batchStart < attachments.length; batchStart += DOWNLOAD_CONCURRENCY) {
       const batch = attachments.slice(batchStart, batchStart + DOWNLOAD_CONCURRENCY);
       const results = await Promise.allSettled(
-        batch.map((attachment) => downloadFile(attachment.url, attachment.filename, { headers: authHeaders })),
+        batch.map((attachment) => {
+          // Same host gate as the inline images. Relation URLs come back from the
+          // Azure REST API rather than from work item HTML, so this is a backstop
+          // rather than the primary defense, but it fails closed either way.
+          const headers = isAzureDevOpsAuthedDownloadUrl(attachment.url) ? authHeaders : undefined;
+          return downloadFile(attachment.url, attachment.filename, headers ? { headers } : undefined);
+        }),
       );
 
       for (const result of results) {
