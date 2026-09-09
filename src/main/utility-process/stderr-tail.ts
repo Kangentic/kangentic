@@ -41,10 +41,17 @@ import { StringDecoder } from 'node:string_decoder';
  *  All-`inherit` is safe (the list is never built) and all-real is safe; only
  *  the mix is fatal. Passing no `stdio` at all is the all-`inherit` case, which
  *  is why `['ignore', 'inherit', 'pipe']` looked like it was keeping a default
- *  it was in fact replacing. Since stderr has to be piped, stdout goes to
- *  `ignore` (a real `NUL` handle on Windows, `/dev/null` elsewhere). Nothing is
- *  lost: a packaged build had no console for `inherit` to reach anyway, and
- *  neither worker writes to stdout. */
+ *  it was in fact replacing. That default survives DESKTOP-S but drops the
+ *  piped stderr DESKTOP-H needs, so both workers still have to pass this
+ *  constant rather than omit `stdio`. Since stderr has to be piped, stdout goes
+ *  to `ignore` (a real `NUL` handle on Windows, `/dev/null` elsewhere).
+ *
+ *  Almost nothing is lost by that: a packaged build had no console for
+ *  `inherit` to reach anyway, and neither worker writes to stdout itself. A
+ *  dependency loaded at module scope (transformers.js and onnxruntime, in the
+ *  embed worker) could still print there, and that output reached the dev
+ *  terminal under `inherit` and now goes to `NUL`. No crash report is affected:
+ *  stderr is captured either way. */
 export const UTILITY_PROCESS_STDIO: Array<'pipe' | 'ignore' | 'inherit'> = ['ignore', 'ignore', 'pipe'];
 
 export const DEFAULT_STDERR_TAIL_BYTES = 8 * 1024;

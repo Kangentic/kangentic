@@ -220,6 +220,105 @@ describe('UTILITY_PROCESS_STDIO', () => {
   });
 });
 
+/** How far past a `utilityProcess.fork(` call to look for its `stdio:` option.
+ *  Generous enough for an options object that wraps over several lines, since a
+ *  window that ends too early fails a call site that is in fact correct. */
+const FORK_OPTIONS_WINDOW_LINES = 12;
+
+/** 1-based line numbers of the `utilityProcess.fork(` calls in `source` that do
+ *  not pass `stdio: UTILITY_PROCESS_STDIO`.
+ *
+ *  Split out from the tree scan below so the detection logic itself can be run
+ *  against known-bad input. Scanning the real tree only ever proves the
+ *  compliant case: both call sites today already pass the constant, so the
+ *  assertion holds no matter what this function does, and a regex that silently
+ *  stopped matching would keep the guard green forever. */
+function findForkCallsMissingSharedStdio(source: string): number[] {
+  const lines = source.split('\n');
+  // `utilityProcess` and `.fork(` land on separate lines when a formatter
+  // breaks the chain, so the call is matched against the whole source rather
+  // than line by line.
+  const forkCallPattern = /utilityProcess\s*\.\s*fork\s*\(/g;
+  const callLineIndexes: number[] = [];
+  let callMatch = forkCallPattern.exec(source);
+  while (callMatch !== null) {
+    callLineIndexes.push(source.slice(0, callMatch.index).split('\n').length - 1);
+    callMatch = forkCallPattern.exec(source);
+  }
+
+  const offendingLineNumbers: number[] = [];
+  callLineIndexes.forEach((lineIndex, callIndex) => {
+    const nextCallLineIndex = callLineIndexes[callIndex + 1] ?? lines.length;
+    // Never read past the next call: a shared window lets a compliant call a
+    // few lines below mask a non-compliant one, which is the exact regression
+    // this guard exists to catch.
+    const windowEnd = Math.min(lineIndex + FORK_OPTIONS_WINDOW_LINES, Math.max(nextCallLineIndex, lineIndex + 1));
+    const optionsWindow = lines.slice(lineIndex, windowEnd).join('\n');
+    if (!/stdio:\s*UTILITY_PROCESS_STDIO\b/.test(optionsWindow)) {
+      offendingLineNumbers.push(lineIndex + 1);
+    }
+  });
+  return offendingLineNumbers;
+}
+
+describe('findForkCallsMissingSharedStdio', () => {
+  // Red cases for the tree scan below, which can only ever go green against the
+  // current tree. Each fixture is the shape of a real call site.
+
+  it('accepts a single-line call that passes the shared constant', () => {
+    const source = [
+      `const child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });`,
+    ].join('\n');
+    expect(findForkCallsMissingSharedStdio(source)).toEqual([]);
+  });
+
+  it('accepts an options object that wraps over more lines than a short window would cover', () => {
+    const source = [
+      `const child = utilityProcess.fork(workerPath, [], {`,
+      `  serviceName: SERVICE_NAME,`,
+      `  cwd: workerDirectory,`,
+      `  env: workerEnvironment,`,
+      `  stdio: UTILITY_PROCESS_STDIO,`,
+      `});`,
+    ].join('\n');
+    expect(findForkCallsMissingSharedStdio(source)).toEqual([]);
+  });
+
+  it('flags a call that inlines its own stdio literal', () => {
+    const source = [
+      `const child = utilityProcess.fork(workerPath, [], {`,
+      `  serviceName: SERVICE_NAME,`,
+      `  stdio: ['ignore', 'inherit', 'pipe'],`,
+      `});`,
+    ].join('\n');
+    expect(findForkCallsMissingSharedStdio(source)).toEqual([1]);
+  });
+
+  it('flags a call that passes no stdio at all', () => {
+    // Omitting `stdio` is the all-`inherit` default, so it survives DESKTOP-S,
+    // but it drops the piped stderr that DESKTOP-H added. Both workers need the
+    // constant, so the absent case is an offender too.
+    const source = [`const child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME });`].join('\n');
+    expect(findForkCallsMissingSharedStdio(source)).toEqual([1]);
+  });
+
+  it('flags a call whose method chain is split across lines', () => {
+    const source = [
+      `const child = utilityProcess`,
+      `  .fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: ['ignore', 'inherit', 'pipe'] });`,
+    ].join('\n');
+    expect(findForkCallsMissingSharedStdio(source)).toEqual([1]);
+  });
+
+  it('does not let a compliant call mask a non-compliant one a few lines above it', () => {
+    const source = [
+      `const first = utilityProcess.fork(firstWorker, [], { serviceName: 'a', stdio: ['ignore', 'inherit', 'pipe'] });`,
+      `const second = utilityProcess.fork(secondWorker, [], { serviceName: 'b', stdio: UTILITY_PROCESS_STDIO });`,
+    ].join('\n');
+    expect(findForkCallsMissingSharedStdio(source)).toEqual([1]);
+  });
+});
+
 describe('utilityProcess.fork call sites', () => {
   it('every utilityProcess.fork call passes the shared UTILITY_PROCESS_STDIO constant, never an inline literal', () => {
     // The value-level tests above (and the ones in embed-client.test.ts /
@@ -230,6 +329,10 @@ describe('utilityProcess.fork call sites', () => {
     // NEXT time it changes for a good reason, a duplicated literal is exactly
     // how DESKTOP-S (or its next variant) comes back at a call site nobody
     // remembered to update. This scans source text for the identifier itself.
+    //
+    // The scan root stays the whole of `src/main` rather than the directories
+    // that fork today, because the call site this needs to catch is the one
+    // nobody anticipated.
     const repoRoot = path.resolve(__dirname, '../..');
     const scanRoot = path.join(repoRoot, 'src/main');
     const offenders: string[] = [];
@@ -248,18 +351,11 @@ describe('utilityProcess.fork call sites', () => {
     }
 
     for (const filePath of collectSourceFiles(scanRoot)) {
-      const relPath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
-      const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-      lines.forEach((line, index) => {
-        if (!/utilityProcess\.fork\s*\(/.test(line)) return;
-        // A small window past the call line covers a fork() options object
-        // that wraps onto following lines, not just the single-line form both
-        // current call sites use.
-        const window = lines.slice(index, index + 4).join('\n');
-        if (!/stdio:\s*UTILITY_PROCESS_STDIO\b/.test(window)) {
-          offenders.push(`${relPath}:${index + 1}`);
-        }
-      });
+      const relativePath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+      const source = fs.readFileSync(filePath, 'utf-8');
+      for (const lineNumber of findForkCallsMissingSharedStdio(source)) {
+        offenders.push(`${relativePath}:${lineNumber}`);
+      }
     }
 
     expect(
