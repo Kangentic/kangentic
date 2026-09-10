@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.40.0] - 2026-09-09
+
+### Features
+- Gate the commit anchor on a connector capability (c341dce8)
+- Record a task pushed branch and resolved base (73ca2786)
+
+### Fixes
+- Discharge the arrival-focus decision a pre-empted replay cancels (1a83294b)
+- Align baseBranchIsKnown with the base fallback and close coverage holes (08202d7b)
+- Link a task PR when its pushed branch diverges from the slug (6412dfc1)
+- Gate the bearer token on a real host check (f4cba984)
+- Make the fork stdio guard actually detect a violation (da3c24f7)
+- Stop mixing inherit with a piped handle in worker stdio (bc15d178)
+- Stop filing a declined Linux update prompt as an error (876444d5)
+- Close two holes in the repo-hygiene guards (fe5c409b)
+
+### Other
+- Correct three descriptions the obligation refactor outdated (ddaa57ef)
+- Pin the skipFocus gates on the arrival obligation (666882ab)
+- Round-trip pushed_branch through the real UPDATE statement (7876a26f)
+- Close three anchor gaps left by the branch-identity columns (9d1d95f7)
+- Document the six-tier PR ladder and the branch-identity columns (1dc0f4ac)
+- Capture the arbiter's decision when arrival focus fails (0378c91b)
+- Require every fork call site to use the shared stdio constant (71047304)
+- Turn a 15s mystery timeout in the agent execution spec into a named failure (047d6256)
+- Bump the github-actions group with 4 updates (a5a93c5c)
+- Correct which guards survive the branch-filter deletion (564e0dc6)
+- Add a code of conduct, Dependabot, and CodeQL scanning (6bd4e574)
+
 ## [v0.39.1] - 2026-09-09
 
 ### Fixes

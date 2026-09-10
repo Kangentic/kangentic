@@ -526,9 +526,14 @@ Codex declares one `AgentLaunchOptionInfo` (see [Agent Adapter Interface - Optio
 | `plan` | `--sandbox read-only --ask-for-approval on-request` | Safe Read-Only Browsing |
 | `dontAsk` | `--sandbox read-only --ask-for-approval never` | Read-Only Non-Interactive (CI) |
 | `default` | `--sandbox workspace-write --ask-for-approval untrusted` | Automatically Edit, Ask for Untrusted |
-| `acceptEdits` | `--sandbox workspace-write --ask-for-approval never` | Workspace Write, No Approval |
-| `auto` | `--sandbox workspace-write --ask-for-approval on-request` | Workspace Write, Model-Decided |
+| `acceptEdits` | `--sandbox workspace-write --ask-for-approval never` | Auto (Preset) |
+| `auto` | `--sandbox workspace-write --ask-for-approval on-request` | Not exposed in the settings dropdown |
 | `bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` | Dangerous Full Access |
+
+The Codex Preset column is the adapter's `AgentPermissionEntry.label`, which is what the Agent
+settings dropdown shows. Codex declares five entries, so `auto` has no preset of its own. It still
+maps to flags, because a column or agent override can set the mode without going through that
+dropdown.
 
 ### Hook Integration
 
