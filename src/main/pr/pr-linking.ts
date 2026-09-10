@@ -79,6 +79,16 @@ export interface PRLinkDeps {
    */
   force?: boolean;
   /**
+   * Bypass the TTL coalesce only, keeping the terminal-state skip. Set by the
+   * `pr-candidate` signal: the agent's own PR command just finished, which is
+   * the strongest hint there is, and it routinely lands inside the 60s window
+   * an idle resolve stamped after the push that preceded it (push, turn ends,
+   * `gh pr create`). Coalescing it away left the card unlinked until the next
+   * idle or sweep. Unlike `force`, a merged or closed PR is still left alone:
+   * a `gh pr view` on a finished PR is not news.
+   */
+  bypassThrottle?: boolean;
+  /**
    * Suppress the confident-not-found clear. Set by link-time triggers, whose
    * whole job is to fill in the state for a link that was JUST written: a
    * resolve fired BY a write must never undo that write. A URL that resolves to
@@ -127,8 +137,10 @@ const MAX_TIP_BRANCH_CANDIDATES = 2;
  *   1. pr_number  -> exact, branch-independent (best for refreshing state)
  *   2. worktree HEAD branch -> the real branch while actively worked
  *   3. commit SHA -> immutable, survives Done/worktree deletion and renames
- *   4. stored slug branch -> weak last resort when there is no worktree
- *   5. stored pushed branch -> the recorded name when the push diverged
+ *   4. stored slug branch -> a reclaimed worktree whose branch was captured on
+ *      Done, or a no-worktree task created with a custom branch
+ *   5. stored pushed branch -> the branch the agent's own `git push` named, or
+ *      the name Tier 6 recorded; the one anchor a no-worktree task can earn
  *   6. remote branch at the HEAD tip -> infers that name when nothing recorded it
  * A degrade error from any tier is REMEMBERED rather than propagated, so the
  * tiers below it still run; it is rethrown unchanged only if none of them
@@ -166,8 +178,10 @@ async function resolvePRViaLadder(args: {
 
   // A degrade at one tier must not discard the tiers below it. The registry now
   // throws when no connector OWNS the repo's remote, or when the owner has no
-  // resolver of that kind, so without this a Tier-3 throw would kill Tier 4 -
-  // and Tier 4 is exactly the tier that rescues a task with no worktree. Errors
+  // resolver of that kind, so without this a Tier-3 throw would kill Tiers 4
+  // and 5 - and those are the tiers that rescue a task whose worktree is gone
+  // or never existed (a captured branch, a custom branch, or the branch its
+  // own push named). Errors
   // are remembered and rethrown UNCHANGED below if no tier resolves, so the
   // `instanceof` test in `linkPRForTask`'s catch still sets `degradeStatus`.
   const degrade = createDeferredDegrade();
@@ -320,13 +334,14 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     if (!task) return { status: 'no-anchor', task: null };
 
     // Auto triggers: skip terminal PRs (merged/closed can't change) and coalesce
-    // rapid re-resolves. Explicit user/agent actions (force) always run fresh.
+    // rapid re-resolves. Explicit user/agent actions (force) always run fresh;
+    // the PR-command signal (bypassThrottle) skips only the coalesce.
     if (!deps.force) {
       if (task.pr_state === 'merged' || task.pr_state === 'closed') {
         return { status: 'unchanged', task };
       }
       const last = lastResolveAt.get(taskId);
-      if (last != null && Date.now() - last < RESOLVE_TTL_MS) {
+      if (!deps.bypassThrottle && last != null && Date.now() - last < RESOLVE_TTL_MS) {
         return { status: 'unchanged', task };
       }
     }
@@ -369,8 +384,10 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
 
     // Nothing to resolve from at all. Mirrors `autoLinkPRForTask`'s gate: a task
     // with no stored number and no git state has no anchor, whatever its
-    // description happens to mention.
-    if (!cwd || (task.pr_number == null && !branch && !effectiveSha)) {
+    // description happens to mention. `pushed_branch` counts: for a task with
+    // no worktree it is the only anchor the app can record (from the agent's
+    // own push), and Tier 5 needs no worktree to resolve from it.
+    if (!cwd || (task.pr_number == null && !branch && !effectiveSha && !task.pushed_branch)) {
       // Still persist a freshly-read SHA if we have one (rare: detached HEAD worktree).
       if (freshSha && freshSha !== task.head_sha) {
         return { status: 'no-anchor', task: deps.tasks.update({ id: task.id, head_sha: freshSha }) };
@@ -519,8 +536,89 @@ interface LinkPROptions {
   scrollback?: string;
   /** Bypass the TTL coalesce + terminal-skip (explicit user/agent refresh). */
   force?: boolean;
+  /** Bypass the TTL coalesce only (the `pr-candidate` signal; see `PRLinkDeps`). */
+  bypassThrottle?: boolean;
   /** Keep a link the resolver could not match (see `PRLinkDeps`). */
   preserveLinkOnNotFound?: boolean;
+}
+
+/**
+ * The project's default base branch for the ladder's base-relative guards.
+ * Board default first, then the effective config, matching
+ * `resolveEffectiveBaseBranch` (ipc/helpers/task-git.ts), which is what decides
+ * the base a worktree is actually cut from. Reading the config alone reported
+ * `main` for a project whose kangentic.json says `develop`, so the linker
+ * measured against a base no worktree here was ever cut from. Only reachable
+ * for a task with neither `base_branch` nor `resolved_base_branch`, since both
+ * outrank this.
+ *
+ * `||`, not `??`, to match `resolveEffectiveBaseBranch` exactly: an empty
+ * string in either layer has to fall through to the next one. Under `??` it
+ * would win, and an empty base defeats the base-tip bail outright, since none
+ * of its three ref forms can match `refs/heads/` or `refs/remotes/<remote>/`
+ * with nothing after the prefix.
+ */
+function resolveProjectDefaultBaseBranch(context: IpcContext, projectPath: string | null): string | undefined {
+  try {
+    return projectPath
+      ? context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+        || context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Record the branch a session's own `git push` named as its destination onto
+ * the session's task, as `pushed_branch`.
+ *
+ * This is the per-task PR anchor for a task with no worktree: every other
+ * anchor is written from a worktree read, and the shared checkout's HEAD is
+ * not per task (three concurrent no-worktree tasks share it). The push command
+ * belongs to exactly one session, so its destination belongs to exactly one
+ * task. Tier 5 then resolves the PR from it with no git read at all.
+ *
+ * Recorded only; nothing resolves from here. The push precedes the PR, and a
+ * non-force resolve now would stamp the 60s per-task throttle that the
+ * `pr-candidate` resolve seconds later would then be coalesced by.
+ *
+ * Refused for three names. The task's own local branch is Tier 2's / Tier 4's
+ * anchor already (and `pushed_branch` is documented as "when that differs").
+ * The stored `pushed_branch` is a no-op. The task's effective base is the one
+ * name that could link WRONGLY: a merge-back's `git push origin HEAD:develop`
+ * would otherwise make Tier 5 answer with the base branch's own PR.
+ *
+ * The patch is only `{ id, pushed_branch }` against a row re-read under the
+ * task lock, so it cannot clobber a concurrent PR-link write.
+ */
+export async function recordPushedBranchForSession(
+  context: IpcContext,
+  sessionId: string,
+  branch: string,
+): Promise<void> {
+  const projectId = context.sessionManager.getSessionProjectId(sessionId) ?? context.currentProjectId;
+  if (!projectId) return;
+  let repos: ReturnType<typeof getProjectRepos>;
+  try {
+    repos = getProjectRepos(context, projectId);
+  } catch {
+    return;
+  }
+  const { tasks } = repos;
+  const task = tasks.getBySessionId(sessionId);
+  if (!task) return;
+
+  const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+  const defaultBaseBranch = resolveProjectDefaultBaseBranch(context, projectPath);
+
+  await withTaskLock(task.id, async () => {
+    const fresh = tasks.getById(task.id);
+    if (!fresh) return;
+    const effectiveBase = fresh.base_branch || fresh.resolved_base_branch || defaultBaseBranch;
+    if (branch === fresh.branch_name || branch === fresh.pushed_branch || branch === effectiveBase) return;
+    tasks.update({ id: fresh.id, pushed_branch: branch });
+  });
 }
 
 /**
@@ -550,32 +648,14 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
   if (!task) return { status: 'no-anchor', task: null };
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
-  let defaultBaseBranch: string | undefined;
-  try {
-    // Board default first, then the effective config, matching
-    // `resolveEffectiveBaseBranch` (ipc/helpers/task-git.ts), which is what
-    // decides the base a worktree is actually cut from. Reading the config
-    // alone reported `main` for a project whose kangentic.json says `develop`,
-    // so the linker measured against a base no worktree here was ever cut from.
-    // Only reachable for a task with neither `base_branch` nor
-    // `resolved_base_branch`, since both outrank this.
-    // `||`, not `??`, to match `resolveEffectiveBaseBranch` exactly: an empty
-    // string in either layer has to fall through to the next one. Under `??` it
-    // would win, and an empty base defeats the base-tip bail outright, since
-    // none of its three ref forms can match `refs/heads/` or `refs/remotes/*/`.
-    defaultBaseBranch = projectPath
-      ? context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
-        || context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
-      : undefined;
-  } catch {
-    defaultBaseBranch = undefined;
-  }
+  const defaultBaseBranch = resolveProjectDefaultBaseBranch(context, projectPath);
 
   return linkPRForTask(task.id, {
     tasks,
     projectPath,
     defaultBaseBranch,
     force: options.force,
+    bypassThrottle: options.bypassThrottle,
     preserveLinkOnNotFound: options.preserveLinkOnNotFound,
     getScrollback: options.scrollback != null ? () => options.scrollback : undefined,
     onLinked: (linked) => {
@@ -617,7 +697,10 @@ export function autoLinkPRForTask(context: IpcContext, taskId: string, projectId
   try {
     const { tasks, swimlanes } = getProjectRepos(context, projectId);
     const task = tasks.getById(taskId);
-    if (!task || (!task.branch_name && !task.worktree_path && !task.head_sha && task.pr_number == null)) return;
+    if (
+      !task
+      || (!task.branch_name && !task.worktree_path && !task.head_sha && !task.pushed_branch && task.pr_number == null)
+    ) return;
     const lane = swimlanes.getById(task.swimlane_id);
     if (!lane || lane.role === 'todo') return;
     void linkPR(context, { projectId, taskId }).catch((error) => {

@@ -528,6 +528,22 @@ export async function performSpawn(
     // SessionFileManager.detachOnPtyExit.
     context.sessionFiles.detachOnPtyExit(id);
 
+    // Fallback push capture, ahead of the PR fallback below on purpose: when
+    // it fires, both land on the same per-task queue, so the branch is on the
+    // row before the ladder that reads it runs.
+    //
+    // "When it fires" is the real bound. A caller that reaches
+    // `SessionManager.remove()` without awaiting exit first (the Backlog sweep,
+    // project delete, MCP task delete) wipes the detector's pending entry
+    // synchronously, so this reads null and emits nothing. The everyday paths
+    // are unaffected: a natural `tool_end` reports the push directly, suspend
+    // leaves the detector alone, and `cleanupTaskSession` awaits exit before
+    // removing. `PRCommandDetector` below has the same bound.
+    const pendingPushedBranch = context.telemetry.takePendingPushedBranch(id);
+    if (pendingPushedBranch) {
+      context.emit('branch-pushed', id, pendingPushedBranch);
+    }
+
     // Fallback PR resolution: if a PR command was flagged (ToolStart seen) but
     // ToolEnd was never processed (event lost or never written), fire the
     // candidate now as a last resort before the session is fully closed. The

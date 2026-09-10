@@ -693,14 +693,22 @@ function TaskDetailKebabItems({
           message: result.message ?? 'Could not reach the PR host - try again in a moment',
           variant: 'error',
         });
+      } else if (result.reason === 'no-anchor') {
+        // Nothing was searched. Distinct from not-found so the user does not
+        // conclude the PR does not exist when the task simply has no anchor.
+        useToastStore.getState().addToast({
+          message: 'Nothing to search by: no branch, pushed branch, commit, or PR number is recorded for this task',
+          variant: 'info',
+        });
       } else if (result.linked && result.task?.pr_number != null) {
         useToastStore.getState().addToast({
           message: `Linked PR #${result.task.pr_number} (${result.task.pr_state ?? 'open'})`,
           variant: 'success',
         });
       } else {
+        const searchedBranch = task.branch_name ?? task.pushed_branch;
         useToastStore.getState().addToast({
-          message: task.branch_name ? `No PR found for branch "${task.branch_name}"` : 'No PR found for this task',
+          message: searchedBranch ? `No PR found for branch "${searchedBranch}"` : 'No PR found for this task',
           variant: 'info',
         });
       }
@@ -806,8 +814,11 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* Link / refresh PR (authoritative branch->PR resolve; works with no live session) */}
-      {(task.branch_name || task.worktree_path) && (
+      {/* Link / refresh PR (authoritative branch->PR resolve; works with no live
+          session). Shown for any anchor the ladder can search by, so a task with
+          no worktree whose push was recorded, or that names its PR by number,
+          gets the control too. */}
+      {(task.branch_name || task.worktree_path || task.pushed_branch || task.pr_number != null) && (
         <KebabMenuItem
           icon={linkingPr ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           label={task.pr_url ? 'Refresh PR' : 'Link PR'}

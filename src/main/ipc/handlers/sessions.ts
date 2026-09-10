@@ -6,7 +6,7 @@ import { UsageHistoryRepository } from '../../db/repositories/usage-history-repo
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
-import { linkPR, autoLinkPRForTask } from '../../pr/pr-linking';
+import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -746,10 +746,25 @@ export function registerSessionHandlers(context: IpcContext): void {
   // Auto-link PR when an agent's `gh pr ...` command finishes (or on session
   // exit if its ToolEnd was lost). The candidate is just the hint; the
   // authoritative branch->PR query runs in linkPR, with the scrollback
-  // passed through only as the gh-unavailable degradation fallback.
+  // passed through only as the gh-unavailable degradation fallback. The
+  // strongest hint there is, so it skips the 60s coalesce an idle resolve
+  // may have stamped after the push (but not the terminal-state skip).
   context.sessionManager.on('pr-candidate', (sessionId: string, scrollback: string) => {
-    void linkPR(context, { sessionId, scrollback }).catch((error) => {
+    void linkPR(context, { sessionId, scrollback, bypassThrottle: true }).catch((error) => {
       console.error(`[pr-candidate] Failed to resolve PR for session ${sessionId}:`, error);
+    });
+  });
+
+  // The agent's own `git push` finished: record its destination branch on the
+  // task as the per-task PR anchor. Recorded only, never resolved from here:
+  // the push precedes the PR, and a non-force resolve now would burn the 60s
+  // per-task throttle that the `pr-candidate` seconds later needs. Transient
+  // (Command Terminal) sessions have no task row to anchor.
+  context.sessionManager.on('branch-pushed', (sessionId: string, branch: string) => {
+    const session = context.sessionManager.getSession(sessionId);
+    if (!session || session.transient) return;
+    void recordPushedBranchForSession(context, sessionId, branch).catch((error) => {
+      console.error(`[branch-pushed] Failed to record pushed branch for session ${sessionId}:`, error);
     });
   });
 
@@ -757,7 +772,11 @@ export function registerSessionHandlers(context: IpcContext): void {
   // Works with no live session (maps by task id, resolves via the confidence ladder).
   ipcMain.handle(IPC.TASK_RESOLVE_PR, async (_, taskId: string, projectId?: string | null): Promise<TaskResolvePrResult> => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
-    if (!resolvedProjectId) return { task: null, linked: false, reason: 'no-anchor' };
+    // Not `no-anchor`: that status means the TASK has nothing to search by,
+    // and the header toast says so. No project open is a different failure.
+    if (!resolvedProjectId) {
+      return { task: null, linked: false, reason: 'resolver-unavailable', message: 'No project is open' };
+    }
     const result = await linkPR(context, { projectId: resolvedProjectId, taskId, force: true });
     return {
       task: result.task,

@@ -10,6 +10,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
+import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
 
 /**
@@ -135,10 +136,7 @@ export async function autoSpawnTasks(
       // Guard: CWD must still exist -- fall back to projectPath if worktree was deleted
       if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
         console.log(`[AUTO_SPAWN] Worktree missing for task ${task.id} -- falling back to project path`);
-        taskRepo.update({ id: task.id, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
-        // The fallback is silent otherwise: record it so the board can say the
-        // agent is now in the shared checkout, and why.
-        taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing');
+        await demoteMissingWorktree(taskRepo, task, projectPath);
         cwd = projectPath;
       }
       if (!fs.existsSync(cwd)) {

@@ -206,6 +206,11 @@ export async function cleanupTaskResources(
   // Remove worktree + branch
   if (task.worktree_path && resolvedProjectPath) {
     let removed = false;
+    // Capture the tip before the checkout goes, as `deleteTaskWorktree` does:
+    // the commit is the one anchor that survives a reset, and a task whose PR
+    // was not linked yet when the reset ran (resolver down) can otherwise never
+    // link it again.
+    const { sha: capturedSha } = await readWorktreeHead(task.worktree_path);
     try {
       const worktreeManager = new WorktreeManager(resolvedProjectPath);
       // Reap orphans + clear node_modules BEFORE taking the git lock so the slow
@@ -234,8 +239,16 @@ export async function cleanupTaskResources(
     // Keeping them set allows resource-cleanup to retry on next startup.
     // Guard against concurrent delete: the task row may already be gone
     // by the time removeWorktree resolves. Update is idempotent.
+    // `pushed_branch` is deliberately kept: it is a remote fact and a PR
+    // anchor that outlives the local checkout, like `pr_number`.
     if (removed && tasks.getById(task.id)) {
-      tasks.update({ id: task.id, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
+      tasks.update({
+        id: task.id,
+        worktree_path: null,
+        branch_name: null,
+        resolved_base_branch: null,
+        ...(capturedSha ? { head_sha: capturedSha } : {}),
+      });
     }
   }
 }

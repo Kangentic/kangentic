@@ -10,6 +10,7 @@ import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../git/task-
 import { removeNodeModulesPath } from '../git/node-modules-link';
 import { removeWithRetry } from '../git/rm-with-retry';
 import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
+import { readLocalBranchSha } from '../git/worktree-head';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 
 const execFileAsync = promisify(execFile);
@@ -217,9 +218,20 @@ async function cleanBacklogTaskResources(
     if (task.branch_name) branchesToDelete.push(task.branch_name);
     if (expectedBranch !== task.branch_name) branchesToDelete.push(expectedBranch);
 
-    // Clear DB fields
+    // Clear DB fields. The directory is already gone, so the tip is captured
+    // from the local branch ref (still present: branches are deleted after this
+    // loop) into `head_sha`, the anchor that outlives the checkout.
+    // `pushed_branch` is kept for the same reason, like `pr_number`.
     if (hasStaleDbFields) {
-      taskRepo.update({ id: task.id, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null, session_id: null });
+      const capturedSha = task.branch_name ? await readLocalBranchSha(projectPath, task.branch_name) : null;
+      taskRepo.update({
+        id: task.id,
+        worktree_path: null,
+        branch_name: null,
+        resolved_base_branch: null,
+        session_id: null,
+        ...(capturedSha ? { head_sha: capturedSha } : {}),
+      });
     }
     cleaned++;
   }

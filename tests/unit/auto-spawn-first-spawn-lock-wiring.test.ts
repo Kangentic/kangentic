@@ -30,9 +30,16 @@ const mockSetWorktreeSkipReason = vi.fn();
 const mockGetLatestForTask = vi.fn();
 const mockGetUserPausedTaskIds = vi.fn(() => new Set<string>());
 const mockSwimlaneList = vi.fn();
+const mockReadLocalBranchSha = vi.fn(async (): Promise<string | null> => null);
 
 vi.mock('node:fs', () => ({
   default: { existsSync: vi.fn(() => true) },
+}));
+
+// The missing-worktree demotion captures the surviving local branch's tip
+// before dropping the name. Mocked so no real git runs against the mock path.
+vi.mock('../../src/main/git/worktree-head', () => ({
+  readLocalBranchSha: (...args: unknown[]) => mockReadLocalBranchSha(...(args as [])),
 }));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
@@ -156,6 +163,10 @@ describe('autoSpawnTasks first-spawn lock wiring', () => {
  * so the board can say the agent runs in the shared project checkout, and
  * falls back to spawning at `projectPath`. Nothing previously drove this
  * branch at all.
+ *
+ * The demotion keeps the PR anchors that describe the WORK rather than the
+ * checkout: `pushed_branch` is never in the patch, and the surviving local
+ * branch's tip is captured into `head_sha` when it can be read.
  */
 describe('autoSpawnTasks: stale worktree_path fallback', () => {
   const STALE_WORKTREE_PATH = '/mock/project/.kangentic/worktrees/task-auto-spawn-001';
@@ -187,11 +198,25 @@ describe('autoSpawnTasks: stale worktree_path fallback', () => {
 
     await runAutoSpawn();
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
+    expect(mockTaskUpdate).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, resolved_base_branch: null });
     expect(mockSetWorktreeSkipReason).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
     expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
     const prepareInput = mockPrepareAgentSpawn.mock.calls[0][0] as unknown as { cwd: string };
     expect(prepareInput.cwd).toBe('/mock/project');
+  });
+
+  it('captures the surviving local branch tip into head_sha before dropping the branch name', async () => {
+    mockTaskList.mockReturnValue([
+      { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' },
+    ]);
+    mockReadLocalBranchSha.mockResolvedValueOnce('abc123def456');
+
+    await runAutoSpawn();
+
+    expect(mockReadLocalBranchSha).toHaveBeenCalledWith('/mock/project', 'stale-branch');
+    expect(mockTaskUpdate).toHaveBeenCalledWith({
+      id: TASK_ID, worktree_path: null, branch_name: null, resolved_base_branch: null, head_sha: 'abc123def456',
+    });
   });
 
   it('does not touch worktree_path or the skip reason when the worktree directory still exists', async () => {

@@ -339,6 +339,12 @@ export class SessionManager extends EventEmitter {
         const scrollback = this.bufferManager.getRawScrollback(sessionId);
         this.emit('pr-candidate', sessionId, scrollback);
       },
+      onBranchPushed: (sessionId, branch) => {
+        // The agent's own `git push` named this branch as its destination. The
+        // IPC listener records it on the task as the per-task PR anchor; no
+        // resolve fires here, the PR does not exist yet.
+        this.emit('branch-pushed', sessionId, branch);
+      },
       onAgentSessionId: (sessionId, agentReportedId) => {
         // Agent session ID capture covers three cases:
         // 1. Fresh capture: agent_session_id was null (Codex/Gemini), now captured from hooks/PTY output.

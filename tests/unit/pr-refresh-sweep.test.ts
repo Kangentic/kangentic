@@ -1,9 +1,10 @@
 /**
  * Unit tests for the background PR-refresh sweep (refreshProjectPRs): which tasks
- * are eligible (a non-terminal linked PR or a live worktree, in a non-To Do lane)
- * and that the backbone is invoked NON-FORCE exactly once per eligible task. The
- * live-worktree case is the discovery path - an unlinked task whose PR was created
- * mid-session is found on the next sweep.
+ * are eligible (a non-terminal linked PR, a live worktree, or a recorded
+ * `pushed_branch` outside a Done lane, in a non-To Do lane) and that the backbone
+ * is invoked NON-FORCE exactly once per eligible task. The live-worktree and
+ * pushed-branch cases are the discovery path - an unlinked task whose PR was
+ * created mid-session is found on the next sweep.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -24,7 +25,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: `task-${idCounter}`, display_id: idCounter, title: 'T', description: '', swimlane_id: 'lane', position: 0,
     agent: null, session_id: null, worktree_path: '/mock/worktrees/wt', branch_name: 'slug', pr_number: null,
-    pr_url: null, pr_state: null, head_sha: null, external_id: null, external_source: null,
+    pr_url: null, pr_state: null, head_sha: null, pushed_branch: null, external_id: null, external_source: null,
     external_url: null, base_branch: 'main', use_worktree: 1, labels: [], priority: 0,
     model_override: null, effort_override: null, agent_override: null, attachment_count: 0,
     archived_at: null, created_at: 't', updated_at: 't', ...overrides,
@@ -41,10 +42,11 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
   };
 }
 
-/** Two lanes: `lane` is an ordinary working lane, `todo-lane` carries role 'todo'. */
+/** Three lanes: `lane` is an ordinary working lane, `todo-lane` is To Do, `done-lane` is Done. */
 const LANES: Swimlane[] = [
   makeSwimlane({ id: 'lane', name: 'In Progress', position: 1 }),
   makeSwimlane({ id: 'todo-lane', name: 'To Do', position: 0, role: 'todo' }),
+  makeSwimlane({ id: 'done-lane', name: 'Done', position: 2, role: 'done' }),
 ];
 
 function withTasks(tasks: Task[]): void {
@@ -144,6 +146,32 @@ describe('refreshProjectPRs eligibility', () => {
     expect(linkedTaskIds()).toEqual(['wt-only']);
     expect(linkedTaskIds()).not.toContain('bare');
     expect(linkedTaskIds()).not.toContain('merged-wt');
+  });
+
+  it('discovers a no-worktree task whose push was recorded (pushed_branch, no pr_number)', async () => {
+    // The same discovery case as the live worktree, for a task that never had
+    // one: its only anchor is the branch its own `git push` named.
+    const pushed = makeTask({ id: 'pushed', worktree_path: null, branch_name: null, use_worktree: 0, pushed_branch: 'maint/pushed' });
+    const bare = makeTask({ id: 'bare', worktree_path: null, branch_name: null, use_worktree: 0 });
+    withTasks([pushed, bare]);
+
+    await refreshProjectPRs({} as never, 'proj-1');
+
+    expect(linkedTaskIds()).toEqual(['pushed']);
+  });
+
+  it('a Done-lane task with only a pushed_branch is not swept, so the sweep stays bounded', async () => {
+    // `pushed_branch` survives Done (a remote fact), unlike the worktree the
+    // Done move reclaims. Without this gate every Done task that ever pushed
+    // but never linked would be swept forever. A Done task with an open
+    // pr_number is still swept, as before.
+    const donePushed = makeTask({ id: 'done-pushed', swimlane_id: 'done-lane', worktree_path: null, branch_name: null, pushed_branch: 'maint/pushed' });
+    const doneOpen = makeTask({ id: 'done-open', swimlane_id: 'done-lane', worktree_path: null, branch_name: null, pr_number: 8, pr_state: 'open' });
+    withTasks([donePushed, doneOpen]);
+
+    await refreshProjectPRs({} as never, 'proj-1');
+
+    expect(linkedTaskIds()).toEqual(['done-open']);
   });
 
   it('swallows a per-task failure and continues the sweep', async () => {

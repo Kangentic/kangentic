@@ -491,14 +491,15 @@ agree, and that is the natural way to write "stop pinning this and go back to th
 
 ### kangentic_link_pr
 
-Authoritatively resolve and link the pull request for a task's git branch using the `gh` CLI (`gh pr list --head <branch>`, plus by-number and by-commit fallbacks). Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or `gh api`, and works even when the task has no live session. Re-running refreshes the linked PR's state (`open`/`draft`/`merged`/`closed`). Use after opening a PR, or to backfill a task whose PR was never linked.
+Authoritatively resolve and link the pull request for a task through the repository's PR host (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in `docs/pr-integration.md`: PR number, worktree branch, commit, stored branch, pushed branch, remote tip. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR's state (`open`/`draft`/`merged`/`closed`). Use after opening a PR, or to backfill a task whose PR was never linked.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
+| `branch` | string | No | The remote branch the work was pushed to (the PR source branch). Recorded as the task's `pushed_branch` before resolving. A task with no worktree has nothing to search by until a push is recorded, so pass this when the auto-capture from the agent's own `git push` did not fire |
 | `project` | string | No | Project selector to target a different project |
 
-Returns the linked PR (number, url, state) on success, or a message when no PR is found or the `gh` CLI is unavailable.
+Returns the linked PR (number, url, state) on success. "Searched and found nothing" is a normal result naming the anchors it searched by. "Nothing to search by" (no PR number, worktree, branch, commit, or pushed branch on the task) is a refusal with `isError: true` that names the two remedies: pass `branch`, or set `prUrl` / `prNumber` with `kangentic_update_task`. A resolver that is unavailable or errored transiently is a refusal too.
 
 ### kangentic_move_task
 

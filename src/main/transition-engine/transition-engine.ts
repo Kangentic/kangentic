@@ -11,6 +11,7 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
+import { readWorktreeHead } from '../git/worktree-head';
 import { prepareWorktreeFolder } from '../git/task-worktree-folder';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
@@ -592,6 +593,9 @@ export class TransitionEngine {
 
     const wm = new WorktreeManager(appConfig.projectPath);
     let removed = false;
+    // Capture the tip before the checkout goes (see task-cleanup.ts): the
+    // commit is the PR anchor that survives the removal.
+    const { sha: capturedSha } = await readWorktreeHead(task.worktree_path);
     // Reap orphans + clear node_modules BEFORE taking the git lock, mirroring
     // task-cleanup.ts: the multi-second fs removal must not hold the
     // per-project queue and head-of-line-block spawns. Safe outside the lock:
@@ -609,13 +613,14 @@ export class TransitionEngine {
 
     // Only clear DB fields if the directory was actually removed.
     // Keeping them set allows resource-cleanup to retry on next startup.
+    // `pushed_branch` is kept: a remote fact and a PR anchor, like `pr_number`.
     if (removed) {
       this.taskRepo.update({
         id: task.id,
         worktree_path: null,
         branch_name: null,
-        pushed_branch: null,
         resolved_base_branch: null,
+        ...(capturedSha ? { head_sha: capturedSha } : {}),
       });
     }
   }

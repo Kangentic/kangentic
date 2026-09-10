@@ -26,7 +26,7 @@ vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => mockGit),
 }));
 
-import { readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase, isShaContainedInRef, readRefsPointingAtSha } from '../../src/main/git/worktree-head';
+import { readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase, isShaContainedInRef, readRefsPointingAtSha, readLocalBranchSha } from '../../src/main/git/worktree-head';
 import { viaGitRead } from '../../src/main/git/git-read-queue';
 import { simpleGit } from 'simple-git';
 
@@ -599,5 +599,134 @@ describe('readRefsPointingAtSha', () => {
     }
     const results = await Promise.all(jobs);
     expect(results).toHaveLength(4);
+  });
+});
+
+/**
+ * readLocalBranchSha is the tip commit of a LOCAL branch by name, read from
+ * the MAIN repo rather than a worktree - the anchor a caller reaches for once
+ * a checkout's directory (and therefore its live HEAD) is already gone but
+ * the branch ref itself survives in the shared ref store (the startup
+ * worktree-missing fallbacks, the Backlog resource sweep).
+ *
+ * Every consumer test (auto-spawn-first-spawn-lock-wiring, resource-cleanup,
+ * resume-suspended-profile-scoped) mocks this whole module, so the real body
+ * - the `isSafeBranchName` pre-check, the `refs/heads/<branch>` prefix
+ * construction, the `revparse --verify --quiet` call, the hex-sha
+ * validation, and the try/catch returning null - never runs anywhere else.
+ * This is that dedicated test.
+ */
+describe('readLocalBranchSha', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the tip sha of a resolvable local branch', async () => {
+    mockGit.revparse.mockResolvedValueOnce('a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4\n');
+
+    const result = await readLocalBranchSha('/mock/repo', 'feature/my-branch');
+
+    expect(result).toBe('a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4');
+  });
+
+  it('queries refs/heads/<branch> with --verify --quiet, so a leading dash on the branch cannot be read as an option', async () => {
+    mockGit.revparse.mockResolvedValueOnce('cafebabe00000000000000000000000000000000\n');
+
+    await readLocalBranchSha('/mock/repo', 'feature/my-branch');
+
+    expect(mockGit.revparse).toHaveBeenCalledWith(['--verify', '--quiet', 'refs/heads/feature/my-branch']);
+  });
+
+  it('invokes simpleGit with the caller-supplied repo path (the main repo, not a worktree)', async () => {
+    mockGit.revparse.mockResolvedValueOnce('cafebabe00000000000000000000000000000000\n');
+
+    await readLocalBranchSha('/mock/main-repo', 'main');
+
+    expect(simpleGit).toHaveBeenCalledWith('/mock/main-repo');
+  });
+
+  it('returns null when the branch does not exist (git exits non-zero; --quiet only suppresses the message)', async () => {
+    mockGit.revparse.mockRejectedValueOnce(new Error('fatal: Needed a single revision'));
+
+    const result = await readLocalBranchSha('/mock/repo', 'feature/never-existed');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null WITHOUT reaching git for an unsafe branch name (leading dash)', async () => {
+    // isSafeBranchName refuses this before viaGitRead/simpleGit is ever
+    // touched - a leading dash would otherwise let `--verify` parse the
+    // "branch name" as a further option.
+    const result = await readLocalBranchSha('/mock/repo', '--output=pwned');
+
+    expect(result).toBeNull();
+    expect(simpleGit).not.toHaveBeenCalled();
+    expect(mockGit.revparse).not.toHaveBeenCalled();
+  });
+
+  it('returns null WITHOUT reaching git for an unsafe branch name (path traversal ..)', async () => {
+    const result = await readLocalBranchSha('/mock/repo', 'feature/../etc');
+
+    expect(result).toBeNull();
+    expect(simpleGit).not.toHaveBeenCalled();
+    expect(mockGit.revparse).not.toHaveBeenCalled();
+  });
+
+  it('returns null WITHOUT reaching git for an unsafe branch name (embedded whitespace, a shell/ref-format hostile character)', async () => {
+    // A space is both an invalid git ref-name character and the word
+    // separator a shell splits a command injection on, so isSafeBranchName's
+    // `\s` refusal covers this class of unsafe name too.
+    const result = await readLocalBranchSha('/mock/repo', 'feature; rm -rf');
+
+    expect(result).toBeNull();
+    expect(simpleGit).not.toHaveBeenCalled();
+    expect(mockGit.revparse).not.toHaveBeenCalled();
+  });
+
+  it('returns null when git resolves a non-hex value (never trusts unverified output as a sha)', async () => {
+    mockGit.revparse.mockResolvedValueOnce('not-a-sha\n');
+
+    const result = await readLocalBranchSha('/mock/repo', 'feature/weird-output');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null (never rejects) when the simpleGit factory itself throws (missing directory)', async () => {
+    vi.mocked(simpleGit).mockImplementationOnce(() => {
+      throw new Error('fatal: cwd does not exist');
+    });
+
+    await expect(readLocalBranchSha('/mock/missing-repo', 'main')).resolves.toBeNull();
+  });
+
+  it('trims surrounding whitespace from the resolved sha', async () => {
+    mockGit.revparse.mockResolvedValueOnce('  beef1234beef1234beef1234beef1234beef1234  \n');
+
+    const result = await readLocalBranchSha('/mock/repo', 'main');
+
+    expect(result).toBe('beef1234beef1234beef1234beef1234beef1234');
+  });
+
+  it('caps concurrent jobs at the queue concurrency (2), like its siblings', async () => {
+    const gates: Array<() => void> = [];
+    mockGit.revparse.mockImplementation(() => new Promise<string>((resolve) => {
+      gates.push(() => resolve('abc1234abc1234abc1234abc1234abc1234abc1\n'));
+    }));
+
+    const jobs = Array.from({ length: 4 }, (_, index) => readLocalBranchSha('/mock/repo', `branch-${index}`));
+
+    await expect.poll(() => gates.length).toBe(2);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(gates.length).toBe(2);
+
+    while (gates.length > 0) {
+      gates.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const results = await Promise.all(jobs);
+    expect(results).toHaveLength(4);
+    for (const result of results) {
+      expect(result).toBe('abc1234abc1234abc1234abc1234abc1234abc1');
+    }
   });
 });

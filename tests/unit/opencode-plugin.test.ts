@@ -81,11 +81,18 @@ describe('opencode-plugin', () => {
       expect(extractToolDetail(fixtures.tool_before_glob.output.args)).toBe('/repo');
     });
 
-    it('truncates detail at 200 characters', () => {
-      const result = extractToolDetail(fixtures.tool_before_long_command.output.args);
+    it('keeps a long command whole below the field cap, and truncates at 2000 characters', () => {
+      // The cap is sized for a Bash command, which the git push capture reads
+      // for its content (a chained commit-and-push lost its push at the old
+      // 200). tests/unit/hook-detail-cap-parity.test.ts pins the value against
+      // the hook bridge's.
+      const longCommand = extractToolDetail(fixtures.tool_before_long_command.output.args);
+      expect(longCommand).toBe(fixtures.tool_before_long_command.output.args.command);
+      expect(longCommand!.length).toBeGreaterThan(200);
 
-      expect(result).toBeDefined();
-      expect(result!.length).toBe(200);
+      const capped = extractToolDetail({ command: 'a'.repeat(2500) });
+      expect(capped).toBeDefined();
+      expect(capped!.length).toBe(2000);
     });
 
     it('returns undefined for empty args', () => {

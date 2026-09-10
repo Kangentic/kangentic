@@ -3,17 +3,29 @@ import type { Task } from '../../src/shared/types';
 
 /**
  * Unit tests for the confidence ladder in linkPRForTask: which anchor
- * wins (pr_number -> worktree branch -> commit SHA -> slug), write-only-on-change,
- * the TTL coalesce + terminal-skip throttle (force bypasses), and transient-error
- * surfacing that preserves an existing link.
+ * wins (pr_number -> worktree branch -> commit SHA -> stored branch -> pushed
+ * branch -> remote tip), write-only-on-change, the TTL coalesce + terminal-skip
+ * throttle (force bypasses), and transient-error surfacing that preserves an
+ * existing link.
  *
  * The connectors, simple-git, and project-repos are mocked so the core logic is
  * tested in isolation (no gh CLI, no native DB).
+ *
+ * Every task is built by one of the builders below, each of which produces a
+ * state the product actually writes. The suite once handed the ladder
+ * `worktree_path: null` with `branch_name: 'slug'` and `use_worktree: 1` and
+ * called that "no worktree"; that pairing exists only after a Done move
+ * captures the branch, and a task created with `useWorktree: false` (which has
+ * no branch, no sha, and until the push capture no anchor at all) was never
+ * tested. The tiers written for it passed against inputs the app cannot
+ * produce.
  */
 
 const git = vi.hoisted(() => ({
   branch: 'real-branch' as string | null,
   sha: 'sha-current' as string | null,
+  /** Every `revparse` call, so a test can prove a no-worktree task never read a HEAD. */
+  revparseCalls: 0,
   // `rev-list --count <base>..<sha>` output: commits the head has of its own
   // beyond base. '0' = a branchless worktree on base's tip (Tier 3 skipped);
   // '1'+ = the task's own work (Tier 3 runs).
@@ -50,7 +62,10 @@ const conn = vi.hoisted(() => ({
 
 vi.mock('simple-git', () => ({
   simpleGit: () => ({
-    revparse: async (args: string[]) => (args.includes('--abbrev-ref') ? (git.branch ?? 'HEAD') : git.sha),
+    revparse: async (args: string[]) => {
+      git.revparseCalls += 1;
+      return args.includes('--abbrev-ref') ? (git.branch ?? 'HEAD') : git.sha;
+    },
     raw: async (args: string[]) => {
       git.rawCalls.push(args);
       // Discriminate by VERB, not by arity: both reads go through `raw`, and a
@@ -120,22 +135,111 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   };
 });
 
-import { linkPRForTask, linkPR } from '../../src/main/pr/pr-linking';
+import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../src/main/pr/pr-linking';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { IPC } from '../../src/shared/ipc-channels';
 
+/**
+ * The columns that describe a task's git state. No test sets them directly:
+ * each builder below fills them for ONE producible state, and `baseTask`
+ * throws on an override naming any of them, so an impossible combination
+ * cannot be constructed. Tests are not typechecked, so the guard is runtime.
+ */
+const ANCHOR_COLUMNS = [
+  'use_worktree', 'worktree_skip_reason', 'worktree_path', 'branch_name', 'head_sha', 'pushed_branch', 'resolved_base_branch',
+] as const;
+type AnchorColumn = (typeof ANCHOR_COLUMNS)[number];
+type NonAnchorOverrides = Partial<Omit<Task, AnchorColumn>>;
+
 let idCounter = 0;
-function makeTask(overrides: Partial<Task> = {}): Task {
+function baseTask(overrides: NonAnchorOverrides): Task {
+  for (const column of ANCHOR_COLUMNS) {
+    if (column in overrides) {
+      throw new Error(`fixture: "${column}" is an anchor column. Pick the builder for the state you mean instead of overriding it.`);
+    }
+  }
   idCounter += 1;
   return {
     id: `task-${idCounter}`, display_id: idCounter, title: 'T', description: '', swimlane_id: 'lane', position: 0,
-    agent: null, session_id: null, worktree_path: '/wt', branch_name: 'slug', pr_number: null,
-    pr_url: null, pr_state: null, head_sha: null, pushed_branch: null, resolved_base_branch: null, external_id: null, external_source: null,
-    external_url: null, base_branch: 'main', use_worktree: 1, labels: [], priority: 0,
-    model_override: null, effort_override: null, agent_override: null, attachment_count: 0,
-    archived_at: null, created_at: 't', updated_at: 't', ...overrides,
+    agent: null, session_id: null, worktree_path: null, worktree_folder: null, worktree_skip_reason: null,
+    branch_name: null, pr_number: null, pr_url: null, pr_state: null, head_sha: null, pushed_branch: null,
+    resolved_base_branch: null, external_id: null, external_source: null, external_url: null, base_branch: 'main',
+    use_worktree: null, labels: [], priority: 0, model_override: null, effort_override: null, agent_override: null,
+    attachment_count: 0, archived_at: null, created_at: 't', updated_at: 't', ...overrides,
+  } as Task;
+}
+
+/**
+ * A task whose worktree is on disk. `branch_name` is the slug the worktree was
+ * created on (an agent may have renamed the live HEAD since); `head_sha` is
+ * whatever an earlier resolve backfilled; `pushed_branch` is whatever the
+ * agent's push or Tier 6 recorded; `resolved_base_branch` is the base the
+ * worktree was cut from, when `recordWorktree` observed one.
+ */
+function worktreeTask(
+  anchors: { branch?: string; headSha?: string | null; pushedBranch?: string | null; resolvedBase?: string | null } = {},
+  overrides: NonAnchorOverrides = {},
+): Task {
+  return {
+    ...baseTask(overrides),
+    use_worktree: 1,
+    worktree_path: '/wt',
+    worktree_folder: 'wt',
+    branch_name: anchors.branch ?? 'slug',
+    head_sha: anchors.headSha ?? null,
+    pushed_branch: anchors.pushedBranch ?? null,
+    resolved_base_branch: anchors.resolvedBase ?? null,
   };
+}
+
+/**
+ * A task whose worktree directory is gone. With `branch` this is the Done
+ * path: `deleteTaskWorktree` captured the live branch and sha before removal
+ * and kept the base. Without it this is a reset (To Do, delete, the Backlog
+ * sweep, a missing directory at startup): `branch_name` and the base go with
+ * the checkout, the sha is captured when it could be read, and
+ * `pushed_branch` survives either way (a remote fact).
+ */
+function reclaimedWorktreeTask(
+  anchors: { branch?: string | null; headSha?: string | null; pushedBranch?: string | null; resolvedBase?: string | null } = {},
+  overrides: NonAnchorOverrides = {},
+): Task {
+  return {
+    ...baseTask(overrides),
+    use_worktree: 1,
+    worktree_path: null,
+    worktree_folder: 'wt',
+    branch_name: anchors.branch ?? null,
+    head_sha: anchors.headSha ?? null,
+    pushed_branch: anchors.pushedBranch ?? null,
+    resolved_base_branch: anchors.resolvedBase ?? null,
+  };
+}
+
+/**
+ * A task created with `useWorktree: false`. It runs in the shared checkout, so
+ * nothing reads a worktree HEAD for it: `head_sha` and `resolved_base_branch`
+ * are always null. `branch_name` is set only when a `customBranchName` was
+ * given at creation; `pushed_branch` only when its own `git push` was
+ * recorded (or `kangentic_link_pr` was handed a `branch`).
+ */
+function noWorktreeTask(
+  anchors: { customBranch?: string; pushedBranch?: string } = {},
+  overrides: NonAnchorOverrides = {},
+): Task {
+  return {
+    ...baseTask(overrides),
+    use_worktree: 0,
+    worktree_skip_reason: 'disabled',
+    branch_name: anchors.customBranch ?? null,
+    pushed_branch: anchors.pushedBranch ?? null,
+  };
+}
+
+/** A task that has never spawned: every git column null, the worktree setting inherited. */
+function unstartedTask(overrides: NonAnchorOverrides = {}): Task {
+  return baseTask(overrides);
 }
 
 function depsFor(
@@ -143,6 +247,7 @@ function depsFor(
   opts: {
     updateSpy?: ReturnType<typeof vi.fn>;
     force?: boolean;
+    bypassThrottle?: boolean;
     preserveLinkOnNotFound?: boolean;
     defaultBaseBranch?: string;
   } = {},
@@ -153,6 +258,7 @@ function depsFor(
     projectPath: '/repo',
     onLinked: vi.fn(),
     force: opts.force ?? true, // ladder tests bypass the throttle unless they're testing it
+    bypassThrottle: opts.bypassThrottle,
     preserveLinkOnNotFound: opts.preserveLinkOnNotFound,
     defaultBaseBranch: opts.defaultBaseBranch,
   };
@@ -174,7 +280,7 @@ beforeEach(() => {
   conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = [];
   conn.lastArgs = {}; conn.allArgs = {}; conn.selfVerifiesCommits = true;
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
-  git.pointsAtRefs = []; git.rawCalls = [];
+  git.pointsAtRefs = []; git.rawCalls = []; git.revparseCalls = 0;
   repos.value = {}; // no state leaks into the ladder tests, which never touch getProjectRepos
   recordPushSpy.mockClear(); // module-scope spy: a stale call would satisfy the wrong test
   trackFeatureUsedSpy.mockClear();
@@ -183,7 +289,7 @@ beforeEach(() => {
 describe('linkPRForTask confidence ladder', () => {
   it('tier 1: prefers pr_number over branch and commit', async () => {
     conn.byNumber = resolved(10); conn.byBranch = resolved(20); conn.byCommit = resolved(30);
-    const task = makeTask({ pr_number: 99, head_sha: 'sha' });
+    const task = worktreeTask({ headSha: 'sha' }, { pr_number: 99 });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('linked');
     expect(result.task?.pr_number).toBe(10);
@@ -193,7 +299,7 @@ describe('linkPRForTask confidence ladder', () => {
 
   it('tier 2: worktree present resolves by the real HEAD branch', async () => {
     conn.byBranch = resolved(20);
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(20);
     expect(conn.calls).toEqual(['byBranch']);
@@ -206,7 +312,7 @@ describe('linkPRForTask confidence ladder', () => {
     // Tier 2 must query the live HEAD, never the stored slug.
     git.branch = 'renamed-branch';
     conn.byBranch = resolved(123, 'open');
-    const task = makeTask({ branch_name: 'old-slug', worktree_path: '/wt', pr_number: null });
+    const task = worktreeTask({ branch: 'old-slug' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(123);
     expect(conn.calls).toEqual(['byBranch']);
@@ -216,19 +322,30 @@ describe('linkPRForTask confidence ladder', () => {
 
   it('tier 3: no worktree but head_sha set resolves by commit', async () => {
     conn.byCommit = resolved(30, 'merged');
-    const task = makeTask({ worktree_path: null, head_sha: 'sha-stored' });
+    const task = reclaimedWorktreeTask({ branch: 'slug', headSha: 'sha-stored' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(30);
     expect(result.task?.pr_state).toBe('merged');
     expect(conn.calls).toContain('byCommit');
   });
 
-  it('tier 4: no worktree and no sha falls back to the slug branch', async () => {
+  it('tier 4: a reclaimed worktree with its branch captured on Done, and no readable sha, resolves by that branch', async () => {
     conn.byBranch = resolved(40);
-    const task = makeTask({ worktree_path: null, head_sha: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(40);
     expect(conn.calls).toContain('byBranch');
+  });
+
+  it('tier 4: a no-worktree task created with a custom branch resolves by that branch', async () => {
+    // The one way `use_worktree = 0` carries a `branch_name`: a `customBranchName`
+    // at creation, which `ensureTaskBranchCheckout` checks out in the shared tree.
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'feature/custom' ? resolved(41) : null);
+    const task = noWorktreeTask({ customBranch: 'feature/custom' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(41);
+    expect(conn.lastArgs.byBranch?.[1]).toBe('feature/custom');
+    expect(git.revparseCalls).toBe(0);
   });
 
   it('tier 3: skips the commit anchor when the commit has no commits ahead of base', async () => {
@@ -236,7 +353,7 @@ describe('linkPRForTask confidence ladder', () => {
     // merge tip that a parent-count check would have missed. Not this task's work.
     git.aheadCount = '0';
     conn.byCommit = resolved(702, 'merged'); // the PR that owns base's tip - not this task's PR
-    const task = makeTask({ worktree_path: null, branch_name: null, head_sha: 'base-tip' });
+    const task = reclaimedWorktreeTask({ headSha: 'base-tip' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(conn.calls).not.toContain('byCommit');
     expect(result.status).toBe('not-found');
@@ -249,7 +366,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.aheadCount = '0';
     conn.byBranch = null; // no PR exists for this brand-new branch yet
     conn.byCommit = resolved(36, 'merged'); // the last-merged PR the commit would magnet onto
-    const task = makeTask(); // worktree present, real HEAD branch, no pr_number
+    const task = worktreeTask(); // worktree present, real HEAD branch, no pr_number
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(conn.calls).not.toContain('byCommit');
     expect(result.status).toBe('not-found');
@@ -273,7 +390,7 @@ describe('linkPRForTask confidence ladder', () => {
     ];
     conn.byBranch = (_cwd: unknown, branch: unknown) =>
       (branch === 'maint/adopt-central-package-management' ? resolved(1369, 'merged') : null);
-    const task = makeTask({ branch_name: 'adopt-central-packag-f07d8383', base_branch: 'develop' });
+    const task = worktreeTask({ branch: 'adopt-central-packag-f07d8383' }, { base_branch: 'develop' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(1369);
     // The load-bearing assertion: the PUSHED branch was queried, not the slug.
@@ -287,7 +404,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/develop', 'refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: 'develop' });
+    const task = worktreeTask({}, { base_branch: 'develop' });
     const result = await linkPRForTask(task.id, depsFor(task));
     // Only tier 2's own query. The candidate at the base tip is never asked about.
     expect(queriedBranches()).toEqual(['real-branch']);
@@ -300,7 +417,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/heads/develop', 'refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: 'develop' });
+    const task = worktreeTask({}, { base_branch: 'develop' });
     await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches()).toEqual(['real-branch']);
   });
@@ -312,7 +429,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/HEAD', 'refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: 'develop' });
+    const task = worktreeTask({}, { base_branch: 'develop' });
     await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches()).not.toContain('origin');
     expect(queriedBranches()).not.toContain('HEAD');
@@ -327,7 +444,7 @@ describe('linkPRForTask confidence ladder', () => {
       'refs/remotes/upstream/pushed-name', // same branch, second remote
     ];
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'pushed-name' ? resolved(88) : null);
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(88);
     expect(queriedBranches()).toEqual(['real-branch', 'pushed-name']);
@@ -339,7 +456,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/--output=pwned', 'refs/remotes/origin/ok-branch'];
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'ok-branch' ? resolved(89) : null);
-    const task = makeTask();
+    const task = worktreeTask();
     await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches()).not.toContain('--output=pwned');
   });
@@ -348,7 +465,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/a', 'refs/remotes/origin/b', 'refs/remotes/origin/c'];
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'real-branch' ? null : resolved(90));
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches()).toEqual(['real-branch']);
     expect(result.status).toBe('not-found');
@@ -359,7 +476,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.pointsAtRefs = ['refs/remotes/origin/one', 'refs/remotes/origin/two'];
     conn.byBranch = (_cwd: unknown, branch: unknown) =>
       (branch === 'one' ? resolved(91) : branch === 'two' ? resolved(92) : null);
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('not-found');
     expect(result.task?.pr_number).toBeNull();
@@ -370,7 +487,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/one', 'refs/remotes/origin/two'];
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'real-branch' ? null : resolved(93));
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(93);
   });
@@ -380,7 +497,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.pointsAtRefs = ['refs/remotes/origin/pushed-name'];
     conn.byBranch = (_cwd: unknown, branch: unknown) =>
       (branch === 'pushed-name' ? new PRResolverUnavailableError('gh CLI not found') : null);
-    const task = makeTask({ pr_number: 77, pr_url: 'u77', pr_state: 'open' });
+    const task = worktreeTask({}, { pr_number: 77, pr_url: 'u77', pr_state: 'open' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('resolver-unavailable');
     expect(result.task?.pr_number).toBe(77);
@@ -397,7 +514,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.aheadCount = '1';
     git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
     conn.byBranch = new PRResolverUnavailableError('gh CLI not found');
-    const task = makeTask({ base_branch: 'main' });
+    const task = worktreeTask({}, { base_branch: 'main' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('resolver-unavailable');
     expect(result.task?.pushed_branch).toBe('maint/pushed-name');
@@ -411,7 +528,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.aheadCount = '1';
     git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
     conn.byBranch = null;
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('not-found');
     expect(result.task?.pushed_branch).toBe('maint/pushed-name');
@@ -425,7 +542,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
     conn.byBranch = null;
-    const task = makeTask({ pushed_branch: 'maint/pushed-name' });
+    const task = worktreeTask({ pushedBranch: 'maint/pushed-name' });
     await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches().filter((name) => name === 'maint/pushed-name')).toHaveLength(1);
   });
@@ -442,7 +559,7 @@ describe('linkPRForTask confidence ladder', () => {
     ];
     conn.byBranch = (_cwd: unknown, branch: unknown) =>
       (branch === 'maint/pushed-name' ? resolved(97) : null);
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(97);
     expect(result.task?.pushed_branch).toBe('maint/pushed-name');
@@ -455,7 +572,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.aheadCount = '0';
     git.pointsAtRefs = ['refs/remotes/origin/task-a-branch'];
     conn.byBranch = null;
-    const task = makeTask();
+    const task = worktreeTask();
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pushed_branch).toBeNull();
   });
@@ -464,7 +581,7 @@ describe('linkPRForTask confidence ladder', () => {
     // The durable half. Once recorded it survives the task committing past the
     // pushed tip, and the remote branch being deleted after the merge.
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'maint/pushed-name' ? resolved(94) : null);
-    const task = makeTask({ pushed_branch: 'maint/pushed-name' });
+    const task = worktreeTask({ pushedBranch: 'maint/pushed-name' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(94);
     expect(readRefs()).toHaveLength(0);
@@ -474,13 +591,13 @@ describe('linkPRForTask confidence ladder', () => {
     // Cost guard. The ref read is per-task on every sweep, so a tier-2 hit must
     // not pay for it.
     conn.byBranch = resolved(95);
-    const task = makeTask();
+    const task = worktreeTask();
     await linkPRForTask(task.id, depsFor(task));
     expect(readRefs()).toHaveLength(0);
   });
 
   it('tier 6: never reads refs when there is no sha to anchor on', async () => {
-    const task = makeTask({ worktree_path: null, head_sha: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' });
     await linkPRForTask(task.id, depsFor(task));
     expect(readRefs()).toHaveLength(0);
   });
@@ -494,7 +611,7 @@ describe('linkPRForTask confidence ladder', () => {
     // called and PR 704 is linked to a task no connector vouched for.
     conn.selfVerifiesCommits = false;
     conn.byCommit = resolved(704, 'merged');
-    const task = makeTask({ worktree_path: null, head_sha: 'sha-stored' });
+    const task = reclaimedWorktreeTask({ branch: 'slug', headSha: 'sha-stored' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(conn.calls).not.toContain('byCommit');
     expect(result.task?.pr_number).toBeNull();
@@ -509,7 +626,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/develop', 'refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: null, resolved_base_branch: 'develop' });
+    const task = worktreeTask({ resolvedBase: 'develop' }, { base_branch: null });
     await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches()).not.toContain('develop');
     expect(queriedBranches()).toEqual(['real-branch']);
@@ -525,7 +642,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/develop', 'refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: '', resolved_base_branch: 'develop' });
+    const task = worktreeTask({ resolvedBase: 'develop' }, { base_branch: '' });
     await linkPRForTask(task.id, depsFor(task));
     expect(queriedBranches()).not.toContain('develop');
     expect(queriedBranches()).toEqual(['real-branch']);
@@ -538,7 +655,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/maint/pushed-name'];
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'maint/pushed-name' ? resolved(96) : null);
-    const task = makeTask({ base_branch: null, resolved_base_branch: 'develop' });
+    const task = worktreeTask({ resolvedBase: 'develop' }, { base_branch: null });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(96);
   });
@@ -549,7 +666,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: null });
+    const task = worktreeTask({}, { base_branch: null });
     await linkPRForTask(task.id, depsFor(task));
     expect(readRefs()).toHaveLength(0);
   });
@@ -565,7 +682,7 @@ describe('linkPRForTask confidence ladder', () => {
     git.sha = HEX_SHA;
     git.pointsAtRefs = ['refs/remotes/origin/someone-elses-branch'];
     conn.byBranch = null;
-    const task = makeTask({ base_branch: null });
+    const task = worktreeTask({}, { base_branch: null });
     await linkPRForTask(task.id, depsFor(task, { defaultBaseBranch: '' }));
     expect(readRefs()).toHaveLength(0);
   });
@@ -575,7 +692,7 @@ describe('linkPRForTask confidence ladder', () => {
     // The stale link - including a stale `merged` - must be cleared atomically.
     conn.byNumber = null; // pr_number no longer resolves
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({ pr_number: 99, pr_url: 'u99', pr_state: 'merged', worktree_path: null, head_sha: null, branch_name: null });
+    const task = reclaimedWorktreeTask({}, { pr_number: 99, pr_url: 'u99', pr_state: 'merged' });
     const deps = depsFor(task, { updateSpy });
     const result = await linkPRForTask(task.id, deps);
     expect(result.status).toBe('not-found');
@@ -592,7 +709,7 @@ describe('linkPRForTask confidence ladder', () => {
     // state, and the non-force sweep clears it on a later pass if it is bogus.
     conn.byNumber = null;
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({ pr_number: 240, pr_url: 'u240', pr_state: null, worktree_path: null, head_sha: null, branch_name: null });
+    const task = unstartedTask({ pr_number: 240, pr_url: 'u240', pr_state: null });
     const deps = depsFor(task, { updateSpy, preserveLinkOnNotFound: true });
     const result = await linkPRForTask(task.id, deps);
     expect(result.status).toBe('not-found');
@@ -605,7 +722,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('write-only-on-change: returns unchanged and does not write when the PR is already current', async () => {
     conn.byNumber = resolved(50, 'open');
     const updateSpy = vi.fn();
-    const task = makeTask({ pr_number: 50, pr_url: 'u50', pr_state: 'open', worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 50, pr_url: 'u50', pr_state: 'open' });
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('unchanged');
     expect(updateSpy).not.toHaveBeenCalled();
@@ -613,7 +730,7 @@ describe('linkPRForTask confidence ladder', () => {
 
   it('resolver-unavailable: surfaces the reason when the resolver throws and no scrollback exists', async () => {
     conn.byNumber = new PRResolverUnavailableError('gh CLI not found');
-    const task = makeTask({ pr_number: 60, worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 60 });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('resolver-unavailable');
     expect(result.message).toMatch(/gh/i);
@@ -622,7 +739,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('transient-error: preserves the existing link and does not report not-found', async () => {
     conn.byNumber = new PRResolverTransientError('HTTP 503');
     const updateSpy = vi.fn();
-    const task = makeTask({ pr_number: 61, pr_url: 'u61', pr_state: 'open', worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 61, pr_url: 'u61', pr_state: 'open' });
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('transient-error');
     expect(updateSpy).not.toHaveBeenCalled();   // existing link preserved
@@ -639,7 +756,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('a degraded tier does not abort the ladder: a later tier still resolves', async () => {
     conn.byNumber = new PRResolverUnavailableError('az missing');
     conn.byCommit = resolved(70, 'merged');
-    const task = makeTask({ pr_number: 70, worktree_path: null, head_sha: 'sha-current' });
+    const task = reclaimedWorktreeTask({ branch: 'slug', headSha: 'sha-current' }, { pr_number: 70 });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(conn.calls).toContain('byCommit');
     expect(result.status).toBe('linked');
@@ -649,7 +766,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('rethrows the deferred degrade when no tier resolves, so degradeStatus is still set', async () => {
     conn.byNumber = new PRResolverUnavailableError('az missing');
     conn.byCommit = null;
-    const task = makeTask({ pr_number: 71, worktree_path: null, head_sha: 'sha-current' });
+    const task = reclaimedWorktreeTask({ branch: 'slug', headSha: 'sha-current' }, { pr_number: 71 });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('resolver-unavailable');
     expect(result.message).toMatch(/az missing/);
@@ -660,7 +777,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('reports a transient over an unavailable when both tiers degraded', async () => {
     conn.byNumber = new PRResolverUnavailableError('az missing');
     conn.byCommit = new PRResolverTransientError('HTTP 503');
-    const task = makeTask({ pr_number: 72, worktree_path: null, head_sha: 'sha-current' });
+    const task = reclaimedWorktreeTask({ branch: 'slug', headSha: 'sha-current' }, { pr_number: 72 });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('transient-error');
   });
@@ -673,7 +790,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('an unexpected resolver error never clears an existing link', async () => {
     conn.byNumber = new TypeError('connector bug');
     const updateSpy = vi.fn();
-    const task = makeTask({ pr_number: 73, pr_url: 'u73', pr_state: 'open', worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 73, pr_url: 'u73', pr_state: 'open' });
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(updateSpy).not.toHaveBeenCalled();
     expect(result.task?.pr_url).toBe('u73');
@@ -682,7 +799,7 @@ describe('linkPRForTask confidence ladder', () => {
   it('opportunistically persists head_sha when the worktree HEAD changes', async () => {
     git.sha = 'sha-new';
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({ head_sha: 'sha-old' });
+    const task = worktreeTask({ headSha: 'sha-old' });
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ head_sha: 'sha-new' }));
     expect(result.status).toBe('not-found');
@@ -712,12 +829,10 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
     git.branch = 'code-review-32-1dbcebe5';
     conn.byNumber = resolved(32, 'open');
     conn.byCommit = resolved(702, 'merged'); // what base's tip would have magneted onto
-    const task = makeTask({
-      pr_number: 32,
-      branch_name: 'code-review-32-1dbcebe5',
-      head_sha: 'base-tip',
-      description: `Review ${CITED_PR_URL}`,
-    });
+    const task = worktreeTask(
+      { branch: 'code-review-32-1dbcebe5', headSha: 'base-tip' },
+      { pr_number: 32, description: `Review ${CITED_PR_URL}` },
+    );
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(32);
     expect(result.task?.pr_state).toBe('open');
@@ -729,10 +844,7 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
     // sibling task's PR as background. No pr_number, branch, head_sha, or
     // worktree - nothing to resolve from, whatever the description mentions.
     const updateSpy = vi.fn();
-    const task = makeTask({
-      pr_number: null, branch_name: null, head_sha: null, worktree_path: null,
-      description: CITING_DESCRIPTION,
-    });
+    const task = unstartedTask({ description: CITING_DESCRIPTION });
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('no-anchor');
     expect(result.task?.pr_number).toBeNull();
@@ -748,11 +860,10 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
     conn.byNumber = null;   // the cited PR is not this task's, and the number no longer resolves for it
     conn.byBranch = null;   // no PR exists for this task's own branch
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({
-      pr_number: 9, pr_url: CITED_PR_URL, pr_state: 'merged',
-      branch_name: 're-review-the-icons-bf9efd2b',
-      description: CITING_DESCRIPTION,
-    });
+    const task = worktreeTask(
+      { branch: 're-review-the-icons-bf9efd2b' },
+      { pr_number: 9, pr_url: CITED_PR_URL, pr_state: 'merged', description: CITING_DESCRIPTION },
+    );
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('not-found');
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
@@ -766,11 +877,10 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
     git.aheadCount = '0'; // review shape: commit tier blocked
     conn.byNumber = null; // gh ran cleanly and matched nothing
     conn.byBranch = null;
-    const task = makeTask({
-      pr_number: 9, pr_url: CITED_PR_URL, pr_state: 'open',
-      head_sha: 'base-tip',
-      description: CITING_DESCRIPTION,
-    });
+    const task = worktreeTask(
+      { headSha: 'base-tip' },
+      { pr_number: 9, pr_url: CITED_PR_URL, pr_state: 'open', description: CITING_DESCRIPTION },
+    );
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('not-found');
     expect(result.task?.pr_number).toBeNull();
@@ -783,10 +893,10 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
     // existing link survives, and the description is not consulted as a fallback.
     conn.byNumber = new PRResolverUnavailableError('gh CLI not found');
     const updateSpy = vi.fn();
-    const task = makeTask({
-      pr_number: 60, pr_url: 'u60', pr_state: 'open',
-      worktree_path: null, description: CITING_DESCRIPTION,
-    });
+    const task = reclaimedWorktreeTask(
+      { branch: 'slug' },
+      { pr_number: 60, pr_url: 'u60', pr_state: 'open', description: CITING_DESCRIPTION },
+    );
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy })); // no getScrollback -> nothing to scrape
     expect(result.status).toBe('resolver-unavailable');
     expect(result.message).toMatch(/gh/i);
@@ -798,7 +908,7 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
 describe('linkPRForTask throttle (auto triggers only)', () => {
   it('skips a terminal (merged/closed) PR on auto triggers without calling the resolver', async () => {
     conn.byNumber = resolved(70);
-    const task = makeTask({ pr_number: 70, pr_url: 'u70', pr_state: 'merged', worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 70, pr_url: 'u70', pr_state: 'merged' });
     const result = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(result.status).toBe('unchanged');
     expect(conn.calls).toEqual([]); // resolver never invoked
@@ -806,7 +916,7 @@ describe('linkPRForTask throttle (auto triggers only)', () => {
 
   it('force bypasses the terminal-skip and re-resolves', async () => {
     conn.byNumber = resolved(71, 'merged');
-    const task = makeTask({ pr_number: 71, pr_url: 'u71', pr_state: 'merged', worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 71, pr_url: 'u71', pr_state: 'merged' });
     const result = await linkPRForTask(task.id, depsFor(task, { force: true }));
     expect(conn.calls).toContain('byNumber');
     expect(result.status).toBe('unchanged'); // resolved to the same PR
@@ -814,7 +924,7 @@ describe('linkPRForTask throttle (auto triggers only)', () => {
 
   it('coalesces back-to-back auto resolves within the TTL window', async () => {
     conn.byBranch = resolved(80);
-    const task = makeTask(); // worktree present, no pr_number
+    const task = worktreeTask(); // worktree present, no pr_number
     const first = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(first.task?.pr_number).toBe(80);
     const callsAfterFirst = conn.calls.length;
@@ -822,6 +932,36 @@ describe('linkPRForTask throttle (auto triggers only)', () => {
     const second = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(second.status).toBe('unchanged');
     expect(conn.calls.length).toBe(callsAfterFirst); // no new resolver calls
+  });
+
+  it('bypassThrottle: the PR-command signal resolves inside the TTL window an idle resolve stamped', async () => {
+    // The shape: push, turn ends (idle resolve finds no PR yet and stamps the
+    // throttle), `gh pr create` inside the next minute. The pr-candidate
+    // resolve must not be coalesced away or the card waits for the next idle.
+    conn.byBranch = null;
+    const task = noWorktreeTask({ pushedBranch: 'maint/pushed' });
+    const idle = await linkPRForTask(task.id, depsFor(task, { force: false }));
+    expect(idle.status).toBe('not-found');
+    const callsAfterIdle = conn.calls.length;
+
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'maint/pushed' ? resolved(1383) : null);
+    const candidate = await linkPRForTask(task.id, depsFor(task, { force: false, bypassThrottle: true }));
+
+    expect(candidate.status).toBe('linked');
+    expect(candidate.task?.pr_number).toBe(1383);
+    expect(conn.calls.length).toBeGreaterThan(callsAfterIdle);
+  });
+
+  it('bypassThrottle: still leaves a terminal PR alone, unlike force', async () => {
+    // `gh pr view` on a merged PR fires the same signal; nothing about a
+    // finished PR changes, so the terminal-state skip must survive the bypass.
+    conn.byNumber = resolved(70, 'merged');
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 70, pr_url: 'u70', pr_state: 'merged' });
+
+    const result = await linkPRForTask(task.id, depsFor(task, { force: false, bypassThrottle: true }));
+
+    expect(result.status).toBe('unchanged');
+    expect(conn.calls).toEqual([]);
   });
 });
 
@@ -856,10 +996,7 @@ describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', ()
     // whether the option survived the project/task resolution on its way in.
     conn.byNumber = null;
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({
-      pr_number: 240, pr_url: 'u240', pr_state: null,
-      worktree_path: null, head_sha: null, branch_name: null,
-    });
+    const task = unstartedTask({ pr_number: 240, pr_url: 'u240', pr_state: null });
     const context = contextFor(task, updateSpy);
 
     const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true, preserveLinkOnNotFound: true });
@@ -876,10 +1013,7 @@ describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', ()
     // regardless of the option), so this negative case is load-bearing.
     conn.byNumber = null;
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({
-      pr_number: 240, pr_url: 'u240', pr_state: null,
-      worktree_path: null, head_sha: null, branch_name: null,
-    });
+    const task = unstartedTask({ pr_number: 240, pr_url: 'u240', pr_state: null });
     const context = contextFor(task, updateSpy);
 
     const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
@@ -907,10 +1041,7 @@ describe('linkPR (IPC wrapper): board config default base branch wins over proje
     git.pointsAtRefs = ['refs/remotes/origin/develop'];
     conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'develop' ? resolved(555) : null);
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({
-      pr_number: null, base_branch: null, resolved_base_branch: null,
-      worktree_path: null, branch_name: null, head_sha: HEX_SHA,
-    });
+    const task = reclaimedWorktreeTask({ headSha: HEX_SHA }, { base_branch: null });
     repos.value = { tasks: { getById: () => task, update: updateSpy } as never };
     const context = {
       currentProjectId: 'proj-1',
@@ -970,11 +1101,8 @@ describe('linkPR (IPC wrapper): onLinked notifies quietly and is recorded', () =
 
   it('a newly linked PR pushes task:prLinkChanged (not task:updatedByAgent), records it, and still emits the board event', async () => {
     conn.byNumber = { url: 'https://github.com/o/r/pull/7', number: 7, state: 'open' };
-    const updateSpy = vi.fn((patch: Partial<Task>) => ({ ...makeTask({ pr_number: 240 }), ...patch }) as Task);
-    const task = makeTask({
-      pr_number: 240, pr_url: 'u240', pr_state: null,
-      worktree_path: null, head_sha: null, branch_name: null,
-    });
+    const updateSpy = vi.fn((patch: Partial<Task>) => ({ ...unstartedTask({ pr_number: 240 }), ...patch }) as Task);
+    const task = unstartedTask({ pr_number: 240, pr_url: 'u240', pr_state: null });
     const { context, send, emitBoardChanged } = contextFor(task, updateSpy);
 
     await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
@@ -1002,10 +1130,7 @@ describe('linkPR (IPC wrapper): onLinked notifies quietly and is recorded', () =
     // and a test that only covered the "linked" branch would miss it entirely.
     conn.byNumber = null;
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
-    const task = makeTask({
-      pr_number: 240, pr_url: 'u240', pr_state: 'open',
-      worktree_path: null, head_sha: null, branch_name: null,
-    });
+    const task = unstartedTask({ pr_number: 240, pr_url: 'u240', pr_state: 'open' });
     const { context, send } = contextFor(task, updateSpy);
 
     const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
@@ -1020,11 +1145,8 @@ describe('linkPR (IPC wrapper): onLinked notifies quietly and is recorded', () =
     // left no trace. Routing through sendToRenderer means a lost push is still
     // recorded with a PushDropped marker.
     conn.byNumber = { url: 'https://github.com/o/r/pull/7', number: 7, state: 'open' };
-    const updateSpy = vi.fn((patch: Partial<Task>) => ({ ...makeTask({ pr_number: 240 }), ...patch }) as Task);
-    const task = makeTask({
-      pr_number: 240, pr_url: 'u240', pr_state: null,
-      worktree_path: null, head_sha: null, branch_name: null,
-    });
+    const updateSpy = vi.fn((patch: Partial<Task>) => ({ ...unstartedTask({ pr_number: 240 }), ...patch }) as Task);
+    const task = unstartedTask({ pr_number: 240, pr_url: 'u240', pr_state: null });
     const { context, send } = contextFor(task, updateSpy);
     (context.mainWindow as unknown as { isDestroyed: () => boolean }).isDestroyed = () => true;
 
@@ -1045,7 +1167,7 @@ describe('linkPR (IPC wrapper): onLinked notifies quietly and is recorded', () =
 describe('linkPRForTask: pull_request adoption signal fires on a real link only', () => {
   it('fires once when a PR is newly linked', async () => {
     conn.byNumber = resolved(10);
-    const task = makeTask({ pr_number: 99, head_sha: 'sha' });
+    const task = worktreeTask({ headSha: 'sha' }, { pr_number: 99 });
 
     const result = await linkPRForTask(task.id, depsFor(task));
 
@@ -1056,7 +1178,7 @@ describe('linkPRForTask: pull_request adoption signal fires on a real link only'
 
   it('never fires when a stale link is cleared (the sweep noticing its own housekeeping)', async () => {
     conn.byNumber = null;
-    const task = makeTask({ pr_number: 99, pr_url: 'u99', pr_state: 'merged', worktree_path: null, head_sha: null, branch_name: null });
+    const task = reclaimedWorktreeTask({}, { pr_number: 99, pr_url: 'u99', pr_state: 'merged' });
 
     const result = await linkPRForTask(task.id, depsFor(task));
 
@@ -1066,11 +1188,266 @@ describe('linkPRForTask: pull_request adoption signal fires on a real link only'
 
   it('never fires when the resolved PR is already current (no write at all)', async () => {
     conn.byNumber = resolved(50, 'open');
-    const task = makeTask({ pr_number: 50, pr_url: 'u50', pr_state: 'open', worktree_path: null });
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 50, pr_url: 'u50', pr_state: 'open' });
 
     const result = await linkPRForTask(task.id, depsFor(task));
 
     expect(result.status).toBe('unchanged');
     expect(trackFeatureUsedSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A task created with `useWorktree: false`. Every anchor the ladder used to
+ * resolve from was written behind a worktree read, so this shape could never
+ * link, and the shared checkout's live HEAD is not a per-task anchor: every
+ * concurrent no-worktree task shares it. The anchor it CAN earn is the branch
+ * its own `git push` named, recorded as `pushed_branch`, which Tier 5 resolves
+ * from with no git read at all. Three of these on one checkout are the filed
+ * bug (three sibling no-worktree tasks, one shared HEAD, zero linked PRs), so
+ * the HEAD-never-read assertions are the point.
+ */
+describe('linkPRForTask: a task with no worktree', () => {
+  it('tier 5: links from the branch its own push recorded, with no HEAD read and no ref read', async () => {
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'maint/build-validation-policy' ? resolved(1383) : null);
+    const task = noWorktreeTask({ pushedBranch: 'maint/build-validation-policy' });
+
+    const result = await linkPRForTask(task.id, depsFor(task));
+
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_number).toBe(1383);
+    expect(conn.lastArgs.byBranch?.[1]).toBe('maint/build-validation-policy');
+    // The resolver ran against the project checkout, since the task has no
+    // directory of its own - and never asked that checkout what it has out.
+    expect(conn.lastArgs.byBranch?.[0]).toBe('/repo');
+    expect(git.revparseCalls).toBe(0);
+    expect(readRefs()).toHaveLength(0);
+  });
+
+  it('tier 1: links by an explicitly recorded number (the /pull-request skill\'s kangentic_update_task write)', async () => {
+    conn.byNumber = resolved(12);
+    const task = noWorktreeTask({}, { pr_number: 12 });
+
+    const result = await linkPRForTask(task.id, depsFor(task));
+
+    expect(result.task?.pr_number).toBe(12);
+    expect(conn.calls).toEqual(['byNumber']);
+    expect(git.revparseCalls).toBe(0);
+  });
+
+  it('with nothing recorded it is no-anchor: the resolver is never consulted and no git read happens', async () => {
+    // The state the three stranded tasks sat in before the push capture existed.
+    // The gate must refuse honestly rather than fall through to a shared-HEAD
+    // read that would have linked all three to one PR.
+    git.branch = 'maint/whatever-is-checked-out';
+    conn.byBranch = resolved(1383);
+    const updateSpy = vi.fn();
+    const task = noWorktreeTask();
+
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+
+    expect(result.status).toBe('no-anchor');
+    expect(conn.calls).toEqual([]);
+    expect(git.revparseCalls).toBe(0);
+    expect(readRefs()).toHaveLength(0);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('three concurrent no-worktree tasks on one checkout link three different PRs, never through the shared HEAD', async () => {
+    // The checkout has ONE branch out, and it carries a PR of its own. A
+    // resolve-time HEAD read would hand that PR to all three tasks. Each task's
+    // own push named a different branch, so each resolves its own PR.
+    git.branch = 'maint/shared-checkout-branch';
+    const prByBranch: Record<string, number> = {
+      'feature/a': 1, 'feature/b': 2, 'feature/c': 3, 'maint/shared-checkout-branch': 99,
+    };
+    conn.byBranch = (_cwd: unknown, branch: unknown) => {
+      const number = prByBranch[String(branch)];
+      return number === undefined ? null : resolved(number);
+    };
+    const tasks = [
+      noWorktreeTask({ pushedBranch: 'feature/a' }),
+      noWorktreeTask({ pushedBranch: 'feature/b' }),
+      noWorktreeTask({ pushedBranch: 'feature/c' }),
+    ];
+
+    const results = await Promise.all(tasks.map((task) => linkPRForTask(task.id, depsFor(task))));
+
+    expect(results.map((result) => result.task?.pr_number)).toEqual([1, 2, 3]);
+    expect(queriedBranches()).not.toContain('maint/shared-checkout-branch');
+    expect(git.revparseCalls).toBe(0);
+  });
+
+  it('three no-worktree tasks with nothing recorded all stay unlinked, never all on one PR', async () => {
+    git.branch = 'maint/shared-checkout-branch';
+    conn.byBranch = resolved(99);
+    const tasks = [noWorktreeTask(), noWorktreeTask(), noWorktreeTask()];
+
+    const results = await Promise.all(tasks.map((task) => linkPRForTask(task.id, depsFor(task))));
+
+    expect(results.map((result) => result.status)).toEqual(['no-anchor', 'no-anchor', 'no-anchor']);
+    expect(results.every((result) => result.task?.pr_number == null)).toBe(true);
+    expect(conn.calls).toEqual([]);
+  });
+
+  it('the fixture refuses an anchor column in overrides, so an impossible state cannot be built', () => {
+    // Tests are not typechecked, so this is the guard: the old fixture let a
+    // test hand the ladder `worktree_path: null` next to `branch_name: 'slug'`
+    // and `use_worktree: 1`, which only the Done path produces.
+    expect(() => noWorktreeTask({}, { head_sha: 'sha' } as never)).toThrow(/head_sha/);
+    expect(() => noWorktreeTask({}, { branch_name: 'slug' } as never)).toThrow(/branch_name/);
+    expect(() => worktreeTask({}, { worktree_path: null } as never)).toThrow(/worktree_path/);
+    expect(() => unstartedTask({ use_worktree: 0 } as never)).toThrow(/use_worktree/);
+    expect(() => reclaimedWorktreeTask({}, { pushed_branch: 'x' } as never)).toThrow(/pushed_branch/);
+  });
+});
+
+/**
+ * `autoLinkPRForTask` is the gate every implicit trigger (a move, a session
+ * going idle) passes through before `linkPR`. It mirrored the ladder's old
+ * anchor gate, so a no-worktree task whose push WAS recorded still bailed
+ * here and never reached Tier 5.
+ */
+describe('autoLinkPRForTask: the anchor gate admits pushed_branch', () => {
+  function contextFor(task: Task, updateSpy: ReturnType<typeof vi.fn>): IpcContext {
+    repos.value = {
+      tasks: { getById: () => task, update: updateSpy },
+      swimlanes: { getById: () => ({ id: 'lane', role: null }) },
+    } as never;
+    return {
+      currentProjectId: 'proj-1',
+      projectRepo: { getById: () => ({ id: 'proj-1', path: '/repo' }) },
+      configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      sessionManager: { getSessionProjectId: () => null },
+    } as never;
+  }
+
+  it('proceeds to the ladder for a no-worktree task whose push was recorded, and links it', async () => {
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'maint/pushed' ? resolved(1385) : null);
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = noWorktreeTask({ pushedBranch: 'maint/pushed' });
+    const context = contextFor(task, updateSpy);
+
+    autoLinkPRForTask(context, task.id, 'proj-1');
+
+    await vi.waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: 1385 }));
+    });
+    expect(git.revparseCalls).toBe(0);
+  });
+
+  it('still bails for a no-worktree task with nothing recorded', async () => {
+    conn.byBranch = resolved(99);
+    const updateSpy = vi.fn();
+    const task = noWorktreeTask();
+    const context = contextFor(task, updateSpy);
+
+    autoLinkPRForTask(context, task.id, 'proj-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(conn.calls).toEqual([]);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `recordPushedBranchForSession` is the write behind the `branch-pushed`
+ * session event: the destination the agent's own `git push` named, recorded
+ * on the session's task. Patch-only, resolve-free, and refused for the three
+ * names that would be wrong: the task's own branch, the stored value, and the
+ * effective base (a merge-back's `git push origin HEAD:develop` must not make
+ * Tier 5 link the base branch's own PR).
+ */
+describe('recordPushedBranchForSession', () => {
+  /** `boardBase: null` models a board config that names no default base. */
+  function contextFor(
+    task: Task | undefined,
+    updateSpy: ReturnType<typeof vi.fn>,
+    options: { boardBase?: string | null } = {},
+  ): IpcContext {
+    const boardBase = options.boardBase === undefined ? 'develop' : options.boardBase;
+    repos.value = {
+      tasks: { getById: () => task, getBySessionId: () => task, update: updateSpy },
+    } as never;
+    return {
+      currentProjectId: 'proj-1',
+      projectRepo: { getById: () => ({ id: 'proj-1', path: '/repo' }) },
+      boardConfigManager: { getDefaultBaseBranchForPath: () => boardBase ?? undefined },
+      configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
+      sessionManager: { getSessionProjectId: () => 'proj-1' },
+    } as never;
+  }
+
+  it('writes only { id, pushed_branch } and never resolves', async () => {
+    conn.byBranch = resolved(1383);
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = noWorktreeTask();
+    const context = contextFor(task, updateSpy);
+
+    await recordPushedBranchForSession(context, 'sess-1', 'maint/build-validation-policy');
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy).toHaveBeenCalledWith({ id: task.id, pushed_branch: 'maint/build-validation-policy' });
+    expect(conn.calls).toEqual([]);
+    expect(git.revparseCalls).toBe(0);
+  });
+
+  it('a newer push overwrites an older recorded branch', async () => {
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = worktreeTask({ pushedBranch: 'maint/old-name' });
+    const context = contextFor(task, updateSpy);
+
+    await recordPushedBranchForSession(context, 'sess-1', 'maint/new-name');
+
+    expect(updateSpy).toHaveBeenCalledWith({ id: task.id, pushed_branch: 'maint/new-name' });
+  });
+
+  it.each([
+    ['the task\'s own branch_name', worktreeTask({ branch: 'slug' }), 'slug'],
+    ['the stored pushed_branch', worktreeTask({ pushedBranch: 'maint/x' }), 'maint/x'],
+    ['the board-config base (no base chosen on the task)', noWorktreeTask({}, { base_branch: null }), 'develop'],
+    ['an explicitly chosen base_branch', noWorktreeTask({}, { base_branch: 'release/1.0' }), 'release/1.0'],
+    ['the observed resolved_base_branch', reclaimedWorktreeTask({ resolvedBase: 'integration' }, { base_branch: null }), 'integration'],
+  ])('writes nothing when the branch is %s', async (_label, task, branch) => {
+    const updateSpy = vi.fn();
+    const context = contextFor(task, updateSpy);
+
+    await recordPushedBranchForSession(context, 'sess-1', branch);
+
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the project config base when the board config names none', async () => {
+    const updateSpy = vi.fn();
+    const context = contextFor(noWorktreeTask({}, { base_branch: null }), updateSpy, { boardBase: null });
+
+    await recordPushedBranchForSession(context, 'sess-1', 'main');
+
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('a task whose chosen base is not the pushed branch still records it (the base guard is exact)', async () => {
+    // The negative twin of the refusals above: with `base_branch: 'main'` set
+    // on the task, a push to `develop` (the board default it outranks) is a
+    // real feature push and must be recorded.
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = noWorktreeTask({}, { base_branch: 'main' });
+    const context = contextFor(task, updateSpy);
+
+    await recordPushedBranchForSession(context, 'sess-1', 'develop');
+
+    expect(updateSpy).toHaveBeenCalledWith({ id: task.id, pushed_branch: 'develop' });
+  });
+
+  it('is a no-op for a session with no task', async () => {
+    const updateSpy = vi.fn();
+    const context = contextFor(undefined, updateSpy);
+
+    await recordPushedBranchForSession(context, 'sess-unknown', 'feature/x');
+
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

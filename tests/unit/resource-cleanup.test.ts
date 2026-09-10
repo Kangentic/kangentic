@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockExistsSync, mockRm, mockReaddir, mockStat, mockExecFile } = vi.hoisted(() => ({
+const { mockExistsSync, mockRm, mockReaddir, mockStat, mockExecFile, mockReadLocalBranchSha } = vi.hoisted(() => ({
   mockExistsSync: vi.fn((): boolean => false),
   mockRm: vi.fn(async () => {}),
   mockReaddir: vi.fn(async () => []),
@@ -12,6 +12,13 @@ const { mockExistsSync, mockRm, mockReaddir, mockStat, mockExecFile } = vi.hoist
   // because the relevant block uses fake timers.
   mockStat: vi.fn(async (_pathArg?: unknown) => ({ mtimeMs: Date.now() - 24 * 60 * 60 * 1000 })),
   mockExecFile: vi.fn(),
+  // The Backlog sweep captures the stale branch's tip into head_sha before
+  // dropping the name; null by default so the patch carries no head_sha key.
+  mockReadLocalBranchSha: vi.fn(async (_repo?: string, _branch?: string): Promise<string | null> => null),
+}));
+
+vi.mock('../../src/main/git/worktree-head', () => ({
+  readLocalBranchSha: mockReadLocalBranchSha,
 }));
 
 vi.mock('node:fs', () => ({
@@ -230,12 +237,14 @@ describe('cleanupStaleResources', () => {
       expect.any(Function),
     );
 
-    // DB fields cleared
+    // DB fields cleared. `pushed_branch` is absent on purpose: a remote fact
+    // and a PR anchor, it outlives the checkout (see pushed-branch-cleanup-parity).
+    // The tip was probed from the branch ref before the branch delete pass.
+    expect(mockReadLocalBranchSha).toHaveBeenCalledWith(projectPath, 'fix-login-bug-bbbb2222');
     expect(taskRepo.update).toHaveBeenCalledWith({
       id: 'bbbb2222-0000-0000-0000-000000000000',
       worktree_path: null,
       branch_name: null,
-      pushed_branch: null,
       resolved_base_branch: null,
       session_id: null,
     });
