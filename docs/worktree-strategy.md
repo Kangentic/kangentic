@@ -47,7 +47,10 @@ bonus rather than a fix.
 - Non-null: used verbatim. This covers every worktree created before the numeric scheme, which
   keeps its legacy `{slug}-{taskId8}` name. Nothing on disk is ever renamed or relocated.
 - Null: the folder is `String(display_id)`, and the caller persists it via
-  `TaskRepository.recordWorktree`, which writes path, branch and folder in one transaction.
+  `TaskRepository.recordWorktree`, which writes path, branch, folder, and the base the worktree
+  was observed to be cut from, in one transaction. That last one is omitted rather than nulled
+  when the caller cannot observe it, so a reattach to an existing branch cannot erase a base an
+  earlier real creation recorded.
 - Invariant: whenever `worktree_path` is non-null,
   `path.basename(worktree_path) === worktree_folder`.
 
