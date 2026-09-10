@@ -45,6 +45,7 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. The callback returns the set of external IDs already imported so the UI can mark duplicates. |
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
 | `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Takes `Array<FileAttachmentRef>` (see below). Implemented by Azure DevOps for `AttachedFile` relations and by Asana for inline images and uploaded attachments. |
+| `resolveLabel(repository)` | optional | Resolve a human-readable display label from a repository identifier, called by the backlog handler after a source is added (Asana: project GID to project name). Best-effort: returning `null`, or throwing, keeps the label the URL parser built. |
 | `authenticate(input)` | optional | Future: PAT / OAuth flow. Not wired to any IPC handler yet. |
 | `listProjects(credentials)` | optional | Future: list boards/projects the user can pick from. |
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
