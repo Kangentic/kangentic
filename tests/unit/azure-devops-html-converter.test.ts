@@ -89,6 +89,27 @@ describe('convertHtmlToMarkdown', () => {
     expect(convertHtmlToMarkdown('&#169;')).toBe(String.fromCharCode(169));
   });
 
+  it('decodes each entity exactly one level, so an escaped entity survives', () => {
+    // &amp; is decoded LAST for this reason. Decoding it first turned &amp;lt;
+    // into &lt; and then into <, so a work item that literally documents the
+    // &lt; entity rendered as a stray angle bracket.
+    expect(convertHtmlToMarkdown('&amp;lt;')).toBe('&lt;');
+    expect(convertHtmlToMarkdown('&amp;#39;')).toBe('&#39;');
+    expect(convertHtmlToMarkdown('&amp;amp;')).toBe('&amp;');
+    expect(convertHtmlToMarkdown('write &amp;nbsp; for a hard space')).toBe('write &nbsp; for a hard space');
+  });
+
+  it('strips tags to a fixed point', () => {
+    // One pass of the tag regex is already a fixed point (a surviving `<` has
+    // no `>` after it, or is immediately followed by one, and a removal cannot
+    // introduce a `>`), so this pins the property rather than a live break. The
+    // loop guards a future edit to the pattern.
+    expect(convertHtmlToMarkdown('<scr<x>ipt>alert(1)</scr<x>ipt>')).not.toContain('<script');
+    expect(convertHtmlToMarkdown('<img src=">" onerror=alert(1)>')).not.toContain('<img');
+    const once = convertHtmlToMarkdown('<div><span>text</span></div>');
+    expect(convertHtmlToMarkdown(once)).toBe(once);
+  });
+
   it('strips unknown HTML tags', () => {
     expect(convertHtmlToMarkdown('<span class="custom">text</span>')).toBe('text');
   });

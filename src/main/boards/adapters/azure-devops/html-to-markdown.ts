@@ -11,22 +11,42 @@
  * Tested in tests/unit/azure-devops-html-converter.test.ts.
  */
 
-/** Strip all HTML tags from a string. */
+/**
+ * Strip all HTML tags from a string, repeating until nothing changes.
+ *
+ * One pass of this regex is in fact already a fixed point: a `<` survives a
+ * pass only when it has no `>` after it or is immediately followed by one, and
+ * removing text can never introduce a `>`. So the loop is a guard against a
+ * future edit to the pattern, not a fix for a reachable input today.
+ */
 function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, '');
+  let previous = '';
+  let current = html;
+  while (current !== previous) {
+    previous = current;
+    current = current.replace(/<[^>]+>/g, '');
+  }
+  return current;
 }
 
-/** Decode common HTML entities. */
+/**
+ * Decode common HTML entities.
+ *
+ * `&amp;` is decoded LAST, deliberately. Decoding it first turns `&amp;lt;`
+ * into `&lt;` and then into `<`, so a work item that literally says `&lt;`
+ * renders as a stray angle bracket. Running it after every other entity leaves
+ * exactly one level decoded.
+ */
 function decodeEntities(text: string): string {
   return text
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#x27;/g, "'")
     .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&amp;/g, '&');
 }
 
 /** Convert HTML (from Azure DevOps rich text) to markdown. */
