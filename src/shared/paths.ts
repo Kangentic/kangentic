@@ -20,10 +20,12 @@ import {
 
 // The shell predicates, `sanitizeForPty`, and the double-quote escaper live in
 // `./shell-quote`, which has no Node imports so the renderer can share them.
-// Re-exported here because this module is the documented single source of truth
-// for path/shell interop and 40-odd call sites import them by this path.
+// The predicates and `sanitizeForPty` are re-exported because this module is the
+// documented single source of truth for path/shell interop and 40-odd call sites
+// import them by this path. `escapeForDoubleQuotedShell` is NOT: `quoteArg` is
+// the only main-process caller and the renderer imports it from `./shell-quote`
+// directly, so a re-export here would just add a second name for it.
 export {
-  escapeForDoubleQuotedShell,
   isCmdShell,
   isPowerShellShell,
   isUnixLikeShell,
