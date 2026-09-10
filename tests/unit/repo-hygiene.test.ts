@@ -185,4 +185,53 @@ describe('.github/workflows/codeql.yml', () => {
       'Keep the weekly schedule: it catches newly published queries against unchanged code.',
     ).toBe(true);
   });
+
+  /**
+   * The scope narrowing on the Initialize CodeQL step, pinned for the same
+   * reason as the triggers above: it fails green.
+   *
+   * Two edits break it silently. Deleting the `config:` block is valid YAML and
+   * a passing workflow, so the test, script, and devtools trees go back to
+   * outnumbering the real findings in the alert list. Or an entry gets a typo
+   * (`script` for `scripts`) or names a tree that has since moved, and CodeQL
+   * treats a pattern matching nothing as a pattern excluding nothing. It does
+   * not warn, so the step stays green and the noise quietly returns.
+   *
+   * The entry list is asserted exactly, not as a subset. Growth is the half
+   * worth catching: adding a tree here removes it from a security scanner's
+   * view, which should never ride along inside an unrelated change.
+   */
+  it('keeps its paths-ignore scope, and every entry names a real directory', () => {
+    const lines = stripComments(readFileSync(codeqlPath, 'utf8'));
+    const pathsIgnoreIndex = lines.findIndex((line) => /^\s*paths-ignore:\s*$/.test(line));
+
+    expect(
+      pathsIgnoreIndex,
+      'The `paths-ignore` block on the Initialize CodeQL step is gone. Without it the test, script, and devtools trees are scanned again, and their alerts bury the real findings.',
+    ).toBeGreaterThan(-1);
+
+    // A line scan, matching the rest of this file: no YAML parser is a direct
+    // dependency, and these are `- value` entries at a fixed indent under the
+    // key. Collect them until the indent falls back to the key's own level.
+    const keyIndent = lines[pathsIgnoreIndex].search(/\S/);
+    const ignoredPaths: string[] = [];
+    for (const line of lines.slice(pathsIgnoreIndex + 1)) {
+      if (line.trim() === '') continue;
+      if (line.search(/\S/) <= keyIndent) break;
+      const entry = /^\s*-\s*(\S+)\s*$/.exec(line);
+      if (entry) ignoredPaths.push(entry[1]);
+    }
+
+    expect(
+      ignoredPaths,
+      'Keep the paths-ignore list exact. Dropping a tree puts its alerts back in front of the real findings, and adding one hides a tree from CodeQL, which is a decision that belongs in its own change.',
+    ).toEqual(['tests', 'scripts', 'src/devtools']);
+
+    for (const ignoredPath of ignoredPaths) {
+      expect(
+        existsSync(join(REPO_ROOT, ignoredPath)),
+        `paths-ignore names \`${ignoredPath}\`, which is not a directory in this repo. A pattern that matches nothing excludes nothing, and CodeQL does not warn about it.`,
+      ).toBe(true);
+    }
+  });
 });
