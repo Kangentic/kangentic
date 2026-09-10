@@ -9,7 +9,7 @@ import { LaunchOverlay } from '../LaunchOverlay';
 import { useTerminalOverlay } from '../../utils/task-progress';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
-import { mayTakeArrivalFocus } from '../../utils/terminal-arrival-focus';
+import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 
 const FIT_DELAY_MS = 100;
 
@@ -101,7 +101,10 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // pass `active` hardcoded true, so `active` carries no information about which
   // surface the user is actually on - the arbiter answers that from user-intent
   // state instead. See terminal-arrival-focus.ts.
-  const mayFocusOnArrival = useCallback(() => mayTakeArrivalFocus(sessionId), [sessionId]);
+  const mayFocusOnArrival = useCallback(
+    (site: ArrivalFocusSite) => mayTakeArrivalFocus(sessionId, site),
+    [sessionId],
+  );
 
   const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
@@ -220,7 +223,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       // `initialized` already true, so it focuses about one frame after mount -
       // well before any replay settles. Gating only the replay would therefore
       // leave the race intact, just decided earlier.
-      if (initialized.current && mayFocusOnArrival()) {
+      if (initialized.current && mayFocusOnArrival('tab-init')) {
         focus();
       }
     });

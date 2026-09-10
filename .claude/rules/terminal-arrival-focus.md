@@ -21,7 +21,7 @@ tell a programmatic focus from a user one.
 ## The rule
 
 **Arrival focus is decided by user-intent state, never by replay order or rAF order.** Route every
-programmatic focus on an arriving terminal through `mayTakeArrivalFocus(sessionId)`
+programmatic focus on an arriving terminal through `mayTakeArrivalFocus(sessionId, site)`
 (`src/renderer/utils/terminal-arrival-focus.ts`). Hosts own the policy and pass it to `useTerminal`
 as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
 
@@ -45,6 +45,37 @@ as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
   retried CI test and, off CI, as an expand click that silently does not move focus. Do not
   tighten it toward observed mount times; if a tighter bound is ever wanted, anchor it to the
   claimed terminal's own mount instead of to the gesture.
+- **An arrival is an OBLIGATION owed by a replay, discharged exactly once.** It is not an instant
+  that either happens or does not. A replay arms the obligation where it STARTS
+  (`arrivalFocusOwedRef` in `useTerminal`), and every path that ends that replay discharges it
+  through `focusOnArrival`: the two that complete normally, and the three that pre-empt one (the
+  watchdog and the two IPC rejections). A path that ends a replay without discharging cancels the
+  decision permanently, because nothing asks again.
+
+  This is not hypothetical. `armScrollbackWatchdog` bumps the replay generation, which makes that
+  replay's own `afterWrite` return ABOVE the frame that asks the arbiter, and it clears
+  `scrollbackPendingRef`, which lifts the replay veil. So the terminal looks like one that
+  finished arriving and simply refused focus, while in fact the arbiter was never consulted at
+  all. It shipped as an intermittently retried CI test (the panel re-expand case) whose arbiter
+  trace was EMPTY, which is why two rounds of reading the tier ladder found nothing.
+
+  Arm at replay START, never at completion: a replay that never completes is the entire case this
+  exists for, so arming in `afterWrite` leaves the pre-emption paths with nothing to discharge.
+  And a DENIED decision discharges exactly like a granted one - a deny is a real answer, and
+  re-asking after one reopens the race the exclusivity rule above closes.
+
+  A `skipFocus` reload does NOT discharge when it COMPLETES, deliberately. It is a repair, and
+  letting it answer an outstanding arrival would let a reveal or refocus catch-up focus a terminal
+  on a park/reveal edge, which is not an arrival at all.
+
+  Two gaps stay open, and neither is closed. A `skipFocus` reload that supersedes a live mount
+  replay strands that obligation, which is the behaviour that already shipped. And the repair's
+  own watchdog discharges unconditionally, so a repair that stalls past `SCROLLBACK_WATCHDOG_MS`
+  spends the stranded obligation and focuses on the very edge the completion path refuses.
+  `onTerminalReveal` is the only route in, being the one `skipFocus` caller with no
+  `scrollbackPendingRef` guard and so the only one that can supersede a live mount replay. Closing
+  either needs a signal for "is this arrival still the user's intent" that does not exist yet, and
+  guessing would trade a terminal that does not focus for one that focuses at the wrong moment.
 - **Genuinely user-initiated focus stays unconditional** and must NOT be routed through the
   arbiter: pointer-down on a window frame, a file drop on a terminal, the maximize/restore
   re-homing, and the imperative `focus()` those use.
@@ -65,7 +96,20 @@ as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
   Every mismatch case is constructed so the next tier down would have allowed it.
 - **Test (behavior):** `tests/ui/terminal-arrival-focus.spec.ts` drives the real race with a
   per-session replay delay and asserts focus stays in the just-opened detail, plus that a panel tab
-  click still focuses its own terminal.
+  click still focuses its own terminal. Its fourth case is the obligation: it delays a
+  focus-bearing reload past `SCROLLBACK_WATCHDOG_MS` so the watchdog pre-empts the decision, and
+  asserts the terminal is focused anyway. That case drives the RELOAD path deliberately - on a
+  fresh mount `TerminalTab`'s own `tab-init` frame focuses the terminal a frame after
+  construction, long before the watchdog, so a mount-based version passes with the fix reverted.
+- **Test (discharge sites):** `tests/unit/terminal-arrival-focus-sites.test.ts` pins all five
+  discharge calls in `useTerminal.ts`, and pins each replay's arm ahead of that replay's own
+  completion. It slices the source into the watchdog, mount and reload regions and checks each
+  region separately, because `focusOnArrival('replay-error')` appears in two of them and a
+  whole-file substring search would let either one be deleted. It checks position, not a count of
+  occurrences: a count would fail on an `armArrival()` helper extraction, which reintroduces
+  nothing, and a pin that fires on safe refactors gets deleted rather than understood.
+  `useTerminal` has no unit tier, so this is a static pin: it makes deleting a discharge fail
+  instantly rather than only in the 6-second UI case.
 - **Review:** `/code-review` flags a new arrival path that focuses unconditionally.
 
 **Mechanical coverage is deliberately incomplete on the CLAIM side, and this is the gap:** the
