@@ -369,7 +369,10 @@ export function handleQueryDb(
         const stringValue = String(value);
         // Truncate long values (e.g. transcript text)
         if (stringValue.length > 120) return stringValue.slice(0, 117) + '...';
-        return stringValue.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+        // Backslash first: it is the escape character in a markdown cell, so a
+        // value already containing one would otherwise pair with the backslash
+        // added below and let the pipe through, splitting the row.
+        return stringValue.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ');
       });
       lines.push(`| ${values.join(' | ')} |`);
     }

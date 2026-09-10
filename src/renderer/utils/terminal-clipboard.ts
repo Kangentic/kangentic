@@ -1,4 +1,5 @@
 import { Terminal } from '@xterm/xterm';
+import { escapeForDoubleQuotedShell, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
 
 // ---------------------------------------------------------------------------
 // OSC 52 clipboard sequence handling
@@ -104,16 +105,12 @@ export function copySelectionToClipboard(terminal: Terminal): void {
 
 // ---------------------------------------------------------------------------
 // Shell-aware path helpers (renderer-safe, no node:path dependency)
+//
+// The shell predicates and the double-quote escaper come from
+// `src/shared/shell-quote.ts`, which is the same code `quoteArg` runs. It is
+// split out of `src/shared/paths.ts` precisely so the renderer can share it:
+// that module imports `node:path` and cannot enter this bundle.
 // ---------------------------------------------------------------------------
-
-/**
- * True when the shell is Unix-like and expects POSIX-style paths.
- * Mirrors `isUnixLikeShell` from `src/shared/paths.ts` for renderer use.
- */
-function isUnixLikeShell(shellName: string): boolean {
-  const lower = shellName.toLowerCase();
-  return !lower.includes('cmd') && !lower.includes('powershell') && !lower.includes('pwsh');
-}
 
 /**
  * Convert a Windows path to the format expected by the target shell.
@@ -141,16 +138,19 @@ export function convertPathForShell(filePath: string, shellName: string): string
  * Quote a file path for insertion into a terminal PTY.
  *
  * - Unix-like shells: single-quotes (no variable expansion)
- * - cmd / PowerShell: double-quotes with backtick/$ escaping
+ * - cmd / PowerShell: double-quotes, escaped by `escapeForDoubleQuotedShell`
  * - No shell provided: simple space-only double-quoting (fallback)
  *
- * Mirrors `quoteArg` from `src/shared/paths.ts` for renderer use,
- * without the `node:path` or `process.platform` dependency.
+ * Shares the escaping with `quoteArg` (`src/shared/paths.ts`) but deliberately
+ * does not call it. `quoteArg` runs `sanitizeForPty`, which collapses runs of
+ * whitespace, and that would silently rewrite a legal path under a folder named
+ * `My  Docs`. It also reads `process.platform` when no shell is given, which the
+ * renderer has no access to, hence the local fallback below.
  */
 export function quoteForShell(filePath: string, shellName?: string): string {
   // Simple paths need no quoting (alphanumeric + common path chars).
   // Backslashes excluded - they're escape chars in Unix-like shells.
-  // Regex matches quoteArg() in src/shared/paths.ts:161.
+  // Regex matches quoteArg() in src/shared/paths.ts.
   if (/^[a-zA-Z0-9_./:-]+$/.test(filePath)) return filePath;
 
   if (!shellName) {
@@ -163,8 +163,7 @@ export function quoteForShell(filePath: string, shellName?: string): string {
     return `'${filePath.replace(/'/g, "'\\''")}'`;
   }
 
-  // PowerShell/cmd: double-quotes with backtick and $ escaping
-  return `"${filePath.replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '\\"')}"`;
+  return `"${escapeForDoubleQuotedShell(filePath, isCmdShell(shellName))}"`;
 }
 
 /**

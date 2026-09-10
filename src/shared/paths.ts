@@ -10,6 +10,25 @@
  * compared against ~/.claude.json must go through `toForwardSlash()`.
  */
 import path from 'node:path';
+import {
+  escapeForDoubleQuotedShell,
+  isCmdShell,
+  isPowerShellShell,
+  isUnixLikeShell,
+  sanitizeForPty,
+} from './shell-quote';
+
+// The shell predicates, `sanitizeForPty`, and the double-quote escaper live in
+// `./shell-quote`, which has no Node imports so the renderer can share them.
+// Re-exported here because this module is the documented single source of truth
+// for path/shell interop and 40-odd call sites import them by this path.
+export {
+  escapeForDoubleQuotedShell,
+  isCmdShell,
+  isPowerShellShell,
+  isUnixLikeShell,
+  sanitizeForPty,
+};
 
 // ---------------------------------------------------------------------------
 // Path normalisation
@@ -99,48 +118,6 @@ export function toWslPath(windowsPath: string): string {
 }
 
 /**
- * True when the shell is Unix-like (bash, zsh, fish, nu, wsl) and
- * expects POSIX-style paths.
- *
- * False for cmd.exe (Windows native); PowerShell is handled separately
- * because it needs the `& ` call operator rather than path conversion.
- */
-export function isUnixLikeShell(shellName: string): boolean {
-  const lower = shellName.toLowerCase();
-  return !lower.includes('cmd') && !isPowerShellShell(lower);
-}
-
-/**
- * True when the shell is cmd.exe (Windows native).
- *
- * cmd terminates the command line on a literal newline mid-quote, so
- * multi-line quoted args have to be flattened before delivery.
- *
- * Match is anchored on the basename (stripped of `.exe`) to avoid false
- * positives on unrelated paths that contain the substring `cmd` (e.g. a
- * tool installed under `/usr/local/cmd-something/`).
- */
-export function isCmdShell(shellName: string): boolean {
-  const basename = shellName.toLowerCase().split(/[\\/]/).pop() ?? '';
-  return basename.replace(/\.exe$/, '') === 'cmd';
-}
-
-/**
- * True for the PowerShell family: Windows PowerShell 5.1 (`powershell.exe`)
- * and PowerShell 7 (`pwsh.exe`), whether the shell spec is a bare picker
- * name or a full path.
- *
- * A substring match on purpose, not the basename anchor `isCmdShell` uses:
- * this is the exact test `isUnixLikeShell` negates, and the two must agree
- * on every input or a spec could be neither unix-like nor PowerShell. Keep
- * them in step if one ever tightens.
- */
-export function isPowerShellShell(shellName: string): boolean {
-  const lower = shellName.toLowerCase();
-  return lower.includes('powershell') || lower.includes('pwsh');
-}
-
-/**
  * The shell-native "clear the screen" statement to prefix onto a typed
  * agent-spawn command, so the SHELL erases its own startup preamble and
  * command echo the instant it executes - before the agent's first byte.
@@ -205,21 +182,6 @@ export function adaptCommandForShell(
 }
 
 // ---------------------------------------------------------------------------
-// PTY-safe text sanitisation
-// ---------------------------------------------------------------------------
-
-/**
- * Sanitise text before writing to a PTY.
- *
- * Newlines are interpreted as Enter (submit) by terminal emulators,
- * tabs can trigger autocomplete, and consecutive whitespace is noise.
- * This function collapses all of these into tidy single spaces.
- */
-export function sanitizeForPty(text: string): string {
-  return text.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-}
-
-// ---------------------------------------------------------------------------
 // CLI argument quoting
 // ---------------------------------------------------------------------------
 
@@ -232,10 +194,14 @@ export function sanitizeForPty(text: string): string {
  *
  * When `shell` is provided, quoting style is chosen by shell type:
  *  - Unix-like shells (bash, zsh, fish, WSL): single-quotes (no expansion)
- *  - PowerShell/cmd: double-quotes with backtick, `$`, and `"` escaping
+ *  - PowerShell: double-quotes, backtick escaping, backslash left alone
+ *  - cmd.exe: double-quotes, C-runtime backslash escaping, backtick left alone
+ *
+ * The two Windows branches are NOT interchangeable; `escapeForDoubleQuotedShell`
+ * in `./shell-quote` carries the measured round-trips.
  *
  * When `shell` is omitted, falls back to platform detection:
- *  - Windows: double-quotes with backtick, `$`, and `"` escaping
+ *  - Windows: the PowerShell branch
  *  - Unix:    single-quotes, escaped `'`
  *
  * Pass `{ multiline: true }` for prompt-style content where newlines must
@@ -286,11 +252,10 @@ export function quoteArg(
   const preserveNewlines = options?.multiline === true && shell !== undefined && !isCmd;
 
   if (useDoubleQuotes) {
-    // PowerShell: ` is escape char, $ triggers variable/subexpression expansion.
-    // Escape backticks first (` → ``), then $ ($ → `$), then quotes (" → \").
-    // cmd.exe: $ is not special, `` and `$ are harmless literal text.
+    // Per-shell escaping, because cmd.exe and PowerShell disagree about the
+    // backslash: see escapeForDoubleQuotedShell for the measured round-trips.
     const source = preserveNewlines ? arg : sanitizeForPty(arg);
-    let escaped = source.replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '\\"');
+    let escaped = escapeForDoubleQuotedShell(source, isCmd);
     if (preserveNewlines) {
       // Convert real newlines/tabs to PowerShell escape sequences. These are
       // NEW backticks (not literal content), so the parser interprets them as

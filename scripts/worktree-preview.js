@@ -255,9 +255,18 @@ function openTerminalWindows(cwd, command) {
 }
 
 function openTerminalMac(cwd, command) {
+  // Two layers, escaped in order. The inner layer is the POSIX shell Terminal
+  // runs, so only `cwd` is single-quoted there. The outer layer is the
+  // AppleScript string literal, where `\` IS the escape character: escape it
+  // before the quotes, or a backslash already in the command pairs with the one
+  // added for a quote and ends the literal early. Escaping the whole assembled
+  // command also covers `cwd`, which the previous form left unescaped for
+  // AppleScript entirely.
+  const shellCommand = `cd '${cwd.replace(/'/g, "'\\''")}' && ${command}; exit`;
+  const applescriptLiteral = shellCommand.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const script = `tell application "Terminal"
   activate
-  do script "cd '${cwd.replace(/'/g, "'\\''")}' && ${command.replace(/"/g, '\\"')}; exit"
+  do script "${applescriptLiteral}"
 end tell`;
   const proc = spawn('osascript', ['-e', script], {
     detached: true,
