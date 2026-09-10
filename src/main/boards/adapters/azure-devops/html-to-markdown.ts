@@ -38,6 +38,22 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 /**
+ * A numeric entity's code point, or null when it is outside Unicode's range.
+ *
+ * `String.fromCharCode` truncates to 16 bits, so every astral character came
+ * out as an unrelated private-use one: an emoji written `&#128512;` decoded to
+ * U+F600 rather than U+1F600. `fromCodePoint` pairs the surrogates instead, but
+ * it THROWS above U+10FFFF where `fromCharCode` silently wrapped, so an absurd
+ * entity has to be caught here and left as the author wrote it rather than
+ * taking the whole work-item description down.
+ */
+function codePointOrNull(digits: string, radix: number): number | null {
+  const codePoint = parseInt(digits, radix);
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return null;
+  return codePoint;
+}
+
+/**
  * Decode common HTML entities, exactly one level deep.
  *
  * One pass over an alternation, not a chain of `.replace()` calls, because no
@@ -53,8 +69,10 @@ function decodeEntities(text: string): string {
     /&(?:([a-z]+)|#(\d+)|#x([0-9a-f]+));/gi,
     (match, name: string | undefined, decimal: string | undefined, hex: string | undefined) => {
       if (name !== undefined) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
-      if (decimal !== undefined) return String.fromCharCode(parseInt(decimal, 10));
-      return String.fromCharCode(parseInt(hex ?? '', 16));
+      const codePoint = decimal !== undefined
+        ? codePointOrNull(decimal, 10)
+        : codePointOrNull(hex ?? '', 16);
+      return codePoint === null ? match : String.fromCodePoint(codePoint);
     },
   );
 }

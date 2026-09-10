@@ -254,20 +254,29 @@ function openTerminalWindows(cwd, command) {
   return true;
 }
 
-function openTerminalMac(cwd, command) {
-  // Two layers, escaped in order. The inner layer is the POSIX shell Terminal
-  // runs, so only `cwd` is single-quoted there. The outer layer is the
-  // AppleScript string literal, where `\` IS the escape character: escape it
-  // before the quotes, or a backslash already in the command pairs with the one
-  // added for a quote and ends the literal early. Escaping the whole assembled
-  // command also covers `cwd`, which the previous form left unescaped for
-  // AppleScript entirely.
+// Two layers, escaped in order. The inner layer is the POSIX shell Terminal
+// runs, so only `cwd` is single-quoted there. The outer layer is the
+// AppleScript string literal, where `\` IS the escape character: escape it
+// before the quotes, or a backslash already in the command pairs with the one
+// added for a quote and ends the literal early. Escaping the whole assembled
+// command also covers `cwd`, which the previous form left unescaped for
+// AppleScript entirely.
+//
+// Exported for tests/unit/worktree-preview-env.test.ts: a quoting bug here is
+// silent (Terminal.app either mis-runs the command or the do-script literal
+// terminates early), so it needs a mechanical guard rather than a manual
+// macOS check.
+function buildAppleScriptCommand(cwd, command) {
   const shellCommand = `cd '${cwd.replace(/'/g, "'\\''")}' && ${command}; exit`;
   const applescriptLiteral = shellCommand.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const script = `tell application "Terminal"
+  return `tell application "Terminal"
   activate
   do script "${applescriptLiteral}"
 end tell`;
+}
+
+function openTerminalMac(cwd, command) {
+  const script = buildAppleScriptCommand(cwd, command);
   const proc = spawn('osascript', ['-e', script], {
     detached: true,
     stdio: 'ignore',
@@ -664,4 +673,6 @@ if (require.main === module) {
 // Exported for tests/unit/worktree-preview-env.test.ts, which pins the shell
 // quoting of --env: a quoting bug here is silent (the preview launches, the
 // variable is simply wrong or missing), so it needs a mechanical guard.
-module.exports = { buildCommand, envPrefix, parseEnvArgs };
+// buildAppleScriptCommand is exported for the same reason (see its own
+// comment above openTerminalMac).
+module.exports = { buildCommand, envPrefix, parseEnvArgs, buildAppleScriptCommand };

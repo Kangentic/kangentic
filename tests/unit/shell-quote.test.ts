@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   escapeForDoubleQuotedShell,
   isCmdShell,
   isPowerShellShell,
   isUnixLikeShell,
 } from '../../src/shared/shell-quote';
-import { quoteForShell } from '../../src/renderer/utils/terminal-clipboard';
+import { convertPathForShell, quoteForShell } from '../../src/renderer/utils/terminal-clipboard';
 
 /**
  * The escaping rules pinned here were measured, not derived: every expectation
@@ -121,5 +121,74 @@ describe('quoteForShell', () => {
   it('still single-quotes for unix-like shells, WSL included', () => {
     expect(quoteForShell('/mnt/c/a b/x.txt', 'wsl')).toBe("'/mnt/c/a b/x.txt'");
     expect(quoteForShell("/tmp/it's.txt", 'bash')).toBe("'/tmp/it'\\''s.txt'");
+  });
+});
+
+/**
+ * `convertPathForShell` now routes its unix-like check through the shared
+ * `isUnixLikeShell` from `../../src/shared/shell-quote` (this diff deleted its
+ * own local copy). That refactor is behavior-preserving - the deleted local
+ * predicate (`!lower.includes('cmd') && !lower.includes('powershell') &&
+ * !lower.includes('pwsh')`) and the shared one (`!lower.includes('cmd') &&
+ * !isPowerShellShell(lower)`, which itself checks 'powershell' / 'pwsh') agree
+ * on every input, and the equivalence is pinned above in 'shell predicates' -
+ * so this suite is not red-green against THIS diff's change, and none of it
+ * needs to be: the WSL-vs-Git-Bash prefix logic below is untouched by the
+ * refactor. It is added because the function had NO direct unit coverage at
+ * all before or after this diff (the comment in the 'shell predicates' block
+ * above calls this out as UI-tier-only, but no UI spec actually exercises the
+ * WSL/`mnt/` branch either - the one UI spec that drops a file path through
+ * this function always drops it under `/mock/...`, which never matches the
+ * `^[A-Za-z]:` drive-letter regex this function keys on). Deriving expectations
+ * from the function's own docstring (WSL: `/mnt/<drive>/...`; other unix-like
+ * shells, Git Bash included: `/<drive>/...`; cmd/PowerShell/non-Windows: no
+ * conversion), not from a debugger read of the current output.
+ */
+describe('convertPathForShell', () => {
+  const originalWindow = globalThis.window;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+  });
+
+  function stubPlatform(platform: string): void {
+    // @ts-expect-error -- minimal window stub; convertPathForShell only reads .platform
+    globalThis.window = { electronAPI: { platform } };
+  }
+
+  it('converts a Windows path to the WSL mount form under a WSL shell', () => {
+    stubPlatform('win32');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'wsl')).toBe('/mnt/c/Users/dev/file.txt');
+    expect(convertPathForShell('D:\\project\\a.png', 'wsl.exe')).toBe('/mnt/d/project/a.png');
+  });
+
+  it('converts a Windows path to the plain-root form under Git Bash and other unix-like shells', () => {
+    stubPlatform('win32');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'bash')).toBe('/c/Users/dev/file.txt');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'git-bash')).toBe('/c/Users/dev/file.txt');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'zsh')).toBe('/c/Users/dev/file.txt');
+  });
+
+  it('lowercases the drive letter and converts every backslash in the remainder', () => {
+    stubPlatform('win32');
+    expect(convertPathForShell('D:\\a\\b\\c.txt', 'bash')).toBe('/d/a/b/c.txt');
+  });
+
+  it('does not convert for cmd or PowerShell, which take native Windows paths', () => {
+    stubPlatform('win32');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'cmd.exe')).toBe('C:\\Users\\dev\\file.txt');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'pwsh.exe')).toBe('C:\\Users\\dev\\file.txt');
+  });
+
+  it('does not convert on a non-Windows platform, even for a WSL-named shell', () => {
+    stubPlatform('darwin');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'wsl')).toBe('C:\\Users\\dev\\file.txt');
+    stubPlatform('linux');
+    expect(convertPathForShell('C:\\Users\\dev\\file.txt', 'bash')).toBe('C:\\Users\\dev\\file.txt');
+  });
+
+  it('leaves a path with no drive-letter prefix unchanged', () => {
+    stubPlatform('win32');
+    expect(convertPathForShell('/already/posix/path.txt', 'bash')).toBe('/already/posix/path.txt');
   });
 });

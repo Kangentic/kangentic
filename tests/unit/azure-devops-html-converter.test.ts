@@ -111,6 +111,24 @@ describe('convertHtmlToMarkdown', () => {
     expect(convertHtmlToMarkdown('write &amp;nbsp; for a hard space')).toBe('write &nbsp; for a hard space');
   });
 
+  it('decodes an astral numeric entity as one character, not a truncated one', () => {
+    // String.fromCharCode truncates to 16 bits, so &#128512; used to decode to
+    // U+F600 (private use) instead of U+1F600. Asserted as a code point rather
+    // than a literal so the expectation cannot silently agree with a mangled
+    // one, and length is checked because a surrogate pair is two code units.
+    expect(convertHtmlToMarkdown('&#128512;')).toBe(String.fromCodePoint(0x1f600));
+    expect(convertHtmlToMarkdown('&#x1F600;')).toBe(String.fromCodePoint(0x1f600));
+    expect(convertHtmlToMarkdown('&#128512;')).toHaveLength(2);
+    expect(convertHtmlToMarkdown('&#169;')).toBe(String.fromCodePoint(169));
+  });
+
+  it('leaves an out-of-range numeric entity as written instead of throwing', () => {
+    // fromCodePoint throws above U+10FFFF where fromCharCode silently wrapped.
+    // One absurd entity must not take the whole description down.
+    expect(convertHtmlToMarkdown('&#99999999;')).toBe('&#99999999;');
+    expect(convertHtmlToMarkdown('&#x7FFFFFFF;')).toBe('&#x7FFFFFFF;');
+  });
+
   it('strips tags to a fixed point', () => {
     // One pass of the tag regex is already a fixed point (a surviving `<` has
     // no `>` after it, or is immediately followed by one, and a removal cannot
