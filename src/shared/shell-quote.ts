@@ -83,12 +83,14 @@ export function sanitizeForPty(text: string): string {
  * pwsh 7.6 correct twice beats 5.1 correct once, and the only reachable input
  * shape is a task prompt whose last character is a backslash.
  *
- * Runs BEFORE `quoteArg`'s backtick-n / backtick-t conversion, which is why
- * the backtick doubling belongs here: the escapes that block injects afterwards
- * are NEW backticks the parser must read as escapes, so any literal backtick
- * already in the text has to be doubled first. The cmd branch can never precede
- * that block (`preserveNewlines` requires a non-cmd shell), so a doubled
- * backslash run is never followed by an injected backtick-n.
+ * Called from `quoteArg`, this runs BEFORE its backtick-n / backtick-t
+ * conversion, which is why the backtick doubling belongs here: the escapes that
+ * block injects afterwards are NEW backticks the parser must read as escapes,
+ * so any literal backtick already in the text has to be doubled first. The cmd
+ * branch can never precede that block (`preserveNewlines` requires a non-cmd
+ * shell), so a doubled backslash run is never followed by an injected
+ * backtick-n. The other caller, `quoteForShell` in the renderer, has no such
+ * conversion step and takes this output as the finished cell.
  */
 export function escapeForDoubleQuotedShell(text: string, isCmd: boolean): string {
   if (isCmd) {

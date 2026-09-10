@@ -258,7 +258,7 @@ describe('Command Builder Logic', () => {
     // at the backslash-quote), and there is no form that works on both: pwsh
     // 7.3+ native argument passing wants a backtick-quote, while 5.1's legacy
     // passing drops that quote and wants backslash-backtick-quote. It is also
-    // unreachable - all 12 prompt-carrying builders pre-replace `"` with `'`
+    // unreachable - every prompt-carrying builder pre-replaces `"` with `'`
     // for double-quote shells (claude/command-builder.ts and siblings), and no
     // other quoteArg input can hold a quote on Windows, where `"` is illegal in
     // a filename. Changing it would pick a losing host silently.

@@ -305,6 +305,17 @@ function stripTrailingSemicolon(sql: string): string {
 }
 
 /**
+ * Escape one cell value for a markdown table row.
+ *
+ * Backslash first: it is the escape character in a markdown cell, so a value
+ * already containing one would otherwise pair with the backslash added for the
+ * pipe and let that pipe through, splitting the row.
+ */
+function escapeMarkdownCell(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
+/**
  * MCP command handler: query_db
  *
  * Runs a read-only SQL query against the current project's SQLite database.
@@ -367,12 +378,13 @@ export function handleQueryDb(
         const value = row[column];
         if (value === null) return 'NULL';
         const stringValue = String(value);
-        // Truncate long values (e.g. transcript text)
-        if (stringValue.length > 120) return stringValue.slice(0, 117) + '...';
-        // Backslash first: it is the escape character in a markdown cell, so a
-        // value already containing one would otherwise pair with the backslash
-        // added below and let the pipe through, splitting the row.
-        return stringValue.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+        // Truncate long values (e.g. transcript text) BEFORE escaping, never
+        // after: escaping first and slicing the result can cut a `\|` pair in
+        // half and leave the row-splitting pipe behind. Truncating the raw
+        // value and escaping the slice means every emitted cell is fully
+        // escaped, whichever branch produced it.
+        if (stringValue.length > 120) return escapeMarkdownCell(stringValue.slice(0, 117)) + '...';
+        return escapeMarkdownCell(stringValue);
       });
       lines.push(`| ${values.join(' | ')} |`);
     }

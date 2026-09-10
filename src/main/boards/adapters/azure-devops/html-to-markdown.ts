@@ -29,24 +29,34 @@ function stripTags(html: string): string {
   return current;
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  nbsp: ' ',
+};
+
 /**
- * Decode common HTML entities.
+ * Decode common HTML entities, exactly one level deep.
  *
- * `&amp;` is decoded LAST, deliberately. Decoding it first turns `&amp;lt;`
- * into `&lt;` and then into `<`, so a work item that literally says `&lt;`
- * renders as a stray angle bracket. Running it after every other entity leaves
- * exactly one level decoded.
+ * One pass over an alternation, not a chain of `.replace()` calls, because no
+ * ordering of a chain decodes exactly one level for every input. Whichever
+ * entity runs first is the one that can be re-fed to a later pass: with `&amp;`
+ * first, `&amp;lt;` decodes twice and a work item that literally says `&lt;`
+ * renders as a stray angle bracket; with `&amp;` last, `&#38;amp;` decodes
+ * twice instead. A single pass resumes scanning AFTER each replacement, so
+ * nothing an entity decodes into can be read as part of another entity.
  */
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
-    .replace(/&amp;/g, '&');
+  return text.replace(
+    /&(?:([a-z]+)|#(\d+)|#x([0-9a-f]+));/gi,
+    (match, name: string | undefined, decimal: string | undefined, hex: string | undefined) => {
+      if (name !== undefined) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+      if (decimal !== undefined) return String.fromCharCode(parseInt(decimal, 10));
+      return String.fromCharCode(parseInt(hex ?? '', 16));
+    },
+  );
 }
 
 /** Convert HTML (from Azure DevOps rich text) to markdown. */

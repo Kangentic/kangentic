@@ -83,17 +83,29 @@ describe('convertHtmlToMarkdown', () => {
 
   it('decodes HTML entities', () => {
     expect(convertHtmlToMarkdown('&amp; &lt; &gt; &quot; &#39; &nbsp;')).toBe('& < > " \'');
+    expect(convertHtmlToMarkdown('a &amp; b')).toBe('a & b');
+    expect(convertHtmlToMarkdown('&bogus;')).toBe('&bogus;');
   });
 
   it('decodes numeric HTML entities', () => {
     expect(convertHtmlToMarkdown('&#169;')).toBe(String.fromCharCode(169));
+    expect(convertHtmlToMarkdown('&#x27;')).toBe("'");
   });
 
   it('decodes each entity exactly one level, so an escaped entity survives', () => {
-    // &amp; is decoded LAST for this reason. Decoding it first turned &amp;lt;
-    // into &lt; and then into <, so a work item that literally documents the
-    // &lt; entity rendered as a stray angle bracket.
+    // No ordering of a chain of `.replace()` calls decodes exactly one level for
+    // every input, because whichever entity is decoded first is the one whose
+    // output can be re-read by a later call in the chain.
+    //
+    // Decoding &amp; first turns &amp;lt; into &lt; and then into <, so a work
+    // item that literally documents the &lt; entity renders as a stray angle
+    // bracket.
     expect(convertHtmlToMarkdown('&amp;lt;')).toBe('&lt;');
+    // Moving &amp; to run last fixes that case, but then a numeric decode step
+    // that runs before it manufactures a fresh & from &#38; that the later amp
+    // step reads as the start of a new entity, so &#38;amp; decodes twice into
+    // a bare &.
+    expect(convertHtmlToMarkdown('&#38;amp;')).toBe('&amp;');
     expect(convertHtmlToMarkdown('&amp;#39;')).toBe('&#39;');
     expect(convertHtmlToMarkdown('&amp;amp;')).toBe('&amp;');
     expect(convertHtmlToMarkdown('write &amp;nbsp; for a hard space')).toBe('write &nbsp; for a hard space');
