@@ -247,6 +247,103 @@ describe('every arrival focus in a terminal host is arbitrated', () => {
     }
   });
 
+  it('the reload path only arms and discharges the arrival obligation when the caller did not pass skipFocus', () => {
+    // A `skipFocus` reload is a REPAIR (a park/reveal catch-up, a width-drift heal),
+    // not an arrival, so it must neither promise an obligation nor pay one off. Two
+    // independent gates hold that, one at arm time and one at discharge time (see
+    // the obligation bullet in .claude/rules/terminal-arrival-focus.md):
+    //
+    //   if (!skipFocus) arrivalFocusOwedRef.current = true;   // arm
+    //   ...
+    //   if (!skipFocus) focusOnArrival('reload');              // discharge
+    //
+    // Deleting the ARM gate alone still looks harmless in isolation - the repair's
+    // own discharge stays gated off - but it leaves an obligation standing that the
+    // watchdog (which discharges UNCONDITIONALLY on force-recovery) can later spend,
+    // focusing the terminal on the very park/reveal edge the discharge gate exists to
+    // refuse. Deleting the DISCHARGE gate alone widens the already-documented
+    // "stranded obligation" gap from watchdog-only to every skipFocus completion. A
+    // single assertion covering only one gate would leave the other free to regress,
+    // exactly the trap the sibling test's own comment names for the two identically
+    // spelled `focusOnArrival('replay-error')` calls.
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/hooks/useTerminal.ts'),
+      'utf8',
+    );
+    const reloadDeclarationIndex = source.indexOf('const reloadScrollback = useCallback(');
+    expect(
+      reloadDeclarationIndex,
+      'reloadScrollback moved or was renamed; re-anchor this scan.',
+    ).toBeGreaterThan(-1);
+    const reloadRegion = source.slice(reloadDeclarationIndex);
+
+    // Tolerant of whitespace and an optional brace body, not a literal single-line
+    // substring: a harmless reformat (wrapping the guarded statement, or adding
+    // braces to the `if`) must not break this pin.
+    const armGate = /if\s*\(\s*!skipFocus\s*\)\s*\{?\s*arrivalFocusOwedRef\.current\s*=\s*true/;
+    const dischargeGate = /if\s*\(\s*!skipFocus\s*\)\s*\{?\s*focusOnArrival\(\s*'reload'\s*\)/;
+
+    expect(
+      armGate.test(reloadRegion),
+      'reloadScrollback must only ARM the arrival obligation when the caller did not '
+      + 'pass skipFocus. Without the `if (!skipFocus)` gate, a repair reload (park/reveal '
+      + "catch-up, width-drift heal) arms an obligation its own completion won't pay, "
+      + 'leaving it standing for the watchdog to discharge unconditionally later - '
+      + 'focusing the terminal on a park/reveal edge that is not an arrival at all.',
+    ).toBe(true);
+
+    expect(
+      dischargeGate.test(reloadRegion),
+      'reloadScrollback must only DISCHARGE the arrival obligation on completion when the '
+      + 'caller did not pass skipFocus. Without the `if (!skipFocus)` gate, every repair '
+      + 'reload focuses on completion, not just the ones that outlive the watchdog - '
+      + 'widening the documented "stranded obligation" gap (terminal-arrival-focus.md) '
+      + 'from a rare edge to the common case.',
+    ).toBe(true);
+  });
+
+  it('focusOnArrival clears the obligation before, not inside, its focus frame', () => {
+    // "Discharged exactly once" (the fix's headline property) depends on WHEN the ref
+    // is cleared, not just that it is cleared. Clearing before the requestAnimationFrame
+    // means a second path that discharges the same replay (there cannot be one - each
+    // arm is per-replay - but a future call site addition could get this wrong) finds
+    // the obligation already gone. Clearing inside the frame, after the
+    // `if (!terminal) return` bail in particular, would let two discharges for the same
+    // arming both pass the outer `if (!arrivalFocusOwedRef.current) return` guard before
+    // either clears it, consulting the arbiter twice for one arrival - the exact race
+    // the comment above `focusOnArrival` in useTerminal.ts says this ordering prevents.
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/hooks/useTerminal.ts'),
+      'utf8',
+    );
+    const declarationIndex = source.indexOf(
+      'const focusOnArrival = useCallback((site: ArrivalFocusSite) => {',
+    );
+    const nextDeclarationIndex = source.indexOf('const traceReplay = useCallback(');
+    expect(
+      declarationIndex,
+      'focusOnArrival moved or was renamed; re-anchor this scan.',
+    ).toBeGreaterThan(-1);
+    expect(
+      nextDeclarationIndex,
+      'traceReplay moved or was renamed; re-anchor this scan.',
+    ).toBeGreaterThan(declarationIndex);
+
+    const focusOnArrivalRegion = source.slice(declarationIndex, nextDeclarationIndex);
+    const clearIndex = focusOnArrivalRegion.indexOf('arrivalFocusOwedRef.current = false');
+    const rafIndex = focusOnArrivalRegion.indexOf('requestAnimationFrame(');
+
+    expect(clearIndex, 'focusOnArrival no longer clears the obligation at all.').toBeGreaterThan(-1);
+    expect(rafIndex, 'focusOnArrival no longer schedules its focus frame via requestAnimationFrame.').toBeGreaterThan(-1);
+    expect(
+      clearIndex,
+      'The obligation must clear BEFORE requestAnimationFrame is scheduled, not inside its '
+      + 'callback. Clearing inside the frame would let a second discharge for the same '
+      + 'arming reach the arbiter before the first one clears the ref, consulting it twice '
+      + 'for one arrival.',
+    ).toBeLessThan(rafIndex);
+  });
+
   it('scans the terminal hosts it is meant to cover', () => {
     // The scan is a no-op if `isTerminalHost` stops matching (a renamed hook, a moved file), and a
     // no-op scan passes silently. Pin the hosts so that failure is loud.
