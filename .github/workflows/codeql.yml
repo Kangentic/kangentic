@@ -32,6 +32,10 @@
 # Default setup (the repo-settings toggle) is the other way to get scanning. It
 # was rejected for exactly one reason: it always adds its Analyze jobs to PRs
 # and offers no way to turn that off.
+#
+# Scan SCOPE is narrowed by the inline `config:` on the Initialize CodeQL step
+# below, which excludes tests, scripts, and src/devtools. The reasoning for each
+# exclusion lives next to it.
 name: CodeQL
 
 on:
@@ -76,6 +80,31 @@ jobs:
           languages: ${{ matrix.language }}
           # Both languages are interpreted, so there is nothing to compile.
           build-mode: none
+          # Scope. These three trees produced 13 of the 21 open alerts in
+          # September 2026, outnumbering the real findings 13 to 4, which is how
+          # a genuine alert gets missed. None of them ships or is
+          # attacker-reachable. Dismissing the alerts one by one is not durable:
+          # the next Math.random() in a new spec opens a new one.
+          #
+          # paths-ignore only applies to the interpreted analysis, so this is
+          # inert for the `actions` leg, which scans this directory. The entries
+          # are bare directory names because the pattern syntax forbids mixing
+          # `**` with other characters.
+          config: |
+            paths-ignore:
+              # Test code. Mock session ids and per-run suffixes from
+              # Math.random(), and MD5 in tests/e2e/helpers.ts, which has to
+              # reproduce the real Kimi CLI's session-directory naming.
+              - tests
+              # Local dev and build scripts. Never packaged, and a flag like
+              # measure-injection-flush.mjs's --pattern regex is
+              # developer-supplied by definition.
+              - scripts
+              # Dev tooling, including the localhost-only inspection server. It
+              # is build-excluded behind __KANGENTIC_DEV__ and dead-code
+              # eliminated, so it never reaches a packaged app. See
+              # .claude/rules/dev-tooling-build-exclusion.md.
+              - src/devtools
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
