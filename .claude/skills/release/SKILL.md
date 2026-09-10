@@ -1,6 +1,6 @@
 ---
 description: Version bump, changelog, tag, push release, and mark the Sentry issues it fixes
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(curl:*), PowerShell, Agent
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(gh:*), Bash(npm:*), Bash(npx:*), Bash(curl:*), PowerShell, Agent
 argument-hint: [patch|minor|major]
 ---
 
@@ -10,7 +10,7 @@ Release pipeline: version bump, changelog generation, git tag, and push to trigg
 
 **Usage:** `/release [patch|minor|major]`
 
-- `/release` -- auto-suggests bump type from commit history, asks for confirmation
+- `/release` -- derives the bump type from commit history and applies it, stopping only for a major
 - `/release patch` -- bump 0.1.0 to 0.1.1
 - `/release minor` -- bump 0.1.0 to 0.2.0
 - `/release major` -- bump 0.1.0 to 1.0.0
@@ -19,26 +19,50 @@ Release pipeline: version bump, changelog generation, git tag, and push to trigg
 
 This command does NOT use `/merge-back`. The release flow is fundamentally different: no rebase, creates tags, and pushes to main directly.
 
+## Where this runs
+
+Every step operates on the MAIN checkout, even though the board usually hands the release task its
+own worktree. Git is the easy half: pass `git -C <main> ...` everywhere. The cwd-sensitive commands
+are the trap, because a bare `cd` is reset by the harness between tool calls. Run each of
+`node scripts/verify-node-modules.js`, `npm ci`, `npm run typecheck`, `npx playwright test`, and
+`npm version` as one PowerShell call shaped `Push-Location <main>; <command>`. `npm ci` is the one
+that does damage rather than nothing: run it bare and it wipes the WORKTREE's `node_modules` while
+the verifier in main still reports stale. Every Read, Glob, Grep, Edit, and Write path is a
+main-checkout absolute path, and the `doc-auditor` agent is given the main-checkout root so it does
+not audit a worktree copy of the repo.
+
+The version bump is where getting this wrong is silent. An `npm version` that runs in the worktree
+bumps the worktree's `package.json`, stages nothing in main, and ships a `vX.Y.Z` tag on the
+PREVIOUS version. That is why Step 2 reads all three files back.
+
 ## Step 0 -- Determine Bump Type
 
 1. **Find the previous tag:** Run `git describe --tags --abbrev=0`. Note whether this succeeds or fails (no tags = first release).
 2. **Collect commits since last tag:** Run `git log <previousTag>..HEAD --oneline --no-decorate` (or `git log --oneline --no-decorate` if no previous tag).
-3. **Analyze conventional commit prefixes to suggest a bump type:**
+3. **Analyze conventional commit prefixes to derive a bump type:**
    - Any commit with `!` after the type (e.g., `feat!:`, `fix!:`) or containing `BREAKING CHANGE` in the subject -- suggest **major**
    - Any `feat:` commit -- suggest **minor**
    - Only `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `style:`, `perf:`, `ci:`, `build:` -- suggest **patch**
    - If no conventional prefixes found, fall back to keyword analysis (same as legacy): "Add"/"Implement"/"Create" = minor, "Fix" = patch, otherwise patch
-4. **If `$ARGUMENTS` is `patch`, `minor`, or `major`:** use it directly, skip the suggestion prompt.
-5. **First-release check:** If no previous tags exist and `$ARGUMENTS` is empty, read the current version from `package.json`. Ask the user: "No previous releases found. Release current version as v{version}? [confirm/override]". If confirmed, skip the version bump in Step 2 (tag the current version as-is).
-6. **Otherwise (no explicit argument):** Report the suggestion with reasoning:
+4. **If `$ARGUMENTS` is `patch`, `minor`, or `major`:** use it directly and skip the derivation in point 3.
+5. **First-release check:** If no previous tags exist and `$ARGUMENTS` is empty, read the current version from `package.json`, report "No previous releases found, releasing the current version as v{version}", and skip the version bump in Step 2 (tag the current version as-is). Do not ask. This branch is unreachable on Kangentic, which has released since v0.1.0; it exists for a fresh fork.
+6. **Otherwise (no explicit argument): apply the derived bump and keep going.** Do not ask. Report
+   what it derived and why, then proceed:
    ```
-   Suggested bump: minor
-   Reason: 3 feat: commits found since v0.1.0
+   Bump: minor (0.1.0 -> 0.2.0)
+   Reason: 3 feat: commits, no breaking changes, since v0.1.0
    Commits: feat: add dark mode, feat: add notifications, fix: resolve crash
-
-   Proceed with minor bump (0.1.0 -> 0.2.0)? [confirm/override]
    ```
-   Wait for user confirmation before proceeding. The user can confirm or override with a different bump type.
+   The derivation in point 3 is deterministic, and the operator can force the answer any time by
+   passing `/release patch|minor|major`, so a confirmation gate here only re-asks a question the
+   commit log already answered. The gate also has a worse record than the rule. v0.40.0 was first
+   tagged as a minor over a range carrying no `feat:` commits, where the rule alone would have said
+   patch. Unwinding that took a tag deletion, a remote tag deletion, a draft release deletion, and
+   a retarget to v0.39.1.
+
+   **The one exception is major.** If the range contains a `!` commit or a `BREAKING CHANGE`
+   subject, stop and report the specific commits rather than tagging it. A major is rare, it is the
+   one bump a human almost always wants to weigh in on, and on a 0.x line it is the jump to 1.0.0.
 
 ## Pre-flight Checks
 
@@ -69,10 +93,41 @@ This command does NOT use `/merge-back`. The release flow is fundamentally diffe
    will see. The release workflow makes the same check in its `preflight-symbols` job, but on the
    normal tag-push path the tag already exists by the time that job runs. This step is the only
    one that can stop the tag from being created at all.
+7. **Verify the target version is unused.** A number freed by a cancelled run reads exactly like a
+   fresh one, one of the four surfaces cannot be undone, and one of them CI will not catch for you.
+   Check all four against the version Step 0 settled on:
+   - `git tag --list "vX.Y.Z"` (local tag)
+   - `git ls-remote --tags origin "refs/tags/vX.Y.Z"` (remote tag)
+   - `gh release list --repo Kangentic/kangentic --limit 100` (a surviving release, draft or published)
+   - `npm view kangentic versions --json` (npm)
+
+   A hit on any of the first three stops the release until that leftover is deleted. `--limit 100`
+   is not decoration: the default page of 30 no longer covers this repo's history, so a leftover
+   for an older number can fall off it.
+
+   A hit on npm is terminal for that number. A published npm version can never be republished, so
+   the release takes the next free one, which means Step 2 runs the explicit
+   `npm version <the next free version> --no-git-tag-version` rather than a bump keyword, which
+   would recompute the taken number from `package.json` and land on it again.
+
+   A leftover DRAFT is the surface CI will not catch. `create-draft-release` treats an existing
+   draft for the tag as a resumable one, logs "A draft release already exists for $tag; reusing
+   it", and exits 0, so all three platform builds then upload into whatever a cancelled run left
+   behind. It fast-fails only on a release that is already PUBLISHED and incomplete, which is the
+   state Step 7 describes. So this check, not the workflow, is what stands between a stale draft
+   and a published release built on top of it.
+
+   Reach for this whenever the target version already appears in `git log`. v0.40.0 was tagged,
+   cancelled before any platform job uploaded, and torn down; v0.39.1's commit message recorded the
+   number as free, and v0.40.0 later shipped normally on it. That declaration lived in a commit
+   message and was not self-verifying, so these four checks are what make a reuse safe.
 
 Report the current version (from package.json), the bump type, and what the new version will be before proceeding.
 
 ## Step 1 -- Validate
+
+Spawn Step 1.5's `doc-auditor` agent before starting these, so the audit runs alongside them. Read
+Step 1.5 now for why, and for what may and may not be applied while Step 1 is still running.
 
 Run these checks sequentially. Stop on the first failure.
 
@@ -84,9 +139,25 @@ Run these checks sequentially. Stop on the first failure.
 Full anchor point verification before release. The audit is read-only; this step always applies
 what it finds. There is no skip and no confirmation prompt here.
 
+Spawn the agent when Step 1 STARTS, not when it finishes. The audit reads source and docs, so it
+does not depend on the test results, and it runs about as long as the UI suite does. Waiting for
+Step 1 first adds roughly ten minutes of wall clock to every release for nothing.
+
+Spawn early, apply late. Hold the findings until Step 1 has PASSED, then work through the numbered
+steps below. Applying them while Step 1 is still running means a Step 1 failure stops the release
+with doc edits already written into main, which the next attempt's clean-tree check then trips on
+for a reason that has nothing to do with the real blocker. If Step 1 fails, discard the findings
+unapplied.
+
 1. Spawn a `doc-auditor` agent with scope "all" (verify every anchor).
 2. **Apply every gap it reports - unconditionally.** For each gap: add missing items, remove
    extras, fix stale references. Do not ask the user; do not offer a skip.
+
+   A gap is a missing, extra, or stale item in something the docs enumerate. An observation the
+   auditor itself labels as prose completeness rather than an anchor gap is not one, so record it
+   in the Step 7 report as a follow-up instead. The release commit absorbs a large doc pass
+   happily, but it is not the place to start writing sections the auditor never claimed were
+   missing.
 3. **Document every undocumented `feat:` commit** since the previous tag: scan for features not
    covered in `docs/` and write the missing coverage. Unconditional - do not ask.
 4. **Check `@kangentic/protocol` changelog parity.** Desktop releases are frequent and protocol
@@ -107,7 +178,7 @@ what it finds. There is no skip and no confirmation prompt here.
 
 ## Step 2 -- Version Bump
 
-**Skip this step entirely if this is a first release** (no previous tags and user confirmed releasing the current version).
+**Skip this step entirely if this is a first release** (no previous tags, so Step 0's first-release check elected to tag the current version as-is).
 
 Run: `npm version <patch|minor|major> --no-git-tag-version`
 
@@ -270,21 +341,33 @@ token, the request bodies, and the traps; do not re-derive them here.
    here. Step 5 has already tagged this release, so `git describe --tags --abbrev=0` now returns
    the NEW tag and the range comes back empty. That is the one silent failure this step has, and an
    empty range reads exactly like a clean run. Collect every shortId the commit bodies name.
-2. **Judge each candidate.** The scan produces candidates, not answers, because a commit body
-   cites shortIds it does not fix. Read each candidate's current issue payload first, both its
-   `status` and its newest `set_resolved_in_release` activity entry: a commit body on its own
-   cannot tell you whether an issue is already resolved somewhere else. Then drop two kinds:
-   - An issue a commit mentions only as context or prior art.
-   - An issue already resolved against a release that genuinely carries its fix. This has bitten
-     once already: `b653463d` names DESKTOP-C, whose fix shipped in v0.39.0, so a blind re-mark to
-     the version being released would have recreated the bug this step exists to prevent.
-3. **Confirm the list with the user** as one numbered prompt before any write, showing each
-   shortId, the commit that fixes it, and the marker about to be set.
-4. **Mark each one** against `Kangentic@<the version just shipped>`. An already-resolved issue
-   needs a `{"status":"unresolved"}` PUT first or the write is silently a no-op, and the GitHub
-   integration resolves issues on PR merge, so expect that state rather than reading it as a
-   decision someone made.
-5. **Verify, then say which way it went.** Read each issue's newest `set_resolved_in_release`
+2. **Sort the candidates mechanically, then act without asking.** The scan produces candidates, not
+   answers, because a commit body cites shortIds it does not fix. Read each candidate's issue
+   payload first, both its `status` and its newest `set_resolved_in_release` activity entry: a
+   commit body on its own cannot tell you whether an issue is already resolved somewhere else. Then
+   sort into exactly three buckets and do not deliberate past this:
+   - **Currently `unresolved`, and a commit in this range states that it fixes the issue.** Mark it.
+   - **Currently `unresolved`, but the commit names it only as context or prior art.** Skip it and
+     say so in the report. Getting this one wrong is self-correcting, because a later event on a
+     newer release reopens the issue.
+   - **Already `resolved`, whatever the commit says.** Never write to it. Report its current
+     marker, and say so explicitly when that marker names a release that predates the fix, because
+     that is the one case a human has to act on and nothing else in this step surfaces it.
+
+   That third rule is what replaces the old confirmation prompt, and it is strictly safer than the
+   prompt was. The failure this step exists to prevent is re-marking an already-resolved issue to
+   the version being shipped, which reopens it on exactly the builds that legitimately carry the
+   fix: `b653463d` names DESKTOP-C, whose fix shipped in v0.39.0. Every instance of that bug is a
+   write to an issue that was already resolved, so refusing those writes removes the bug outright
+   rather than asking a human to catch it.
+
+   The cost is that a wrong marker written by the GitHub integration, which resolves an issue
+   without being asked when a merged PR names a shortId, gets reported rather than corrected.
+   Correcting one takes two ordered writes rather than one, per the sentry skill's "Four things
+   bite" item 1. That makes it a deliberate act and the one part of this step genuinely worth a
+   human, so it does not belong on the unattended path.
+3. **Mark each issue in the first bucket** against `Kangentic@<the version just shipped>`.
+4. **Verify, then say which way it went.** Read each issue's newest `set_resolved_in_release`
    activity entry back, because `statusDetails` alone cannot confirm a write landed. Then report
    the outcome in one line, including the empty ones: "no Sentry shortIds in this range", or "403
    on the resolve PUT, these issues are unmarked: ...". Per
@@ -297,7 +380,12 @@ back.
 
 ## Allowed Tools
 
-Use `Read`, `Glob`, `Grep`, `Bash` (for `git`, `npm`, `npx`, and `curl` commands), `Write` (for commit message temp file), and `Edit` (for CHANGELOG.md).
+Use `Read`, `Glob`, `Grep`, `Bash` (for `git`, `gh`, `npm`, `npx`, and `curl` commands), `Write` (for commit message temp file), and `Edit` (for CHANGELOG.md).
+
+`gh` carries the entire GitHub half of the release: the symbol-secret check and the leftover-release
+check in pre-flight, and every Step 7 call that watches the run and verifies what was published.
+Without `Bash(gh:*)` the release can still tag and push, which is the worst possible failure shape,
+because it ships the build and then cannot confirm what it shipped.
 
 Step 8 needs two more: `PowerShell`, for the sentry skill's Windows request pattern, which chains
 with `;` and so cannot go through `Bash` under `.claude/rules/bash-single-command.md`; and
