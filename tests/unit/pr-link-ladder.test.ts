@@ -257,7 +257,7 @@ describe('linkPRForTask confidence ladder', () => {
   });
 
   it('tier 6: links via the REMOTE branch whose tip is the task HEAD when the pushed name diverges', async () => {
-    // The filed bug (my-repo #15). The local worktree branch is the Kangentic
+    // The filed bug. The local worktree branch is the Kangentic
     // slug; the branch actually pushed, and used as the PR source, is
     // `maint/adopt-central-package-management`. Nothing reconciled the two, so:
     // tier 1 has no number, tiers 2/4 query the slug and miss, and tier 3 is

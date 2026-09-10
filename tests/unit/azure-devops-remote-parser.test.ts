@@ -6,49 +6,49 @@ import {
 } from '../../src/main/pr/adapters/azure-devops/azure-remote';
 import { azureDevOpsPRConnector } from '../../src/main/pr/adapters/azure-devops/azure-devops-connector';
 
-const my-repo = { org: 'my-org', project: 'My Project', repo: 'my-repo' };
+const AZURE_REMOTE = { org: 'my-org', project: 'My Project', repo: 'my-repo' };
 
 describe('parseAzureRemote', () => {
-  // The literal remote of the my-repo checkout this connector exists for.
+  // The scp-like form this parser was written against.
   it('parses the scp-like SSH remote, decoding %20 in the project', () => {
-    expect(parseAzureRemote('git@ssh.dev.azure.com:v3/my-org/My%20Project/my-repo')).toEqual(my-repo);
+    expect(parseAzureRemote('git@ssh.dev.azure.com:v3/my-org/My%20Project/my-repo')).toEqual(AZURE_REMOTE);
   });
 
   it('parses the ssh:// form with an explicit port', () => {
-    expect(parseAzureRemote('ssh://git@ssh.dev.azure.com:22/v3/my-org/My%20Project/my-repo')).toEqual(my-repo);
+    expect(parseAzureRemote('ssh://git@ssh.dev.azure.com:22/v3/my-org/My%20Project/my-repo')).toEqual(AZURE_REMOTE);
   });
 
   it('parses the modern HTTPS form', () => {
-    expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo')).toEqual(my-repo);
+    expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo')).toEqual(AZURE_REMOTE);
   });
 
   // The userinfo is a login hint; the org must come from the path.
   it('takes the org from the path, not the userinfo', () => {
     expect(
       parseAzureRemote('https://someoneelse@dev.azure.com/my-org/My%20Project/_git/my-repo'),
-    ).toEqual(my-repo);
+    ).toEqual(AZURE_REMOTE);
   });
 
   it('parses the legacy visualstudio.com form, org from the host label', () => {
-    expect(parseAzureRemote('https://my-org.visualstudio.com/My%20Project/_git/my-repo')).toEqual(my-repo);
+    expect(parseAzureRemote('https://my-org.visualstudio.com/My%20Project/_git/my-repo')).toEqual(AZURE_REMOTE);
   });
 
   it('parses the legacy form with a DefaultCollection segment', () => {
     expect(
       parseAzureRemote('https://my-org.visualstudio.com/DefaultCollection/My%20Project/_git/my-repo'),
-    ).toEqual(my-repo);
+    ).toEqual(AZURE_REMOTE);
   });
 
   it('parses the legacy vs-ssh form', () => {
-    expect(parseAzureRemote('git@vs-ssh.visualstudio.com:v3/my-org/My%20Project/my-repo')).toEqual(my-repo);
+    expect(parseAzureRemote('git@vs-ssh.visualstudio.com:v3/my-org/My%20Project/my-repo')).toEqual(AZURE_REMOTE);
   });
 
   it('strips a trailing .git from the repo', () => {
-    expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo.git')).toEqual(my-repo);
+    expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo.git')).toEqual(AZURE_REMOTE);
   });
 
   it('tolerates a trailing slash', () => {
-    expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo/')).toEqual(my-repo);
+    expect(parseAzureRemote('https://dev.azure.com/my-org/My%20Project/_git/my-repo/')).toEqual(AZURE_REMOTE);
   });
 
   /**
@@ -99,7 +99,7 @@ describe('firstAzureRemote', () => {
         'https://github.com/owner/repo.git',
         'git@ssh.dev.azure.com:v3/my-org/My%20Project/my-repo',
       ]),
-    ).toEqual(my-repo);
+    ).toEqual(AZURE_REMOTE);
   });
 
   it('returns null when none is an Azure remote', () => {
@@ -115,18 +115,18 @@ describe('buildAzurePrWebUrl', () => {
   // Azure returns null for _links.web.href / remoteUrl / repository.webUrl on
   // every tier, so this construction is the only source of a browser URL.
   it('round-trips a spaced project back to %20 without double-encoding', () => {
-    expect(buildAzurePrWebUrl(my-repo, 1343)).toBe(
+    expect(buildAzurePrWebUrl(AZURE_REMOTE, 1343)).toBe(
       'https://dev.azure.com/my-org/My%20Project/_git/my-repo/pullrequest/1343',
     );
   });
 
   it('produces a URL the shared parser can read the number back out of', async () => {
     const { prNumberFromUrl } = await import('../../src/shared/pr-url');
-    expect(prNumberFromUrl(buildAzurePrWebUrl(my-repo, 1343))).toBe(1343);
+    expect(prNumberFromUrl(buildAzurePrWebUrl(AZURE_REMOTE, 1343))).toBe(1343);
   });
 
   it('parses back to the same remote triple', () => {
-    const url = buildAzurePrWebUrl(my-repo, 1343).replace('/pullrequest/1343', '');
-    expect(parseAzureRemote(url)).toEqual(my-repo);
+    const url = buildAzurePrWebUrl(AZURE_REMOTE, 1343).replace('/pullrequest/1343', '');
+    expect(parseAzureRemote(url)).toEqual(AZURE_REMOTE);
   });
 });

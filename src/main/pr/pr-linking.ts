@@ -408,7 +408,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         //
         // Do NOT narrow this to match `knownBase`. It reads like the obviously
         // consistent thing to do and it makes the whole tier inert: the task
-        // this was written for (my-repo #15) has `base_branch` NULL and predates
+        // this was written for has `base_branch` NULL and predates
         // `resolved_base_branch`, so it would never reach Tier 6 at all. The
         // residual that narrowing would close is documented in
         // docs/pr-integration.md and is not closable this way, because a task
