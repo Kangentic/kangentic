@@ -219,6 +219,39 @@ describe('Command Builder Logic', () => {
     expect(result).toBe('"use ``code`` here`nline2"');
   });
 
+  it('quoteArg doubles a trailing backslash run for cmd, so the CRT keeps the closing quote', () => {
+    // Measured by round-tripping through node's process.argv: cmd hands the raw
+    // line to the target's C runtime, which reads the `\"` of `"C:\dir\"` as an
+    // escaped quote and delivers `C:\dir"`. Doubling the run fixes it.
+    expect(quoteArg('C:\\dir\\', 'cmd')).toBe('"C:\\dir\\\\"');
+    expect(quoteArg('finish the path C:\\dir\\', 'cmd.exe')).toBe('"finish the path C:\\dir\\\\"');
+  });
+
+  it('quoteArg leaves a trailing backslash alone for PowerShell, where it is not an escape', () => {
+    // The opposite rule to cmd, and the reason the two branches cannot share a
+    // chain: `"C:\dir\"` already reaches a native command as `C:\dir\` on both
+    // pwsh 7.6 and Windows PowerShell 5.1. Escaping the backslash here would
+    // deliver `C:\dir\\` and break every Windows path a spawn carries.
+    expect(quoteArg('C:\\dir\\', 'pwsh')).toBe('"C:\\dir\\"');
+    expect(quoteArg('C:\\Program Files\\bin\\claude.exe', 'powershell'))
+      .toBe('"C:\\Program Files\\bin\\claude.exe"');
+  });
+
+  it('quoteArg leaves backticks and $ literal under cmd, which does not collapse them', () => {
+    // cmd shared PowerShell's backtick doubling until this was measured: the
+    // agent received `use ``code`` here`, two backticks per one written.
+    expect(quoteArg('use `code` here', 'cmd')).toBe('"use `code` here"');
+    expect(quoteArg('cost $5 total', 'cmd')).toBe('"cost $5 total"');
+  });
+
+  it('quoteArg escapes a quote for the parser that will read it', () => {
+    // Reachable only in theory: every prompt-carrying builder pre-replaces `"`
+    // with `'` for double-quote shells, and no other quoteArg input can hold a
+    // quote on Windows. Pinned so the two branches stay distinguishable.
+    expect(quoteArg('say "hi"', 'cmd')).toBe('"say \\"hi\\""');
+    expect(quoteArg('path\\"x', 'cmd')).toBe('"path\\\\\\"x"');
+  });
+
   it('quoteArg with multiline: true falls back to sanitisation under cmd', () => {
     // cmd.exe terminates the command on a literal newline mid-quote, so we
     // accept readability loss to keep the command parseable.
