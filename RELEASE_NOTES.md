@@ -1,12 +1,12 @@
 ## What's New
 
-- **Semantic memory works in packaged builds.** The embed worker was forked without part of its dependency closure, so it exited at startup on every installed copy and semantic search never ran. If you have only used a released build, this is the first version where it works at all.
+- **A task now tracks the branch it actually pushed.** Kangentic records the pushed branch and the base branch it resolved against, so a task whose branch was renamed locally, or pushed under a different name, no longer loses track of itself.
+- **Pull request linking follows that pushed branch instead of guessing from the task slug.** A task whose branch diverged from its slug now finds its PR.
+- The commit anchor in the Changes panel appears only when the connected board provider can actually supply it, rather than offering a control that leads nowhere.
 
 ## Bug Fixes
 
-- Relaunching Kangentic while it was still running with no visible window no longer crashes. A browser pane that outlived its window kept the process alive holding the single-instance lock, so relaunching appeared to do nothing, and the launch after that crashed.
-- Terminal sessions shut down cleanly when macOS or Linux restarts or logs out. Kangentic now asks the OS to wait while it drains them, instead of having them killed mid-write.
-- Crash reports are no longer polluted by unrelated programs. Crashes from processes launched out of a Kangentic terminal were being uploaded as ours, and a report sent after an update was blamed on the version that uploaded it rather than the one that crashed.
-- Opening a file or folder no longer leaves the request hanging on Linux, where the handler could sit waiting on whatever viewer it launched.
-- The Command Terminal reattaches its surviving terminals after a reload instead of losing track of them.
-- Usage stats record run duration and board shape, which were missing from the dashboard.
+- An arriving terminal no longer steals keyboard focus after its replay was pre-empted. The focus decision outlived the replay that requested it, so it could pull you out of the pane you were typing in.
+- Azure DevOps no longer sends its bearer token to hosts that are not really Azure DevOps.
+- Declining a Linux update prompt is no longer filed as an application error.
+- Worker processes no longer mix an inherited handle with a piped one for their output, which could stall a worker or lose what it wrote.
