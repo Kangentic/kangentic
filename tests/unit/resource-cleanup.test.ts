@@ -260,6 +260,58 @@ describe('cleanupStaleResources', () => {
     );
   });
 
+  /**
+   * Every other test in this file leaves `mockReadLocalBranchSha` at its
+   * `null` default, so none of them can tell a real capture from a dropped
+   * one - the patch looks identical either way. This test overrides it with a
+   * real sha and pins the shape AND the ordering the source comment claims:
+   * "the tip is captured ... into head_sha ... (still present: branches are
+   * deleted after this loop)". If the capture line moved below the branch
+   * delete pass, readLocalBranchSha would read an already-deleted ref and
+   * silently return null again - the patch-shape assertion alone would not
+   * catch that regression, only the ordering assertion does.
+   */
+  it('captures a real head_sha into the update patch, read BEFORE the branch is deleted', async () => {
+    const staleTask = createMockTask({
+      id: 'bbbb2222-0000-0000-0000-000000000000',
+      title: 'Fix login bug',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/fix-login-bug-bbbb2222',
+      branch_name: 'fix-login-bug-bbbb2222',
+      session_id: 'session-123',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([staleTask]);
+
+    mockExistsSync.mockImplementation((pathArg: string) =>
+      pathArg === '/home/dev/my-project/.kangentic/worktrees/fix-login-bug-bbbb2222',
+    );
+    mockReadLocalBranchSha.mockResolvedValue('abc123def456');
+
+    await cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(mockReadLocalBranchSha).toHaveBeenCalledWith(projectPath, 'fix-login-bug-bbbb2222');
+    expect(taskRepo.update).toHaveBeenCalledWith({
+      id: 'bbbb2222-0000-0000-0000-000000000000',
+      worktree_path: null,
+      branch_name: null,
+      resolved_base_branch: null,
+      session_id: null,
+      head_sha: 'abc123def456',
+    });
+
+    const branchDeleteCallIndex = mockExecFile.mock.calls.findIndex(
+      (call) => call[0] === 'git' && Array.isArray(call[1]) && call[1][0] === 'branch' && call[1][1] === '-D',
+    );
+    expect(branchDeleteCallIndex).toBeGreaterThanOrEqual(0);
+    const branchDeleteCallOrder = mockExecFile.mock.invocationCallOrder[branchDeleteCallIndex];
+    expect(mockReadLocalBranchSha.mock.invocationCallOrder[0]).toBeLessThan(branchDeleteCallOrder);
+  });
+
   it('cleans task with null DB fields but stale directory on disk (core bug fix)', async () => {
     const task = createMockTask({
       id: 'cccc3333-0000-0000-0000-000000000000',
