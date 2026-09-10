@@ -1026,8 +1026,8 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `window` / `window-mismatch` / `occupied` / `burst-taken` / `unclaimed`), the `site` that asked
   (one arrival decides more than once, and they were otherwise indistinguishable), and the
   arbiter's own INPUTS: the claimed session, both fingerprints, the claim's age, and the focused
-  window's session. The reason alone was not enough to diagnose with - it could not separate "no
-  claim was live" from "a claim was live and its fingerprint had moved". `claimArrivalFocus` emits
+  window's session and `openedByAgent` stamp. The reason alone was not enough to diagnose with - it
+  could not separate "no claim was live" from "a claim was live and its fingerprint had moved". `claimArrivalFocus` emits
   `arrival-claim` / `arrival-claim-clear` beside it, so a claim that was never made reads as a
   positive fact rather than as a missing entry. Together they are the only record of WHY a terminal
   did or did not take focus, which a "typed into the wrong terminal" report otherwise leaves to

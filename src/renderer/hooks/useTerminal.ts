@@ -277,8 +277,13 @@ interface UseTerminalOptions {
    *  firing to lift its replay veil so only the settled frame is ever shown.
    *  Read live via a ref, so the callback never goes stale. */
   onScrollbackSettled?: () => void;
-  /** Host policy: may this terminal take keyboard focus on ARRIVAL (the mount
-   *  replay, or a reload the caller did not opt out of with `skipFocus`)?
+  /** Host policy: may this terminal take keyboard focus on ARRIVAL?
+   *
+   *  An arrival is armed by a replay START (a mount, or a reload the caller did
+   *  not opt out of with `skipFocus`) and answered exactly once, by whichever
+   *  path ends that replay: either completion, the stuck-replay watchdog, or
+   *  either IPC rejection. So this is consulted from five sites, all of them
+   *  through `focusOnArrival`.
    *
    *  Arrival focus is arbitrated because two terminals can mount together and
    *  each finish its replay at an unpredictable moment, so an unconditional
@@ -639,8 +644,9 @@ export function useTerminal(options: UseTerminalOptions) {
    *  current callback. */
   const onScrollbackSettledRef = useRef(options.onScrollbackSettled);
   onScrollbackSettledRef.current = options.onScrollbackSettled;
-  /** Updated every render (same pattern as onScrollbackSettledRef) so the two
-   *  arrival-focus frames below ask the host's CURRENT policy. */
+  /** Updated every render (same pattern as onScrollbackSettledRef) so the single
+   *  arrival-focus frame below (`focusOnArrival`, reached from all five discharge
+   *  sites) asks the host's CURRENT policy. */
   const mayTakeArrivalFocusRef = useRef(options.mayTakeArrivalFocus);
   mayTakeArrivalFocusRef.current = options.mayTakeArrivalFocus;
 
