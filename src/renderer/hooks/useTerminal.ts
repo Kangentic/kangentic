@@ -21,6 +21,9 @@ import { createRepaintNudge, isUserInputData, isMouseReport, mouseReportLane, ty
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PtyResizeOrigin, TerminalColorOverrides } from '../../shared/types';
+// Type only, so this creates no runtime edge to the arbiter (the hook stays
+// surface-agnostic and never reads the policy - it only labels its own paths).
+import type { ArrivalFocusSite } from '../utils/terminal-arrival-focus';
 import { activateUnicode11 } from '../../shared/xterm-unicode11';
 import '@xterm/xterm/css/xterm.css';
 
@@ -285,8 +288,14 @@ interface UseTerminalOptions {
    *
    *  Read live via a ref (same pattern as onScrollbackSettled) and evaluated
    *  INSIDE the focus frame, so the answer is the one at focus time rather than
-   *  at render time. Absent means allow; both live hosts pass it. */
-  mayTakeArrivalFocus?: () => boolean;
+   *  at render time. Absent means allow; both live hosts pass it.
+   *
+   *  `site` names which arrival path is asking, purely so the decision is
+   *  identifiable in the dev trace ring. The hook stays surface-agnostic: it is
+   *  labelling its OWN paths, not reading the policy. `ArrivalFocusSite` is a
+   *  type-only import, erased at build, so this adds no runtime edge to the
+   *  arbiter. */
+  mayTakeArrivalFocus?: (site: ArrivalFocusSite) => boolean;
 }
 
 /** Restore a saved scroll position (from HMR) or pin to the bottom.
@@ -536,6 +545,23 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Monotonic counter to abandon stale scrollback operations when a newer
    *  one starts (e.g. initTerminal and reloadScrollback racing). */
   const scrollbackGenerationRef = useRef(0);
+  /** Whether this terminal still owes an arrival-focus DECISION.
+   *
+   *  An arrival is an obligation a REPLAY takes on (a mount, or a reload the
+   *  caller did not opt out of), not an instant that happens to pass. The
+   *  decision used to live only inside that replay's own completion frame, so any
+   *  path that PRE-EMPTED the replay cancelled the decision along with it and
+   *  nothing ever asked again - leaving the terminal unfocusable for the rest of
+   *  its life.
+   *
+   *  The watchdog below does exactly that, which is what made this so hard to
+   *  read: it bumps the generation (so `afterWrite` returns above its focus
+   *  frame) AND clears the veil, so the terminal looks like one that finished
+   *  arriving and simply refused focus. It shipped as an intermittently retried
+   *  CI test (`terminal-arrival-focus.spec.ts`, the panel re-expand case) whose
+   *  arbiter trace was empty, because the arbiter was never consulted at all.
+   *  See `focusOnArrival`. */
+  const arrivalFocusOwedRef = useRef(false);
   /** Backstop timer for a stuck replay (see SCROLLBACK_WATCHDOG_MS). Arming a
    *  new one clears any prior timer, so at most one is ever live - the one
    *  for the most recently started replay. */
@@ -631,6 +657,38 @@ export function useTerminal(options: UseTerminalOptions) {
     onScrollbackSettledRef.current?.();
   }, []);
 
+  /** Discharge this terminal's arrival-focus obligation, at most once per arrival.
+   *
+   *  Every path that ends a replay WITHOUT a newer replay having started routes
+   *  here: the two that complete normally, and the three that pre-empt one (the
+   *  watchdog and the two IPC rejections). A pre-empted replay therefore hands its
+   *  obligation on rather than dropping it, which is the whole fix - see
+   *  `arrivalFocusOwedRef`. A generation-aborted exit deliberately does not route
+   *  here, because the newer replay that bumped the generation owns the obligation
+   *  instead; the one exception is a `skipFocus` repair, which supersedes without
+   *  taking ownership (see the `!skipFocus` gate in `reloadScrollback`).
+   *
+   *  The ref is cleared BEFORE the frame, not inside it, so two paths racing the
+   *  same replay cannot both focus. A DENIED decision discharges exactly like a
+   *  granted one: a deny is a real answer from the arbiter, and re-asking after
+   *  one would reopen the race the arbiter exists to close
+   *  (.claude/rules/terminal-arrival-focus.md - tiers are EXCLUSIVE).
+   *
+   *  Terminal before policy, for the reason the two original call sites gave: the
+   *  policy is not a pure query (it records the grant that suppresses a competing
+   *  tier-3 arrival), so asking it for a host that unmounted between the settle
+   *  and this frame would deny a live terminal on behalf of a disposed one. */
+  const focusOnArrival = useCallback((site: ArrivalFocusSite) => {
+    if (!arrivalFocusOwedRef.current) return;
+    arrivalFocusOwedRef.current = false;
+    requestAnimationFrame(() => {
+      const terminal = xtermRef.current;
+      if (!terminal) return;
+      if (mayTakeArrivalFocusRef.current?.(site) === false) return;
+      terminal.focus();
+    });
+  }, []);
+
   /** Trace one step of a replay's lifecycle. Every entry carries its generation,
    *  because an abort is always "a newer generation started" and the two numbers
    *  are the whole story - without them a replay that died is visible only as the
@@ -663,6 +721,14 @@ export function useTerminal(options: UseTerminalOptions) {
       // fit / scroll / focus after we already force-recovered.
       scrollbackGenerationRef.current += 1;
       settleScrollback(true);
+      // The generation bump above just cancelled this replay's own arrival-focus
+      // decision (`afterWrite` now returns above its focus frame), and the settle
+      // cleared the veil, so to everything downstream this terminal has finished
+      // arriving. Discharge the obligation here rather than leaving it to the
+      // recovery below: the recovery is a repair that passes `skipFocus`, and it
+      // does not run at all once the budget is spent, so neither is a reliable
+      // owner. See `focusOnArrival`.
+      focusOnArrival('replay-watchdog');
       const canRecover = stuckReplayRecoveriesRef.current < MAX_STUCK_REPLAY_RECOVERIES;
       traceReplay('replay-watchdog', { trigger, generation, recovering: canRecover });
       if (!canRecover) return;
@@ -671,7 +737,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // send another SIGWINCH and start a fresh repaint round of its own.
       reloadScrollbackRef.current?.({ skipResize: true, skipFocus: true });
     }, SCROLLBACK_WATCHDOG_MS);
-  }, [settleScrollback, traceReplay]);
+  }, [settleScrollback, traceReplay, focusOnArrival]);
 
   /**
    * Discard the bytes the incoming queue is HOLDING, because the sample that
@@ -985,6 +1051,10 @@ export function useTerminal(options: UseTerminalOptions) {
       // are ordered on the main process, not here - see the parallel-IPC note
       // below.
       scrollbackPendingRef.current = true;
+      // The mount is what takes the arrival on. Armed here, alongside the pending
+      // flag, so every exit from the replay below - completion, watchdog, or IPC
+      // rejection - finds the obligation and discharges it.
+      arrivalFocusOwedRef.current = true;
       const scrollbackGeneration = ++scrollbackGenerationRef.current;
       const suppressScrollback = suppressDataRef.current;
       traceReplay('replay-start', { trigger: 'mount', generation: scrollbackGeneration, suppressed: suppressScrollback });
@@ -1083,16 +1153,7 @@ export function useTerminal(options: UseTerminalOptions) {
             // corrective resize: main already sampled the settled frame at the
             // fitted width, and a same-dims resize is a documented no-op (POSIX
             // sends SIGWINCH only on a real size change; ConPTY likewise).
-            requestAnimationFrame(() => {
-              // Terminal first: the policy is not a pure query (it records the
-              // grant that suppresses a competing tier-3 arrival), so asking it
-              // for a host that unmounted between the settle and this frame
-              // would deny a live terminal on behalf of a disposed one.
-              const terminal = xtermRef.current;
-              if (!terminal) return;
-              if (mayTakeArrivalFocusRef.current?.() === false) return;
-              terminal.focus();
-            });
+            focusOnArrival('mount-replay');
           };
           if (scrollback && xtermRef.current) {
             // Chunked so a 512KB replay doesn't parse in one synchronous write.
@@ -1129,6 +1190,12 @@ export function useTerminal(options: UseTerminalOptions) {
             scrollbackWatchdogRef.current = null;
           }
           settleScrollback(false);
+          // Same obligation, same reason as the watchdog: this exit ends the
+          // replay without reaching its focus frame. Usually inert - a rejected
+          // read means the session is gone, so the frame's null-check bails - but
+          // discharging unconditionally is what keeps "every exit answers" true
+          // by inspection rather than by case analysis.
+          focusOnArrival('replay-error');
         });
       // Last statement of the synchronous body: the promise chain above is only
       // REGISTERED here, so this is where the beat the long frame measures ends.
@@ -1140,7 +1207,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fitElapsedMs = readClock() - fitStartedAt;
       traceInitTiming('session-less');
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -1619,6 +1686,11 @@ export function useTerminal(options: UseTerminalOptions) {
     // re-issue this mechanism exists to give it.
     if (!reloadOptions?.reissue) replayWidthAttemptsRef.current = 0;
     scrollbackPendingRef.current = true;
+    // Armed at replay START, exactly like the mount does, and NOT at completion.
+    // A reload that never completes is precisely the case this exists for, so
+    // arming in `afterWrite` would leave the watchdog with nothing to discharge -
+    // which is the original bug wearing a different hat.
+    if (!skipFocus) arrivalFocusOwedRef.current = true;
     const scrollbackGeneration = ++scrollbackGenerationRef.current;
     traceReplay('replay-start', { trigger: 'reload', generation: scrollbackGeneration, skipResize });
     armScrollbackWatchdog('reload', scrollbackGeneration);
@@ -1753,23 +1825,31 @@ export function useTerminal(options: UseTerminalOptions) {
             return;
           }
           if (widthDecision.refundBudget) replayWidthAttemptsRef.current = 0;
-          // Focus after the reload completes, unless the caller opted out or the
-          // host's arrival policy declines. The two gates are separate on
+          // Focus after the reload completes, if an arrival is outstanding and the
+          // host's arrival policy allows it. The two gates stay separate on
           // purpose: `skipFocus` is a CALLER saying "this reload is a repair, not
           // an arrival", while the policy is the HOST arbitrating between
           // terminals that all believe they are arriving.
+          //
+          // A repair does NOT discharge on COMPLETION, even when an arrival is
+          // still owed from a mount replay something pre-empted. Letting it would
+          // mean a reveal or refocus catch-up (both `skipFocus`) could focus a
+          // terminal on a park/reveal edge, which is not an arrival and which no
+          // spec covers.
+          //
+          // That leaves two gaps, and this line closes neither. A `skipFocus`
+          // reload that supersedes a live mount replay strands the obligation,
+          // which is the behaviour that already shipped. And `armScrollbackWatchdog`
+          // discharges UNCONDITIONALLY, so a repair that stalls past
+          // SCROLLBACK_WATCHDOG_MS spends that stranded obligation and focuses on
+          // the very edge this line refuses. `onTerminalReveal` is the only route
+          // in, being the one `skipFocus` caller with no `scrollbackPendingRef`
+          // guard and so the only one that can supersede a live mount replay.
+          // See the obligation bullet in .claude/rules/terminal-arrival-focus.md.
+          //
           // No corrective resize: when a resize was sent above, main sampled
           // the settled frame; a same-dims resize is a no-op either way.
-          if (!skipFocus) {
-            requestAnimationFrame(() => {
-              // Terminal first, for the same reason as the mount-replay frame:
-              // the policy records a grant, so a disposed host must not consult it.
-              const terminal = xtermRef.current;
-              if (!terminal) return;
-              if (mayTakeArrivalFocusRef.current?.() === false) return;
-              terminal.focus();
-            });
-          }
+          if (!skipFocus) focusOnArrival('reload');
         };
         if (scrollback && xtermRef.current) {
           // Clear the old frame HERE, not before the fetch: the reset and the
@@ -1822,8 +1902,11 @@ export function useTerminal(options: UseTerminalOptions) {
           scrollbackWatchdogRef.current = null;
         }
         settleScrollback(false);
+        // See the matching call in initTerminal's catch: this exit ends the
+        // replay short of its focus frame, so it answers any outstanding arrival.
+        focusOnArrival('replay-error');
       });
-  }, [options.sessionId, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample]);
+  }, [options.sessionId, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival]);
 
   // Let the watchdog (armed from initTerminal, declared above this callback)
   // re-issue a stuck replay without a circular declaration.

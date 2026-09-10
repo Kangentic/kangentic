@@ -243,24 +243,48 @@ async function settleFocusFrames(page: Page): Promise<void> {
  * `list`-reporter job log - the UI shard job uploads no report/trace artifact, so
  * a `testInfo.attach()` would be invisible there.
  *
- * Diagnostic only: changes no wait and weakens no assertion. Added after the spec
- * 3 CI failure below could not be reproduced locally (30/30 baseline runs; CDP
- * CPU throttling broke the EARLIER veil-clear step instead of isolating this one,
- * the wrong shape; 18/18 runs under real 30-core OS contention with 3 concurrent
- * browsers) and static reading of the arbiter (`terminal-arrival-focus.ts`) found
- * no invalidation path within this test's lifecycle - `ARRIVAL_CLAIM_TTL_MS` is
- * already 30s specifically for this scenario class. Rather than guess at a fix
- * for an unconfirmed cause, this captures the arbiter's own `{allow, reason}`
- * decision (or its absence, which narrows to the rAF never running / the xterm
- * ref being null at focus time) so the next occurrence resolves in one log line.
+ * Diagnostic only: changes no wait and weakens no assertion.
+ *
+ * It earned its keep. The failure it was added for turned out to be an arrival
+ * whose decision was never made at all: the scrollback watchdog pre-empted the
+ * replay, which cancelled the decision (a generation bump) and lifted the veil (a
+ * settle) in the same breath, so the terminal read as fully arrived and merely
+ * unfocusable. Two rounds of reading the tier ladder found nothing because the
+ * arbiter was never consulted - the ABSENCE of an `arrival-focus` entry was the
+ * whole signal, and nothing was printing it. Spec 4 now covers that path.
+ *
+ * So what to read here, in order: no `arrival-focus` entry for the session means
+ * nothing asked (look for `replay-watchdog` / `replay-abort` just before it); an
+ * `{allow: false, reason}` entry is a product-side denial, and the claim and
+ * fingerprint fields on it separate "no claim was live" from "a claim was live
+ * and its fingerprint had moved"; `{allow: true}` with focus elsewhere means it
+ * was granted and then stolen, which is a different bug.
  */
 async function logArrivalFocusFailure(page: Page, sessionId: string): Promise<void> {
   const diagnostics = await page.evaluate((sid) => {
     const traceReader = (window as unknown as { __kangenticTerminalTrace?: () => unknown[] }).__kangenticTerminalTrace;
+    // An absent bridge and an empty ring both used to read as `[]`, which are very
+    // different diagnoses - one means the dev tooling did not mount, the other
+    // means the app genuinely decided nothing.
+    const traceInstalled = typeof traceReader === 'function';
     const trace = (traceReader ? traceReader() : []) as Array<{ sessionId: string | null; event: string }>;
-    const relevant = trace.filter((entry) => entry.sessionId === sid || entry.event === 'arrival-focus');
+    // Every `arrival-` event, not just `arrival-focus`: a CLAIM for a different
+    // session is exactly what a `claim-mismatch` needs explaining, and filtering
+    // on this session alone would drop it.
+    const matching = trace.filter((entry) => entry.sessionId === sid || entry.event.startsWith('arrival-'));
+    // The TAIL, because the diagnosis is always the last few events before the
+    // failure and the CI job log truncates a long dump - which is what happened to
+    // the first version of this helper, mid-entry at ~1.8KB.
+    const TAIL = 24;
+    const relevant = matching.slice(-TAIL);
     const active = document.activeElement;
     return {
+      traceInstalled,
+      // TRACE_RING_SIZE is 300, shared across every session and event kind, so a
+      // busy spec can evict the early entries. Report occupancy rather than
+      // letting a truncated ring read as "it never happened".
+      ringEntries: trace.length,
+      matchingEntries: matching.length,
       relevantTrace: relevant,
       activeElement: active && active !== document.body ? {
         tag: active.tagName,
@@ -271,6 +295,30 @@ async function logArrivalFocusFailure(page: Page, sessionId: string): Promise<vo
     };
   }, sessionId);
   console.log(`[arrival-focus-diagnostics] session=${sessionId}`, JSON.stringify(diagnostics, null, 2));
+}
+
+/**
+ * Read the dev-only trace ring (`window.__kangenticTerminalTrace`, installed by
+ * `DevtoolsBootstrap` under Vite dev), filtered to one session and one event kind.
+ * Returns each entry's `detail`, so a spec can assert on WHICH path produced a
+ * decision rather than only that some decision happened.
+ */
+async function readTraceDetails(
+  page: Page,
+  sessionId: string,
+  event: string,
+): Promise<Array<Record<string, unknown>>> {
+  return page.evaluate(([targetSessionId, targetEvent]) => {
+    const traceReader = (window as unknown as { __kangenticTerminalTrace?: () => unknown[] }).__kangenticTerminalTrace;
+    const trace = (traceReader ? traceReader() : []) as Array<{
+      sessionId: string | null;
+      event: string;
+      detail?: Record<string, unknown>;
+    }>;
+    return trace
+      .filter((entry) => entry.sessionId === targetSessionId && entry.event === targetEvent)
+      .map((entry) => entry.detail ?? {});
+  }, [sessionId, event]);
 }
 
 test('a delayed background replay does not steal focus from a just-opened task detail', async () => {
@@ -428,6 +476,113 @@ test('re-expanding the bottom panel focuses its terminal while a detail window i
       await logArrivalFocusFailure(page, SESSION_FALLBACK);
       throw error;
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
+ * Spec 4: an arrival whose replay is PRE-EMPTED still gets its focus decision.
+ *
+ * `useTerminal`'s scrollback watchdog (SCROLLBACK_WATCHDOG_MS, 5s) is a backstop
+ * for a replay that never completes. When it fires it bumps the replay
+ * generation, which makes that replay's own `afterWrite` return ABOVE the frame
+ * which asks the arbiter - so the arrival-focus decision is cancelled - and it
+ * clears `scrollbackPendingRef`, which lifts the replay veil. To everything
+ * downstream the terminal has finished arriving. In fact nothing ever asked
+ * whether it may take focus, and nothing asks again, so that terminal is
+ * unfocusable for the rest of its life.
+ *
+ * Why this drives the RELOAD path rather than a fresh mount. On a solo mount
+ * `TerminalTab`'s own init frame (the `mayFocusOnArrival('tab-init')` call in its
+ * `active` effect) runs one frame after the init queue constructs the terminal,
+ * and focuses it long before the watchdog - so a mount-based version of this spec
+ * would pass with the fix reverted, i.e. vacuously. Lifting the launch overlay on
+ * an ALREADY-INITIALIZED terminal produces an arrival with no `tab-init` frame at
+ * all (`TerminalTab`'s `terminalReady` false -> true effect calls
+ * `reloadScrollback()` with no `skipFocus`), so the pre-empted decision is the
+ * only one there is. That is what makes this red-green.
+ *
+ * The tab click before the delay is what puts a live claim in place. Without it
+ * the still-focused detail window wins tier 2 and the terminal is denied for a
+ * legitimate reason, which would also pass vacuously.
+ *
+ * How to verify RED / GREEN: drop the `focusOnArrival('replay-watchdog')` call
+ * from `armScrollbackWatchdog` in `useTerminal.ts` and this fails with the
+ * production symptom - pane mounted, veil gone, textarea never focused.
+ */
+test('a terminal whose replay the watchdog pre-empts still takes arrival focus', async () => {
+  // The watchdog is a real 5s wall-clock timer and the replay behind it is
+  // delayed past that deliberately, so this one case needs more than the tier's
+  // default per-test budget. 90s rather than 60s because the four STEP_TIMEOUT_MS
+  // waits ahead of the delay sum to 32s on their own, and 32 + 5.5 + the 20s
+  // watchdog poll + a final 8s focus wait already reaches 60 before anything has
+  // gone wrong. A loaded CI shard would then fail this on the budget rather than
+  // on the behaviour under test.
+  test.setTimeout(90_000);
+  const { browser, page } = await launch({ delayFallbackReplay: false });
+  try {
+    await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
+    // DETAIL only. The fallback session keeps its launch overlay, so lifting that
+    // overlay later is what produces the arrival under test.
+    await markFirstOutput(page, [SESSION_DETAIL]);
+
+    await page.locator(`text=Arrival Detail ${RUN_ID}`).first().click();
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
+
+    const fallbackPane = page.locator(
+      `[data-testid="terminal-session-pane"][data-session-id="${SESSION_FALLBACK}"]`,
+    );
+    await fallbackPane.waitFor({ state: 'visible', timeout: STEP_TIMEOUT_MS });
+
+    // A tab click claims arrival focus for this session (selectActiveSession ->
+    // claimArrivalFocus). The session is already the panel's selection, so this
+    // moves no tab and remounts nothing - it only puts the claim in place, which
+    // is what lets tier 1 grant while the detail window still holds window focus.
+    await page.locator(`[data-testid="terminal-session-tab"][data-session-id="${SESSION_FALLBACK}"]`)
+      .click({ timeout: STEP_TIMEOUT_MS });
+
+    // Past SCROLLBACK_WATCHDOG_MS (5000), so the reload below is guaranteed to be
+    // pre-empted rather than completing. Armed here rather than at launch so the
+    // earlier mounts stay fast and keep their own recovery budget intact.
+    await page.evaluate((sessionId) => {
+      (window as unknown as { __mockScrollbackDelayMs?: Record<string, number> })
+        .__mockScrollbackDelayMs = { [sessionId]: 5500 };
+    }, SESSION_FALLBACK);
+
+    // Lift the launch overlay: terminalReady false -> true makes TerminalTab call
+    // reloadScrollback() with no skipFocus, i.e. an arrival.
+    await markFirstOutput(page, [SESSION_FALLBACK]);
+
+    // Wait for the watchdog's own trace event rather than for the veil. The
+    // watchdog clears the veil and then its recovery replay (delayed again by the
+    // same mock entry) raises it, so the veil is not a stable marker here - and
+    // asserting the watchdog actually fired is what stops this spec passing
+    // vacuously if the delay ever stops applying, the same argument the mock's
+    // getScrollback makes for __mockScrollbackCalls.
+    await expect.poll(
+      async () => (await readTraceDetails(page, SESSION_FALLBACK, 'replay-watchdog')).length,
+      { timeout: 20_000 },
+    ).toBeGreaterThan(0);
+
+    // The production symptom first, so a regression reports as "the terminal was
+    // never focused" rather than as a trace-shape mismatch.
+    try {
+      await expect(fallbackPane.locator('.xterm-helper-textarea').first()).toBeFocused({ timeout: STEP_TIMEOUT_MS });
+    } catch (error) {
+      await logArrivalFocusFailure(page, SESSION_FALLBACK);
+      throw error;
+    }
+
+    // Then the non-vacuity guard: the decision has to have come from the
+    // watchdog's discharge. A green produced by some other focus path would not
+    // be the thing under test, and this spec is built so no other path can run -
+    // if one appears, this is what says so instead of quietly passing.
+    expect(
+      (await readTraceDetails(page, SESSION_FALLBACK, 'arrival-focus'))
+        .filter((detail) => detail.site === 'replay-watchdog' && detail.allow === true),
+    ).toHaveLength(1);
   } finally {
     await browser.close();
   }

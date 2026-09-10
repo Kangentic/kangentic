@@ -514,9 +514,11 @@ Sessions are resumable on next launch via `--resume <agent_session_id>` from the
   main delays 150-400ms for the repaint settle, and every arrival path used to end in an
   unconditional `xterm.focus()` - so whichever replay resolved LAST won, and a user who opened a
   task and started typing could have the keystrokes land in whatever agent the panel fell back to.
-  `mayTakeArrivalFocus(sessionId)` decides from user-intent STATE instead, in three tiers:
+  `mayTakeArrivalFocus(sessionId, site)` decides from user-intent STATE instead, in four tiers:
   a claim recorded by a gesture that named a terminal before it existed (a panel tab click, a panel
-  expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else the
+  expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else a
+  window an AGENT opened or raised, which denies EVERYONE including its own terminal while it
+  holds focus (`openedByAgent`, see `.claude/rules/agent-driven-focus.md`); else the
   terminal-hosting window holding window-layer focus, resolved by ANCHOR across all three layers
   via `resolveFocusedWindowTerminal` in `dictation-target.ts`; else, when nothing owns the user's
   attention, allow unless focus is in a typing surface. A claim is NOT consumed on grant, because
@@ -531,6 +533,17 @@ Sessions are resumable on next launch via `--resume <agent_session_id>` from the
   surface-agnostic. Genuinely user-initiated focus (frame pointer-down, file drop, maximize
   re-homing) is unconditional and marked `// arrival-focus-ok:`. See
   `.claude/rules/terminal-arrival-focus.md`.
+- **The arrival is an obligation the replay owes, not a moment it passes through.** A replay arms
+  it at START and discharges it via `focusOnArrival`: the two normal completions, plus the three
+  that PRE-EMPT one - the stuck-replay watchdog (`SCROLLBACK_WATCHDOG_MS`) and the two IPC
+  rejections. The one deliberate exception is a `skipFocus` reload, which does not discharge, since
+  letting a reveal or refocus catch-up answer an arrival would move focus on a park/reveal edge
+  that is not an arrival at all. Without that, a pre-empted replay took its
+  focus decision down with it: the watchdog bumps the replay generation, so the replay's own
+  `afterWrite` returns above the frame that asks the arbiter, and it clears the pending flag, which
+  lifts the replay veil. The terminal then looks fully arrived and merely unfocusable, while the
+  arbiter was in fact never consulted - and nothing asks again, so it stays that way for the life
+  of the terminal.
 - The converse also holds: anything with NO mounted xterm must be OUT of that set. A collapsed panel renders no `TerminalTab`, so `derivePanelSessionId` returns null for it (`panelShowsTerminal`, threaded from `useTerminalResize`'s `showContent`). Otherwise main streams bytes nothing can acknowledge, and a chatty agent eventually trips backpressure (`BACKPRESSURE_HIGH_WATER`) and has its PTY paused. Output produced while collapsed accumulates in main's scrollback ring and is replayed when the panel expands and the terminal remounts. A remount is not the only way back: a session that stays MOUNTED and merely leaves the focused union (a detail window a detached monitor owns, a hidden panel, a closed command bar over a transient) is repaired on the focus edge alone, without remounting. See the focus-edge catch-up bullet under Output Streaming.
 
 ## Project-Scoped Session State
@@ -1009,11 +1022,18 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `focused-terminals.ts`), and `repaint-repaired` / `repaint-verified` (renderer,
   `repaint-nudge.ts`, the latter meaning the frame was already correct and the nudge cost one
   render). `arrival-focus` (renderer, `terminal-arrival-focus.ts`) joins them, carrying the
-  allow/deny plus the tier that decided it (`claim` / `claim-mismatch` / `window` /
-  `window-mismatch` / `occupied` / `burst-taken` / `unclaimed`) - the only record of WHY a terminal
+  allow/deny plus the tier that decided it (`claim` / `claim-mismatch` / `agent-window` /
+  `window` / `window-mismatch` / `occupied` / `burst-taken` / `unclaimed`), the `site` that asked
+  (one arrival decides more than once, and they were otherwise indistinguishable), and the
+  arbiter's own INPUTS: the claimed session, both fingerprints, the claim's age, and the focused
+  window's session. The reason alone was not enough to diagnose with - it could not separate "no
+  claim was live" from "a claim was live and its fingerprint had moved". `claimArrivalFocus` emits
+  `arrival-claim` / `arrival-claim-clear` beside it, so a claim that was never made reads as a
+  positive fact rather than as a missing entry. Together they are the only record of WHY a terminal
   did or did not take focus, which a "typed into the wrong terminal" report otherwise leaves to
-  guesswork. All seven merge into `kangentic_devtools_terminal_state`'s timeline alongside the
-  resize and replay events above. `kangentic_devtools_terminal_forensics` is the session-scoped
+  guesswork - and an ABSENT `arrival-focus` entry is itself a diagnosis, meaning nothing ever asked
+  (see the arrival-obligation bullet above). All nine merge into
+  `kangentic_devtools_terminal_state`'s timeline alongside the resize and replay events above. `kangentic_devtools_terminal_forensics` is the session-scoped
   companion: renderer viewport rows, main's re-parsed grid, and the raw byte ring side by side,
   which is what separates "the agent never sent these rows" from "we lost them".
 - **Replay veil for a warm mount.** For an already-running session, `TerminalTab`'s launch overlay

@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useTerminal } from '../../hooks/useTerminal';
-import { mayTakeArrivalFocus } from '../../utils/terminal-arrival-focus';
+import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
@@ -57,7 +57,10 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
   // be remounted by the project-switch reconcile rather than by a user gesture,
   // so its arrivals are arbitrated like any other. A real Ctrl+Shift+P still
   // focuses: opening the layer focuses its window, which the arbiter resolves.
-  const mayFocusOnArrival = useCallback(() => mayTakeArrivalFocus(sessionId), [sessionId]);
+  const mayFocusOnArrival = useCallback(
+    (site: ArrivalFocusSite) => mayTakeArrivalFocus(sessionId, site),
+    [sessionId],
+  );
 
   const { terminalRef, initTerminal, fit, flushResize, focus, getDimensions } = useTerminal({
     sessionId,
@@ -95,7 +98,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     initTerminal,
     onInit: () => {
       fit();
-      if (mayFocusOnArrival()) focus();
+      if (mayFocusOnArrival('deferred-init')) focus();
     },
   });
 

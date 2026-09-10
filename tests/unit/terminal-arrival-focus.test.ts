@@ -453,12 +453,12 @@ describe('mayTakeArrivalFocus / claimArrivalFocus (the real, impure wrapper)', (
     // denied as a claim-mismatch against the session cleared above. If the
     // null branch became a no-op, the stale claim on 'sess-a' would still be
     // live and would deny 'sess-b'.
-    expect(mayTakeArrivalFocus('sess-b')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-b', 'mount-replay')).toBe(true);
   });
 
   it('claims tier-1 exclusivity through the real wrapper: the claimed session is allowed, any other is denied', () => {
     claimArrivalFocus('sess-a');
-    expect(mayTakeArrivalFocus('sess-a')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-a', 'mount-replay')).toBe(true);
 
     // Step past the tier-3 burst window (well inside the tier-1 claim's own
     // TTL) before the second check. Without this, a wrapper that silently
@@ -469,7 +469,7 @@ describe('mayTakeArrivalFocus / claimArrivalFocus (the real, impure wrapper)', (
     // Stepping past the burst window removes that false-pass path.
     vi.advanceTimersByTime(ARRIVAL_BURST_MS + 1);
 
-    expect(mayTakeArrivalFocus('sess-b')).toBe(false);
+    expect(mayTakeArrivalFocus('sess-b', 'mount-replay')).toBe(false);
   });
 
   it('records lastArrivalGrant only for a tier-3 (unclaimed) grant, never for a tier-1 (claim) grant', () => {
@@ -478,10 +478,10 @@ describe('mayTakeArrivalFocus / claimArrivalFocus (the real, impure wrapper)', (
     // check below (an unrelated session, checked at the SAME instant, well
     // inside ARRIVAL_BURST_MS) would be denied as burst-taken instead of
     // reaching tier 3 on its own.
-    expect(mayTakeArrivalFocus('sess-claimed')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-claimed', 'mount-replay')).toBe(true);
     claimArrivalFocus(null);
 
-    expect(mayTakeArrivalFocus('sess-unrelated')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-unrelated', 'mount-replay')).toBe(true);
   });
 });
 
@@ -524,7 +524,7 @@ describe('focusIsInTypingSurface (through mayTakeArrivalFocus, its only entry po
     const matchesSpy = vi.fn(() => false);
     vi.stubGlobal('document', { body: {}, activeElement: { matches: matchesSpy } });
 
-    expect(mayTakeArrivalFocus('sess-button-focus')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-button-focus', 'mount-replay')).toBe(true);
     // The load-bearing assertion: this is what fails if `button` (or anything
     // else) is ever added to the selector list. The return-value assertion
     // above cannot see that change, because the stub returns whatever this
@@ -537,7 +537,7 @@ describe('focusIsInTypingSurface (through mayTakeArrivalFocus, its only entry po
     const matchesSpy = vi.fn(() => true);
     vi.stubGlobal('document', { body: {}, activeElement: { matches: matchesSpy } });
 
-    expect(mayTakeArrivalFocus('sess-textarea-focus')).toBe(false);
+    expect(mayTakeArrivalFocus('sess-textarea-focus', 'mount-replay')).toBe(false);
   });
 
   it('short-circuits on activeElement === document.body without calling matches', () => {
@@ -545,7 +545,7 @@ describe('focusIsInTypingSurface (through mayTakeArrivalFocus, its only entry po
     const bodySentinel = { matches: matchesSpy };
     vi.stubGlobal('document', { body: bodySentinel, activeElement: bodySentinel });
 
-    expect(mayTakeArrivalFocus('sess-body-focus')).toBe(true);
+    expect(mayTakeArrivalFocus('sess-body-focus', 'mount-replay')).toBe(true);
     // The load-bearing assertion for the second red condition: dropping the
     // `active === document.body` guard would route this call into
     // `active.matches(...)` instead of short-circuiting. A real
