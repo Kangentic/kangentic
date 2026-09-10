@@ -1,9 +1,11 @@
 /**
  * Cross-platform path normalization and shell-specific conversions.
  *
- * SINGLE SOURCE OF TRUTH for all path ↔ shell interop in Kangentic.
- * Every module that touches file paths across platforms or shells
- * MUST use these utilities instead of ad-hoc `.replace(/\\/g, '/')`.
+ * SINGLE SOURCE OF TRUTH for Node-side path/shell interop in Kangentic.
+ * Every main-process module that touches file paths across platforms or
+ * shells MUST use these utilities instead of ad-hoc `.replace(/\\/g, '/')`.
+ * The renderer cannot import this file (it pulls in `node:path`), so the
+ * parts it shares live in `./shell-quote` and are re-exported below.
  *
  * Key invariant: Claude Code stores paths with forward slashes on ALL
  * platforms (e.g. "C:/Users/dev/..."), so any path written to or
