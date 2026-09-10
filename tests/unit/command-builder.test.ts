@@ -244,12 +244,28 @@ describe('Command Builder Logic', () => {
     expect(quoteArg('cost $5 total', 'cmd')).toBe('"cost $5 total"');
   });
 
-  it('quoteArg escapes a quote for the parser that will read it', () => {
-    // Reachable only in theory: every prompt-carrying builder pre-replaces `"`
-    // with `'` for double-quote shells, and no other quoteArg input can hold a
-    // quote on Windows. Pinned so the two branches stay distinguishable.
+  it('quoteArg escapes a quote for cmd by the C-runtime rule', () => {
+    // `\"` is an escaped quote to the target's CRT, and a backslash run before
+    // one has to be doubled or it eats the escape. Round-tripped through cmd:
+    // both inputs below arrive at the agent byte-identical.
     expect(quoteArg('say "hi"', 'cmd')).toBe('"say \\"hi\\""');
     expect(quoteArg('path\\"x', 'cmd')).toBe('"path\\\\\\"x"');
+  });
+
+  it('quoteArg emits a quote PowerShell cannot parse, which is unreachable and stays', () => {
+    // Named for what it is rather than pinned as correct. `"say \"hi\""` is a
+    // parse error on BOTH pwsh 7.6 and Windows PowerShell 5.1 (the string ends
+    // at the backslash-quote), and there is no form that works on both: pwsh
+    // 7.3+ native argument passing wants a backtick-quote, while 5.1's legacy
+    // passing drops that quote and wants backslash-backtick-quote. It is also
+    // unreachable - all 12 prompt-carrying builders pre-replace `"` with `'`
+    // for double-quote shells (claude/command-builder.ts and siblings), and no
+    // other quoteArg input can hold a quote on Windows, where `"` is illegal in
+    // a filename. Changing it would pick a losing host silently.
+    expect(quoteArg('say "hi"', 'pwsh')).toBe('"say \\"hi\\""');
+    // The backslash is NOT doubled here, unlike the cmd case above. That is the
+    // whole difference between the two branches, on the one input that shows it.
+    expect(quoteArg('path\\"x', 'powershell')).toBe('"path\\\\"x"');
   });
 
   it('quoteArg with multiline: true falls back to sanitisation under cmd', () => {
