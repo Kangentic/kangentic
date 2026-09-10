@@ -1,6 +1,6 @@
 /**
- * EMPIRICAL tests for the `tasks.worktree_skip_reason` and
- * `tasks.resolved_base_branch` columns, run against a REAL SQLite engine
+ * EMPIRICAL tests for the `tasks.worktree_skip_reason`, `tasks.resolved_base_branch`,
+ * and `tasks.pushed_branch` columns, run against a REAL SQLite engine
  * (node:sqlite) rather than a mocked repository.
  *
  * Every existing spec that touches `setWorktreeSkipReason`
@@ -10,6 +10,16 @@
  * so none of them prove the column actually round-trips through a real
  * database, that `recordWorktree` clears it inside its own transaction, or
  * that the write skips the `updated_at` bump its own doc comment promises.
+ *
+ * `pushed_branch` gets the same treatment for the same reason: its only
+ * production writer is `pr-linking.ts`, whose own test
+ * (`pr-link-ladder.test.ts`) mocks `tasks.update` as a plain `Object.assign`,
+ * so nothing exercises the real hand-maintained `UPDATE tasks SET ...`
+ * statement for that column. That statement lists 24 columns as positional
+ * `?` placeholders in one order and binds 24 values in a second, separately
+ * maintained order (`task-repository.ts`'s `update()`); a forgotten column in
+ * either list is a real, single-line mistake this file can catch and a mock
+ * cannot, because a mock never touches the SQL text.
  *
  * node:sqlite rather than better-sqlite3: better-sqlite3 is compiled for
  * Electron's Node ABI, so a suite gated on it currently SKIPS everywhere, CI
@@ -143,6 +153,47 @@ describeWithSqlite('worktree_skip_reason', () => {
     tasks.update({ id: task.id, title: 'Renamed' });
 
     expect(tasks.getById(task.id)!.worktree_skip_reason).toBe('disabled');
+  });
+});
+
+describeWithSqlite('pushed_branch (via the real update() UPDATE statement)', () => {
+  it('writes pushed_branch, and its column-list neighbors, each to its own column - not a shifted one', () => {
+    // head_sha, pushed_branch, base_branch, and resolved_base_branch sit
+    // adjacent in update()'s hand-maintained `SET ... = ?` list and its
+    // separately maintained `.run(...)` argument list. Four DISTINCT values in
+    // one write, read back by COLUMN NAME, is what catches a forgotten or
+    // shifted entry in either list: a mock (`vi.fn` on `update`, as
+    // pr-link-ladder.test.ts uses) never touches the SQL text and cannot see
+    // this class of bug at all.
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+
+    tasks.update({
+      id: task.id,
+      head_sha: 'sha-head-value',
+      pushed_branch: 'maint/pushed-name',
+      base_branch: 'release/explicit-base',
+      resolved_base_branch: 'develop',
+    });
+
+    const stored = tasks.getById(task.id)!;
+    expect(stored.head_sha).toBe('sha-head-value');
+    expect(stored.pushed_branch).toBe('maint/pushed-name');
+    expect(stored.base_branch).toBe('release/explicit-base');
+    expect(stored.resolved_base_branch).toBe('develop');
+  });
+
+  it('clears pushed_branch back to null through a real update(), like every other nullable column', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    tasks.update({ id: task.id, pushed_branch: 'maint/pushed-name' });
+    expect(tasks.getById(task.id)!.pushed_branch).toBe('maint/pushed-name');
+
+    tasks.update({ id: task.id, pushed_branch: null });
+
+    expect(tasks.getById(task.id)!.pushed_branch).toBeNull();
   });
 });
 
