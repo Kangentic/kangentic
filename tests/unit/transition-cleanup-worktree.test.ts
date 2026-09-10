@@ -13,12 +13,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 
-const { mockPrepareWorktreeForRemoval, mockRemoveWorktree, mockRemoveBranch, callOrder, withLockOptions } = vi.hoisted(() => ({
+const { mockPrepareWorktreeForRemoval, mockRemoveWorktree, mockRemoveBranch, mockReadWorktreeHead, callOrder, withLockOptions } = vi.hoisted(() => ({
   mockPrepareWorktreeForRemoval: vi.fn<(path: string, profile: string) => Promise<void>>(),
   mockRemoveWorktree: vi.fn<(path: string, options?: unknown) => Promise<boolean>>(),
   mockRemoveBranch: vi.fn<(branch: string) => Promise<void>>(),
+  mockReadWorktreeHead: vi.fn<(path: string) => Promise<{ branch: string | null; sha: string | null }>>(),
   callOrder: [] as string[],
   withLockOptions: [] as Array<{ label?: string; priority?: number } | undefined>,
+}));
+
+// The action captures the worktree HEAD before removal so the commit anchor
+// survives the reclaim. Mocked so no real git runs against the mock path.
+vi.mock('../../src/main/git/worktree-head', () => ({
+  readWorktreeHead: mockReadWorktreeHead,
 }));
 
 vi.mock('../../src/main/git/worktree-manager', () => ({
@@ -110,6 +117,7 @@ describe('executeCleanupWorktree', () => {
     mockPrepareWorktreeForRemoval.mockResolvedValue(undefined);
     mockRemoveWorktree.mockResolvedValue(true);
     mockRemoveBranch.mockResolvedValue(undefined);
+    mockReadWorktreeHead.mockResolvedValue({ branch: null, sha: null });
   });
 
   it('runs prepareWorktreeForRemoval BEFORE the git lock, at BACKGROUND priority', async () => {
@@ -131,12 +139,30 @@ describe('executeCleanupWorktree', () => {
       '/mock/project/.kangentic/worktrees/done-task',
       { removalProfile: 'moderate' },
     );
+    // `pushed_branch` is absent from the patch on purpose: a remote fact and a
+    // PR anchor, it outlives the checkout (see pushed-branch-cleanup-parity).
     expect(taskRepo.update).toHaveBeenCalledWith({
       id: 'task-cleanup-1',
       worktree_path: null,
       branch_name: null,
-      pushed_branch: null,
       resolved_base_branch: null,
+    });
+  });
+
+  it('captures the worktree HEAD sha into head_sha before removal', async () => {
+    const { engine, taskRepo } = makeEngine();
+    mockReadWorktreeHead.mockResolvedValue({ branch: 'kangentic/done-task', sha: 'abc123def456' });
+
+    await engine.executeTransition(makeTask(), 'lane-doing', 'lane-done');
+
+    expect(mockReadWorktreeHead).toHaveBeenCalledWith('/mock/project/.kangentic/worktrees/done-task');
+    expect(mockReadWorktreeHead.mock.invocationCallOrder[0]).toBeLessThan(mockRemoveWorktree.mock.invocationCallOrder[0]);
+    expect(taskRepo.update).toHaveBeenCalledWith({
+      id: 'task-cleanup-1',
+      worktree_path: null,
+      branch_name: null,
+      resolved_base_branch: null,
+      head_sha: 'abc123def456',
     });
   });
 

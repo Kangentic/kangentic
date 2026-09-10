@@ -19,8 +19,9 @@ import { linkPRForTask } from '../../pr/pr-linking';
 import { prNumberFromUrl } from '../../../shared/pr-url';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
+import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
+import type { Task, TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -603,10 +604,29 @@ export const handleUpdateTask: CommandHandler = (
 };
 
 /**
+ * The anchors the ladder searched for a task, for a not-found message that
+ * reads differently from "nothing to search by".
+ */
+function describeSearchedAnchors(task: Task): string {
+  const anchors: string[] = [];
+  if (task.pr_number != null) anchors.push(`PR #${task.pr_number}`);
+  if (task.worktree_path) anchors.push('its worktree branch');
+  else if (task.branch_name) anchors.push(`branch "${task.branch_name}"`);
+  if (task.pushed_branch) anchors.push(`pushed branch "${task.pushed_branch}"`);
+  if (task.head_sha) anchors.push(`commit ${task.head_sha.slice(0, 7)}`);
+  return anchors.join(', ');
+}
+
+/**
  * Authoritatively resolve and link the PR for a task via the confidence ladder
- * (PR number -> worktree branch -> commit SHA -> stored slug). Works without a
- * live session, picks up human/web-UI-created PRs the scraper misses, and
- * refreshes the linked PR's state (open/draft/merged/closed) on re-run.
+ * (PR number -> worktree branch -> commit SHA -> stored branch -> pushed
+ * branch -> remote tip). Works without a live session, picks up human/web-UI-
+ * created PRs the scraper misses, and refreshes the linked PR's state
+ * (open/draft/merged/closed) on re-run.
+ *
+ * `branch` (optional) is the remote branch the work was pushed to. It is
+ * recorded as the task's `pushed_branch` before the ladder runs, which is how
+ * an agent anchors a task that has no worktree and nothing else recorded.
  */
 export const handleLinkPr: CommandHandler = async (
   params: Record<string, unknown>,
@@ -619,9 +639,31 @@ export const handleLinkPr: CommandHandler = async (
 
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
-  const task = resolveTask(taskRepo, taskId);
+  let task = resolveTask(taskRepo, taskId);
   if (!task) {
     return { success: false, error: `Task "${taskId}" not found` };
+  }
+
+  const branch = typeof params.branch === 'string' ? params.branch.trim() : '';
+  if (params.branch != null && params.branch !== '' && !isSafeBranchName(branch)) {
+    return {
+      success: false,
+      error: `branch ${JSON.stringify(params.branch)} is not a valid git branch name. Pass the remote branch the work was pushed to, for example "feature/my-change".`,
+    };
+  }
+  // Refused for the same name the automatic capture refuses, and for the same
+  // reason: a merge-back's `git push origin HEAD:develop` would otherwise make
+  // Tier 5 answer with the base branch's own PR. A refusal rather than a silent
+  // skip, because the caller named this branch explicitly and can correct it.
+  const effectiveBase = task.base_branch || task.resolved_base_branch || context.getDefaultBaseBranch?.();
+  if (branch && branch === effectiveBase) {
+    return {
+      success: false,
+      error: `branch "${branch}" is this task's base branch, not a PR source branch. Pass the branch the work was pushed to, or omit branch to resolve from what is already recorded.`,
+    };
+  }
+  if (branch && branch !== task.branch_name && branch !== task.pushed_branch) {
+    task = taskRepo.update({ id: task.id, pushed_branch: branch });
   }
 
   let result;
@@ -658,18 +700,21 @@ export const handleLinkPr: CommandHandler = async (
     case 'transient-error':
       return { success: false, error: result.message ?? 'Temporary error while resolving the PR - try again.' };
     case 'no-anchor':
+      // A refusal, not a pass: nothing was searched. `isError` lets the agent
+      // self-correct instead of reading "linked: false" as "no PR exists".
       return {
-        success: true,
-        message: `"${task.title}" has no branch, worktree, or PR number to resolve a PR from.`,
-        data: { id: task.id, linked: false },
+        success: false,
+        error: `"${task.title}" has nothing recorded to search by: no pull request number, worktree, branch, commit, or pushed branch. Pass branch (the remote branch the work was pushed to) to kangentic_link_pr, or set prUrl or prNumber with kangentic_update_task, then call kangentic_link_pr again.`,
       };
     case 'not-found':
-    default:
+    default: {
+      const searched = describeSearchedAnchors(linkedTask ?? task);
       return {
         success: true,
-        message: `No PR found for "${task.title}".`,
+        message: `No PR found for "${task.title}"${searched ? ` (searched by ${searched})` : ''}.`,
         data: { id: task.id, linked: false },
       };
+    }
   }
 };
 

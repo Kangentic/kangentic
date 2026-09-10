@@ -11,6 +11,7 @@ import {
 import { looksLikeShellId } from './background-shell/looks-like-shell-id';
 import { UsageAccumulator } from './usage-accumulator';
 import { PRCommandDetector } from './pr-command-detector';
+import { PushCommandDetector } from './push-command-detector';
 import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 
 const MAX_EVENTS_PER_SESSION = 500;
@@ -39,6 +40,13 @@ interface SessionTelemetryCallbacks {
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
   onPRCandidate(sessionId: string): void;
+  /**
+   * Called when the agent's own `git push` finished, with the branch the push
+   * named as its destination. The listener records it as the task's
+   * `pushed_branch`, the PR ladder's per-task anchor for a task with no
+   * worktree. Optional: only the production wiring cares.
+   */
+  onBranchPushed?(sessionId: string, branch: string): void;
   /** Called when the agent reports its own session_id (from status.json). */
   onAgentSessionId?(sessionId: string, agentReportedId: string): void;
   requestSuspend(sessionId: string): void;
@@ -133,6 +141,7 @@ export class SessionTelemetry {
   private readonly ptyTracker: PtyActivityTracker;
   private readonly usage = new UsageAccumulator();
   private readonly prCommandDetector = new PRCommandDetector();
+  private readonly pushCommandDetector = new PushCommandDetector();
   /**
    * Live snapshot writer. Recreated on demand when the resolver returns a
    * different path so toggle changes (e.g. `developer.activityDebugOverlay`)
@@ -627,6 +636,15 @@ export class SessionTelemetry {
   }
 
   /**
+   * A `git push` whose ToolEnd never arrived, cleared on read. The exit-time
+   * fallback reports it through `onBranchPushed`'s listener ahead of the
+   * pending PR resolve, so the branch is on the row before the ladder runs.
+   */
+  takePendingPushedBranch(sessionId: string): string | null {
+    return this.pushCommandDetector.takePending(sessionId);
+  }
+
+  /**
    * Clear all per-session tracking state (used by suspend). Keeps the
    * eventCache and sessionParsers entries because the session record
    * may be reused on resume.
@@ -647,6 +665,7 @@ export class SessionTelemetry {
     this.agentSessionIdChecked.delete(sessionId);
     this.lastReportedAgentSessionIds.delete(sessionId);
     this.prCommandDetector.removeSession(sessionId);
+    this.pushCommandDetector.removeSession(sessionId);
     this.notifySessionEnded(sessionId);
     // Note: we deliberately do NOT remove the debug-dump file here.
     // Surviving past session-end is the whole point - so a developer
@@ -751,6 +770,8 @@ export class SessionTelemetry {
    *   - usage accumulator records ToolStart/End for per-tool stats
    *   - PR command detector flips pending flag, fires `onPRCandidate`
    *     when ToolStart-then-ToolEnd pair completes
+   *   - push command detector remembers a `git push` destination on
+   *     ToolStart, fires `onBranchPushed` when that call's ToolEnd arrives
    *   - `maybeSuppressPtyTracker` once a hooks_and_pty agent delivers a
    *     thinking signal
    *   - `detectExitPlanMode` fires plan-exit when ExitPlanMode tool
@@ -781,6 +802,10 @@ export class SessionTelemetry {
       const prResult = this.prCommandDetector.detect(sessionId, event);
       if (prResult.fireCandidate) {
         this.callbacks.onPRCandidate(sessionId);
+      }
+      const pushResult = this.pushCommandDetector.detect(sessionId, event);
+      if (pushResult.pushedBranch) {
+        this.callbacks.onBranchPushed?.(sessionId, pushResult.pushedBranch);
       }
 
       this.activityEngine.processEvent(sessionId, event);

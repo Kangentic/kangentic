@@ -59,6 +59,13 @@ vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => true),
 }));
 
+// The missing-worktree demotion captures the surviving local branch's tip
+// before dropping the name. Mocked so no real git runs against the mock path.
+const readLocalBranchShaMock = vi.fn(async (): Promise<string | null> => null);
+vi.mock('../../src/main/git/worktree-head', () => ({
+  readLocalBranchSha: (...args: unknown[]) => readLocalBranchShaMock(...(args as [])),
+}));
+
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({}) as never),
 }));
@@ -388,12 +395,32 @@ describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing bra
 
     await runResume();
 
-    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, pushed_branch: null, resolved_base_branch: null });
+    // `pushed_branch` is never in the patch: a remote fact and a PR anchor
+    // that outlives the checkout (see pushed-branch-cleanup-parity).
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: TASK_ID, worktree_path: null, branch_name: null, resolved_base_branch: null });
     expect(taskRepoSetWorktreeSkipReasonMock).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
     // The record itself is still retired (unresumable cwd), regardless of
     // the task-level fallback.
     expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'record-1');
     expect(prepareAgentSpawn).not.toHaveBeenCalled();
+  });
+
+  it('captures the surviving local branch tip into head_sha before dropping the branch name', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' }),
+    ]);
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    readLocalBranchShaMock.mockResolvedValueOnce('abc123def456');
+
+    await runResume();
+
+    expect(readLocalBranchShaMock).toHaveBeenCalledWith(expect.any(String), 'stale-branch');
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({
+      id: TASK_ID, worktree_path: null, branch_name: null, resolved_base_branch: null, head_sha: 'abc123def456',
+    });
   });
 
   it('leaves worktree_path and the skip reason untouched when only the record cwd is stale (task worktree_path already null)', async () => {

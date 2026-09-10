@@ -1,5 +1,6 @@
 import { simpleGit } from 'simple-git';
 import { viaGitRead } from './git-read-queue';
+import { isSafeBranchName } from './push-command';
 
 /**
  * Read the worktree's live HEAD: the actual branch (preferred over the stored
@@ -39,6 +40,34 @@ export async function readWorktreeHeadUnqueued(worktreePath: string): Promise<{ 
     // Worktree gone or git error.
     return { branch: null, sha: null };
   }
+}
+
+/**
+ * The tip commit of a LOCAL branch by name, read from the main repo, or null
+ * when the branch does not exist or cannot be read.
+ *
+ * For the paths that discard a checkout whose directory is already gone (the
+ * startup worktree-missing fallbacks, the Backlog resource sweep): the worktree
+ * HEAD cannot be read any more, but the branch ref lives in the shared ref
+ * store and survives the directory, so its tip is still capturable as the
+ * task's `head_sha`. A named ref is per task, unlike the checkout's HEAD.
+ *
+ * Never throws and never hands git an option-shaped name: the `refs/heads/`
+ * prefix defuses a leading dash, and `isSafeBranchName` refuses the rest.
+ * Queued through the global read cap like its siblings.
+ */
+export async function readLocalBranchSha(repoCwd: string, branchName: string): Promise<string | null> {
+  if (!isSafeBranchName(branchName)) return null;
+  return viaGitRead(async () => {
+    try {
+      const git = simpleGit(repoCwd);
+      const sha = (await git.revparse(['--verify', '--quiet', `${LOCAL_REF_PREFIX}${branchName}`])).trim();
+      return HEX_SHA_PATTERN.test(sha) ? sha : null;
+    } catch {
+      // Missing branch, or `simpleGit()` itself threw on a missing directory.
+      return null;
+    }
+  });
 }
 
 /**

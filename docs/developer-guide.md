@@ -120,6 +120,7 @@ src/
         user-interrupt-coordinator.ts # 3s settle timer for Ctrl+C; synthesizes Interrupted on stuck state
         usage-accumulator.ts # Per-tool stats
         pr-command-detector.ts # PR command pattern detector
+        push-command-detector.ts # git push destination capture (the pushed_branch PR anchor)
         pty-activity-tracker.ts # PTY-byte fallback for non-hook agents
   preload/
     preload.ts             # Context bridge (window.electronAPI)

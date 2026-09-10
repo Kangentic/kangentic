@@ -1451,18 +1451,25 @@
         var mode = tasks[idx].session_id ? 'live' : 'persisted';
         return { ok: true, mode: mode };
       },
-      resolvePr: async function (taskId) {
+      resolvePr: async function (taskId, projectId) {
         // Test hook: spec can override the response by setting
         // window.__mockResolvePrResult before calling. Defaults to returning the
         // task unchanged (no PR linked) - real resolution needs the gh CLI.
+        // Takes the projectId the preload forwards, like the real handler.
         if (typeof window !== 'undefined') {
           if (!window.__mockResolvePrCalls) window.__mockResolvePrCalls = [];
-          window.__mockResolvePrCalls.push(taskId);
+          window.__mockResolvePrCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
           if (typeof window.__mockResolvePrResult === 'function') {
             return window.__mockResolvePrResult(taskId);
           }
         }
         var found = tasks.find(function (t) { return t.id === taskId; }) || null;
+        // Mirror the real anchor gate: a task with nothing to search by is
+        // `no-anchor`, never `not-found`.
+        var hasAnchor = !!(found && (
+          found.pr_number != null || found.worktree_path || found.branch_name || found.head_sha || found.pushed_branch
+        ));
+        if (found && !hasAnchor) return { task: found, linked: false, reason: 'no-anchor' };
         var isLinked = !!(found && found.pr_url);
         return { task: found, linked: isLinked, reason: isLinked ? 'unchanged' : 'not-found' };
       },

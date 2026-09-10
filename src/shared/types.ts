@@ -393,8 +393,14 @@ export interface Task {
    * Kangentic slug, and nothing else reconciles the two, so every branch-keyed
    * PR anchor looks up a branch no PR was opened from.
    *
-   * Captured opportunistically by the PR linker from a remote branch whose tip
-   * is this task's HEAD, and read back as a PR anchor. Deliberately NOT
+   * Captured from the agent's own `git push` (the destination its command
+   * named, recorded when that call ends) and, failing that, by the PR linker
+   * from a remote branch whose tip is this task's HEAD. Read back as a PR
+   * anchor. For a task with no worktree it is the ONLY anchor: every other one
+   * is written from a worktree read, and the shared checkout's HEAD is not per
+   * task. It is a remote fact, so it outlives the local checkout and no cleanup
+   * path nulls it (like `pr_number`); it is only ever overwritten by a newer
+   * observation. Deliberately NOT
    * `branch_name`: that names the LOCAL branch a restore re-attaches to, and
    * `WorktreeManager.createWorktree` verifies it with `rev-parse --verify`,
    * which does not resolve a remote-only branch. Writing a pushed-only name

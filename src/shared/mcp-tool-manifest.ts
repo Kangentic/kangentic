@@ -60,7 +60,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns and place it at a slot, running the same lifecycle as a drag', category: 'tasks' },
   { name: 'kangentic_reorder_tasks', label: 'Reorder Tasks', blurb: 'set the top-to-bottom order of tasks within one column', category: 'tasks' },
   { name: 'kangentic_move_task_to_project', label: 'Move Task to Project', blurb: 'relocate a To Do task to another project\'s board', category: 'tasks' },
-  { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request via the gh CLI', category: 'tasks' },
+  { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request by its number, branch, commit, or pushed branch', category: 'tasks' },
   { name: 'kangentic_delete_task', label: 'Delete Task', blurb: 'permanently remove a task, its attachments, and session records', category: 'tasks' },
   { name: 'kangentic_remove_task_attachment', label: 'Remove Attachment', blurb: 'detach a file from a board task or backlog item by attachment ID', category: 'tasks' },
 

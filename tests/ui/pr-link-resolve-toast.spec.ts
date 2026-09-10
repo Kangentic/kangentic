@@ -26,6 +26,18 @@ const PROJECT_ID = 'proj-pr-link-toast';
 const TASK_ID = 'task-pr-link-toast';
 const SESSION_ID = 'sess-pr-link-toast';
 
+// Extra fixtures for the pushed_branch / pr_number anchor coverage at the
+// bottom of this file: pushed_branch is now a first-class PR anchor for a
+// task with no worktree, so a task can carry it (or a bare pr_number) alone,
+// with branch_name and worktree_path both null.
+const TASK_ID_PUSHED_BRANCH = 'task-pr-link-toast-pushed-branch';
+const SESSION_ID_PUSHED_BRANCH = 'sess-pr-link-toast-pushed-branch';
+const PUSHED_BRANCH_NAME = 'maint/foo';
+const TASK_ID_PR_NUMBER = 'task-pr-link-toast-pr-number';
+const SESSION_ID_PR_NUMBER = 'sess-pr-link-toast-pr-number';
+const TASK_ID_NO_ANCHOR = 'task-pr-link-toast-no-anchor';
+const SESSION_ID_NO_ANCHOR = 'sess-pr-link-toast-no-anchor';
+
 const preConfig = `
   window.__mockPreConfigure(function (state) {
     var ts = new Date().toISOString();
@@ -72,6 +84,112 @@ const preConfig = `
       session_id: '${SESSION_ID}',
       worktree_path: null,
       branch_name: 'feature/pr-link-toast',
+      pr_number: null,
+      pr_url: null,
+      pr_state: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // Pushed-branch-only anchor: no worktree, no branch_name, only an
+    // ephemeral pushed branch recorded. Needs its own running session for the
+    // same reason as the task above (the detail dialog must open on the
+    // header, not the edit form).
+    state.sessions.push({
+      id: '${SESSION_ID_PUSHED_BRANCH}',
+      taskId: '${TASK_ID_PUSHED_BRANCH}',
+      projectId: '${PROJECT_ID}',
+      pid: 9998,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/pr-link-toast-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.tasks.push({
+      id: '${TASK_ID_PUSHED_BRANCH}',
+      // Deliberately NOT prefixed "PR Link Toast Task": the existing tests
+      // above locate their card with the unquoted text=PR Link Toast Task
+      // selector, which Playwright matches as a case-insensitive substring.
+      // A title containing that substring would make their .first() pick
+      // ambiguous once this task is on the board too.
+      title: 'Pushed Branch Anchor Task',
+      description: 'No worktree, no branch_name - only pushed_branch is set',
+      swimlane_id: laneIds['Code Review'],
+      position: 1,
+      agent: 'claude',
+      session_id: '${SESSION_ID_PUSHED_BRANCH}',
+      worktree_path: null,
+      branch_name: null,
+      pushed_branch: '${PUSHED_BRANCH_NAME}',
+      pr_number: null,
+      pr_url: null,
+      pr_state: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // pr_number-only anchor: no worktree, no branch_name, no pushed_branch -
+    // only a recorded PR number.
+    state.sessions.push({
+      id: '${SESSION_ID_PR_NUMBER}',
+      taskId: '${TASK_ID_PR_NUMBER}',
+      projectId: '${PROJECT_ID}',
+      pid: 9997,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/pr-link-toast-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.tasks.push({
+      id: '${TASK_ID_PR_NUMBER}',
+      title: 'PR Number Anchor Task',
+      description: 'No worktree, no branch_name, no pushed_branch - only pr_number is set',
+      swimlane_id: laneIds['Code Review'],
+      position: 2,
+      agent: 'claude',
+      session_id: '${SESSION_ID_PR_NUMBER}',
+      worktree_path: null,
+      branch_name: null,
+      pushed_branch: null,
+      pr_number: 42,
+      pr_url: null,
+      pr_state: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // No anchor at all - guards the other direction: the Link/Refresh PR item
+    // must stay hidden when none of the four anchors is set.
+    state.sessions.push({
+      id: '${SESSION_ID_NO_ANCHOR}',
+      taskId: '${TASK_ID_NO_ANCHOR}',
+      projectId: '${PROJECT_ID}',
+      pid: 9996,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/pr-link-toast-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.tasks.push({
+      id: '${TASK_ID_NO_ANCHOR}',
+      title: 'No Anchor Task',
+      description: 'No worktree, branch_name, pushed_branch, or pr_number',
+      swimlane_id: laneIds['Code Review'],
+      position: 3,
+      agent: 'claude',
+      session_id: '${SESSION_ID_NO_ANCHOR}',
+      worktree_path: null,
+      branch_name: null,
+      pushed_branch: null,
       pr_number: null,
       pr_url: null,
       pr_state: null,
@@ -179,6 +297,34 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
+  // `no-anchor` means nothing was searched: the task has no branch, commit,
+  // or PR number recorded. It used to fall into the not-found branch and toast
+  // "No PR found", which reads as "the PR does not exist" when it may well
+  // exist and the task simply had nothing to search by.
+  test('no-anchor toasts "nothing to search by", not "no PR found"', async () => {
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=PR Link Toast Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await page.evaluate(() => {
+      window.__mockResolvePrResult = () => Promise.resolve({ task: null, linked: false, reason: 'no-anchor' });
+    });
+
+    await clickLinkPr();
+
+    const toast = page.getByTestId('toast').filter({ hasText: 'Nothing to search by' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast).not.toContainText('No PR found');
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
   // The transient-error branch is a SEPARATE `result.message ?? '<fallback>'`
   // in the handler, not shared code with the resolver-unavailable branch
   // above - it needs its own coverage or a future regression there (e.g.
@@ -207,6 +353,89 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
     const toast = page.getByTestId('toast').filter({ hasText: 'Temporary Azure DevOps error - try again.' });
     await expect(toast).toBeVisible({ timeout: 5000 });
     await expect(toast).not.toContainText('GitHub');
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+});
+
+test.describe('Link/Refresh PR kebab item: pushed_branch and pr_number anchors', () => {
+  // THE FIX under test (TaskDetailHeader.tsx, TaskDetailKebabItems):
+  //   1. The item's visibility widened from
+  //      (task.branch_name || task.worktree_path) to also include
+  //      task.pushed_branch and task.pr_number != null, so a no-worktree task
+  //      whose push was recorded, or that names its PR only by number, now
+  //      gets the control too.
+  //   2. The "no PR found" toast's searched-branch fallback widened from
+  //      task.branch_name only to task.branch_name ?? task.pushed_branch, so
+  //      a task with no branch_name but a recorded pushed_branch names that
+  //      branch in the toast instead of dropping to the generic message.
+  // The sibling `no-anchor` test above exercises a task with none of
+  // branch_name, worktree_path, pushed_branch, or pr_number - it does not
+  // cover a task that has pushed_branch or pr_number ALONE, which is the gap
+  // these three tests close.
+
+  test('shows Link PR and toasts the pushed branch for a no-worktree task with only pushed_branch set', async () => {
+    const card = page.locator(`[data-task-id="${TASK_ID_PUSHED_BRANCH}"]`);
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await dialog.locator('[title="Actions"]').click();
+    const linkPrItem = page.getByRole('button', { name: 'Link PR', exact: true });
+    await expect(linkPrItem).toBeVisible();
+
+    await page.evaluate(() => {
+      window.__mockResolvePrResult = () => Promise.resolve({ task: null, linked: false, reason: 'not-found' });
+    });
+
+    await linkPrItem.click();
+
+    const toast = page.getByTestId('toast').filter({
+      hasText: `No PR found for branch "${PUSHED_BRANCH_NAME}"`,
+    });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    // Before the fix, a task with branch_name null fell straight to the
+    // generic message even with pushed_branch set.
+    await expect(toast).not.toContainText('No PR found for this task');
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('shows Link PR for a no-worktree task with only pr_number set', async () => {
+    const card = page.locator(`[data-task-id="${TASK_ID_PR_NUMBER}"]`);
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await dialog.locator('[title="Actions"]').click();
+    const linkPrItem = page.getByRole('button', { name: 'Link PR', exact: true });
+    await expect(linkPrItem).toBeVisible();
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // Guards the other direction: with none of the four anchors set, the item
+  // must stay hidden rather than opening onto a resolver call with nothing
+  // to search by.
+  test('hides Link/Refresh PR entirely when none of the four anchors is set', async () => {
+    const card = page.locator(`[data-task-id="${TASK_ID_NO_ANCHOR}"]`);
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await dialog.locator('[title="Actions"]').click();
+    // Positive anchor first: "View conversation" always renders in this menu
+    // (only its disabled state varies), so this proves the kebab actually
+    // opened before the absence check below is trusted. Without it, a broken
+    // Actions trigger would make the count-0 assertion pass vacuously.
+    await expect(page.getByTestId('view-conversation-btn')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^(Link PR|Refresh PR)$/ })).toHaveCount(0);
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });

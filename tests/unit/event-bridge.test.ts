@@ -149,11 +149,13 @@ describe('event-bridge', () => {
     expect(line.detail).toBe('Alert');
   });
 
-  it('detail directive truncates to 200 chars', () => {
-    const stdin = JSON.stringify({ name: 'a'.repeat(250) });
+  it('detail directive truncates at the field cap (2000 chars)', () => {
+    // Sized for a Bash `command`, which the git push capture reads for its
+    // content; tests/unit/hook-detail-cap-parity.test.ts pins the value.
+    const stdin = JSON.stringify({ name: 'a'.repeat(2500) });
     runBridge(stdin, [outputFile, 'task_completed', extractDetail(['name'])]);
     const line = readEvent();
-    expect((line.detail as string).length).toBe(200);
+    expect((line.detail as string).length).toBe(2000);
   });
 
   // --- detail directive (nested) ---
@@ -457,7 +459,7 @@ describe('event-bridge', () => {
   // never embedded raw ---
   //
   // Both arms now match firstNonNull's own contract: `String(value).slice(0,
-  // 200)`. Before that, `event.tool` was assigned the raw walked/looked-up
+  // FIELD_CAP)`. Before that, `event.tool` was assigned the raw walked/looked-up
   // value with no stringify/cap - so a leaf that resolves to a nested OBJECT
   // (e.g. a future agy payload shape whose `toolCall.name` is itself a
   // structured value, or any adapter whose top-level field is an object)

@@ -19,11 +19,21 @@ import type { AgentParser } from '../../src/shared/types';
 
 // ---- Module-level mocks (hoisted before the import under test) ----
 
+// Holder so the node-pty mock can hand the captured onExit callback back to
+// the "onExit fallback ordering" describe block below (mirrors the harness in
+// session-exit-intentional.test.ts). Every other describe block in this file
+// never fires it, so capturing it here is purely additive.
+const ptyExitHarness = vi.hoisted(() => ({
+  onExitCallback: null as ((event: { exitCode: number }) => void) | null,
+}));
+
 // Prevent real PTY process from spawning.
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({
     onData: vi.fn(),
-    onExit: vi.fn(),
+    onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+      ptyExitHarness.onExitCallback = callback;
+    }),
     write: vi.fn(),
     kill: vi.fn(),
     resize: vi.fn(),
@@ -152,6 +162,7 @@ function makeContext(): SpawnFlowContext {
       emitSessionEnd: vi.fn(),
       hasPendingPRCommand: vi.fn(() => false),
       clearPendingPRCommand: vi.fn(),
+      takePendingPushedBranch: vi.fn(() => null),
       getSessionActivity: vi.fn(() => null),
     },
     sessionIdManager: {
@@ -1118,5 +1129,63 @@ describe('performSpawn - cols/rows precedence', () => {
     const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
     expect(spawnOptions.cols).toBe(100);
     expect(spawnOptions.rows).toBe(40);
+  });
+});
+
+describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candidate', () => {
+  // The onExit handler emits the pushed-branch fallback immediately BEFORE the
+  // PR-candidate fallback, with a comment claiming this is deliberate: both
+  // land on the same per-task queue (recordPushedBranchForSession runs
+  // synchronously up to its `await withTaskLock`), so the branch-pushed
+  // listener enqueues before the pr-candidate listener's resolve can run.
+  //
+  // Every other test in this file (and in session-exit-intentional.test.ts)
+  // stubs takePendingPushedBranch to null and/or hasPendingPRCommand to
+  // false, so neither fallback branch executes and swapping the two blocks
+  // in session-spawn-flow.ts would pass every one of them. This test makes
+  // BOTH preconditions true and asserts the OBSERVED emit order, not merely
+  // that each mock was called.
+  //
+  // Red-green: swapped the two emit blocks in session-spawn-flow.ts (emitting
+  // 'pr-candidate' before consuming/emitting the pending pushed branch) -
+  // this test went red (branchPushedIndex > prCandidateIndex); restored the
+  // source order - green again.
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  beforeEach(() => {
+    ptyExitHarness.onExitCallback = null;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('emits branch-pushed before pr-candidate when both are pending at PTY exit', async () => {
+    const context = makeContext();
+    (context.telemetry.takePendingPushedBranch as ReturnType<typeof vi.fn>).mockReturnValue('feature/pending-branch');
+    (context.telemetry.hasPendingPRCommand as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (context.bufferManager.getRawScrollback as ReturnType<typeof vi.fn>).mockReturnValue('scrollback bytes');
+
+    const input = makeInput();
+    await performSpawn(input, context);
+
+    expect(ptyExitHarness.onExitCallback).toBeTypeOf('function');
+    ptyExitHarness.onExitCallback!({ exitCode: 0 });
+
+    const emitMock = context.emit as unknown as ReturnType<typeof vi.fn>;
+    const eventOrder = emitMock.mock.calls.map((call) => call[0] as string);
+    const branchPushedIndex = eventOrder.indexOf('branch-pushed');
+    const prCandidateIndex = eventOrder.indexOf('pr-candidate');
+
+    // Both fallbacks must actually have fired (the preconditions were set up
+    // to make both true) ...
+    expect(branchPushedIndex).toBeGreaterThanOrEqual(0);
+    expect(prCandidateIndex).toBeGreaterThanOrEqual(0);
+    // ... and branch-pushed must land on the queue first.
+    expect(branchPushedIndex).toBeLessThan(prCandidateIndex);
+
+    expect(emitMock.mock.calls[branchPushedIndex]).toEqual(['branch-pushed', input.id, 'feature/pending-branch']);
+    expect(emitMock.mock.calls[prCandidateIndex]).toEqual(['pr-candidate', input.id, 'scrollback bytes']);
   });
 });

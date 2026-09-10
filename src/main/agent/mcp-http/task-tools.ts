@@ -657,14 +657,15 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_link_pr',
     {
-      description: 'Authoritatively resolve and link the pull request for a task\'s git branch using the gh CLI (`gh pr list --head <branch>`). Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or `gh api`, and works even when the task has no live session. Re-running refreshes the linked PR\'s state (open/draft/merged/closed). Use after opening a PR, or to backfill a task whose PR was never linked. Find the task ID first with kangentic_find_task. Pass `project` to target a different project.',
+      description: 'Authoritatively resolve and link the pull request for a task through the repository\'s PR host (GitHub via gh, Azure DevOps via az), searching by the task\'s PR number, worktree branch, commit, stored branch, and pushed branch in that order. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR\'s state (open/draft/merged/closed). Use after opening a PR, or to backfill a task whose PR was never linked. A task with no worktree has nothing to search by until its push is recorded: pass `branch` (the remote branch the work was pushed to) and it is recorded first. Find the task ID first with kangentic_find_task. Pass `project` to target a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
+        branch: z.string().optional().describe('The remote branch the work was pushed to (the PR source branch). Recorded on the task before resolving; needed when the task has no worktree and nothing else recorded.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('link_pr', { taskId }, ctx, 'Failed to resolve PR')),
+    async ({ taskId, branch, project }) => withProject(resolver, project, (ctx) => callHandler('link_pr', { taskId, branch }, ctx, 'Failed to resolve PR')),
   );
 
   // --- kangentic_move_task ---

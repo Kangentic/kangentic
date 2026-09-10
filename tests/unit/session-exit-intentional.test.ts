@@ -124,6 +124,7 @@ function makeContext(): SpawnFlowContext {
       emitSessionEnd: vi.fn(),
       hasPendingPRCommand: vi.fn(() => false),
       clearPendingPRCommand: vi.fn(),
+      takePendingPushedBranch: vi.fn(() => null),
       getSessionActivity: vi.fn(() => null),
     },
     sessionIdManager: {
