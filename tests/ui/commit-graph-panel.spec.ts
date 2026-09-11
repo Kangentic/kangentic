@@ -19,7 +19,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { pressResizeHandle, waitForViteReady } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -213,22 +213,13 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
     // it, so dragging the handle 80px UP grows the history body (mirrors the
     // file-tree's "drag-resizable" test in changes-panel-scope.spec.ts).
     //
-    // `hover()` rather than a hand-rolled mouse.move: expanding History runs a
-    // height transition, so a boundingBox read the instant the graph becomes
-    // visible is already stale by the time the press lands, and the press then
-    // misses the 4px handle entirely. Playwright's actionability waits for the
-    // box to STOP moving first, which is the real precondition here. This
-    // showed up as a CI flake on UI shard 4 (the height stayed at its 200px
-    // default, then passed on retry).
+    // `pressResizeHandle` hovers (so Playwright waits for the History height
+    // transition to finish moving the handle), presses, and re-presses when
+    // the drag has not armed: both shapes of the CI flake this test has had on
+    // UI shard 4. See the helper's docblock for the history.
     const handle = page.locator('[data-testid="changes-history-resize"]');
-    await handle.hover();
-    const handleBox = (await handle.boundingBox())!;
     const beforeHeight = (await historyPanel.boundingBox())!.height;
-    await page.mouse.down();
-
-    // The drag is genuinely in flight before any move is dispatched, so the
-    // moves cannot land before the handler installs its document listeners.
-    await expect(handle).toHaveAttribute('data-resizing', 'true');
+    const handleBox = await pressResizeHandle(page, '[data-testid="changes-history-resize"]');
 
     await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y - 80, { steps: 6 });
     await page.mouse.up();

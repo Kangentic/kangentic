@@ -47,6 +47,45 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
 }
 
 /**
+ * Press one of the Changes panel's resize handles (`data-testid` selector) and
+ * return its box once the drag is genuinely in flight, meaning the handle
+ * publishes `data-resizing="true"`. Dispatch the moves only after this
+ * resolves, so they cannot land before the handler installs its document
+ * listeners.
+ *
+ * `hover()` waits for the handle's box to stop moving (expanding History runs a
+ * height transition, which was the first CI flake on this shape). The press
+ * itself then still lost once on UI shard 4: the hover had verifiably hit the
+ * handle, the box never moved again, and `data-resizing` stayed `false` for
+ * the full 5 s, which is the shape of an input event starved under
+ * parallel-worker load rather than a moving target. A press that has not armed
+ * within a short window is therefore released and re-issued from a freshly
+ * read box, bounded, the same treatment `dragTaskToColumn` gives a missed
+ * dnd-kit activation. The hard cap keeps a handle that never arms a failure
+ * rather than a hang.
+ */
+export async function pressResizeHandle(
+  page: Page,
+  selector: string,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  const handle = page.locator(selector);
+  const armed = page.locator(`${selector}[data-resizing="true"]`);
+  const PRESS_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= PRESS_ATTEMPTS; attempt += 1) {
+    await handle.hover();
+    const box = await handle.boundingBox();
+    if (!box) throw new Error(`${selector} has no bounding box`);
+    await page.mouse.down();
+    const inFlight = await armed.waitFor({ state: 'attached', timeout: 1500 })
+      .then(() => true)
+      .catch(() => false);
+    if (inFlight) return box;
+    await page.mouse.up();
+  }
+  throw new Error(`${selector} did not enter its drag after ${PRESS_ATTEMPTS} presses`);
+}
+
+/**
  * Launch a headless Chromium page with the electronAPI mock injected.
  * The Vite dev server must be running (started by playwright webServer config).
  */
