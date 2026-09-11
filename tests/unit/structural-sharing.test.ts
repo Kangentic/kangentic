@@ -127,6 +127,30 @@ describe('applyStructuralSharing', () => {
     expect(result[0]).toBe(next);
   });
 
+  // A background PR sweep or an explicit "Refresh PR" can resolve a new merge
+  // verdict while the link itself (url/number/state) stays exactly the same -
+  // see pr-link-ladder.test.ts's "fires when only the merge-readiness verdict
+  // changes (url/number/state unchanged)". Without this comparison the card
+  // would keep the stale chip reference until an unrelated field changed too.
+  it('uses next reference when pr_merge_readiness changed with url/number/state unchanged', () => {
+    const previous = makeTask({
+      pr_url: 'https://github.com/owner/repo/pull/10',
+      pr_number: 10,
+      pr_state: 'open',
+      pr_merge_readiness: 'ready',
+    });
+    const next = makeTask({
+      pr_url: 'https://github.com/owner/repo/pull/10',
+      pr_number: 10,
+      pr_state: 'open',
+      pr_merge_readiness: 'blocked',
+    });
+
+    const result = applyStructuralSharing([previous], [next]);
+
+    expect(result[0]).toBe(next);
+  });
+
   it('uses next reference when run_mode differs (Column Settings vs Agent Override)', () => {
     const previous = makeTask({ run_mode: 'column_settings' });
     const next = makeTask({ run_mode: 'agent_override' });
