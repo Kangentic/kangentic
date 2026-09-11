@@ -1,12 +1,13 @@
 /**
- * Unit tests for toBoardTaskWire (src/main/mobile-bridge/handlers/wire-mappers.ts).
- * No existing suite exercises this mapper directly - read-board.test.ts covers
- * handleReadBoard end to end but stubs raw partial task rows, never a full
- * Task, and never asserts on pr_merge_readiness specifically.
+ * Unit tests for toBoardTaskWire and toBoardColumnWire
+ * (src/main/mobile-bridge/handlers/wire-mappers.ts). No existing suite
+ * exercises either mapper directly - read-board.test.ts covers
+ * handleReadBoard end to end but stubs raw partial rows, never a full Task
+ * or Swimlane.
  */
 import { describe, it, expect } from 'vitest';
-import { toBoardTaskWire } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
-import type { Task } from '../../../src/shared/types';
+import { columnSpawnsSession, toBoardColumnWire, toBoardTaskWire } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
+import type { Swimlane, Task } from '../../../src/shared/types';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -50,5 +51,69 @@ describe('toBoardTaskWire', () => {
   it('passes null through when the PR has no judged readiness', () => {
     const task = makeTask({ pr_merge_readiness: null });
     expect(toBoardTaskWire(task).pr_merge_readiness).toBeNull();
+  });
+});
+
+function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
+  return {
+    id: 'lane-1',
+    name: 'Column',
+    description: null,
+    role: null,
+    position: 0,
+    color: '#00ff00',
+    icon: null,
+    is_archived: false,
+    is_ghost: false,
+    permission_mode: null,
+    auto_spawn: true,
+    auto_command: null,
+    auto_command_mode: 'immediate',
+    plan_exit_target_id: null,
+    agent_override: null,
+    model_override: null,
+    effort_override: null,
+    handoff_context: false,
+    session_target: 'main',
+    session_spawn_strategy: 'create_or_resume',
+    created_at: '2026-04-17T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('columnSpawnsSession', () => {
+  it('is false for a role:todo column, even with auto_spawn true', () => {
+    expect(columnSpawnsSession(makeSwimlane({ role: 'todo', auto_spawn: true }))).toBe(false);
+  });
+
+  it('is false for a role:done column, even with auto_spawn true', () => {
+    expect(columnSpawnsSession(makeSwimlane({ role: 'done', auto_spawn: true }))).toBe(false);
+  });
+
+  it('is false for a custom column with auto_spawn false', () => {
+    expect(columnSpawnsSession(makeSwimlane({ role: null, auto_spawn: false }))).toBe(false);
+  });
+
+  it('is true for a custom column with auto_spawn true', () => {
+    expect(columnSpawnsSession(makeSwimlane({ role: null, auto_spawn: true }))).toBe(true);
+  });
+
+  it('is a real boolean, never undefined, for a malformed auto_spawn', () => {
+    const malformed = makeSwimlane({ role: null }) as Swimlane;
+    // @ts-expect-error - simulating a malformed row with a missing auto_spawn
+    delete malformed.auto_spawn;
+    expect(columnSpawnsSession(malformed)).toBe(false);
+  });
+});
+
+describe('toBoardColumnWire', () => {
+  it('carries spawns_session computed from role and auto_spawn', () => {
+    expect(toBoardColumnWire(makeSwimlane({ role: 'todo', auto_spawn: true })).spawns_session).toBe(false);
+    expect(toBoardColumnWire(makeSwimlane({ role: null, auto_spawn: true })).spawns_session).toBe(true);
+  });
+
+  it('passes role through unchanged', () => {
+    expect(toBoardColumnWire(makeSwimlane({ role: 'done' })).role).toBe('done');
+    expect(toBoardColumnWire(makeSwimlane({ role: null })).role).toBeNull();
   });
 });

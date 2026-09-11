@@ -167,6 +167,9 @@ interface MockContext {
     isDestroyed: ReturnType<typeof vi.fn>;
     webContents: { send: ReturnType<typeof vi.fn> };
   };
+  boardEvents: {
+    emitBoardChanged: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
@@ -197,6 +200,9 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     mainWindow: {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
+    },
+    boardEvents: {
+      emitBoardChanged: vi.fn(),
     },
     ...overrides,
   };
@@ -700,5 +706,105 @@ describe('SWIMLANE_DELETE handler - Board Profile pruning', () => {
 
     expect(context.boardConfigManager.setBoardProfiles).not.toHaveBeenCalled();
     expect(context.boardConfigManager.writeBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// board-changed emit on every swimlane mutation (a paired phone was never
+// told about a user's own column edit before this - only an agent/MCP edit
+// reached the bus - so its board snapshot, including spawns_session, could
+// go stale until an unrelated board change happened to fire).
+// ---------------------------------------------------------------------------
+
+describe('SWIMLANE_CREATE/UPDATE/DELETE/REORDER handlers - board-changed emit', () => {
+  let context: MockContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.restartSessionForSettingsChange.mockReset();
+    hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
+    hoisted.prepareInjectionPlan.mockReset();
+    hoisted.prepareInjectionPlan.mockReturnValue(null);
+    capturedHandlers.clear();
+
+    context = createMockContext();
+    registerBoardHandlers(context as never);
+  });
+
+  it('SWIMLANE_CREATE emits swimlane-updated with the new column id', () => {
+    const created = createSwimlaneBefore({ id: 'lane-new' });
+    const repos = buildProjectRepos(null, created, []);
+    repos.swimlanes.create.mockReturnValue(created);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    const handler = capturedHandlers.get(IPC.SWIMLANE_CREATE);
+    if (!handler) throw new Error('Handler for SWIMLANE_CREATE was not registered');
+    handler(null, { name: 'New Column' });
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledWith({
+      projectId: 'proj-board-1',
+      change: 'swimlane-updated',
+      ids: ['lane-new'],
+    });
+  });
+
+  it('SWIMLANE_UPDATE emits swimlane-updated with the updated column id', async () => {
+    const swimlaneBefore = createSwimlaneBefore({ id: 'lane-executing' });
+    const updatedSwimlane = { ...swimlaneBefore, name: 'Executing (renamed)' };
+    const repos = buildProjectRepos(swimlaneBefore, updatedSwimlane, []);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    await callSwimlaneUpdate({ id: 'lane-executing', name: 'Executing (renamed)' }, context);
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledWith({
+      projectId: 'proj-board-1',
+      change: 'swimlane-updated',
+      ids: ['lane-executing'],
+    });
+  });
+
+  it('SWIMLANE_DELETE emits swimlane-updated naming the deleted column, even though the row no longer exists', () => {
+    const doomedSwimlane = createSwimlaneBefore({ id: 'lane-doomed' });
+    const repos = buildProjectRepos(doomedSwimlane, doomedSwimlane, []);
+    mockGetProjectRepos.mockReturnValue(repos);
+    context.boardConfigManager.getBoardProfiles.mockReturnValue([]);
+
+    const handler = capturedHandlers.get(IPC.SWIMLANE_DELETE);
+    if (!handler) throw new Error('Handler for SWIMLANE_DELETE was not registered');
+    handler(null, 'lane-doomed');
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledWith({
+      projectId: 'proj-board-1',
+      change: 'swimlane-updated',
+      ids: ['lane-doomed'],
+    });
+  });
+
+  it('SWIMLANE_REORDER emits swimlane-updated naming every reordered id', () => {
+    const repos = buildProjectRepos(null, createSwimlaneBefore(), []);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    const handler = capturedHandlers.get(IPC.SWIMLANE_REORDER);
+    if (!handler) throw new Error('Handler for SWIMLANE_REORDER was not registered');
+    handler(null, ['lane-a', 'lane-b']);
+
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledWith({
+      projectId: 'proj-board-1',
+      change: 'swimlane-updated',
+      ids: ['lane-a', 'lane-b'],
+    });
+  });
+
+  it('does not emit with no project open', () => {
+    context = createMockContext({ currentProjectId: null });
+    registerBoardHandlers(context as never);
+    const repos = buildProjectRepos(null, createSwimlaneBefore(), []);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    const handler = capturedHandlers.get(IPC.SWIMLANE_REORDER);
+    if (!handler) throw new Error('Handler for SWIMLANE_REORDER was not registered');
+    handler(null, ['lane-a']);
+
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
   });
 });

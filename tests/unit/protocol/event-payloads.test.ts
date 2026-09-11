@@ -10,6 +10,8 @@ import {
   parseActivityEventPayload,
 } from '../../../packages/protocol/src/events/event';
 import {
+  isDoneRole,
+  isTodoRole,
   parseBacklogItemWire,
   parseBoardColumnWire,
   parseBoardTaskWire,
@@ -252,8 +254,59 @@ describe('board row guards', () => {
       icon: null,
       is_archived: false,
       is_ghost: false,
+      spawns_session: false,
     };
     expect(parseBoardColumnWire(column)).toEqual(column);
+  });
+
+  it('reads a column missing spawns_session entirely as null (pre-field desktop)', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'To Do',
+      description: null,
+      role: 'todo',
+      position: 0,
+      color: '#00ff00',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+    };
+    expect(parseBoardColumnWire(column).spawns_session).toBeNull();
+  });
+
+  it('passes through a present spawns_session value', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'Executing',
+      description: null,
+      role: null,
+      position: 2,
+      color: '#0000ff',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      spawns_session: true,
+    };
+    expect(parseBoardColumnWire(column).spawns_session).toBe(true);
+  });
+
+  it('passes through an unrecognized role rather than throwing', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'Archive',
+      description: null,
+      role: 'archive',
+      position: 3,
+      color: '#888888',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      spawns_session: null,
+    };
+    const parsed = parseBoardColumnWire(column);
+    expect(parsed.role).toBe('archive');
+    expect(isTodoRole(parsed.role)).toBe(false);
+    expect(isDoneRole(parsed.role)).toBe(false);
   });
 
   it('parses a backlog row', () => {

@@ -26,6 +26,7 @@ import {
   type TranscriptEntryWire,
 } from '@kangentic/protocol';
 import { isJsonValue } from '@kangentic/protocol';
+import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import type {
   ActivityReason,
   BacklogTask,
@@ -257,6 +258,24 @@ export function toSessionEventWire(event: SessionEvent): SessionEventWire {
   };
 }
 
+/**
+ * Whether moving a task into this column would spawn a successor agent
+ * session, per `BoardColumnWire.spawns_session`. Derived from the same
+ * `NEVER_AUTO_SPAWN_ROLES` gate `task-move.ts` Priority 1/2 and
+ * `auto-spawn-reconcile.ts` already enforce - a role in that set never
+ * spawns, whatever `auto_spawn` says (Priority 2.5 covers everything else,
+ * so `auto_spawn` alone decides the rest).
+ *
+ * Returns a real boolean, never `undefined`: `swimlane.auto_spawn` is a
+ * required field, but a malformed row must still resolve to a defined
+ * answer, or the wire's `nullableBoolean` reader would silently read it back
+ * as "unknown desktop" instead of "does not spawn".
+ */
+export function columnSpawnsSession(swimlane: Swimlane): boolean {
+  if (swimlane.role !== null && NEVER_AUTO_SPAWN_ROLES.has(swimlane.role)) return false;
+  return swimlane.auto_spawn === true;
+}
+
 export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
   return {
     id: swimlane.id,
@@ -268,6 +287,7 @@ export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
     icon: swimlane.icon,
     is_archived: swimlane.is_archived,
     is_ghost: swimlane.is_ghost,
+    spawns_session: columnSpawnsSession(swimlane),
   };
 }
 
