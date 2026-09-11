@@ -280,6 +280,12 @@ function useTrackHeadBranch(): void {
     };
     refresh();
     window.electronAPI.git.subscribeDiff(projectRoot);
+    // agent-focus-ok: this push opens nothing. It only re-reads HEAD and
+    // rewrites the branch text of windows that already exist; every openWindow
+    // in this file runs off a user gesture (Ctrl+Shift+P, "New terminal") or
+    // the reconcile that follows it, never off this subscription. The scan in
+    // agent-driven-focus-sites.test.ts cannot tell the two apart, so the answer
+    // is written down here. See .claude/rules/agent-driven-focus.md.
     const unsubscribe = window.electronAPI.git.onDiffChanged(refresh);
     return () => {
       cancelled = true;

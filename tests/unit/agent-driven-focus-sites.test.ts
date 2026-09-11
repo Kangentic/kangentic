@@ -116,10 +116,16 @@ describe('agent-reachable window opens declare their origin', () => {
     const scanned = agentReachableWindowOpeners().map(({ relative }) => relative).sort();
     expect(scanned).toEqual([
       'src/renderer/App.tsx',
+      'src/renderer/components/command-bar/CommandTerminalLayer.tsx',
       'src/renderer/components/monitor/useMonitorDetailOwnership.ts',
       'src/renderer/window-manager/bridge/useBrowserPaneRequestBridge.ts',
       'src/renderer/window-manager/bridge/useTaskDetailWindowBridge.ts',
     ]);
+    // `CommandTerminalLayer` is on the list only because `useTrackHeadBranch`
+    // subscribes to `git.onDiffChanged` in the same file that opens Command
+    // Terminal windows. That push opens nothing (it re-reads HEAD for the branch
+    // pills), so the file carries an `agent-focus-ok` marker rather than an
+    // origin; it is pinned here so the marker cannot be dropped unnoticed.
     // `useProjectSwitchEffect` is deliberately NOT here: it re-opens a task
     // detail from `_pendingOpenTaskId` but subscribes to no push itself, so it
     // is downstream of whoever parked the id rather than a site that can tell
