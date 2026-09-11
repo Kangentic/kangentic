@@ -194,6 +194,7 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       prUrl: task?.pr_url ?? null,
       prNumber: task?.pr_number ?? null,
       prState: task?.pr_state ?? null,
+      prMergeReadiness: task?.pr_merge_readiness ?? null,
       agentName: managed.agentName,
       // Prefer the agent-reported live model (what the card shows); fall back to
       // the persisted applied model, which is all we have before first output

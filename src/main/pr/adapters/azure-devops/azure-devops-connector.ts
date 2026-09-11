@@ -29,7 +29,7 @@
  */
 
 import PQueue from 'p-queue';
-import type { PRConnector, DetectedPR, ResolvedPR, PRState } from '../../shared/pr-connector';
+import type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness } from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
 import {
   AzureDevOpsImporter,
@@ -98,7 +98,34 @@ function mapState(item: AzurePrItem): PRState {
   return item.isDraft ? 'draft' : 'open';
 }
 
+/**
+ * Fold Azure's `mergeStatus` (the server-side merge preview) into the
+ * normalized verdict, or undefined when the item carries none (the commit
+ * tier). `succeeded` maps to `unknown`, NOT `ready`, on purpose: it says the
+ * preview merge applied cleanly, and nothing here has evaluated branch policies
+ * (`_apis/policy/evaluations`, which needs `api-version=7.0-preview.1` and the
+ * project GUID - the follow-up), so `ready` would promise a Merge click this
+ * code cannot vouch for. `queued` / `notSet` / null are "no verdict yet", and
+ * an unrecognized status is `unknown` too: Azure was asked, and the answer was
+ * not one this code understands.
+ */
+function mapMergeReadiness(item: AzurePrItem): PRMergeReadiness | undefined {
+  if (item.mergeStatus === undefined) return undefined;
+  switch (item.mergeStatus) {
+    case 'conflicts':
+      return 'conflicting';
+    case 'rejectedByPolicy':
+    case 'failure':
+      return 'blocked';
+    default:
+      // succeeded (clean preview merge, policies unverified this pass), queued,
+      // notSet, null, and anything newer than this list.
+      return 'unknown';
+  }
+}
+
 function toResolvedPR(item: AzurePrItem, remote: AzureRemote): ResolvedPR {
+  const mergeReadiness = mapMergeReadiness(item);
   return {
     // Constructed, not read: Azure returns null for _links.web.href, remoteUrl
     // AND repository.webUrl on every tier.
@@ -107,6 +134,8 @@ function toResolvedPR(item: AzurePrItem, remote: AzureRemote): ResolvedPR {
     state: mapState(item),
     baseRefName: item.baseRefName,
     updatedAt: item.updatedAt,
+    // Conditional spread so the commit tier's "cannot judge" stays an absent key.
+    ...(mergeReadiness === undefined ? {} : { mergeReadiness }),
   };
 }
 

@@ -11,9 +11,9 @@
  *   refresh* - bulk re-link across a project (see pr-refresh.ts)
  */
 
-import type { PRState } from '../../../shared/types';
+import type { PRState, PRMergeReadiness } from '../../../shared/types';
 
-export type { PRState };
+export type { PRState, PRMergeReadiness };
 
 export interface DetectedPR {
   url: string;
@@ -30,6 +30,19 @@ export interface ResolvedPR {
   state: PRState;
   baseRefName?: string;
   updatedAt?: string;
+  /**
+   * Normalized merge readiness, when THIS resolve could judge it. Omitted means
+   * "this tier or connector cannot determine it" and the linker keeps the stored
+   * verdict; it never means "not ready". A returned `unknown` is different: the
+   * platform was asked and has no verdict yet. The linker holds a determined
+   * stored verdict through a bounded re-poll before conceding to it, because
+   * GitHub answers `UNKNOWN` for a few seconds after every push while it
+   * recomputes, and blanking the card for that window is a flicker, not news.
+   * Each connector folds its own platform vocabulary into this enum inside its
+   * adapter; the generic layer never sees a raw platform string, which
+   * `tests/unit/pr-connector-gate.test.ts` enforces over the real registry.
+   */
+  mergeReadiness?: PRMergeReadiness;
 }
 
 export interface PRConnector {

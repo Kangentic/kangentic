@@ -371,6 +371,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               prUrl={task.pr_url}
               prNumber={task.pr_number}
               prState={task.pr_state}
+              prMergeReadiness={task.pr_merge_readiness}
               testId="task-card-pr-link"
             />
           </div>

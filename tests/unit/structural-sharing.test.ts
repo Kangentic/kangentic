@@ -71,6 +71,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     pr_number: null,
     pr_url: null,
     pr_state: null,
+    pr_merge_readiness: null,
     head_sha: null,
     pushed_branch: null,
     base_branch: null,

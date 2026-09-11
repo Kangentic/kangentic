@@ -220,9 +220,10 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
     const updated = tasks.update(input);
 
-    // The task-detail edit form writes pr_url/pr_number with pr_state null on
-    // purpose (`buildPrFields`), so a stale terminal state can't freeze a
-    // re-pointed link. Nothing else resolves promptly, which left the card
+    // The task-detail edit form writes pr_url/pr_number with pr_state and
+    // pr_merge_readiness null on purpose (`buildPrFields`), so a stale terminal
+    // state can't freeze a re-pointed link and a stale verdict can't describe
+    // the wrong PR. Nothing else resolves promptly, which left the card
     // showing a bare PR pill with no state chip until the background sweep or
     // the next auto-link trigger. Resolve now so the chip lands on save.
     //

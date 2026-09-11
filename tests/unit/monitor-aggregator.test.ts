@@ -161,6 +161,7 @@ function makeTask(id: string, overrides: Partial<Task> = {}): Task {
     pr_number: null,
     pr_url: null,
     pr_state: null,
+    pr_merge_readiness: null,
     head_sha: null,
     external_id: null,
     external_source: null,
@@ -415,6 +416,7 @@ describe('buildMonitorSnapshot', () => {
     expect(row.prUrl).toBeNull();
     expect(row.prNumber).toBeNull();
     expect(row.prState).toBeNull();
+    expect(row.prMergeReadiness).toBeNull();
   });
 
   it('falls back to the unnumbered name for a transient session with no slot', () => {
@@ -591,6 +593,33 @@ describe('buildMonitorSnapshot', () => {
     const generatedAtMs = Date.parse(snapshot.generatedAt);
     expect(generatedAtMs).toBeGreaterThanOrEqual(before);
     expect(generatedAtMs).toBeLessThanOrEqual(after);
+  });
+
+  it('carries the task PR link and merge readiness onto the row', () => {
+    // The transient-session test above pins the null shape; this one pins the
+    // passthrough, so a row that hardcoded `prMergeReadiness: null` goes red.
+    registerHealthyProject('project-a', {
+      tasksById: new Map([
+        ['task-a', makeTask('task-a', {
+          pr_url: 'https://github.com/owner/repo/pull/7',
+          pr_number: 7,
+          pr_state: 'open',
+          pr_merge_readiness: 'ready',
+        })],
+      ]),
+    });
+    const context = makeContext([
+      makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
+    ]);
+
+    const snapshot = buildMonitorSnapshot(context);
+
+    expect(snapshot.rows[0]).toMatchObject({
+      prUrl: 'https://github.com/owner/repo/pull/7',
+      prNumber: 7,
+      prState: 'open',
+      prMergeReadiness: 'ready',
+    });
   });
 
   // =========================================================================

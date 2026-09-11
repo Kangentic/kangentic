@@ -291,6 +291,21 @@ export interface ProjectMoveProgress {
 export type PRState = 'open' | 'draft' | 'merged' | 'closed';
 
 /**
+ * Normalized, platform-agnostic merge readiness: would clicking Merge right now
+ * succeed? Orthogonal to `PRState`, which stays the gate for the terminal
+ * short-circuits. `ready` means a Merge click would succeed; `blocked` means no
+ * conflicts but reviews, checks, policy, or a stale base stop it; `conflicting`
+ * means merge conflicts; `unknown` means the platform was asked and has no
+ * verdict (GitHub `UNKNOWN` while it recomputes, Azure `queued` / `notSet`, and
+ * Azure `succeeded` until branch policies are evaluated). It is distinct from a
+ * null column, which means never checked or no PR. The runtime list comes first
+ * so `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
+ * connector registry; the type is derived from it.
+ */
+export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'unknown'] as const;
+export type PRMergeReadiness = (typeof PR_MERGE_READINESS_VALUES)[number];
+
+/**
  * Outcome of an on-demand PR resolve. `linked`/`unchanged` mean a PR is associated;
  * `not-found`/`no-anchor` mean none was found; `resolver-unavailable` means the
  * provider CLI is missing/unauthenticated; `transient-error` means the check
@@ -384,6 +399,16 @@ export interface Task {
   pr_url: string | null;
   /** Normalized PR state from the authoritative branch->PR resolver. null when no PR is linked or it was linked before state tracking. */
   pr_state: PRState | null;
+  /**
+   * Normalized merge readiness of the linked PR (see `PRMergeReadiness`),
+   * refreshed by every resolve whose connector can judge it. null when no PR is
+   * linked, when the link predates readiness tracking, or when no resolving
+   * tier has been able to judge it yet. A tier that cannot judge it (the commit
+   * tier) preserves the stored value; a pending `unknown` holds a determined
+   * value through a bounded re-poll; the confident-not-found clear nulls it with
+   * the other three PR columns.
+   */
+  pr_merge_readiness: PRMergeReadiness | null;
   /** Last-captured worktree HEAD commit SHA. Immutable anchor for resolving the PR after the worktree is reclaimed (Done) or the branch is renamed. null until captured. */
   head_sha: string | null;
   /**
@@ -2434,6 +2459,7 @@ export interface MonitorSessionRow {
   prUrl: string | null;
   prNumber: number | null;
   prState: PRState | null;
+  prMergeReadiness: PRMergeReadiness | null;
   /** Adapter name captured at spawn (e.g. "claude"). Null for a pre-adapter session. */
   agentName: string | null;
   /** The agent-reported live model when available, else the model the session was
@@ -3587,6 +3613,8 @@ export interface TaskUpdateInput {
   pr_number?: number | null;
   pr_url?: string | null;
   pr_state?: PRState | null;
+  /** Normalized merge readiness of the linked PR (see `Task.pr_merge_readiness`). */
+  pr_merge_readiness?: PRMergeReadiness | null;
   head_sha?: string | null;
   /** The branch the work was pushed to when it differs from `branch_name` (see `Task.pushed_branch`). */
   pushed_branch?: string | null;
@@ -3608,7 +3636,7 @@ export interface TaskUpdateInput {
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */
 export interface TaskResolvePrResult {
-  /** The task after resolution (latest pr_url/pr_number/pr_state), or null if not found. */
+  /** The task after resolution (latest pr_url/pr_number/pr_state/pr_merge_readiness), or null if not found. */
   task: Task | null;
   /** True when the task now has a linked PR (whether or not it changed this call). */
   linked: boolean;

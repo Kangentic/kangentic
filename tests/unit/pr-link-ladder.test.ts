@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Task } from '../../src/shared/types';
 
 /**
@@ -135,7 +135,7 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   };
 });
 
-import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../src/main/pr/pr-linking';
+import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls } from '../../src/main/pr/pr-linking';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -163,7 +163,7 @@ function baseTask(overrides: NonAnchorOverrides): Task {
   return {
     id: `task-${idCounter}`, display_id: idCounter, title: 'T', description: '', swimlane_id: 'lane', position: 0,
     agent: null, session_id: null, worktree_path: null, worktree_folder: null, worktree_skip_reason: null,
-    branch_name: null, pr_number: null, pr_url: null, pr_state: null, head_sha: null, pushed_branch: null,
+    branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, head_sha: null, pushed_branch: null,
     resolved_base_branch: null, external_id: null, external_source: null, external_url: null, base_branch: 'main',
     use_worktree: null, labels: [], priority: 0, model_override: null, effort_override: null, agent_override: null,
     attachment_count: 0, archived_at: null, created_at: 't', updated_at: 't', ...overrides,
@@ -696,7 +696,7 @@ describe('linkPRForTask confidence ladder', () => {
     const deps = depsFor(task, { updateSpy });
     const result = await linkPRForTask(task.id, deps);
     expect(result.status).toBe('not-found');
-    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null }));
     expect(deps.onLinked).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null }));
     expect(result.task?.pr_number).toBeNull();
   });
@@ -866,7 +866,7 @@ describe('linkPRForTask description PR URLs are never an anchor', () => {
     );
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('not-found');
-    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null }));
   });
 
   it('a manually-set pr_number is cleared when it cannot be confirmed, even with a URL in the description', async () => {
@@ -1019,8 +1019,289 @@ describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', ()
     const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
 
     expect(result.status).toBe('not-found');
-    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null }));
     expect(result.task?.pr_number).toBeNull();
+  });
+});
+
+/**
+ * Merge readiness has three rules `pr_state` never needed, because every tier
+ * can determine a state and not every tier can determine readiness:
+ *   - PRESERVE on undetermined (a tier that cannot judge it leaves the stored
+ *     verdict alone, unless the link moved to a different PR),
+ *   - HOLD through a pending `unknown` on a determined verdict, re-polling on a
+ *     bounded timer before conceding (no flicker on GitHub's post-push
+ *     recompute, and an Azure `succeeded` still clears a stale `conflicting`
+ *     once the budget is spent),
+ *   - otherwise write, including `unknown` over null.
+ * Each case reuses the ladder harness: `conn.byNumber` is the Tier-1 answer and
+ * `depsFor` mutates the task in place so a re-poll sees the last write.
+ */
+describe('linkPRForTask merge readiness', () => {
+  const withReadiness = (number: number, mergeReadiness: string | undefined) =>
+    mergeReadiness === undefined ? resolved(number) : { ...resolved(number), mergeReadiness };
+  // A Done task whose worktree was reclaimed and whose branch was captured: the
+  // shape the sweep keeps refreshing after the work is done, and one with no
+  // live HEAD to backfill, so a "no write" assertion sees only readiness.
+  const linkedTask = (overrides: NonAnchorOverrides = {}) =>
+    reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 10, pr_url: 'u10', pr_state: 'open', ...overrides });
+
+  beforeEach(() => {
+    cancelPendingVerdictRepolls();
+  });
+
+  afterEach(() => {
+    cancelPendingVerdictRepolls();
+    vi.useRealTimers();
+  });
+
+  it('writes a verdict on an otherwise unchanged link and notifies the renderer', async () => {
+    conn.byNumber = withReadiness(10, 'ready');
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = linkedTask();
+    const deps = depsFor(task, { updateSpy });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('linked');
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+      pr_url: 'u10', pr_number: 10, pr_state: 'open', pr_merge_readiness: 'ready',
+    }));
+    expect(deps.onLinked).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes a changed verdict (ready -> blocked)', async () => {
+    conn.byNumber = withReadiness(10, 'blocked');
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_merge_readiness).toBe('blocked');
+  });
+
+  it('preserves a stored verdict when the tier cannot judge it (no write, unchanged)', async () => {
+    conn.byNumber = withReadiness(10, undefined);
+    const updateSpy = vi.fn();
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(result.status).toBe('unchanged');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_merge_readiness).toBe('ready');
+  });
+
+  it('carries the preserved verdict into a state-change write', async () => {
+    conn.byNumber = { ...resolved(10, 'merged') };
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_state: 'merged', pr_merge_readiness: 'ready' }));
+  });
+
+  it('starts from null when an undetermined tier links a DIFFERENT PR', async () => {
+    // The old verdict described the old PR; it must not ride onto the new one.
+    conn.byNumber = null;
+    conn.byBranch = withReadiness(20, undefined);
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = worktreeTask({}, { pr_url: 'u10', pr_state: 'open', pr_merge_readiness: 'ready' });
+    await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: 20, pr_merge_readiness: null }));
+  });
+
+  it('writes unknown over null, so "asked, no verdict yet" is recorded', async () => {
+    conn.byNumber = withReadiness(10, 'unknown');
+    const task = linkedTask({ pr_merge_readiness: null });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_merge_readiness).toBe('unknown');
+  });
+
+  it('holds a determined verdict through a pending unknown and re-polls for the real answer', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const deps = depsFor(task, { updateSpy });
+
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('unchanged');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(task.pr_merge_readiness).toBe('ready');
+
+    // The platform finished recomputing before the first re-poll.
+    conn.byNumber = withReadiness(10, 'blocked');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'blocked' }));
+    expect(deps.onLinked).toHaveBeenCalledTimes(1);
+
+    // The hold ended with a real answer, so no further timer fires.
+    updateSpy.mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('concedes to unknown only once the re-poll budget is spent', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    const task = linkedTask({ pr_merge_readiness: 'conflicting' });
+
+    await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // First re-poll (5s): still pending, still held.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(task.pr_merge_readiness).toBe('conflicting');
+
+    // Second re-poll (20s more): budget spent, the pending answer finally lands.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'unknown' }));
+    expect(task.pr_merge_readiness).toBe('unknown');
+  });
+
+  it('does not hold a verdict for a terminal PR: unknown writes straight through', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = { ...resolved(10, 'merged'), mergeReadiness: 'unknown' };
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_state: 'merged', pr_merge_readiness: 'unknown' }));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cancelPendingVerdictRepolls drops a scheduled re-poll', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const updateSpy = vi.fn();
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(vi.getTimerCount()).toBe(1);
+    cancelPendingVerdictRepolls();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('scrape degradation keeps the verdict on the same URL and nulls it on a different one', async () => {
+    conn.byNumber = new PRResolverUnavailableError('gh missing');
+    const sameUrlTask = linkedTask({ pr_merge_readiness: 'ready' });
+    conn.detect = { url: 'u10', number: 10 };
+    const sameUrlSpy = vi.fn();
+    const sameUrlResult = await linkPRForTask(sameUrlTask.id, {
+      ...depsFor(sameUrlTask, { updateSpy: sameUrlSpy }),
+      getScrollback: () => 'scrollback',
+    });
+    expect(sameUrlResult.status).toBe('unchanged');
+    expect(sameUrlSpy).not.toHaveBeenCalled();
+
+    const otherUrlTask = linkedTask({ pr_merge_readiness: 'ready' });
+    conn.detect = { url: 'u11', number: 11 };
+    const otherUrlSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    await linkPRForTask(otherUrlTask.id, {
+      ...depsFor(otherUrlTask, { updateSpy: otherUrlSpy }),
+      getScrollback: () => 'scrollback',
+    });
+    expect(otherUrlSpy).toHaveBeenCalledWith(expect.objectContaining({
+      pr_url: 'u11', pr_number: 11, pr_state: null, pr_merge_readiness: null,
+    }));
+  });
+
+  it('holds a draft PR through a pending unknown, same as an open one', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = { ...resolved(10, 'draft'), mergeReadiness: 'unknown' };
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = linkedTask({ pr_state: 'draft', pr_merge_readiness: 'ready' });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(result.status).toBe('unchanged');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('a second resolve landing while a re-poll is pending does not add a timer or consume the budget', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const deps = depsFor(task, { updateSpy });
+
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // A second sweep lands on the same pending answer while the re-poll is
+    // already scheduled. force:true bypasses the 60s throttle so this call
+    // actually re-resolves instead of coalescing (which would pass vacuously).
+    const resolverCallsBeforeSecond = conn.calls.length;
+    const secondResult = await linkPRForTask(task.id, { ...deps, force: true });
+    expect(conn.calls.length).toBe(resolverCallsBeforeSecond + 1);
+    expect(secondResult.status).toBe('unchanged');
+    expect(task.pr_merge_readiness).toBe('ready');
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The re-poll fires at the FIRST delay (5s), proving the second resolve
+    // did not bump the attempt to the second (20s) delay. Red-green: dropping
+    // the `if (existing?.timer) return;` guard schedules a second timer at
+    // 20s on top of the first, so this 5s advance never fires the write.
+    conn.byNumber = withReadiness(10, 'blocked');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'blocked' }));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a rejecting re-poll clears the hold entry so the next hold restarts from the first delay', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    const getByIdSpy = vi.fn((): Task | undefined => task);
+    const deps = { ...depsFor(task, { updateSpy }), tasks: { getById: getByIdSpy, update: updateSpy } as never };
+
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The re-poll's own lookup fails (a DB error, not a deletion). The
+    // rejection is caught inside schedulePendingVerdictRepoll, so this never
+    // surfaces as an unhandled rejection (vitest would fail the test if it did).
+    getByIdSpy.mockImplementationOnce(() => { throw new Error('boom'); });
+    await vi.advanceTimersByTimeAsync(5_000);
+    // Does not discriminate the fix by itself (the timer already self-nulled
+    // before the rejection), but documents the fired timer left nothing behind.
+    expect(vi.getTimerCount()).toBe(0);
+
+    // The real proof: a fresh hold for the same task starts at the FIRST
+    // delay again, not wherever the failed re-poll left the budget. Red-green:
+    // dropping the `clearPendingVerdictRepoll(taskId)` inside the `.catch`
+    // leaves attempt=1 behind, so this next hold schedules the 20s delay
+    // instead of 5s, and the 5s advance below never fires the write.
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+    conn.byNumber = withReadiness(10, 'blocked');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'blocked' }));
+  });
+
+  it('a task deleted mid-hold drops its entry so the next hold for that task id restarts the budget', async () => {
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    const getByIdSpy = vi.fn((): Task | undefined => task);
+    const deps = { ...depsFor(task, { updateSpy }), tasks: { getById: getByIdSpy, update: updateSpy } as never };
+
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The task was deleted between scheduling the hold and the re-poll firing.
+    getByIdSpy.mockImplementationOnce(() => undefined);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // The task id is reused (or the task came back): the next hold starts at
+    // the FIRST delay again. Red-green: dropping the
+    // `clearPendingVerdictRepoll(taskId)` inside the `!task` branch leaves
+    // attempt=1 behind, so this next hold schedules the 20s delay instead of
+    // 5s, and the 5s advance below never fires the write.
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+    conn.byNumber = withReadiness(10, 'blocked');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'blocked' }));
   });
 });
 
@@ -1194,6 +1475,19 @@ describe('linkPRForTask: pull_request adoption signal fires on a real link only'
 
     expect(result.status).toBe('unchanged');
     expect(trackFeatureUsedSpy).not.toHaveBeenCalled();
+  });
+
+  it('fires when only the merge-readiness verdict changes (url/number/state unchanged)', async () => {
+    conn.byNumber = { ...resolved(10, 'open'), mergeReadiness: 'blocked' };
+    const task = reclaimedWorktreeTask({ branch: 'slug' }, {
+      pr_number: 10, pr_url: 'u10', pr_state: 'open', pr_merge_readiness: 'ready',
+    });
+
+    const result = await linkPRForTask(task.id, depsFor(task));
+
+    expect(result.status).toBe('linked');
+    expect(trackFeatureUsedSpy).toHaveBeenCalledTimes(1);
+    expect(trackFeatureUsedSpy).toHaveBeenCalledWith('pull_request');
   });
 });
 

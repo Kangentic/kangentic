@@ -50,7 +50,7 @@ interface GitHubProjectItemRaw {
 const COMMAND_TIMEOUT = 15_000;
 
 /**
- * Raw PR shape from `gh pr list --json number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository`.
+ * Raw PR shape from `gh pr list --json number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository,mergeable,mergeStateStatus,reviewDecision`.
  * `state` is GitHub's uppercase enum: OPEN | CLOSED | MERGED. `isCrossRepository`
  * is true for PRs opened from a fork - the disambiguator filters those out so a
  * fork PR that happens to share a branch name can't be mislinked.
@@ -72,10 +72,32 @@ export interface GhPrListItem {
    * Populated from the REST `merge_commit_sha` on the commit-pulls path only.
    */
   mergeCommitOid?: string;
+  /**
+   * GitHub's mergeability triple, requested on the `gh pr list` / `gh pr view`
+   * paths and left undefined on the commit-pulls REST path, which does not
+   * carry them (the mirror of `mergeCommitOid`, populated on that path only).
+   * Raw GitHub vocabulary, deliberately NOT normalized here: this client is
+   * shared with the board importers, so PR semantics stay in the PR connector.
+   *   mergeable:        MERGEABLE | CONFLICTING | UNKNOWN
+   *   mergeStateStatus: BEHIND | BLOCKED | CLEAN | DIRTY | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE
+   *   reviewDecision:   APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED, or '' when
+   *                     the repository requires no review and none was left
+   * Typed as strings because they come off `JSON.parse`, and a value this code
+   * does not know must fall through the connector's fallback rather than be
+   * hidden by a union.
+   */
+  mergeable?: string;
+  mergeStateStatus?: string;
+  reviewDecision?: string;
 }
 
-/** JSON field set requested from `gh pr list` / `gh pr view`. */
-const PR_JSON_FIELDS = 'number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository';
+/**
+ * JSON field set requested from `gh pr list` / `gh pr view`. Both commands
+ * accept the same field list, so the mergeability triple costs no extra call.
+ * `statusCheckRollup` is deliberately absent: it is a per-check-run array on
+ * every PR in the list, and `mergeStateStatus` already folds the checks in.
+ */
+const PR_JSON_FIELDS = 'number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository,mergeable,mergeStateStatus,reviewDecision';
 
 /**
  * Thrown by resolver paths when the `gh` CLI is missing or unauthenticated, so

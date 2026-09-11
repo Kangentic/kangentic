@@ -286,6 +286,7 @@ export function toBoardTaskWire(task: Task): BoardTaskWire {
     pr_number: task.pr_number,
     pr_url: task.pr_url,
     pr_state: task.pr_state,
+    pr_merge_readiness: task.pr_merge_readiness,
     base_branch: task.base_branch,
     labels: task.labels,
     priority: task.priority,

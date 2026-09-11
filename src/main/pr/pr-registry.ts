@@ -27,7 +27,7 @@ import { gitHubPRConnector } from './adapters/github/github-connector';
 import { azureDevOpsPRConnector } from './adapters/azure-devops/azure-devops-connector';
 
 // Re-export the contract + errors so consumers have a single import surface.
-export type { PRConnector, DetectedPR, ResolvedPR, PRState } from './shared/pr-connector';
+export type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness } from './shared/pr-connector';
 export { PRResolverUnavailableError, PRResolverTransientError } from './shared/pr-errors';
 
 // --- Registry: add new providers here ---

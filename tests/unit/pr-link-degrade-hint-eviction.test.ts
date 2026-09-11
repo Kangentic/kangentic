@@ -69,7 +69,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: `task-${idCounter}`, display_id: idCounter, title: 'T', description: '', swimlane_id: 'lane', position: 0,
     agent: null, session_id: null, worktree_path: null, branch_name: null, pr_number: null,
-    pr_url: null, pr_state: null, head_sha: null, external_id: null, external_source: null,
+    pr_url: null, pr_state: null, pr_merge_readiness: null, head_sha: null, external_id: null, external_source: null,
     external_url: null, base_branch: 'main', use_worktree: 1, labels: [], priority: 0,
     model_override: null, effort_override: null, agent_override: null, attachment_count: 0,
     archived_at: null, created_at: 't', updated_at: 't', ...overrides,

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registeredPRConnectors, commitAnchorSelfVerifies } from '../../src/main/pr/pr-registry';
+import { PR_MERGE_READINESS_VALUES } from '../../src/shared/types';
+import { GitHubImporter } from '../../src/main/boards/adapters/github-common/gh-client';
+import { AzureDevOpsImporter } from '../../src/main/boards/adapters/azure-devops/client';
 
 // The registry's only git touch. Stubbed so `commitAnchorSelfVerifies` can be
 // driven over the REAL connectors with a chosen remote set and no repo on disk.
@@ -176,4 +179,139 @@ describe('commitAnchorSelfVerifies', () => {
     remotes.urls = ['https://github.com/owner/repo.git'];
     await expect(commitAnchorSelfVerifies('')).resolves.toBe(false);
   });
+});
+
+/**
+ * The merge-readiness half of `.claude/rules/agent-adapters-boundary.md`.
+ *
+ * Each connector folds its own platform's mergeability vocabulary into the
+ * normalized `PRMergeReadiness` enum INSIDE its adapter, and nothing generic
+ * ever sees a raw `BLOCKED` or `succeeded`. That is a promise the type system
+ * cannot check on its own: the raw fields are plain strings on the item shapes,
+ * so a pasted adapter that forwarded one through `ResolvedPR.mergeReadiness`
+ * would type-check. This suite drives every registered connector's number
+ * resolver over every raw value its platform can produce, plus an unrecognized
+ * one and an absent one, and asserts the verdict is either omitted (the tier
+ * cannot judge it) or a member of the enum.
+ *
+ * The driver table is keyed by connector name, in the same shape as
+ * `PROVIDER_REMOTES` above: a third provider fails the first case until it
+ * declares its own driver. Omission is a valid ANSWER on the wire (`undefined`
+ * means preserve), but it must not be a way to skip the QUESTION here, exactly
+ * as `verifiesCommitOwnership` cannot be skipped above.
+ */
+interface ReadinessDriver {
+  /** Remotes the connector must own, so `remoteFor`-style self-gates pass. */
+  remoteUrls: string[];
+  /** Raw items spanning every platform value, including absent and unrecognized. */
+  rawItems: unknown[];
+  /** Stub the importer's number resolver to answer with one raw item. */
+  stub: (item: unknown) => void;
+}
+
+const GH_BASE_ITEM = {
+  number: 1,
+  url: 'https://github.com/owner/repo/pull/1',
+  state: 'OPEN',
+  isDraft: false,
+  headRefName: 'feat',
+  baseRefName: 'main',
+  updatedAt: '2026-01-01T00:00:00Z',
+  isCrossRepository: false,
+};
+
+const AZ_BASE_ITEM = {
+  number: 1,
+  state: 'active',
+  isDraft: false,
+  headRefName: 'feat',
+  baseRefName: 'main',
+  updatedAt: '2026-01-01T00:00:00Z',
+  isCrossRepository: false,
+};
+
+function cartesian<T>(...axes: T[][]): T[][] {
+  return axes.reduce<T[][]>((rows, axis) => rows.flatMap((row) => axis.map((value) => [...row, value])), [[]]);
+}
+
+/** Every combination of GitHub's three raw fields, with `undefined` meaning "key absent". */
+function gitHubRawItems(): unknown[] {
+  const mergeStateStatuses = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BLOCKED', 'BEHIND', 'DRAFT', 'DIRTY', 'UNKNOWN', 'SOMETHING_NEW', undefined];
+  const mergeables = ['MERGEABLE', 'CONFLICTING', 'UNKNOWN', undefined];
+  const reviewDecisions = ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED', '', undefined];
+  return cartesian<string | undefined>(mergeStateStatuses, mergeables, reviewDecisions).map(
+    ([mergeStateStatus, mergeable, reviewDecision]) => ({
+      ...GH_BASE_ITEM,
+      ...(mergeStateStatus === undefined ? {} : { mergeStateStatus }),
+      ...(mergeable === undefined ? {} : { mergeable }),
+      ...(reviewDecision === undefined ? {} : { reviewDecision }),
+    }),
+  );
+}
+
+function azureRawItems(): unknown[] {
+  const mergeStatuses = ['succeeded', 'conflicts', 'rejectedByPolicy', 'failure', 'queued', 'notSet', null, 'somethingNew', undefined];
+  return mergeStatuses.map((mergeStatus) => ({
+    ...AZ_BASE_ITEM,
+    ...(mergeStatus === undefined ? {} : { mergeStatus }),
+  }));
+}
+
+const READINESS_DRIVERS: Record<string, ReadinessDriver> = {
+  GitHub: {
+    remoteUrls: PROVIDER_REMOTES.github,
+    rawItems: gitHubRawItems(),
+    stub: (item) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
+    },
+  },
+  'Azure DevOps': {
+    remoteUrls: PROVIDER_REMOTES.azure,
+    rawItems: azureRawItems(),
+    stub: (item) => {
+      vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
+    },
+  },
+};
+
+describe('every registered connector reports merge readiness from the normalized enum', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    remotes.urls = null;
+  });
+
+  it('every registered connector has a readiness driver here', () => {
+    for (const connector of registeredPRConnectors) {
+      expect(
+        READINESS_DRIVERS[connector.name],
+        `${connector.name} has no readiness driver in this test. Add one carrying every raw `
+        + 'platform value its resolvers may see, so the gate can prove it never leaks a raw string.',
+      ).toBeDefined();
+    }
+  });
+
+  it.each(registeredPRConnectors.map((connector) => [connector.name, connector] as const))(
+    '%s never returns a raw platform readiness string',
+    async (name, connector) => {
+      const driver = READINESS_DRIVERS[name];
+      expect(driver).toBeDefined();
+      expect(connector.resolveByNumber).toBeDefined();
+      remotes.urls = driver.remoteUrls;
+      const verdicts: unknown[] = [];
+      for (const rawItem of driver.rawItems) {
+        driver.stub(rawItem);
+        const resolvedPr = await connector.resolveByNumber!('C:/repo', 1);
+        expect(resolvedPr, `${name} resolved nothing for ${JSON.stringify(rawItem)}`).not.toBeNull();
+        const verdict = resolvedPr?.mergeReadiness;
+        verdicts.push(verdict);
+        expect(
+          verdict === undefined || (PR_MERGE_READINESS_VALUES as readonly string[]).includes(verdict),
+          `${name} returned mergeReadiness ${String(verdict)} for ${JSON.stringify(rawItem)}`,
+        ).toBe(true);
+      }
+      // Not vacuous: a connector that omits the verdict for every input would
+      // pass the loop above, so deleting the mapping must fail here.
+      expect(verdicts.some((verdict) => verdict !== undefined)).toBe(true);
+    },
+  );
 });

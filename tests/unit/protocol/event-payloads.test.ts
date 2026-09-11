@@ -49,6 +49,7 @@ const boardTaskFixture: JsonValue = {
   pr_number: null,
   pr_url: null,
   pr_state: null,
+  pr_merge_readiness: null,
   base_branch: 'main',
   labels: ['bug'],
   priority: 1,
@@ -227,6 +228,17 @@ describe('board row guards', () => {
 
   it('rejects a task without an id', () => {
     expect(() => parseBoardTaskWire({ title: 'x' })).toThrow(/id/);
+  });
+
+  it('reads a board task missing pr_merge_readiness entirely as null (pre-readiness desktop)', () => {
+    const withoutReadiness = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutReadiness.pr_merge_readiness;
+    expect(parseBoardTaskWire(withoutReadiness).pr_merge_readiness).toBeNull();
+  });
+
+  it('passes through a present pr_merge_readiness value', () => {
+    const withReadiness = { ...(boardTaskFixture as Record<string, JsonValue>), pr_merge_readiness: 'blocked' };
+    expect(parseBoardTaskWire(withReadiness).pr_merge_readiness).toBe('blocked');
   });
 
   it('parses a column row', () => {

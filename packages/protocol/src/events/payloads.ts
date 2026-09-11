@@ -225,6 +225,12 @@ export interface BoardTaskWire {
   pr_number: number | null;
   pr_url: string | null;
   pr_state: string | null;
+  /**
+   * Normalized merge readiness of the linked PR: `ready` / `blocked` /
+   * `conflicting` / `unknown`, or null when never judged. Absent from desktops
+   * that predate it, which the parser reads as null.
+   */
+  pr_merge_readiness: string | null;
   base_branch: string | null;
   labels: string[];
   priority: number;
@@ -517,6 +523,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     pr_number: nullableNumber(value, 'pr_number'),
     pr_url: nullableString(value, 'pr_url'),
     pr_state: nullableString(value, 'pr_state'),
+    pr_merge_readiness: nullableString(value, 'pr_merge_readiness'),
     base_branch: nullableString(value, 'base_branch'),
     labels: Array.isArray(value.labels) ? parseStringArray(value.labels, 'board task labels') : [],
     priority: typeof value.priority === 'number' ? value.priority : 0,

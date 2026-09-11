@@ -357,6 +357,121 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
+
+  // The success toast speaks the same word the card's chip shows, so a refresh
+  // that changed only the merge verdict still reports a visible result rather
+  // than a second "open".
+  test('the success toast names the merge verdict when the PR is open and judged', async () => {
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=PR Link Toast Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await page.evaluate(() => {
+      window.__mockResolvePrResult = () =>
+        Promise.resolve({
+          reason: 'linked',
+          linked: true,
+          task: {
+            id: 'task-pr-link-toast',
+            pr_number: 42,
+            pr_url: 'https://github.com/owner/repo/pull/42',
+            pr_state: 'open',
+            pr_merge_readiness: 'blocked',
+          },
+        });
+    });
+
+    await clickLinkPr();
+
+    const toast = page.getByTestId('toast').filter({ hasText: 'Linked PR #42 (blocked)' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // A NULL pr_state (linked before merge-readiness tracking existed, or a host
+  // that never reports it) has no chip label, so the toast falls back to the
+  // word "open" rather than showing nothing. This pins the `|| 'open'` fallback
+  // in the handler, distinct from the "blocked" test above which exercises the
+  // chip-label branch, not the fallback.
+  test('the success toast falls back to "open" when the PR has no reported state', async () => {
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=PR Link Toast Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await page.evaluate(() => {
+      window.__mockResolvePrResult = () =>
+        Promise.resolve({
+          reason: 'linked',
+          linked: true,
+          task: {
+            id: 'task-pr-link-toast',
+            pr_number: 43,
+            pr_url: 'https://github.com/owner/repo/pull/43',
+            pr_state: null,
+            pr_merge_readiness: null,
+          },
+        });
+    });
+
+    await clickLinkPr();
+
+    const toast = page.getByTestId('toast').filter({ hasText: 'Linked PR #43 (open)' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // Pins that the toast's word comes from prStatePresentation's chip label
+  // ("conflicts"), not the raw PRMergeReadiness enum value ("conflicting"). A
+  // future regression that inlines the enum instead of calling
+  // prStatePresentation would pass the "blocked" test above (the words happen
+  // to match) but fail this one.
+  test('the success toast names the chip word for a conflicting verdict, not the raw enum', async () => {
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=PR Link Toast Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await page.evaluate(() => {
+      window.__mockResolvePrResult = () =>
+        Promise.resolve({
+          reason: 'linked',
+          linked: true,
+          task: {
+            id: 'task-pr-link-toast',
+            pr_number: 44,
+            pr_url: 'https://github.com/owner/repo/pull/44',
+            pr_state: 'open',
+            pr_merge_readiness: 'conflicting',
+          },
+        });
+    });
+
+    await clickLinkPr();
+
+    const toast = page.getByTestId('toast').filter({ hasText: 'Linked PR #44 (conflicts)' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
 });
 
 test.describe('Link/Refresh PR kebab item: pushed_branch and pr_number anchors', () => {

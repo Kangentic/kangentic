@@ -16,6 +16,7 @@
 
 import { runWithProjectLogContext } from '../diagnostics/project-log-context';
 import { refreshProjectPRs } from './pr-refresh';
+import { cancelPendingVerdictRepolls } from './pr-linking';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Project } from '../../shared/types';
 
@@ -78,5 +79,8 @@ export const prRefreshScheduler = {
       activeTimer = null;
     }
     activeProjectId = null;
+    // The linker's merge-verdict re-polls belong to the project that was being
+    // swept; a switch-back's on-open sweep asks afresh.
+    cancelPendingVerdictRepolls();
   },
 };
