@@ -557,6 +557,45 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('toggling Evaluate branch policies persists git.prEvaluateBranchPolicies to the project override', async () => {
+    // DEFAULT_CONFIG.git.prEvaluateBranchPolicies is false (src/shared/types.ts).
+    // Project creation seeds a full overridable-settings snapshot (see
+    // pickOverridableSubset), so this shared-page project already carries an
+    // explicit `false` for this key - the switch starts unchecked either way.
+    // GitTab is a PROJECT tab: the write goes through updateProject -> the
+    // project override, not global config. This pins the actual write path,
+    // not just the UI copy - settings-tab-scope-parity.test.ts only proves the
+    // registry id and tab pairing exist, not that the row's onChange closure
+    // names the right key at the right nesting level. Red-green while writing
+    // it: a wrong key OR a wrong scope (updateProject swapped for updateGlobal)
+    // both fail the aria-checked assertion here, because the seeded project
+    // override always wins the merge over a global write; the
+    // getProjectOverrides() poll below still documents the intended target.
+    await openSettings();
+    await page.getByRole('button', { name: 'Git' }).click();
+
+    const toggle = page.getByRole('switch', { name: 'Evaluate branch policies' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prEvaluateBranchPolicies?: boolean } } | null)?.git?.prEvaluateBranchPolicies;
+    }, { timeout: 3000 }).toBe(true);
+
+    // Restore so later tests in this shared-page file are unaffected (this
+    // file resets nothing between tests, unlike browser-settings.spec.ts).
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prEvaluateBranchPolicies?: boolean } } | null)?.git?.prEvaluateBranchPolicies;
+    }, { timeout: 3000 }).toBe(false);
+
+    await closeSettings();
+  });
+
   test('Escape key closes panel', async () => {
     await openSettings();
     await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
