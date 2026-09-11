@@ -215,7 +215,7 @@ what made the task #573 spawn-race fix miss its target on PowerShell. See
 
 ## Exit Sequences
 
-Graceful exit sequences written to the PTY during `SessionManager.suspend()`:
+Graceful exit sequences written to the PTY before a force-kill. `SessionManager.suspend()` writes one for every session; `kill()` writes one for a young session (inside the agent's boot window, see the `kill()` grace in [session-lifecycle.md](session-lifecycle.md)); the quit path's `killAll()` writes one best-effort for every session.
 
 | Agent | Sequence | Notes |
 |-------|----------|-------|
