@@ -184,6 +184,17 @@ type LinkedPR = { url: string; number: number; state: PRState | null; mergeReadi
 type RecordPushedBranch = (branchName: string) => void;
 
 /**
+ * Another task on this board already holding a PR number, or already holding a
+ * remote branch name as its `branch_name` or `pushed_branch`, if any. Asked by
+ * the INFERRED tiers (3 and 6) before they answer, never by the per-task
+ * anchors (1, 2, 4, 5). Built by `linkPRForTask` from the repository's
+ * `listByPRNumber` / `listByBranchOrPushedBranch`, archived rows included (a
+ * Done task keeps its link), excluding the task being resolved.
+ */
+type FindOtherTaskHoldingPR = (prNumber: number) => Task | undefined;
+type FindOtherTaskHoldingBranch = (branchName: string) => Task | undefined;
+
+/**
  * How many remote branches may share the task's HEAD tip before Tier 6 gives up.
  * The no-guess rule means every survivor has to be queried (short-circuiting on
  * the first hit would silently pick one of several ambiguous PRs), so this is a
@@ -206,7 +217,9 @@ const MAX_TIP_BRANCH_CANDIDATES = 2;
  *   6. remote branch at the HEAD tip -> infers that name when nothing recorded it
  * A degrade error from any tier is REMEMBERED rather than propagated, so the
  * tiers below it still run; it is rethrown unchanged only if none of them
- * resolved, and the caller degrades then.
+ * resolved, and the caller degrades then. A hit at an INFERRED tier (3 or 6)
+ * that another task on the board already holds, by PR number or by branch
+ * name, is refused and treated as a miss (see `refusedAsHeldByAnotherTask`).
  *
  * Every anchor is git state or an explicitly stored number. A PR URL written into
  * the task DESCRIPTION is deliberately not an anchor: a URL cited as background
@@ -227,8 +240,13 @@ async function resolvePRViaLadder(args: {
   baseBranch: string;
   baseBranchIsKnown: boolean;
   recordPushedBranch: RecordPushedBranch;
+  findOtherTaskHoldingPR: FindOtherTaskHoldingPR;
+  findOtherTaskHoldingBranch: FindOtherTaskHoldingBranch;
 }): Promise<LinkedPR | null> {
-  const { task, cwd, projectPath, branch, effectiveSha, baseBranch, baseBranchIsKnown, recordPushedBranch } = args;
+  const {
+    task, cwd, projectPath, branch, effectiveSha, baseBranch, baseBranchIsKnown, recordPushedBranch,
+    findOtherTaskHoldingPR, findOtherTaskHoldingBranch,
+  } = args;
   /**
    * The base to hand the branch resolvers for `disambiguate`'s base-match bonus.
    * Deliberately NOT `baseBranch`: that one falls back to the project default
@@ -247,6 +265,37 @@ async function resolvePRViaLadder(args: {
   // are remembered and rethrown UNCHANGED below if no tier resolves, so the
   // `instanceof` test in `linkPRForTask`'s catch still sets `degradeStatus`.
   const degrade = createDeferredDegrade();
+
+  /**
+   * The board fact git cannot see. A task fast-forwarded onto a sibling's PR
+   * branch has the sibling's commits as its own HEAD: `hasOwnCommits` counts
+   * them, the commit tier answers with the sibling's PR (the connector keeps a
+   * lone candidate whose head does not match the hint ON PURPOSE, for the
+   * "pushed my tip under another name" shape), and the remote-tip tier finds
+   * the sibling's branch at that tip. Both shapes are byte-identical in git.
+   * The DB separates them: the sibling links first in the normal flow, so it
+   * already holds the number, and its push was captured as `pushed_branch`
+   * before its PR even existed. A hit held by ANOTHER task is a miss for this
+   * one: the ladder keeps descending (a refused commit hit must still let
+   * Tier 5 link this task's own PR) and the confident-not-found clear still
+   * applies. Asked by the inferred tiers only; the per-task anchors are never
+   * refused, so two tasks that legitimately share a PR (a review task and its
+   * author) both link through Tier 1. A board fact rather than a provider
+   * one, so Azure gets it identically. One log line per refusal, naming both
+   * tasks.
+   */
+  const refusedAsHeldByAnotherTask = (pr: LinkedPR, tier: 'by commit' | 'by remote tip'): boolean => {
+    const holder = findOtherTaskHoldingPR(pr.number);
+    if (!holder) return false;
+    console.log(`[pr-linking] Refused PR #${pr.number} ${tier} for "${task.title}" (#${task.display_id}): already linked to "${holder.title}" (#${holder.display_id})`);
+    return true;
+  };
+  const refusedAsAnotherTasksBranch = (candidate: string): boolean => {
+    const holder = findOtherTaskHoldingBranch(candidate);
+    if (!holder) return false;
+    console.log(`[pr-linking] Refused remote branch "${candidate}" at the tip of "${task.title}" (#${task.display_id}): it belongs to "${holder.title}" (#${holder.display_id})`);
+    return true;
+  };
 
   if (task.pr_number != null) {
     const byNumber = await degrade.attempt(() => resolvePRByNumber(cwd, task.pr_number as number));
@@ -283,7 +332,7 @@ async function resolvePRViaLadder(args: {
     const byCommit = await degrade.attempt(() =>
       resolvePRByCommit(projectPath ?? cwd, effectiveSha, branch ?? undefined),
     );
-    if (byCommit) return byCommit;
+    if (byCommit && !refusedAsHeldByAnotherTask(byCommit, 'by commit')) return byCommit;
   }
   if (!task.worktree_path && branch) {
     const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase));
@@ -341,8 +390,15 @@ async function resolvePRViaLadder(args: {
       // Every survivor is queried rather than short-circuiting on the first hit:
       // two branches on one tip carrying two different PRs is ambiguous, and a
       // wrong link here is permanent. Same rule `disambiguate` applies when
-      // nothing ties the candidates back to this task.
-      if (new Set(hits.map((hit) => hit.pr.number)).size === 1) {
+      // nothing ties the candidates back to this task. The holder refusals come
+      // AFTER the distinct check on purpose: an ambiguous pair never consults
+      // the board, and a refused sole hit stays in `hits`, so the record-only
+      // path below cannot see an empty list and store the sibling's branch.
+      if (
+        new Set(hits.map((hit) => hit.pr.number)).size === 1
+        && !refusedAsAnotherTasksBranch(hits[0].candidate)
+        && !refusedAsHeldByAnotherTask(hits[0].pr, 'by remote tip')
+      ) {
         recordPushedBranch(hits[0].candidate);
         return hits[0].pr;
       }
@@ -351,24 +407,30 @@ async function resolvePRViaLadder(args: {
       // task may commit past the pushed tip first, after which no remote ref
       // matches head_sha and this tier goes quiet for good.
       //
-      // `hasOwnCommits` guards THIS path only, not the link above it. It
-      // excludes the follow-on shape, where a task cut from another task's
-      // branch with zero commits sits on that branch's tip and would otherwise
-      // record its neighbour's branch. The link path has no such gate: it is
-      // guarded by `pointsAtBaseTip` alone, so a zero-commit task sitting on a
-      // neighbour branch that already MERGED (by squash or rebase, so its tip
-      // is contained in base without being base's tip) can still link that
-      // neighbour's PR. That is the residual in docs/pr-integration.md, and it
-      // is not closable by hoisting this condition up: reaching Tier 6 at all
-      // requires `hasOwnCommits` false, which for a neighbour branch MEANS it
-      // merged, so every discriminator built from "commits ahead of base" or
-      // "is the PR merged" is already true in exactly the bad case. Reviewers
-      // keep proposing that hoist. It buys nothing and costs the merged-PR
-      // rescue this tier exists for.
+      // Two gates on THIS path. `hasOwnCommits` excludes the follow-on shape
+      // against a MERGED neighbour: a task cut from another task's branch with
+      // zero commits sits on that branch's tip, and once the neighbour merged
+      // the count is 0. It is base-relative, so it is blind to a neighbour that
+      // has NOT merged: a follower fast-forwarded onto a sibling's unmerged
+      // branch counts the sibling's commits as its own (the incident this
+      // guard was written for: 2 ahead of main, none of them the task's). The
+      // holder refusal covers that half from the board side, refusing a
+      // candidate another task recorded as its branch. The link path above is
+      // gated by `pointsAtBaseTip` plus the two holder refusals; without the
+      // DB it could still link a zero-commit task to a neighbour branch that
+      // merged by squash or rebase (its tip contained in base without being
+      // base's tip). Hoisting `hasOwnCommits` up to the link path is not the
+      // fix: for a merged neighbour every discriminator built from "commits
+      // ahead of base" or "is the PR merged" is already true in exactly the
+      // bad case, and the hoist costs the merged-PR rescue this tier exists
+      // for. Reviewers keep proposing it.
       //
       // The condition is also only as sound as `baseBranch`, which is why the
       // base is recorded at worktree creation.
-      if (hits.length === 0 && candidates.length === 1 && hasOwnCommits) {
+      if (
+        hits.length === 0 && candidates.length === 1 && hasOwnCommits
+        && !refusedAsAnotherTasksBranch(candidates[0])
+      ) {
         recordPushedBranch(candidates[0]);
       }
     }
@@ -513,6 +575,13 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         // Assigned as Tier 6 discovers it, so a deferred degrade rethrown out of
         // the ladder still leaves the identity here to persist below.
         recordPushedBranch: (branchName) => { discoveredPushedBranch = branchName; },
+        // "Another task" is a board fact, so it is read from the repository
+        // rather than from git. The task's own row is excluded so a task
+        // re-confirming its own number by commit is never refused.
+        findOtherTaskHoldingPR: (prNumber) =>
+          deps.tasks.listByPRNumber(prNumber).find((other) => other.id !== task.id),
+        findOtherTaskHoldingBranch: (branchName) =>
+          deps.tasks.listByBranchOrPushedBranch(branchName).find((other) => other.id !== task.id),
       });
       if (found) next = { url: found.url, number: found.number, state: found.state, mergeReadiness: found.mergeReadiness };
     } catch (error) {

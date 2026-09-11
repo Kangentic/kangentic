@@ -84,6 +84,11 @@ vi.mock('simple-git', () => ({
 // importing pr-linking doesn't pull in the DB/electron chain, and make the
 // return value swappable per test (via `repos.value`) so the linkPR tests below
 // can hand it a real-enough tasks repo instead of the empty ladder-tests default.
+// Those wrapper stubs carry only `getById` and `update`: none of them produces
+// a Tier 3 or Tier 6 hit, which is the only moment the ladder calls the holder
+// lookups (`listByPRNumber` / `listByBranchOrPushedBranch`). A wrapper test
+// that does reach a hit must add both, or the missing method throws into the
+// generic catch and reads as `resolveFailed` rather than failing visibly.
 const repos = vi.hoisted(() => ({ value: {} as unknown }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: () => repos.value }));
 
@@ -250,11 +255,26 @@ function depsFor(
     bypassThrottle?: boolean;
     preserveLinkOnNotFound?: boolean;
     defaultBaseBranch?: string;
+    /**
+     * The OTHER tasks on the board, as the two holder lookups see them. Empty
+     * by default so every pre-existing test keeps its answer: the inferred
+     * tiers consult them only on a hit, and a board with no other task refuses
+     * nothing. The resolving task itself may be listed here to prove the
+     * lookup excludes it.
+     */
+    siblings?: Task[];
   } = {},
 ) {
   const update = opts.updateSpy ?? vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+  const siblings = opts.siblings ?? [];
   return {
-    tasks: { getById: () => task, update } as never,
+    tasks: {
+      getById: () => task,
+      update,
+      listByPRNumber: vi.fn((prNumber: number) => siblings.filter((sibling) => sibling.pr_number === prNumber)),
+      listByBranchOrPushedBranch: vi.fn((branchName: string) =>
+        siblings.filter((sibling) => sibling.branch_name === branchName || sibling.pushed_branch === branchName)),
+    } as never,
     projectPath: '/repo',
     onLinked: vi.fn(),
     force: opts.force ?? true, // ladder tests bypass the throttle unless they're testing it
@@ -803,6 +823,291 @@ describe('linkPRForTask confidence ladder', () => {
     const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ head_sha: 'sha-new' }));
     expect(result.status).toBe('not-found');
+  });
+});
+
+/**
+ * The two INFERRED tiers (3 and 6) refuse an answer another task on the board
+ * already holds. Git cannot separate "my own pushed tip" from "fast-forwarded
+ * onto a sibling's tip": both are the identical state, and the connector keeps
+ * a lone candidate whose head does not match the hint ON PURPOSE (a Done task
+ * whose branch was pushed under another name). The board can separate them,
+ * because the sibling links first in the normal flow. The per-task anchors
+ * (Tiers 1, 2, 4, 5) are never refused.
+ *
+ * The holder lookups on the fake repository answer from `siblings`; the spies
+ * are read back through `holderLookups` so a test can prove a lookup ran (the
+ * guard found nothing) or never ran (an earlier check answered first).
+ */
+describe('linkPRForTask inferred tiers never take a PR or branch another task holds', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+  const refusalLines = () => logSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('Refused'));
+  const holderLookups = (deps: ReturnType<typeof depsFor>) => deps.tasks as unknown as {
+    listByPRNumber: ReturnType<typeof vi.fn>;
+    listByBranchOrPushedBranch: ReturnType<typeof vi.fn>;
+  };
+  /** Task A: a reclaimed worktree that holds PR 388 by number, on its own slug branch. */
+  const holderOfPR = (overrides: NonAnchorOverrides = {}) => reclaimedWorktreeTask(
+    { branch: 'pr-merge-readiness-pill-1a2b3c4d' },
+    { title: 'Merge-readiness pill', pr_number: 388, pr_url: 'u388', pr_state: 'open', ...overrides },
+  );
+
+  it('tier 3: refuses the sibling PR the commit tier answers with when that task already holds it (the incident)', async () => {
+    // A follower task fast-forwarded its worktree onto a sibling's PR branch:
+    // its HEAD is that PR's tip, two commits ahead of main, none of them the
+    // follower's own. The commit tier answers the sibling's PR and the
+    // connector keeps the lone candidate on purpose. The board knows what git
+    // cannot: the sibling already holds that number, archived on Done.
+    git.branch = 'azure-devops-evaluat-cac3c91e';
+    git.sha = 'sha-current'; // non-hex, so the tier 6 ref read is refused unread and only tier 3 is in play
+    git.aheadCount = '2';
+    conn.byBranch = null;
+    conn.byCommit = resolved(388);
+    const holder = holderOfPR({ pr_state: 'merged', archived_at: 't' });
+    const updateSpy = vi.fn();
+    const task = worktreeTask(
+      { branch: 'azure-devops-evaluat-cac3c91e', headSha: 'sha-current' },
+      { title: 'Azure DevOps branch policies' },
+    );
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy, siblings: [holder] }));
+    expect(conn.calls).toContain('byCommit'); // the tier ran; the guard refused its answer
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pr_url).toBeNull();
+    expect(result.task?.pushed_branch).toBeNull();
+    const lines = refusalLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Refused PR #388 by commit');
+    expect(lines[0]).toContain(`"Azure DevOps branch policies" (#${task.display_id})`);
+    expect(lines[0]).toContain(`"Merge-readiness pill" (#${holder.display_id})`);
+  });
+
+  it('tier 6: refuses the PR at the tip when another task already holds it, and records no pushed_branch', async () => {
+    // The same follower, resolved after tier 3 came back empty (say the sibling
+    // rebased). The remote branch at its tip is the sibling's PR branch. Two
+    // ahead of main on purpose: the sibling's unmerged commits count as "own",
+    // so the record-only path would otherwise be armed for this candidate.
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    git.pointsAtRefs = ['refs/remotes/origin/feat/pr-merge-readiness-pill'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'feat/pr-merge-readiness-pill' ? resolved(388) : null);
+    const holder = holderOfPR();
+    const updateSpy = vi.fn();
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy, siblings: [holder] }));
+    expect(queriedBranches()).toContain('feat/pr-merge-readiness-pill'); // the tier ran
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pushed_branch).toBeNull();
+    const lines = refusalLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Refused PR #388 by remote tip');
+    expect(lines[0]).toContain(`"Merge-readiness pill" (#${holder.display_id})`);
+  });
+
+  it('tier 6: refuses a tip branch another task recorded as its pushed branch, before that task has linked its PR', async () => {
+    // The stamp race. A pushed feat/a and opened its PR seconds ago; A's own
+    // resolve has not written the number yet, so the by-number lookup is blind.
+    // The branch is still A's: its push was captured as pushed_branch.
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    git.pointsAtRefs = ['refs/remotes/origin/feat/a'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'feat/a' ? resolved(388) : null);
+    const holder = noWorktreeTask({ pushedBranch: 'feat/a' }, { title: 'A' });
+    const updateSpy = vi.fn();
+    const task = worktreeTask({ headSha: HEX_SHA }, { title: 'B' });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy, siblings: [holder] }));
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pushed_branch).toBeNull();
+    const lines = refusalLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Refused remote branch "feat/a"');
+    expect(lines[0]).toContain(`"B" (#${task.display_id})`);
+    expect(lines[0]).toContain(`"A" (#${holder.display_id})`);
+  });
+
+  it('tier 6: does not record a tip branch another task holds when no PR exists yet (B resolved before A opened its PR)', async () => {
+    // The ordering the by-number guard cannot reach: there is no number to look
+    // up. Without the branch refusal the record-only path stores feat/a as B's
+    // pushed_branch (hasOwnCommits counts A's unmerged commits), and once A's
+    // PR exists the unguarded tier 5 links it to B from that stored name.
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    conn.byBranch = null;
+    git.pointsAtRefs = ['refs/remotes/origin/feat/a'];
+    const holder = noWorktreeTask({ pushedBranch: 'feat/a' }, { title: 'A' });
+    const updateSpy = vi.fn();
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy, siblings: [holder] }));
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pushed_branch).toBeNull();
+    const lines = refusalLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Refused remote branch "feat/a"');
+  });
+
+  it('tier 3: still links a commit-tier PR no other task holds (the lone non-matching candidate wins as before)', async () => {
+    git.sha = 'sha-current';
+    git.aheadCount = '2';
+    conn.byBranch = null;
+    conn.byCommit = resolved(388);
+    const task = worktreeTask({ headSha: 'sha-current' });
+    const deps = depsFor(task, { siblings: [] });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_number).toBe(388);
+    // The guard RAN and found nothing, rather than never running.
+    expect(holderLookups(deps).listByPRNumber).toHaveBeenCalledWith(388);
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('tier 6: still links and records when no other task holds the PR or the branch', async () => {
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    git.pointsAtRefs = ['refs/remotes/origin/feat/mine'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'feat/mine' ? resolved(388) : null);
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const deps = depsFor(task, { siblings: [] });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.task?.pr_number).toBe(388);
+    expect(result.task?.pushed_branch).toBe('feat/mine');
+    expect(holderLookups(deps).listByBranchOrPushedBranch).toHaveBeenCalledWith('feat/mine');
+    expect(holderLookups(deps).listByPRNumber).toHaveBeenCalledWith(388);
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('tier 6: still records a free tip branch when no PR exists yet', async () => {
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    conn.byBranch = null;
+    git.pointsAtRefs = ['refs/remotes/origin/feat/mine'];
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const deps = depsFor(task, { siblings: [] });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.task?.pushed_branch).toBe('feat/mine');
+    expect(holderLookups(deps).listByBranchOrPushedBranch).toHaveBeenCalledWith('feat/mine');
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('tier 1: an explicit number is never refused, even when a sibling holds the same PR (the review-task shape)', async () => {
+    conn.byNumber = resolved(388);
+    const holder = holderOfPR();
+    const task = worktreeTask({ headSha: 'sha-current' }, { pr_number: 388, pr_url: 'u388', pr_state: 'open' });
+    const deps = depsFor(task, { siblings: [holder] });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('unchanged');
+    expect(result.task?.pr_number).toBe(388);
+    expect(holderLookups(deps).listByPRNumber).not.toHaveBeenCalled();
+    expect(holderLookups(deps).listByBranchOrPushedBranch).not.toHaveBeenCalled();
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('the lookup excludes the task itself: re-confirming its own number by commit is not a refusal', async () => {
+    // Tier 1 missed (say the number resolver refused the secondary-remote
+    // fallback) and the commit tier answers the number this task already
+    // holds. A self-match must not refuse, or the task would clear its own link.
+    git.sha = 'sha-current';
+    git.aheadCount = '2';
+    conn.byNumber = null;
+    conn.byBranch = null;
+    conn.byCommit = resolved(388);
+    const task = worktreeTask({ headSha: 'sha-current' }, { pr_number: 388, pr_url: 'u388', pr_state: 'open' });
+    const result = await linkPRForTask(task.id, depsFor(task, { siblings: [task] }));
+    expect(result.status).toBe('unchanged');
+    expect(result.task?.pr_number).toBe(388);
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('the lookup excludes the task itself on the branch side: a remote branch named after its own stored branch_name is not refused', async () => {
+    // Tier 6's candidate filter compares against the LIVE HEAD branch
+    // ('real-branch' here), not the stored branch_name ('slug'). So a remote
+    // branch named after the task's own stored slug is still a Tier 6
+    // candidate, and listByBranchOrPushedBranch('slug') returns the task's own
+    // row. A self-match must not refuse, or the record-only path would go
+    // silent for a task whose worktree branch was ever renamed.
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    conn.byBranch = null;
+    git.pointsAtRefs = ['refs/remotes/origin/slug']; // the task's own stored branch_name; live HEAD is 'real-branch'
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const deps = depsFor(task, { siblings: [task] });
+    const result = await linkPRForTask(task.id, deps);
+    expect(holderLookups(deps).listByBranchOrPushedBranch).toHaveBeenCalledWith('slug');
+    expect(result.task?.pushed_branch).toBe('slug');
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('a refused commit-tier hit is a miss, not a stop: tier 5 still links the task\'s own PR', async () => {
+    // B pushed feat/b (#500) earlier, then fast-forwarded onto A's tip to build
+    // on it. The commit tier answers A's PR 388 (feat/b sits at an older commit)
+    // and is refused; B's own pushed branch still resolves B's own PR.
+    git.sha = 'sha-current';
+    git.aheadCount = '2';
+    conn.byCommit = resolved(388);
+    conn.byBranch = (_cwd: unknown, branch: unknown) => (branch === 'feat/b' ? resolved(500) : null);
+    const holder = holderOfPR();
+    const task = worktreeTask({ headSha: 'sha-current', pushedBranch: 'feat/b' });
+    const result = await linkPRForTask(task.id, depsFor(task, { siblings: [holder] }));
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_number).toBe(500);
+    expect(queriedBranches()).toEqual(['real-branch', 'feat/b']);
+    expect(refusalLines()).toHaveLength(1);
+  });
+
+  it('tier 6: an ambiguous pair is refused by ambiguity alone; the board is never consulted for it', async () => {
+    // Pins the order: the distinct-number check answers first, so the guard
+    // never pre-filters `hits`. A pre-filter that dropped a held candidate
+    // would leave `hits` empty and arm the record-only path for the survivor.
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    git.pointsAtRefs = ['refs/remotes/origin/one', 'refs/remotes/origin/two'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) =>
+      (branch === 'one' ? resolved(91) : branch === 'two' ? resolved(92) : null);
+    const holder = holderOfPR({ pr_number: 91, pr_url: 'u91' });
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const deps = depsFor(task, { siblings: [holder] });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('not-found');
+    expect(result.task?.pushed_branch).toBeNull();
+    expect(holderLookups(deps).listByPRNumber).not.toHaveBeenCalled();
+    expect(holderLookups(deps).listByBranchOrPushedBranch).not.toHaveBeenCalled();
+    expect(refusalLines()).toHaveLength(0);
+  });
+
+  it('a refused hit still counts as a clean miss: a stale different link is cleared', async () => {
+    git.sha = 'sha-current';
+    git.aheadCount = '2';
+    conn.byNumber = null; // #100 no longer resolves
+    conn.byBranch = null;
+    conn.byCommit = resolved(388);
+    const holder = holderOfPR();
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = worktreeTask({ headSha: 'sha-current' }, { pr_number: 100, pr_url: 'u100', pr_state: 'open' });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy, siblings: [holder] }));
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+      pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null,
+    }));
+    expect(refusalLines()).toHaveLength(1);
   });
 });
 
