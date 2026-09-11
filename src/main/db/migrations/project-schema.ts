@@ -1335,9 +1335,11 @@ export function runProjectMigrations(db: Database.Database): void {
   }
 
   // Migration: add 'pr_merge_readiness' - the normalized merge-readiness verdict
-  // of the linked PR ('ready' | 'blocked' | 'conflicting' | 'unknown', the
-  // `PRMergeReadiness` union), computed inside each PR connector from its own
-  // platform's mergeability fields. Orthogonal to `pr_state`, which stays the
+  // of the linked PR (the `PRMergeReadiness` union, `PR_MERGE_READINESS_VALUES`
+  // in src/shared/types.ts: 'ready' | 'blocked' | 'conflicting' | 'queued' |
+  // 'running' | 'unknown'), computed inside each PR connector from its own
+  // platform's mergeability fields. Plain TEXT with no CHECK constraint, so a
+  // widened union needs no migration. Orthogonal to `pr_state`, which stays the
   // gate for the terminal short-circuits. NULL means never judged (no PR, or a
   // link that predates this column); 'unknown' means the platform was asked and
   // has no verdict yet. Preserved by a resolve whose tier cannot judge it,

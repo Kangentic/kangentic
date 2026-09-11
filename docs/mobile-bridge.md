@@ -358,7 +358,7 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 
 **Shipped (Protocol 0.13.0 - a board task carries its PR's merge verdict):**
 
-- Protocol: `pr_merge_readiness` on `BoardTaskWire` (`ready` / `blocked` / `conflicting` / `unknown`, or null when the desktop has never judged the PR). Additive; `PROTOCOL_VERSION` stays '3'. An older desktop omits the field and `parseBoardTaskWire` reads that as null, so a newer phone renders the plain open chip it always did.
+- Protocol: `pr_merge_readiness` on `BoardTaskWire` (`ready` / `blocked` / `conflicting` / `unknown` at 0.13.0, or null when the desktop has never judged the PR). Additive; `PROTOCOL_VERSION` stays '3'. An older desktop omits the field and `parseBoardTaskWire` reads that as null, so a newer phone renders the plain open chip it always did. The desktop has since widened the set to `ready` / `blocked` / `conflicting` / `queued` / `running` / `unknown` (`PR_MERGE_READINESS_VALUES` in `src/shared/types.ts`); the wire type stays `string | null` and is never validated against a list, so a value the phone does not know renders as plain open.
 - Desktop: `wire-mappers.ts` copies `tasks.pr_merge_readiness` onto the board task, the same column the desktop's own PR pill folds into its state chip (see [PR Integration](pr-integration.md#merge-readiness)). No new verb and no new handler; the field rides every `read-board` snapshot and change event that already carried `pr_state`.
 - The phone-side rendering is the mobile app's own change and is gated on this package publishing.
 
