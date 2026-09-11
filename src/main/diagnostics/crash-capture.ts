@@ -15,6 +15,12 @@ import { isBenignStreamWriteError } from './benign-stream-error';
  *   - `process.on('uncaughtException')` in main
  *   - `process.on('unhandledRejection')` in main
  *   - `webContents.on('render-process-gone')` per-window (renderer crashed)
+ *   - `app.on('child-process-gone')` for the GPU process (crashed or killed;
+ *     a clean exit is not recorded). Sentry sees these only as native
+ *     minidumps when error reporting is on; locally nothing else records that
+ *     the GPU process died, and a GPU death is what puts every terminal on
+ *     the slow DOM renderer for the next two minutes (see
+ *     `src/renderer/utils/terminal-webgl.ts`).
  *   - `webContents.on('preload-error')` per-window (preload threw at load)
  *   - IPC.CRASH_REPORT from the preload error capture (window.onerror,
  *     unhandledrejection)
@@ -93,6 +99,24 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
         context: null,
         versions: getVersions(),
       });
+    });
+  });
+
+  // The GPU process is not a webContents, so it has no per-window event; the
+  // app-level `child-process-gone` is the only place its death is visible.
+  // Chromium relaunches it on its own, so this is a record, not a recovery.
+  app.on('child-process-gone', (_event, details) => {
+    if (details.type !== 'GPU' || details.reason === 'clean-exit') return;
+    console.warn(`[gpu] GPU process gone: ${details.reason} (exit code ${details.exitCode})`);
+    writeRecord(options.getProjectRoot(), {
+      ts: new Date().toISOString(),
+      kind: 'gpu-process-gone',
+      source: 'gpu',
+      message: `GPU process gone: ${details.reason}`,
+      stack: null,
+      origin: null,
+      context: { reason: details.reason, exitCode: details.exitCode },
+      versions: getVersions(),
     });
   });
 

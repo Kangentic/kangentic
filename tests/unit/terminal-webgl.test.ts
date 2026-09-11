@@ -1,10 +1,13 @@
 /**
  * Unit tests for `src/renderer/utils/terminal-webgl.ts`.
  *
- * The WebGL renderer recovers from context loss by retrying re-initialization
- * with a backoff, then permanently falling back to the DOM renderer. These tests
- * inject a fake addon factory (capturing `onContextLoss`) and a fake terminal so
- * the retry state machine can be driven deterministically with fake timers.
+ * The WebGL renderer recovers from context loss by re-acquiring on a backoff
+ * schedule whose last slot repeats forever. Chromium refuses WebGL for the
+ * page's domain for up to two minutes after a second GPU-process crash, so a
+ * terminal on the DOM renderer for any reason other than a budget suspend must
+ * always have a retry armed; there is no permanent fallback. These tests
+ * inject a fake addon factory (capturing `onContextLoss`) and a fake terminal
+ * so the state machine can be driven deterministically with fake timers.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Terminal } from '@xterm/xterm';
@@ -32,6 +35,9 @@ function makeFakeAddon(): FakeAddon {
     disposed: false,
     textureAtlasCleared: false,
     onContextLoss(handler: () => void) { addon.lossHandlers.push(handler); },
+    // Deliberately does NOT clear lossHandlers: the real addon never clears its
+    // 3s restore timer on dispose either, so a superseded addon can still report
+    // a loss after the module has moved on.
     dispose() { addon.disposed = true; },
     clearTextureAtlas() { addon.textureAtlasCleared = true; },
     triggerLoss() { for (const handler of addon.lossHandlers) handler(); },
@@ -44,8 +50,13 @@ function makeFakeAddon(): FakeAddon {
  * (one entry per call, 'ok' or 'throw'; calls past the end of the array default
  * to 'ok'). Only successful calls push a `FakeAddon` onto the returned `addons`
  * array, so `addons[n]` always lines up with the n-th SUCCESSFUL attach.
+ * `callCount()` reports every call, successful or not.
  */
-function makeAddonFactory(modes: Array<'ok' | 'throw'>): { createAddon: () => FakeAddon; addons: FakeAddon[] } {
+function makeAddonFactory(modes: Array<'ok' | 'throw'>): {
+  createAddon: () => FakeAddon;
+  addons: FakeAddon[];
+  callCount: () => number;
+} {
   const addons: FakeAddon[] = [];
   let callIndex = 0;
   const createAddon = (): FakeAddon => {
@@ -58,7 +69,7 @@ function makeAddonFactory(modes: Array<'ok' | 'throw'>): { createAddon: () => Fa
     addons.push(addon);
     return addon;
   };
-  return { createAddon, addons };
+  return { createAddon, addons, callCount: () => callIndex };
 }
 
 const fakeTerminal = { loadAddon: vi.fn() } as unknown as Terminal;
@@ -82,8 +93,12 @@ describe('attachWebglRenderer', () => {
       createAddon: makeFakeAddon,
       retryDelaysMs: RETRY_DELAYS,
     });
-    expect(getTerminalRendererReport()['k-attach'].renderer).toBe('webgl');
-    expect(getTerminalRendererReport()['k-attach'].contextLossCount).toBe(0);
+    const status = getTerminalRendererReport()['k-attach'];
+    expect(status.renderer).toBe('webgl');
+    expect(status.contextLossCount).toBe(0);
+    expect(status.failedAttempts).toBe(0);
+    expect(status.retryArmed).toBe(false);
+    expect(status).not.toHaveProperty('permanentDomFallback');
     dispose();
     expect(getTerminalRendererReport()['k-attach']).toBeUndefined();
   });
@@ -99,19 +114,23 @@ describe('attachWebglRenderer', () => {
     const afterLoss = getTerminalRendererReport()['k-recover'];
     expect(afterLoss.renderer).toBe('dom');
     expect(afterLoss.contextLossCount).toBe(1);
-    expect(afterLoss.permanentDomFallback).toBe(false);
+    expect(afterLoss.failedAttempts).toBe(1);
+    expect(afterLoss.retryArmed).toBe(true);
     expect(addons[0].disposed).toBe(true);
 
     // Re-init is scheduled for +2000ms; nothing before then.
     vi.advanceTimersByTime(1_999);
     expect(getTerminalRendererReport()['k-recover'].renderer).toBe('dom');
     vi.advanceTimersByTime(1);
-    expect(getTerminalRendererReport()['k-recover'].renderer).toBe('webgl');
+    const afterRecovery = getTerminalRendererReport()['k-recover'];
+    expect(afterRecovery.renderer).toBe('webgl');
+    expect(afterRecovery.failedAttempts).toBe(0);
+    expect(afterRecovery.retryArmed).toBe(false);
     expect(addons).toHaveLength(2);
     dispose();
   });
 
-  it('uses the second, longer backoff for a second loss', () => {
+  it('a loss after a recovery restarts the schedule at the first slot', () => {
     const addons: FakeAddon[] = [];
     const dispose = attachWebglRenderer(fakeTerminal, 'k-second', {
       createAddon: () => { const addon = makeFakeAddon(); addons.push(addon); return addon; },
@@ -122,69 +141,61 @@ describe('attachWebglRenderer', () => {
     vi.advanceTimersByTime(2_000); // recovered on addon[1]
     expect(getTerminalRendererReport()['k-second'].renderer).toBe('webgl');
 
+    // A successful attach resets the consecutive-failure count, so the next
+    // loss is a fresh event with the transient 2s slot, not the 10s one.
     addons[1].triggerLoss();
-    expect(getTerminalRendererReport()['k-second'].contextLossCount).toBe(2);
-    // Second backoff is 10s: not recovered at 2s...
-    vi.advanceTimersByTime(2_000);
+    const afterSecondLoss = getTerminalRendererReport()['k-second'];
+    expect(afterSecondLoss.contextLossCount).toBe(2);
+    expect(afterSecondLoss.failedAttempts).toBe(1);
+    vi.advanceTimersByTime(1_999);
     expect(getTerminalRendererReport()['k-second'].renderer).toBe('dom');
-    // ...recovered at 10s total.
-    vi.advanceTimersByTime(8_000);
+    vi.advanceTimersByTime(1);
     expect(getTerminalRendererReport()['k-second'].renderer).toBe('webgl');
     expect(addons).toHaveLength(3);
     dispose();
   });
 
-  it('gives up permanently after the retries are exhausted', () => {
-    const addons: FakeAddon[] = [];
-    const dispose = attachWebglRenderer(fakeTerminal, 'k-permanent', {
-      createAddon: () => { const addon = makeFakeAddon(); addons.push(addon); return addon; },
-      retryDelaysMs: RETRY_DELAYS,
-    });
-
-    addons[0].triggerLoss();
-    vi.advanceTimersByTime(2_000);
-    addons[1].triggerLoss();
-    vi.advanceTimersByTime(10_000);
-    // Third loss exceeds the 2 retry slots -> permanent DOM, no timer armed.
-    addons[2].triggerLoss();
-    const status = getTerminalRendererReport()['k-permanent'];
-    expect(status.renderer).toBe('dom');
-    expect(status.contextLossCount).toBe(3);
-    expect(status.permanentDomFallback).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-    dispose();
-  });
-
-  it('advances to the next backoff slot when a scheduled retry itself fails, and only sets permanentDomFallback once slots are exhausted', () => {
-    // Initial attach succeeds; the FIRST scheduled retry (after the loss) throws;
-    // the SECOND scheduled retry also throws. A failed non-final retry must not
-    // set permanentDomFallback and must arm the next backoff slot instead of
-    // leaving the terminal stuck on DOM with no further retry scheduled.
-    const { createAddon, addons } = makeAddonFactory(['ok', 'throw', 'throw']);
-    const dispose = attachWebglRenderer(fakeTerminal, 'k-retry-fail', {
+  it('keeps retrying after the schedule is exhausted, repeating the last delay', () => {
+    // Initial attach succeeds; the next three attempts throw; the fifth
+    // succeeds. With two slots the third failure must NOT latch the terminal:
+    // the last slot repeats until an attempt succeeds.
+    const { createAddon, addons } = makeAddonFactory(['ok', 'throw', 'throw', 'throw', 'ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-tail', {
       createAddon,
       retryDelaysMs: RETRY_DELAYS,
     });
-    expect(getTerminalRendererReport()['k-retry-fail'].renderer).toBe('webgl');
 
     addons[0].triggerLoss();
-    expect(getTerminalRendererReport()['k-retry-fail'].contextLossCount).toBe(1);
-
-    // First scheduled retry (at +2000ms) itself throws inside tryAttach.
-    vi.advanceTimersByTime(RETRY_DELAYS[0]);
-    const afterFirstRetryFailure = getTerminalRendererReport()['k-retry-fail'];
-    expect(afterFirstRetryFailure.renderer).toBe('dom');
-    expect(afterFirstRetryFailure.permanentDomFallback).toBe(false);
-    // Not the final slot yet: the next backoff must be armed.
     expect(vi.getTimerCount()).toBe(1);
 
-    // Second (final) scheduled retry also throws: slots exhausted -> permanent.
-    vi.advanceTimersByTime(RETRY_DELAYS[1]);
-    const afterSecondRetryFailure = getTerminalRendererReport()['k-retry-fail'];
-    expect(afterSecondRetryFailure.renderer).toBe('dom');
-    expect(afterSecondRetryFailure.permanentDomFallback).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(RETRY_DELAYS[0]); // attempt 1 throws
+    let status = getTerminalRendererReport()['k-tail'];
+    expect(status.renderer).toBe('dom');
+    expect(status.failedAttempts).toBe(2);
+    expect(status.retryArmed).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
 
+    vi.advanceTimersByTime(RETRY_DELAYS[1]); // attempt 2 throws: slots exhausted
+    status = getTerminalRendererReport()['k-tail'];
+    expect(status.renderer).toBe('dom');
+    expect(status.failedAttempts).toBe(3);
+    expect(status.retryArmed).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The last slot repeats: nothing at +9999, attempt 3 at +10000 (throws).
+    vi.advanceTimersByTime(RETRY_DELAYS[1] - 1);
+    expect(getTerminalRendererReport()['k-tail'].failedAttempts).toBe(3);
+    vi.advanceTimersByTime(1);
+    expect(getTerminalRendererReport()['k-tail'].failedAttempts).toBe(4);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.advanceTimersByTime(RETRY_DELAYS[1]); // attempt 4 succeeds
+    status = getTerminalRendererReport()['k-tail'];
+    expect(status.renderer).toBe('webgl');
+    expect(status.failedAttempts).toBe(0);
+    expect(status.retryArmed).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(addons).toHaveLength(2);
     dispose();
   });
 
@@ -199,29 +210,41 @@ describe('attachWebglRenderer', () => {
     // First scheduled retry throws; must advance to the next slot rather than
     // giving up.
     vi.advanceTimersByTime(RETRY_DELAYS[0]);
-    expect(getTerminalRendererReport()['k-retry-recover'].permanentDomFallback).toBe(false);
+    expect(getTerminalRendererReport()['k-retry-recover'].retryArmed).toBe(true);
     expect(vi.getTimerCount()).toBe(1);
 
     // Second scheduled retry succeeds.
     vi.advanceTimersByTime(RETRY_DELAYS[1]);
     const status = getTerminalRendererReport()['k-retry-recover'];
     expect(status.renderer).toBe('webgl');
-    expect(status.permanentDomFallback).toBe(false);
+    expect(status.retryArmed).toBe(false);
+    expect(status.failedAttempts).toBe(0);
     expect(addons).toHaveLength(2); // initial attach + the recovered retry
 
     dispose();
   });
 
-  it('records a permanent DOM fallback when WebGL construction throws', () => {
+  it('arms the retry schedule when the initial attach throws', () => {
+    // A terminal opened while Chromium is refusing WebGL (blocked after a GPU
+    // crash) must enter the same schedule as a loss, not latch on DOM.
+    const { createAddon, addons } = makeAddonFactory(['throw', 'ok']);
     const dispose = attachWebglRenderer(fakeTerminal, 'k-unavailable', {
-      createAddon: () => { throw new Error('WebGL unavailable'); },
+      createAddon,
       retryDelaysMs: RETRY_DELAYS,
     });
     const status = getTerminalRendererReport()['k-unavailable'];
     expect(status.renderer).toBe('dom');
-    expect(status.permanentDomFallback).toBe(true);
     expect(status.contextLossCount).toBe(0);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(status.failedAttempts).toBe(1);
+    expect(status.retryArmed).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.advanceTimersByTime(RETRY_DELAYS[0]);
+    const recovered = getTerminalRendererReport()['k-unavailable'];
+    expect(recovered.renderer).toBe('webgl');
+    expect(recovered.failedAttempts).toBe(0);
+    expect(recovered.retryArmed).toBe(false);
+    expect(addons).toHaveLength(1);
     dispose();
   });
 
@@ -243,6 +266,98 @@ describe('attachWebglRenderer', () => {
     vi.advanceTimersByTime(10_000);
     expect(addons).toHaveLength(1);
   });
+
+  it('the default schedule probes at 2, 12, 42, 72, 132, 252 and then every 120 seconds', () => {
+    // No retryDelaysMs injected: this pins the production schedule. Six probes
+    // throw, the seventh (at 372s) succeeds.
+    const { createAddon, addons, callCount } = makeAddonFactory([
+      'ok', 'throw', 'throw', 'throw', 'throw', 'throw', 'throw', 'ok',
+    ]);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-default-schedule', { createAddon });
+    expect(callCount()).toBe(1);
+
+    addons[0].triggerLoss();
+    const boundariesMs = [2_000, 12_000, 42_000, 72_000, 132_000, 252_000, 372_000];
+    let elapsedMs = 0;
+    for (let index = 0; index < boundariesMs.length; index += 1) {
+      const boundaryMs = boundariesMs[index];
+      vi.advanceTimersByTime(boundaryMs - 1 - elapsedMs);
+      expect(callCount()).toBe(index + 1);
+      vi.advanceTimersByTime(1);
+      expect(callCount()).toBe(index + 2);
+      elapsedMs = boundaryMs;
+    }
+    expect(getTerminalRendererReport()['k-default-schedule'].renderer).toBe('webgl');
+    expect(vi.getTimerCount()).toBe(0);
+    dispose();
+  });
+
+  it('ignores a loss reported by a superseded addon', () => {
+    const addons: FakeAddon[] = [];
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-stale-addon', {
+      createAddon: () => { const addon = makeFakeAddon(); addons.push(addon); return addon; },
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    addons[0].triggerLoss();
+    vi.advanceTimersByTime(RETRY_DELAYS[0]); // recovered on addons[1]
+    expect(getTerminalRendererReport()['k-stale-addon'].renderer).toBe('webgl');
+
+    // The disposed addon's late loss callback must not touch the live one.
+    addons[0].triggerLoss();
+    const status = getTerminalRendererReport()['k-stale-addon'];
+    expect(status.renderer).toBe('webgl');
+    expect(status.contextLossCount).toBe(1);
+    expect(status.retryArmed).toBe(false);
+    expect(addons[1].disposed).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    dispose();
+  });
+
+  it('disposes the addon it handed to xterm when loadAddon throws', () => {
+    // The real WebGL2 throw comes from WebglAddon.activate(), inside
+    // terminal.loadAddon(), AFTER xterm's AddonManager has pushed the addon
+    // onto its list. Disposing it is what splices that entry back out.
+    const throwingTerminal = {
+      loadAddon: vi.fn(() => { throw new Error('WebGL2 not supported'); }),
+    } as unknown as Terminal;
+    const { createAddon, addons } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(throwingTerminal, 'k-load-throws', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    expect(addons).toHaveLength(1);
+    expect(addons[0].disposed).toBe(true);
+    const status = getTerminalRendererReport()['k-load-throws'];
+    expect(status.renderer).toBe('dom');
+    expect(status.failedAttempts).toBe(1);
+    expect(status.retryArmed).toBe(true);
+    dispose();
+  });
+
+  it('falls back to the default schedule when retryDelaysMs is an empty array', () => {
+    // An empty array must not be read at index -1: `retryDelaysMs[-1]` is
+    // undefined, which would arm setTimeout with an undefined delay (fires on
+    // the next tick) instead of falling back to DEFAULT_RETRY_DELAYS_MS.
+    const { createAddon, callCount } = makeAddonFactory(['throw', 'ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-empty-schedule', {
+      createAddon,
+      retryDelaysMs: [],
+    });
+
+    const status = getTerminalRendererReport()['k-empty-schedule'];
+    expect(status.retryArmed).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The default schedule's first slot is 2000ms.
+    vi.advanceTimersByTime(1_999);
+    expect(callCount()).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(callCount()).toBe(2);
+    expect(getTerminalRendererReport()['k-empty-schedule'].renderer).toBe('webgl');
+    dispose();
+  });
 });
 
 describe('notifyFontChanged', () => {
@@ -259,7 +374,7 @@ describe('notifyFontChanged', () => {
     dispose();
   });
 
-  it('is a safe no-op for a terminal permanently on the DOM renderer', () => {
+  it('is a safe no-op for a terminal on the DOM renderer after a failed attach', () => {
     const dispose = attachWebglRenderer(fakeTerminal, 'k-font-dom', {
       createAddon: () => { throw new Error('WebGL unavailable'); },
       retryDelaysMs: RETRY_DELAYS,
@@ -292,7 +407,8 @@ describe('budget suspend/resume', () => {
     expect(status.renderer).toBe('dom');
     expect(status.suspendedByBudget).toBe(true);
     expect(status.contextLossCount).toBe(0);
-    expect(status.permanentDomFallback).toBe(false);
+    expect(status.failedAttempts).toBe(0);
+    expect(status.retryArmed).toBe(false);
     expect(addons[0].disposed).toBe(true);
     dispose();
   });
@@ -316,7 +432,9 @@ describe('budget suspend/resume', () => {
     const status = getTerminalRendererReport()['k-suspend-retry'];
     expect(status.renderer).toBe('dom');
     expect(status.suspendedByBudget).toBe(true);
-    expect(status.permanentDomFallback).toBe(false);
+    expect(status.retryArmed).toBe(false);
+    // The failure count survives the suspend (see the mid-block test below).
+    expect(status.failedAttempts).toBe(1);
     dispose();
   });
 
@@ -332,7 +450,8 @@ describe('budget suspend/resume', () => {
 
     const status = getTerminalRendererReport()['k-late-loss'];
     expect(status.contextLossCount).toBe(0);
-    expect(status.permanentDomFallback).toBe(false);
+    expect(status.failedAttempts).toBe(0);
+    expect(status.retryArmed).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
     dispose();
   });
@@ -354,8 +473,11 @@ describe('budget suspend/resume', () => {
     dispose();
   });
 
-  it('a failed resume stays budget-suspended without escalating, and a later resume recovers', () => {
-    const { createAddon, addons } = makeAddonFactory(['ok', 'throw', 'ok']);
+  it('a failed resume arms the retry schedule instead of staying passively suspended', () => {
+    // The coordinator wants this terminal live; a failed acquisition on resume
+    // is the same situation as a failed retry after a loss, and a page with no
+    // coordinator (the Agent Monitor pop-out) would otherwise never retry.
+    const { createAddon, addons, callCount } = makeAddonFactory(['ok', 'throw', 'ok']);
     const dispose = attachWebglRenderer(fakeTerminal, 'k-resume-fail', {
       createAddon,
       retryDelaysMs: RETRY_DELAYS,
@@ -366,34 +488,82 @@ describe('budget suspend/resume', () => {
 
     const afterFailure = getTerminalRendererReport()['k-resume-fail'];
     expect(afterFailure.renderer).toBe('dom');
-    expect(afterFailure.suspendedByBudget).toBe(true);
-    expect(afterFailure.permanentDomFallback).toBe(false);
+    expect(afterFailure.suspendedByBudget).toBe(false);
+    expect(afterFailure.retryArmed).toBe(true);
+    expect(afterFailure.failedAttempts).toBe(1);
     expect(afterFailure.contextLossCount).toBe(0);
-    // No retry ladder armed: the coordinator's next plan application retries.
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
 
-    applyWebglAttachmentPlan(attachPlan('k-resume-fail')); // succeeds
+    // Re-applying the plan before the timer fires is a no-op: probe timing must
+    // not follow window focus (the coordinator re-applies on every change).
+    applyWebglAttachmentPlan(attachPlan('k-resume-fail'));
+    expect(callCount()).toBe(2);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.advanceTimersByTime(RETRY_DELAYS[0]);
     const afterRecovery = getTerminalRendererReport()['k-resume-fail'];
     expect(afterRecovery.renderer).toBe('webgl');
     expect(afterRecovery.suspendedByBudget).toBe(false);
+    expect(afterRecovery.retryArmed).toBe(false);
     expect(addons).toHaveLength(2);
     dispose();
   });
 
-  it('suspend and resume are no-ops for a permanently-DOM terminal', () => {
-    const dispose = attachWebglRenderer(fakeTerminal, 'k-permanent-plan', {
-      createAddon: () => { throw new Error('WebGL unavailable'); },
+  it('suspend applies to a terminal mid-schedule and resume probes again', () => {
+    const { createAddon, addons, callCount } = makeAddonFactory(['throw', 'ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-mid-schedule', {
+      createAddon,
       retryDelaysMs: RETRY_DELAYS,
     });
-    expect(getTerminalRendererReport()['k-permanent-plan'].permanentDomFallback).toBe(true);
+    expect(getTerminalRendererReport()['k-mid-schedule'].retryArmed).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
 
-    applyWebglAttachmentPlan(suspendPlan('k-permanent-plan'));
-    expect(getTerminalRendererReport()['k-permanent-plan'].suspendedByBudget).toBe(false);
+    applyWebglAttachmentPlan(suspendPlan('k-mid-schedule'));
+    const suspendedStatus = getTerminalRendererReport()['k-mid-schedule'];
+    expect(suspendedStatus.suspendedByBudget).toBe(true);
+    expect(suspendedStatus.retryArmed).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
 
-    applyWebglAttachmentPlan(attachPlan('k-permanent-plan'));
-    const status = getTerminalRendererReport()['k-permanent-plan'];
-    expect(status.renderer).toBe('dom');
-    expect(status.permanentDomFallback).toBe(true);
+    // No probe while suspended, however long it stays that way.
+    vi.advanceTimersByTime(20_000);
+    expect(callCount()).toBe(1);
+
+    applyWebglAttachmentPlan(attachPlan('k-mid-schedule'));
+    const resumedStatus = getTerminalRendererReport()['k-mid-schedule'];
+    expect(resumedStatus.renderer).toBe('webgl');
+    expect(resumedStatus.suspendedByBudget).toBe(false);
+    expect(resumedStatus.failedAttempts).toBe(0);
+    expect(addons).toHaveLength(1);
+    dispose();
+  });
+
+  it('suspend does not reset failedAttempts, so a resume mid-block continues the schedule', () => {
+    // A user flipping window focus during Chromium's block must not restart
+    // every affected schedule at 2s: the resume failure takes the NEXT slot.
+    const { createAddon, addons, callCount } = makeAddonFactory(['ok', 'throw', 'throw', 'ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-keep-failures', {
+      createAddon,
+      retryDelaysMs: [2_000, 10_000, 30_000],
+    });
+
+    addons[0].triggerLoss(); // failure 1
+    vi.advanceTimersByTime(2_000); // failure 2, next slot 10s
+    expect(getTerminalRendererReport()['k-keep-failures'].failedAttempts).toBe(2);
+
+    applyWebglAttachmentPlan(suspendPlan('k-keep-failures'));
+    expect(getTerminalRendererReport()['k-keep-failures'].failedAttempts).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
+
+    applyWebglAttachmentPlan(attachPlan('k-keep-failures')); // failure 3, slot 30s
+    expect(getTerminalRendererReport()['k-keep-failures'].failedAttempts).toBe(3);
+    expect(callCount()).toBe(3);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.advanceTimersByTime(29_999);
+    expect(callCount()).toBe(3);
+    vi.advanceTimersByTime(1);
+    expect(callCount()).toBe(4);
+    expect(getTerminalRendererReport()['k-keep-failures'].renderer).toBe('webgl');
     dispose();
   });
 
@@ -416,11 +586,136 @@ describe('budget suspend/resume', () => {
     const status = getTerminalRendererReport()['k-cap-2'];
     expect(status.renderer).toBe('dom');
     expect(status.suspendedByBudget).toBe(true);
-    expect(status.permanentDomFallback).toBe(false);
+    expect(status.retryArmed).toBe(false);
     expect(secondFactory).not.toHaveBeenCalled();
 
     disposeFirst();
     disposeSecond();
+  });
+
+  it('a retry that finds the page over budget parks the terminal as budget-suspended and notifies listeners', () => {
+    const listener = vi.fn();
+    const unsubscribe = onWebglAttachmentsChanged(listener);
+    // Cleanup runs in a finally: the listener registry is module state, and a
+    // listener leaked by a failed assertion would flip the no-coordinator
+    // branch for every later test in this file.
+    let disposeParked: (() => void) | null = null;
+    let disposeLive: (() => void) | null = null;
+    try {
+      // The parked terminal mounts FIRST (under budget, its attach throws, it
+      // arms a retry), then a second terminal takes the only slot.
+      const parked = makeAddonFactory(['throw']);
+      disposeParked = attachWebglRenderer(fakeTerminal, 'k-park-b', {
+        createAddon: parked.createAddon,
+        retryDelaysMs: RETRY_DELAYS,
+        attachBudget: 1,
+      });
+      expect(getTerminalRendererReport()['k-park-b'].retryArmed).toBe(true);
+
+      const live = makeAddonFactory(['ok']);
+      disposeLive = attachWebglRenderer(fakeTerminal, 'k-park-a', {
+        createAddon: live.createAddon,
+        retryDelaysMs: RETRY_DELAYS,
+        attachBudget: 1,
+      });
+      expect(getTerminalRendererReport()['k-park-a'].renderer).toBe('webgl');
+      const notifiesBefore = listener.mock.calls.length;
+
+      vi.advanceTimersByTime(RETRY_DELAYS[0]);
+      const status = getTerminalRendererReport()['k-park-b'];
+      expect(status.renderer).toBe('dom');
+      expect(status.suspendedByBudget).toBe(true);
+      expect(status.retryArmed).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      // Parking never asked for a context past the cap.
+      expect(parked.callCount()).toBe(1);
+      expect(listener.mock.calls.length).toBe(notifiesBefore + 1);
+    } finally {
+      disposeLive?.();
+      disposeParked?.();
+      unsubscribe();
+    }
+  });
+
+  it('a plan re-applied from the park notification can resume the parked terminal in the same tick', () => {
+    // The coordinator re-applies its plan synchronously inside the
+    // attachment-changed notification. If the plan prefers the parked terminal,
+    // it suspends the other one and resumes this one before the retry timer
+    // callback returns, so the callback's state must be committed before the
+    // notify.
+    const parked = makeAddonFactory(['throw', 'ok']);
+    const live = makeAddonFactory(['ok']);
+    const unsubscribe = onWebglAttachmentsChanged(() => {
+      // The listener also fires on the two mounts; act only once the park
+      // has actually happened.
+      if (getTerminalRendererReport()['k-reent-b']?.suspendedByBudget) {
+        applyWebglAttachmentPlan({ attachKeys: new Set(['k-reent-b']), suspendKeys: new Set(['k-reent-a']) });
+      }
+    });
+    // Cleanup runs in a finally for the same reason as the park test above.
+    let disposeParked: (() => void) | null = null;
+    let disposeLive: (() => void) | null = null;
+    try {
+      disposeParked = attachWebglRenderer(fakeTerminal, 'k-reent-b', {
+        createAddon: parked.createAddon,
+        retryDelaysMs: RETRY_DELAYS,
+        attachBudget: 1,
+      });
+      disposeLive = attachWebglRenderer(fakeTerminal, 'k-reent-a', {
+        createAddon: live.createAddon,
+        retryDelaysMs: RETRY_DELAYS,
+        attachBudget: 1,
+      });
+      expect(getTerminalRendererReport()['k-reent-a'].renderer).toBe('webgl');
+
+      vi.advanceTimersByTime(RETRY_DELAYS[0]);
+      const parkedStatus = getTerminalRendererReport()['k-reent-b'];
+      expect(parkedStatus.renderer).toBe('webgl');
+      expect(parkedStatus.suspendedByBudget).toBe(false);
+      expect(parkedStatus.failedAttempts).toBe(0);
+      const liveStatus = getTerminalRendererReport()['k-reent-a'];
+      expect(liveStatus.renderer).toBe('dom');
+      expect(liveStatus.suspendedByBudget).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      disposeLive?.();
+      disposeParked?.();
+      unsubscribe();
+    }
+  });
+
+  it('a page with no attachment listener waits out a tail slot instead of parking', () => {
+    // No listener is registered here: this is the Agent Monitor pop-out, which
+    // hosts terminals without a coordinator. A parked terminal there would
+    // never be resumed, so the retry waits for a slot to free up instead.
+    const parked = makeAddonFactory(['throw', 'ok']);
+    const disposeParked = attachWebglRenderer(fakeTerminal, 'k-nolistener-b', {
+      createAddon: parked.createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+      attachBudget: 1,
+    });
+    const live = makeAddonFactory(['ok']);
+    const disposeLive = attachWebglRenderer(fakeTerminal, 'k-nolistener-a', {
+      createAddon: live.createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+      attachBudget: 1,
+    });
+
+    vi.advanceTimersByTime(RETRY_DELAYS[0]);
+    const waiting = getTerminalRendererReport()['k-nolistener-b'];
+    expect(waiting.renderer).toBe('dom');
+    expect(waiting.suspendedByBudget).toBe(false);
+    expect(waiting.retryArmed).toBe(true);
+    expect(waiting.failedAttempts).toBe(1); // waiting is not a failure
+    expect(vi.getTimerCount()).toBe(1);
+    expect(parked.callCount()).toBe(1);
+
+    disposeLive(); // frees the slot
+    vi.advanceTimersByTime(RETRY_DELAYS[1] - 1);
+    expect(parked.callCount()).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(getTerminalRendererReport()['k-nolistener-b'].renderer).toBe('webgl');
+    disposeParked();
   });
 
   it('applies suspends before resumes so the live count never overshoots the cap', () => {
@@ -514,5 +809,121 @@ describe('budget suspend/resume', () => {
     expect(addons).toHaveLength(1);
     expect(addons[0].disposed).toBe(false);
     dispose();
+  });
+});
+
+describe('logging', () => {
+  it('warns on each failure through the first pass, once for the steady state, then only on recovery', () => {
+    // Every warn is a Sentry breadcrumb; a WebGL-less environment must not fill
+    // the ring with a line per probe. Seven throws, then success.
+    const { createAddon, addons } = makeAddonFactory([
+      'ok', 'throw', 'throw', 'throw', 'throw', 'throw', 'throw', 'throw', 'ok',
+    ]);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-log', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    warnSpy.mockClear();
+
+    addons[0].triggerLoss();
+    expect(warnSpy).toHaveBeenCalledTimes(1); // the loss itself
+    vi.advanceTimersByTime(RETRY_DELAYS[0]);
+    expect(warnSpy).toHaveBeenCalledTimes(2); // failure in slot 2
+    vi.advanceTimersByTime(RETRY_DELAYS[1]);
+    expect(warnSpy).toHaveBeenCalledTimes(3); // the one steady-state line
+
+    for (let slot = 0; slot < 5; slot += 1) vi.advanceTimersByTime(RETRY_DELAYS[1]);
+    expect(warnSpy).toHaveBeenCalledTimes(3); // silent while the tail repeats
+
+    vi.advanceTimersByTime(RETRY_DELAYS[1]);
+    expect(getTerminalRendererReport()['k-log'].renderer).toBe('webgl');
+    expect(warnSpy).toHaveBeenCalledTimes(4); // recovered
+    dispose();
+  });
+
+  it('logs a distinct message for each failure kind: context loss, re-init failure, and initial unavailability', () => {
+    // Content, not just count: the call-count test above would still pass if
+    // all three kinds collapsed onto one shared warn string.
+    const loss = makeAddonFactory(['ok']);
+    const disposeLoss = attachWebglRenderer(fakeTerminal, 'k-msg-loss', {
+      createAddon: loss.createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    warnSpy.mockClear();
+    loss.addons[0].triggerLoss();
+    expect(String(warnSpy.mock.calls[0]![0])).toContain(
+      'WebGL context lost (1) for k-msg-loss; retrying in 2000ms',
+    );
+    disposeLoss();
+
+    const reinit = makeAddonFactory(['ok', 'throw']);
+    const disposeReinit = attachWebglRenderer(fakeTerminal, 'k-msg-reinit', {
+      createAddon: reinit.createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    reinit.addons[0].triggerLoss();
+    warnSpy.mockClear();
+    vi.advanceTimersByTime(RETRY_DELAYS[0]); // the scheduled retry throws
+    expect(String(warnSpy.mock.calls[0]![0])).toContain(
+      'WebGL re-init failed for k-msg-reinit; retrying in 10000ms',
+    );
+    disposeReinit();
+
+    warnSpy.mockClear();
+    const disposeUnavailable = attachWebglRenderer(fakeTerminal, 'k-msg-unavailable', {
+      createAddon: () => { throw new Error('WebGL unavailable'); },
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    expect(String(warnSpy.mock.calls[0]![0])).toContain(
+      'WebGL unavailable for k-msg-unavailable; retrying in 2000ms',
+    );
+    disposeUnavailable();
+  });
+});
+
+describe('invariant', () => {
+  const emptyPlan = { attachKeys: new Set<string>(), suspendKeys: new Set<string>() };
+
+  it('a DOM terminal that is not budget-suspended always has exactly one retry armed', () => {
+    const expectArmed = (key: string): void => {
+      const status = getTerminalRendererReport()[key];
+      expect(status.renderer).toBe('dom');
+      expect(status.suspendedByBudget).toBe(false);
+      expect(status.retryArmed).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+    };
+
+    // (a) a context loss
+    const loss = makeAddonFactory(['ok']);
+    const disposeLoss = attachWebglRenderer(fakeTerminal, 'k-inv-loss', { createAddon: loss.createAddon, retryDelaysMs: RETRY_DELAYS });
+    loss.addons[0].triggerLoss();
+    expectArmed('k-inv-loss');
+    disposeLoss();
+    expect(vi.getTimerCount()).toBe(0);
+
+    // (b) a failed retry
+    const retry = makeAddonFactory(['ok', 'throw']);
+    const disposeRetry = attachWebglRenderer(fakeTerminal, 'k-inv-retry', { createAddon: retry.createAddon, retryDelaysMs: RETRY_DELAYS });
+    retry.addons[0].triggerLoss();
+    vi.advanceTimersByTime(RETRY_DELAYS[0]);
+    expectArmed('k-inv-retry');
+    disposeRetry();
+    expect(vi.getTimerCount()).toBe(0);
+
+    // (c) a failed resume
+    const resume = makeAddonFactory(['ok', 'throw']);
+    const disposeResume = attachWebglRenderer(fakeTerminal, 'k-inv-resume', { createAddon: resume.createAddon, retryDelaysMs: RETRY_DELAYS });
+    applyWebglAttachmentPlan({ ...emptyPlan, suspendKeys: new Set(['k-inv-resume']) });
+    applyWebglAttachmentPlan({ ...emptyPlan, attachKeys: new Set(['k-inv-resume']) });
+    expectArmed('k-inv-resume');
+    disposeResume();
+    expect(vi.getTimerCount()).toBe(0);
+
+    // (d) an initial attach failure
+    const initial = makeAddonFactory(['throw']);
+    const disposeInitial = attachWebglRenderer(fakeTerminal, 'k-inv-initial', { createAddon: initial.createAddon, retryDelaysMs: RETRY_DELAYS });
+    expectArmed('k-inv-initial');
+    disposeInitial();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
