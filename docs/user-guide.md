@@ -501,6 +501,7 @@ All permission modes are available in both the global App Settings dropdown and 
 | Link node_modules | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-Worktree Script install the worktree's own dependencies |
 | Auto-refresh PRs | How often the background sweep refreshes linked PRs' state and merge readiness (every 2, 5, 10, or 15 minutes, or off; the on-open sweep still runs) |
 | Evaluate branch policies | Off by default. Ask Azure DevOps to evaluate a PR's branch policies (reviewer minimums, required builds, work-item linking) so a clean PR can read `ready` instead of plain `open`, at one extra `az` call per open PR per refresh. GitHub already reports policy in its normal call and ignores this |
+| Count merge bypass as ready | On by default. On GitHub, a PR whose only block is a missing required review reads `blocked` even when you can bypass branch protection and merge it yourself, which is how the Merge column already lands PRs. On, such a PR reads `ready`, at one extra `gh` call per review-blocked PR per refresh. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass. Azure DevOps ignores this |
 
 ### Shortcuts
 

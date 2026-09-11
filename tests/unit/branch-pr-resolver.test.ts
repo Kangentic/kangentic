@@ -384,6 +384,225 @@ describe('GitHubImporter.resolvePRByNumber', () => {
   });
 });
 
+/**
+ * The viewer's merge bypass and the base branch's required checks are the two
+ * readiness inputs `gh pr view --json` cannot project, so they share one
+ * `gh api graphql` call. Every failure is contained as `null`: this enriches a
+ * resolve that already succeeded, and a throw here would fail that resolve and
+ * freeze `pr_state` for the sweep.
+ */
+describe('GitHubImporter.resolveMergeBypass', () => {
+  const answer = (viewerCanMergeAsAdmin: unknown, requiredStatusCheckContexts: unknown = null) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            viewerCanMergeAsAdmin,
+            baseRef: {
+              branchProtectionRule: requiredStatusCheckContexts === null
+                ? null
+                : { requiredStatusCheckContexts },
+            },
+          },
+        },
+      },
+    });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // Every contained failure warns once; keep the run quiet and observable.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.lastArgs = [];
+    state.lastCwd = undefined;
+  });
+
+  it('asks GraphQL with gh placeholder substitution, a typed number, and the repo cwd', async () => {
+    state.ghStdout = answer(true, ['cla']);
+    const importer = new GitHubImporter();
+    await expect(importer.resolveMergeBypass('/repo', 393)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: ['cla'],
+    });
+    // `{owner}` / `{repo}` are gh's own placeholders, filled from the remote of
+    // the repo at `cwd`: no owner/name parsing anywhere in this code. `-F` (not
+    // `-f`) on `number` is what makes it an Int for the `Int!` variable.
+    expect(state.lastArgs.slice(0, 7)).toEqual([
+      'api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-F',
+    ]);
+    expect(state.lastArgs[7]).toBe('number=393');
+    expect(state.lastArgs[8]).toBe('-f');
+    expect(state.lastArgs[9]).toMatch(/^query=query\(\$owner:String!,\$name:String!,\$number:Int!\)/);
+    expect(state.lastArgs[9]).toContain('viewerCanMergeAsAdmin');
+    // Off `baseRef`, never `refUpdateRule`: that one reports the rules as they
+    // apply to the VIEWER and answers an empty list for a bypassing admin,
+    // which is exactly the viewer this call serves.
+    expect(state.lastArgs[9]).toContain('baseRef{branchProtectionRule{requiredStatusCheckContexts}}');
+    expect(state.lastArgs[9]).not.toContain('refUpdateRule');
+    expect(state.lastCwd).toBe('/repo');
+  });
+
+  /**
+   * Real-shape fixture per the external-input-parser convention (the
+   * `codex-rollout-event-msg.jsonl` pattern): every other case in this
+   * describe block builds the envelope with the hand-written `answer()`
+   * helper, so gh's actual `gh api graphql` stdout is never JSON.parse'd here.
+   * This drives a literal, realistic stdout string (this repo's own public CI
+   * job names; the query returns no owner/repo/PR fields to sanitize) through
+   * the real parse -> field read path.
+   */
+  it('parses a literal gh api graphql stdout into GhMergeBypass', async () => {
+    state.ghStdout = '{"data":{"repository":{"pullRequest":{"viewerCanMergeAsAdmin":true,'
+      + '"baseRef":{"branchProtectionRule":{"requiredStatusCheckContexts":'
+      + '["cla","Lint, Typecheck, Build","Unit tests (Vitest)","UI tests (Playwright)","E2E tests (Electron)"]}}}}}}';
+    const importer = new GitHubImporter();
+    await expect(importer.resolveMergeBypass('/repo', 393)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: ['cla', 'Lint, Typecheck, Build', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)'],
+    });
+  });
+
+  it('returns false when the viewer cannot bypass', async () => {
+    state.ghStdout = answer(false, ['cla']);
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
+      viewerCanMergeAsAdmin: false,
+      requiredStatusCheckContexts: ['cla'],
+    });
+  });
+
+  it('reads a protected branch that requires no status checks as an empty list, not as unreadable', async () => {
+    state.ghStdout = answer(true, []);
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: [],
+    });
+  });
+
+  it.each([
+    // A branch with no classic protection; a repo on rulesets answers this too.
+    ['a null branch protection rule', answer(true, null)],
+    ['a null baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true, baseRef: null } } } })],
+    ['an absent baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true } } } })],
+    ['a non-array context list', answer(true, 'cla')],
+    // Fails the WHOLE list closed: a partially-read list looks complete and
+    // would under-require.
+    ['a list carrying a non-string', answer(true, ['cla', 7])],
+  ])('answers requiredStatusCheckContexts null for %s, keeping the bypass', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
+      viewerCanMergeAsAdmin: true,
+      requiredStatusCheckContexts: null,
+    });
+  });
+
+  it.each([
+    ['a non-boolean at the path', answer('yes')],
+    ['a null pull request (no such PR)', JSON.stringify({ data: { repository: { pullRequest: null } } })],
+    ['a null repository', JSON.stringify({ data: { repository: null } })],
+    ['an envelope with no data', JSON.stringify({ errors: [{ message: 'Could not resolve' }] })],
+    ['an empty stdout', ''],
+    ['a bare null', 'null'],
+  ])('returns null for %s instead of guessing', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+  });
+
+  it('returns null and never throws when gh fails, warning once per cause', async () => {
+    const warn = vi.mocked(console.warn);
+    const failure = Object.assign(new Error('Command failed: gh api graphql -F number=7'), {
+      stderr: 'gh: Resource not accessible by integration (HTTP 403)\n',
+    });
+    state.ghError = failure;
+    const importer = new GitHubImporter();
+    await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    await expect(importer.resolveMergeBypass('/repo', 8)).resolves.toBeNull();
+    // Keyed on the stderr line, not the message (which embeds the PR number),
+    // so one repo-wide cause prints once however many PRs it touches.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('gh: Resource not accessible by integration (HTTP 403)');
+    expect(warn.mock.calls[0][0]).toContain('merge readiness stays blocked');
+  });
+
+  /**
+   * `bypassProbeWarningsShown` is bounded at MAX_BYPASS_PROBE_WARNINGS (32) with
+   * oldest-first eviction, and the test above only proves same-cause dedupe (two
+   * calls, one cause, one warning) - nothing drives the Set past 32 distinct
+   * causes, so the eviction branch itself has never run in this suite.
+   *
+   * The Set is module-level and shared with every other test in this file, so
+   * this test uses stderr text unique to it (a `BOUND-TEST-CAUSE-` marker) to
+   * avoid pre-seeding or colliding with the once-per-cause test's exact stderr
+   * string above. Whatever else already occupies the Set when this test starts,
+   * inserting exactly 32 new distinct causes fills the bound with only this
+   * test's own entries (any pre-existing entries are the ones evicted first,
+   * since they were inserted earlier) - so the 33rd new cause evicts this
+   * test's own oldest entry, and re-triggering that first cause is what proves
+   * eviction really happened rather than the bound being decorative. Reverting
+   * the bound to an unbounded Set (or dropping the eviction inside
+   * `warnBypassProbeOnce`) fails the final assertion: the re-triggered first
+   * cause would still be in the Set and would stay silent instead of warning a
+   * 34th time.
+   */
+  it('evicts the oldest bypass-probe warning cause once the 32-entry cap is exceeded', async () => {
+    const warn = vi.mocked(console.warn);
+    const importer = new GitHubImporter();
+    const causeStderr = (index: number) => `BOUND-TEST-CAUSE-${index}: gh api graphql failed\n`;
+
+    for (let index = 0; index < 32; index += 1) {
+      state.ghError = Object.assign(new Error('Command failed: gh api graphql'), { stderr: causeStderr(index) });
+      await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    }
+    expect(warn).toHaveBeenCalledTimes(32);
+
+    // A 33rd distinct cause still warns: the cap is not silently refusing new causes.
+    state.ghError = Object.assign(new Error('Command failed: gh api graphql'), { stderr: causeStderr(32) });
+    await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(33);
+
+    // Re-trigger the FIRST of the 32 causes. If it was actually evicted, this
+    // warns again; if the bound never evicted anything, it is still in the Set
+    // and this call stays silent.
+    state.ghError = Object.assign(new Error('Command failed: gh api graphql'), { stderr: causeStderr(0) });
+    await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(34);
+  });
+
+  /**
+   * Every other failure test in this describe block rejects with an `Error`.
+   * `describeGhFailure` falls back to `String(error)` for a rejection that
+   * carries neither `stderr` nor a `message` at all, and that branch has never
+   * run: reverting it to assume an Error shape (an unguarded `error.message`)
+   * would throw a TypeError out of the catch instead of resolving null.
+   */
+  it.each([
+    ['a bare string rejection', 'ENOTFOUND api.github.com', 'ENOTFOUND api.github.com'],
+    ['a plain object rejection with no message or stderr', {}, '[object Object]'],
+  ] as Array<[string, unknown, string]>)(
+    'resolves null and warns with the stringified cause for %s',
+    async (_label, rejection, expectedCause) => {
+      const warn = vi.mocked(console.warn);
+      state.ghError = rejection as unknown as Error;
+      const importer = new GitHubImporter();
+      await expect(importer.resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain(expectedCause);
+    },
+  );
+
+  it('returns null without throwing when gh is not installed', async () => {
+    state.whichResult = new Error('not found');
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])('rejects PR number %s before spawning anything', async (prNumber) => {
+    state.ghStdout = answer(true);
+    await expect(new GitHubImporter().resolveMergeBypass('/repo', prNumber)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+});
+
 describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
   beforeEach(() => {
     state.whichResult = '/usr/bin/gh';
@@ -522,9 +741,10 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
    * importer -> connector path, with no prototype spy.
    *
    * Only the first case proves the named revert target (deleting the BLOCKED
-   * short-circuit in mapMergeReadiness, `checksInFlight(...) ?? 'blocked'`,
-   * falls through mapMergeStateStatus, which maps no BLOCKED case, to
-   * `mapMergeable('MERGEABLE')` -> 'unknown', not 'blocked'). The other two
+   * short-circuit in mapMergeReadiness, the `classifyRollup` /
+   * `bypassClearsTheBlock` branch, falls through mapMergeStateStatus, which
+   * maps no BLOCKED case, to `mapMergeable('MERGEABLE')` -> 'unknown', not
+   * 'blocked'). The other two
    * guard adjacent behavior: the REVIEW_REQUIRED downgrade of an otherwise
    * clean/ready PR, and gh's '' rendering of "no review decision" read as
    * ready rather than as a truthy value.
@@ -664,10 +884,232 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
       pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: '' }),
     );
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
     const withOption = await gitHubPRConnector.resolveByNumber!('/r', 7, { evaluateBranchPolicies: true });
     const without = await gitHubPRConnector.resolveByNumber!('/r', 7);
     expect(withOption).toEqual(without);
     expect(withOption?.mergeReadiness).toBe('ready');
+    // The branch-policy option alone never opens the bypass probe either.
+    expect(bypass).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The viewer's merge bypass, folded into `ready`. The board's Merge column
+   * merges a green PR past its missing review with `gh pr merge --admin`, so
+   * for a viewer who can do that the literal promise on a review-blocked green
+   * PR is `ready`, not `blocked`. Every row below is red with the fold
+   * reverted (the fold rows) or with its gate loosened (the `blocked` rows):
+   * the failed-check row is the load-bearing one, because
+   * `viewerCanMergeAsAdmin` is a capability that reads true on a red PR too,
+   * observed live against a PR with a FAILURE check run.
+   */
+  const BYPASS_ON: PRResolveOptions = { bypassCountsAsReady: true };
+  const green = [checkRun('COMPLETED', 'SUCCESS'), checkRun('COMPLETED', 'SKIPPED'), checkRun('COMPLETED', 'NEUTRAL'), statusContext('SUCCESS')];
+  /**
+   * What the probe answers. `requiredStatusCheckContexts` null is "no readable
+   * rule" (an unprotected branch, or a repo on rulesets), where the fold falls
+   * back to the rollup alone; a list is compared against the rollup's own
+   * passing names, so a required context the rollup never carried refuses the
+   * fold.
+   */
+  const canBypass = (requiredStatusCheckContexts: string[] | null = null) =>
+    ({ viewerCanMergeAsAdmin: true, requiredStatusCheckContexts });
+  const cannotBypass = { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null };
+
+  it.each([
+    // [label, mergeStateStatus, reviewDecision, rollup, bypass answer, options, expected]
+    ['BLOCKED by a required review with every check green', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
+    ['the same PR with the option absent', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), undefined, 'blocked'],
+    ['the same PR with the option off', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), { bypassCountsAsReady: false }, 'blocked'],
+    ['the same PR when the viewer cannot bypass', 'BLOCKED', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
+    ['the same PR when the probe gave no answer', 'BLOCKED', 'REVIEW_REQUIRED', green, null, BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a FAILED check, bypass or not', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a failed status context', 'BLOCKED', 'REVIEW_REQUIRED', [statusContext('FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an empty rollup (checks about to start)', 'BLOCKED', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with no rollup key', 'BLOCKED', 'REVIEW_REQUIRED', undefined, canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a stale check beside green ones', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'STALE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a completed check lacking a conclusion', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', null)], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an unrecognized conclusion', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SOMETHING_NEW')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an unrecognized status', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('SOMETHING_NEW')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with an unrecognized rollup entry', 'BLOCKED', 'REVIEW_REQUIRED', [{ __typename: 'SomethingNew' }], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a check in progress (in flight wins)', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS'), checkRun('IN_PROGRESS')], canBypass(), BYPASS_ON, 'running'],
+    ['BLOCKED by a required review with a queued check', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('QUEUED')], canBypass(), BYPASS_ON, 'queued'],
+    ['BLOCKED with every check green and the review approved (something else blocks)', 'BLOCKED', 'APPROVED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED with every check green and no review decision', 'BLOCKED', '', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED with every check green and changes requested', 'BLOCKED', 'CHANGES_REQUESTED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['CLEAN with a required review and every check green', 'CLEAN', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
+    ['CLEAN with a required review and an empty rollup', 'CLEAN', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
+    ['CLEAN with a required review when the viewer cannot bypass', 'CLEAN', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
+    ['UNSTABLE with a required review and a failed non-required check', 'UNSTABLE', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BEHIND with a required review and every check green (a stale base never folds)', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['DIRTY with a required review and every check green', 'DIRTY', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'conflicting'],
+    // The required-context comparison. A `passing` rollup is "nothing here
+    // failed", not "everything required ran": a check GitHub still EXPECTS is
+    // absent from the rollup entirely, so the branch's own required list is
+    // what decides.
+    ['BLOCKED with every required context green', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(['CI', 'ci/legacy']), BYPASS_ON, 'ready'],
+    ['BLOCKED with a required context missing from the rollup', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(['CI', 'Lint, Typecheck, Build']), BYPASS_ON, 'blocked'],
+    // Every other "required context missing" row above names a CheckRun-shaped
+    // context. `passingContextNames` reads `StatusContext.context` on a
+    // separate branch from `CheckRun.name`, and until this row that branch was
+    // only ever exercised as a context that IS satisfied ('ci/legacy' in the
+    // all-green row above). Mirrors that row's shape (one satisfied, one
+    // missing) but for a StatusContext-styled required name.
+    ['BLOCKED with a required status-context name missing from the rollup', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(['ci/legacy', 'ci/needs-secops-review']), BYPASS_ON, 'blocked'],
+    ['BLOCKED with a protected branch that requires no checks', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass([]), BYPASS_ON, 'ready'],
+    ['BLOCKED with no readable rule (rulesets or no protection)', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(null), BYPASS_ON, 'ready'],
+    ['CLEAN with a required context missing from the rollup', 'CLEAN', 'REVIEW_REQUIRED', green, canBypass(['cla']), BYPASS_ON, 'blocked'],
+  ] as Array<[string, string, string, unknown[] | undefined, { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null } | null, PRResolveOptions | undefined, string]>)(
+    'resolveByNumber folds %s into %s',
+    async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, bypassAnswer, options, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({
+          number: 7,
+          mergeStateStatus,
+          mergeable: mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE',
+          reviewDecision,
+          ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
+        }),
+      );
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(bypassAnswer);
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7, options);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  /**
+   * The shape this repo produces on every PR it opens, and the reason the
+   * required-context comparison exists. The CLA check runs in its own workflow
+   * and finishes in seconds; CI's runs are created by a different workflow, so
+   * for a moment the rollup holds ONE green check on a PR whose CI has not
+   * started. `classifyRollup` calls that `passing` and cannot do better -
+   * GitHub omits an expected-but-unreported required check from the rollup
+   * entirely - so without the comparison this folds to `ready` with no CI run.
+   */
+  it('never folds a PR whose CLA check is green while CI has not created its runs', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({
+        number: 395,
+        mergeStateStatus: 'BLOCKED',
+        mergeable: 'MERGEABLE',
+        reviewDecision: 'REVIEW_REQUIRED',
+        statusCheckRollup: [checkRun('COMPLETED', 'SUCCESS', 'cla')],
+      }),
+    );
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+      canBypass(['cla', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)', 'Lint, Typecheck, Build']),
+    );
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 395, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  /**
+   * The probe is spent only where its answer can change the verdict: the
+   * option on, an open non-draft PR, the review still required, the merge
+   * state one a review alone blocks, and every check settled green. Never one
+   * call per open PR per sweep, which is what lets the setting default on.
+   */
+  it.each([
+    ['the option is absent', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), undefined],
+    ['the option is off', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), { bypassCountsAsReady: false }],
+    ['only the branch-policy option is on', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), { evaluateBranchPolicies: true }],
+    ['the PR is already ready', pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', statusCheckRollup: green }), BYPASS_ON],
+    ['a check failed', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [checkRun('COMPLETED', 'FAILURE')] }), BYPASS_ON],
+    ['a check is in progress', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [checkRun('IN_PROGRESS')] }), BYPASS_ON],
+    ['the rollup is empty', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [] }), BYPASS_ON],
+    ['the review is approved and something else blocks', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', statusCheckRollup: green }), BYPASS_ON],
+    ['the PR is a draft', pr({ number: 7, isDraft: true, mergeStateStatus: 'DRAFT', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the PR is merged', pr({ number: 7, state: 'MERGED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the base is behind', pr({ number: 7, mergeStateStatus: 'BEHIND', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the item carries no mergeability', pr({ number: 7 }), BYPASS_ON],
+  ] as Array<[string, GhPrListItem, PRResolveOptions | undefined]>)(
+    'resolveByNumber never spends the bypass probe when %s',
+    async (_label, item, options) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item);
+      const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+      await gitHubPRConnector.resolveByNumber!('/r', 7, options);
+      expect(bypass).not.toHaveBeenCalled();
+    },
+  );
+
+  it('resolveByNumber spends exactly one probe, for the resolved PR, from the repo cwd', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 393, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+    );
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 393, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('ready');
+    expect(bypass).toHaveBeenCalledTimes(1);
+    expect(bypass).toHaveBeenCalledWith('/r', 393);
+  });
+
+  it('resolveForBranch folds the bypass for the ONE chosen candidate', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({ number: 1, state: 'CLOSED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+      pr({ number: 3, state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+    ]);
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main', BYPASS_ON);
+    expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'ready' });
+    // Disambiguation runs first, so a branch shared by several PRs costs one call.
+    expect(bypass).toHaveBeenCalledTimes(1);
+    expect(bypass).toHaveBeenCalledWith('/r', 3);
+  });
+
+  /**
+   * `disambiguate` refuses to guess when several candidates share the branch
+   * query but none matches the branch hint, and returns null before there is
+   * any "ONE chosen candidate" for `bypassFor` to probe. Reverting the early
+   * `if (!best) return null;` to probe anyway (or to probe the disambiguation
+   * pool's first entry regardless) would call `resolveMergeBypass` here.
+   */
+  it('resolveForBranch never spends the bypass probe when disambiguate finds no single candidate', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({ number: 1, headRefName: 'other-a' }),
+      pr({ number: 2, headRefName: 'other-b' }),
+    ]);
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main', BYPASS_ON);
+    expect(result).toBeNull();
+    expect(bypass).not.toHaveBeenCalled();
+  });
+
+  it('resolveByCommit never probes: the REST payload cannot judge readiness', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([pr({ number: 2, state: 'OPEN' })]);
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+    const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
+    expect(result?.number).toBe(2);
+    expect(result).not.toHaveProperty('mergeReadiness');
+    expect(bypass).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The live shape this was written against (PR #393): every check run
+   * COMPLETED / SUCCESS, BLOCKED, REVIEW_REQUIRED, and a viewer whose
+   * `viewerCanMergeAsAdmin` reads true. Drives the literal `gh pr view --json`
+   * stdout through the real importer; only the GraphQL probe is stubbed, since
+   * the child_process mock answers every spawn with the same stdout.
+   */
+  it('resolveByNumber parses a literal gh rollup with every check green into ready under the bypass', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":393,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-10T22:42:48Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-10T22:41:34Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-10T22:43:28Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-10T22:43:04Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/393"}';
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+      canBypass(['Lint, Typecheck, Build', 'Unit tests (Vitest)']),
+    );
+    const withBypass = await gitHubPRConnector.resolveByNumber!('/repo', 393, BYPASS_ON);
+    expect(withBypass?.mergeReadiness).toBe('ready');
+    // Same stdout, option off: GitHub's own answer stands.
+    const without = await gitHubPRConnector.resolveByNumber!('/repo', 393);
+    expect(without?.mergeReadiness).toBe('blocked');
   });
 
   it('resolveByNumber omits the verdict when the item carries no mergeability at all', async () => {

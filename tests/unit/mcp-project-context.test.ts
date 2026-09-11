@@ -327,14 +327,32 @@ describe('buildCommandContextForProject - getPrResolveOptions', () => {
   it('reads evaluateBranchPolicies from the target project path', () => {
     const { ipcContext, getEffectiveConfig } = makeOptionsContext({ prEvaluateBranchPolicies: true });
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
-    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: true });
+    // Exact shape: the same mapper the linker's own sweep uses
+    // (`prResolveOptionsFromGitConfig`), so a tool-triggered resolve and the
+    // background sweep can never write different verdicts for one PR.
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: true, bypassCountsAsReady: false });
     expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
   });
 
+  it('reads bypassCountsAsReady from the target project path', () => {
+    const { ipcContext } = makeOptionsContext({ prBypassCountsAsReady: true });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: true });
+  });
+
+  it('reads an explicit false for the default-on bypass setting as off', () => {
+    const { ipcContext } = makeOptionsContext({ prBypassCountsAsReady: false });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
+  });
+
   it('reads an absent key as off, never as undefined', () => {
+    // The stub returns the raw git block with no DEFAULT_CONFIG merge, so the
+    // default-on bypass key reads false here too; production reads its
+    // default through `getEffectiveConfig`'s merge.
     const { ipcContext } = makeOptionsContext({ defaultBaseBranch: 'main' });
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
-    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false });
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false, bypassCountsAsReady: false });
   });
 
   it('returns every option off instead of throwing when the config is unreadable', () => {

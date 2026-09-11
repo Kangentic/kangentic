@@ -67,6 +67,17 @@ export interface PRResolveOptions {
    * `mergeStateStatus`) ignores it.
    */
   evaluateBranchPolicies?: boolean;
+  /**
+   * Count the viewer's own merge bypass as `ready`. `git.prBypassCountsAsReady`,
+   * default on. GitHub is the connector that pays for it: one `gh api graphql`
+   * probe per PR whose ONLY block is a missing required review (every check
+   * settled green), never one per open PR per sweep, and the answer folds that
+   * PR to `ready`. The same probe reads the base branch's required checks, so a
+   * failed, in-flight, or not-yet-reported one still reads `blocked` whatever
+   * the bypass says. The verdict becomes viewer-relative. Azure DevOps ignores
+   * it (its bypass lives in the security namespace and is out of scope).
+   */
+  bypassCountsAsReady?: boolean;
 }
 
 export interface PRConnector {

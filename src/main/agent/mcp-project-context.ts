@@ -19,6 +19,7 @@ import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
+import { prResolveOptionsFromGitConfig } from '../pr/pr-linking';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -65,10 +66,11 @@ export function buildCommandContextForProject(
     },
     // Same project binding and the same failure posture as the base branch:
     // an unreadable config reads as every option off, never a failed call.
+    // The key mapping itself is the linker's, so a sweep and a tool-triggered
+    // resolve of the same PR can never disagree.
     getPrResolveOptions: () => {
       try {
-        const gitConfig = ipcContext.configManager.getEffectiveConfig(projectPath).git;
-        return { evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true };
+        return prResolveOptionsFromGitConfig(ipcContext.configManager.getEffectiveConfig(projectPath).git);
       } catch {
         return {};
       }

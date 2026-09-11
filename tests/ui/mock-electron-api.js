@@ -155,6 +155,7 @@
       prRefreshIntervalMinutes: 5,
       autoFetchIntervalMinutes: 5,
       prEvaluateBranchPolicies: false,
+      prBypassCountsAsReady: true,
     },
     mcpServer: {
       enabled: true,
@@ -340,6 +341,7 @@
       prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
       autoFetchIntervalMinutes: git.autoFetchIntervalMinutes,
       prEvaluateBranchPolicies: git.prEvaluateBranchPolicies,
+      prBypassCountsAsReady: git.prBypassCountsAsReady,
     });
     if (pickedGit) result.git = pickedGit;
     return result;

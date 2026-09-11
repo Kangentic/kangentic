@@ -245,6 +245,25 @@ const AZ_BASE_ITEM = {
 };
 
 const EVALUATE_POLICIES: PRResolveOptions = { evaluateBranchPolicies: true };
+const BYPASS_COUNTS_AS_READY: PRResolveOptions = { bypassCountsAsReady: true };
+
+/**
+ * Every option the GitHub connector may be handed, paired with the answer its
+ * bypass probe gives when the option opens it. `null` is "no answer" (the
+ * probe failed or the option never opened it); a non-bypassing viewer is not a
+ * separate row, because the connector treats it exactly as `null`, and the
+ * on/off/false/null and required-context semantics live in
+ * branch-pr-resolver.test.ts. The probe is stubbed on EVERY row, including the
+ * ones whose option never reaches it, for the reason the suite comment gives.
+ */
+type GhBypassAnswer = { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null } | null;
+const GH_OPTION_ROWS: Array<{ options: PRResolveOptions | undefined; bypassAnswer: GhBypassAnswer }> = [
+  { options: undefined, bypassAnswer: null },
+  { options: EVALUATE_POLICIES, bypassAnswer: null },
+  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: null } },
+  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: ['ci'] } },
+  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: null },
+];
 
 function cartesian<T>(...axes: T[][]): T[][] {
   return axes.reduce<T[][]>((rows, axis) => rows.flatMap((row) => axis.map((value) => [...row, value])), [[]]);
@@ -266,8 +285,9 @@ const GH_ROLLUPS: unknown[] = [
 
 /**
  * Every combination of GitHub's three raw fields and the rollup, with
- * `undefined` meaning "key absent", each run with and without the
- * branch-policy option (which GitHub must ignore).
+ * `undefined` meaning "key absent", each run under every option row: without
+ * options, with the branch-policy option (which GitHub must ignore), and with
+ * the bypass option under each answer its probe can give.
  */
 function gitHubRows(): ReadinessRow[] {
   const mergeStateStatuses = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BLOCKED', 'BEHIND', 'DRAFT', 'DIRTY', 'UNKNOWN', 'SOMETHING_NEW', undefined];
@@ -282,11 +302,14 @@ function gitHubRows(): ReadinessRow[] {
       ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
     }),
   );
-  return items.flatMap((item) => [undefined, EVALUATE_POLICIES].map((options) => ({
+  return items.flatMap((item) => GH_OPTION_ROWS.map(({ options, bypassAnswer }) => ({
     item,
     options,
     stub: () => {
       vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
+      // Stubbed on every row, including the ones whose gate never reaches
+      // it (see the suite comment): the real method would spawn `gh`.
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(bypassAnswer);
     },
   })));
 }

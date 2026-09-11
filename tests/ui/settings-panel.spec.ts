@@ -596,6 +596,38 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('toggling Count merge bypass as ready persists git.prBypassCountsAsReady to the project override', async () => {
+    // The mirror of the branch-policies test above for the sibling row, with
+    // the default flipped: DEFAULT_CONFIG.git.prBypassCountsAsReady is TRUE
+    // (src/shared/types.ts), so the seeded project override carries an
+    // explicit `true` and the switch starts checked. The write goes through
+    // updateProject -> the project override; the seeded override always wins
+    // the merge over a global write, so a wrong scope fails the aria-checked
+    // assertion here as well as the getProjectOverrides() poll.
+    await openSettings();
+    await page.getByRole('button', { name: 'Git' }).click();
+
+    const toggle = page.getByRole('switch', { name: 'Count merge bypass as ready' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prBypassCountsAsReady?: boolean } } | null)?.git?.prBypassCountsAsReady;
+    }, { timeout: 3000 }).toBe(false);
+
+    // Restore so later tests in this shared-page file are unaffected.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => {
+      const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
+      return (overrides as { git?: { prBypassCountsAsReady?: boolean } } | null)?.git?.prBypassCountsAsReady;
+    }, { timeout: 3000 }).toBe(true);
+
+    await closeSettings();
+  });
+
   test('Escape key closes panel', async () => {
     await openSettings();
     await expect(page.locator('h2:has-text("Settings")')).toBeVisible();

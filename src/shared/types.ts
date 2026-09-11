@@ -302,9 +302,13 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
  * CI while it runs; `unknown` means the platform was asked and has no verdict
  * (GitHub `UNKNOWN` while it recomputes, Azure `queued` / `notSet`, and Azure
  * `succeeded` while branch-policy evaluation is off or unreadable). It is
- * distinct from a null column, which means never checked or no PR. The runtime
- * list comes first so `tests/unit/pr-connector-gate.test.ts` can assert
- * membership over the real connector registry; the type is derived from it.
+ * distinct from a null column, which means never checked or no PR. The promise
+ * is read for the VIEWER: with `git.prBypassCountsAsReady` on, a GitHub PR
+ * whose only block is a missing review is `ready` when the viewer's bypass
+ * would merge it, so two people on the same repo can correctly see different
+ * verdicts. The runtime list comes first so
+ * `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
+ * connector registry; the type is derived from it.
  */
 export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
 export type PRMergeReadiness = (typeof PR_MERGE_READINESS_VALUES)[number];
@@ -410,7 +414,10 @@ export interface Task {
    * tier has been able to judge it yet. A tier that cannot judge it (the commit
    * tier) preserves the stored value; a pending `unknown` holds a determined
    * value through a bounded re-poll; the confident-not-found clear nulls it with
-   * the other three PR columns.
+   * the other three PR columns. Unlike `pr_state`, this column is
+   * VIEWER-RELATIVE: with `git.prBypassCountsAsReady` on, the GitHub connector
+   * folds the resolving user's own merge bypass into `ready`, so the same PR
+   * can legitimately read `ready` on one machine and `blocked` on another.
    */
   pr_merge_readiness: PRMergeReadiness | null;
   /** Last-captured worktree HEAD commit SHA. Immutable anchor for resolving the PR after the worktree is reclaimed (Done) or the branch is renamed. null until captured. */
@@ -2685,6 +2692,22 @@ export interface AppConfig {
      * it an Azure PR's clean merge preview stays `unknown` rather than `ready`.
      */
     prEvaluateBranchPolicies: boolean;
+    /**
+     * Count the viewer's own merge bypass as `ready`. On GitHub a PR whose only
+     * block is a missing required review reads `BLOCKED`, yet a viewer who can
+     * bypass branch protection (`viewerCanMergeAsAdmin`) merges it at once, and
+     * the board's Merge column does exactly that with `gh pr merge --admin`
+     * once every check is green. On, the GitHub connector spends one
+     * `gh api graphql` probe per such review-blocked green PR per sweep and
+     * folds the answer to `ready`. Never past a check that has not passed: the
+     * bypass is a capability (it reads true on a red PR too), so the same probe
+     * reads the branch's required checks and every one of them must have
+     * reported green. Default on because the shipped Merge column
+     * already merges this way; turn it off for a team that keeps the review
+     * norm even where it could bypass. Azure DevOps ignores it. This makes
+     * `Task.pr_merge_readiness` viewer-relative.
+     */
+    prBypassCountsAsReady: boolean;
   };
 
   mcpServer: {
@@ -3191,6 +3214,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     prRefreshIntervalMinutes: 5,
     autoFetchIntervalMinutes: 5,
     prEvaluateBranchPolicies: false,
+    prBypassCountsAsReady: true,
   },
   mcpServer: {
     enabled: true,

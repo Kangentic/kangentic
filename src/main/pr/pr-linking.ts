@@ -16,7 +16,7 @@ import type { PRResolveOptions } from './pr-registry';
 import { createDeferredDegrade } from './shared/pr-dispatch';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
-import type { Task, PRState, PRMergeReadiness, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
+import type { AppConfig, Task, PRState, PRMergeReadiness, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
 
 export interface PRLinkResult {
@@ -779,11 +779,36 @@ function resolveProjectLinkSettings(context: IpcContext, projectPath: string | n
     return {
       defaultBaseBranch: context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
         || gitConfig?.defaultBaseBranch,
-      resolveOptions: { evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true },
+      resolveOptions: prResolveOptionsFromGitConfig(gitConfig),
     };
   } catch {
     return { defaultBaseBranch: undefined, resolveOptions: {} };
   }
+}
+
+/**
+ * The per-resolve PR options a project's effective `git` config selects. The
+ * ONE mapping from config keys to `PRResolveOptions`, shared by the linker's
+ * own read above and by the MCP command context (`mcp-project-context.ts`),
+ * so a background sweep and an agent-triggered resolve can never disagree
+ * about the same PR: with two hand-written copies a key added to one and not
+ * the other would write `ready` on one path and `blocked` on the other, and
+ * the chip would flicker between them. Every key comes out an explicit
+ * boolean, never undefined, so a connector's `=== true` gate reads the same
+ * value the config holds.
+ *
+ * `=== true` on both, including the default-ON `prBypassCountsAsReady`:
+ * `getEffectiveConfig` merges `DEFAULT_CONFIG`, so an absent key already reads
+ * `true` by the time it gets here. The `{}` fallbacks in the callers (no
+ * project path, an unreadable config) are the one asymmetry that setting
+ * introduced: they leave a default-on option OFF, which is the safe direction
+ * (a PR reads `blocked`, GitHub's own answer) and is deliberate.
+ */
+export function prResolveOptionsFromGitConfig(gitConfig: AppConfig['git'] | undefined): PRResolveOptions {
+  return {
+    evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true,
+    bypassCountsAsReady: gitConfig?.prBypassCountsAsReady === true,
+  };
 }
 
 /**

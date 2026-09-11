@@ -26,8 +26,9 @@ export interface CommandContext {
    */
   getDefaultBaseBranch?: () => string | undefined;
   /**
-   * This project's per-resolve PR settings (`git.prEvaluateBranchPolicies`),
-   * for the two `linkPRForTask` calls this module makes itself. Bound to the
+   * This project's per-resolve PR settings (`git.prEvaluateBranchPolicies`,
+   * `git.prBypassCountsAsReady`), for the two `linkPRForTask` calls this
+   * module makes itself. Bound to the
    * request's project like `getDefaultBaseBranch`. Optional so a test context
    * can omit it; the linker treats absent as every option off.
    */
