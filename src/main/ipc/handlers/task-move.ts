@@ -210,7 +210,15 @@ export async function handleTaskMove(
   // Kept out of `input` (which flows raw from the renderer over IPC) so the
   // renderer cannot inject prompts; only main-process callers (the plan-exit
   // listener) can pass a continuation.
-  options?: { continuationPrompt?: string },
+  //
+  // `onCommitted` fires the moment the board row is on disk (see the commit
+  // point inside Phase 1), which is long before the returned promise settles:
+  // a Done move suspends, reaps and deletes the worktree after that point, and
+  // an auto-spawn move creates a worktree and spawns. A caller that has to
+  // answer someone on a deadline (the mobile bridge verb, against the phone's
+  // 10s per-verb budget) answers on this signal and lets the tail finish behind
+  // the response. Every other caller keeps awaiting the whole move.
+  options?: { continuationPrompt?: string; onCommitted?: () => void },
 ): Promise<void> {
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
@@ -229,6 +237,32 @@ export async function handleTaskMove(
   const logProjectName = announceProjectId
     ? context.projectRepo.getById(announceProjectId)?.name ?? null
     : null;
+
+  // The board-changed bus emit, shared by the two announce points: once at the
+  // commit point inside Phase 1, and once from the `finally` after the whole
+  // move has settled. The rationale for announcing at all (and for erring
+  // toward a duplicate) is on the settle-time block below; the rationale for
+  // the commit-time one is at the commit point.
+  //
+  // The shutdown gate is load-bearing rather than defensive: on that path the
+  // DB is already closed and the window is going away, but the bus would still
+  // wake a phone subscription mid-teardown. Wrapped because BoardEventBus is a
+  // plain EventEmitter that dispatches synchronously on this stack, so a
+  // subscriber that threw would either replace the error runMove is already
+  // propagating, or turn a committed move into a rejection with the rest of
+  // Phase 1 (the Done cleanup) skipped. Announcing is best-effort by design.
+  const emitBoardChanged = (): void => {
+    if (!announceProjectId || isShuttingDown()) return;
+    try {
+      context.boardEvents.emitBoardChanged({
+        projectId: announceProjectId,
+        change: 'task-updated',
+        ids: [input.taskId],
+      });
+    } catch (announceError) {
+      console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
+    }
+  };
 
   // Whether Phase 1's DB write actually landed, and the title captured with it.
   //
@@ -330,6 +364,38 @@ export async function handleTaskMove(
       // try/catch for why "the move threw" does not imply "nothing changed".
       moveCommitted = true;
       movedTaskTitle = task.title;
+
+      // Commit-time announce. Everything slow in this handler comes AFTER this
+      // line, and much of it still inside this lock: the Done branch suspends,
+      // reaps leftovers and deletes the worktree before Phase 1 returns, and
+      // an auto-spawn destination pays for worktree creation and spawn in
+      // Phases 2/3. Announcing only from the settle-time `finally` meant a
+      // paired phone saw nothing until the desktop was completely done, so a
+      // phone that had moved a card optimistically had no board snapshot to
+      // settle against until its own verb timed out.
+      //
+      // Bus only. The origin-keyed renderer push stays at settle time: the
+      // `agent` and `auto-move` pushes each raise a toast per push, so pushing
+      // here too would toast the same move twice. The second bus emit from the
+      // `finally` is cheap: the Agent Monitor debounces it into the push it
+      // already scheduled, and a paired phone gets one more small board event,
+      // which it already tolerates (the session-lifecycle feed double-emits by
+      // design). That second emit is what corrects a committed-then-rolled-back
+      // move. Same row, same shape, two emits.
+      emitBoardChanged();
+
+      // Commit signal for a caller that answers on the row landing (the mobile
+      // bridge verb). Bus first, so the board event is already queued on the
+      // session before the verb response goes out. A caller's callback must
+      // never turn a committed move into a rejection with the rest of this
+      // branch (the Done cleanup) skipped, so it is fenced like the announce.
+      if (options?.onCommitted) {
+        try {
+          options.onCommitted();
+        } catch (callbackError) {
+          console.error(`[TASK_MOVE] onCommitted callback threw for task ${input.taskId.slice(0, 8)}:`, callbackError);
+        }
+      }
 
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
@@ -1181,18 +1247,18 @@ export async function handleTaskMove(
       // because read-board forwards `change` straight onto the wire, making a
       // new member a phone-visible protocol change for no gain.
       //
-      // Both calls are wrapped because this runs in a `finally`: BoardEventBus
-      // is a plain EventEmitter, so it dispatches synchronously on this stack,
-      // and a subscriber that threw would REPLACE whatever error runMove was
-      // already propagating (the rollback tests assert the original surfaces)
-      // or turn a clean move into a rejection. Announcing is best-effort by
-      // design, so a failure to announce must never become the move's outcome.
+      // This is the SECOND bus emit for the move (the first fired at the commit
+      // point inside Phase 1). It is not redundant: this one runs after the
+      // rollback, so it is what tells a phone that a committed-then-failed
+      // move went back. The renderer push fires here ONLY, since two of the
+      // origin channels toast per push.
+      //
+      // The push is wrapped because this runs in a `finally`: a throwing
+      // sendToRenderer would REPLACE whatever error runMove was already
+      // propagating (the rollback tests assert the original surfaces) or turn
+      // a clean move into a rejection. The bus emit fences itself the same way.
+      emitBoardChanged();
       try {
-        context.boardEvents.emitBoardChanged({
-          projectId: announceProjectId,
-          change: 'task-updated',
-          ids: [input.taskId],
-        });
         MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, movedTaskTitle);
       } catch (announceError) {
         console.error(`[TASK_MOVE] Announce failed for task ${input.taskId.slice(0, 8)}:`, announceError);
