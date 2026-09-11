@@ -7,6 +7,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { columnSpawnsSession, toBoardColumnWire, toBoardTaskWire } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
+import { parseBoardColumnWire } from '@kangentic/protocol';
+import type { JsonValue } from '@kangentic/protocol';
 import type { Swimlane, Task } from '../../../src/shared/types';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -115,5 +117,30 @@ describe('toBoardColumnWire', () => {
   it('passes role through unchanged', () => {
     expect(toBoardColumnWire(makeSwimlane({ role: 'done' })).role).toBe('done');
     expect(toBoardColumnWire(makeSwimlane({ role: null })).role).toBeNull();
+  });
+});
+
+describe('toBoardColumnWire round-trips through parseBoardColumnWire', () => {
+  // The mapper (this file's producer) and the parser (packages/protocol's
+  // consumer) are otherwise only ever tested independently, so a field-name
+  // drift between the two (spawnsSession vs spawns_session, a renamed
+  // is_ghost) would pass both suites while breaking the real bridge. This
+  // sends a mapped column through an actual wire round trip
+  // (JSON.parse(JSON.stringify(...))) the way the bridge does, then asserts
+  // the parser reproduces the mapper's output exactly.
+  function roundTrip(swimlane: Swimlane) {
+    const wire = toBoardColumnWire(swimlane);
+    const overWire = JSON.parse(JSON.stringify(wire)) as JsonValue;
+    return { wire, parsed: parseBoardColumnWire(overWire) };
+  }
+
+  it('round-trips a role:done column', () => {
+    const { wire, parsed } = roundTrip(makeSwimlane({ role: 'done', auto_spawn: true }));
+    expect(parsed).toEqual(wire);
+  });
+
+  it('round-trips a role:null, auto_spawn:true column', () => {
+    const { wire, parsed } = roundTrip(makeSwimlane({ role: null, auto_spawn: true }));
+    expect(parsed).toEqual(wire);
   });
 });

@@ -263,8 +263,15 @@ export function toSessionEventWire(event: SessionEvent): SessionEventWire {
  * session, per `BoardColumnWire.spawns_session`. Derived from the same
  * `NEVER_AUTO_SPAWN_ROLES` gate `task-move.ts` Priority 1/2 and
  * `auto-spawn-reconcile.ts` already enforce - a role in that set never
- * spawns, whatever `auto_spawn` says (Priority 2.5 covers everything else,
- * so `auto_spawn` alone decides the rest).
+ * spawns, whatever `auto_spawn` says.
+ *
+ * The role half is exact, because `applyProfileToLane` passes a lane's role
+ * through untouched and Priority 1/2 read it before anything else. The
+ * `auto_spawn` half is the column's BASE value only: Priority 2.5 gates on
+ * the profile-folded lane, and `resolveColumnStrategy` lets a task's Board
+ * Profile set `autoSpawn` either way for this column. A column-shaped wire
+ * field cannot see a per-task profile, so the wire type documents this half
+ * as intent rather than a promise in both directions.
  *
  * Returns a real boolean, never `undefined`: `swimlane.auto_spawn` is a
  * required field, but a malformed row must still resolve to a defined

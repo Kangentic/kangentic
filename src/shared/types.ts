@@ -633,10 +633,12 @@ export function normalizeSwimlaneRole(value: unknown): SwimlaneRole | null {
  * role 'todo', and a To Do card relies on having no session to open straight
  * into the edit form.
  *
- * Also the ground truth for `spawns_session` on the mobile bridge's
- * `BoardColumnWire` (`toBoardColumnWire` in
- * src/main/mobile-bridge/handlers/wire-mappers.ts): a column in this set
- * never delivers a successor session, whatever `auto_spawn` says.
+ * This set is the one ground truth for that rule, so every gate reads it here
+ * rather than re-listing the roles: the auto-spawn reconcile, a task move, and
+ * the mobile bridge's `spawns_session` wire field all resolve a column in this
+ * set to "never delivers a successor session", whatever `auto_spawn` says.
+ * A role, unlike `auto_spawn`, is not something a Board Profile can override
+ * per task, which is what makes that answer exact rather than advisory.
  */
 export const NEVER_AUTO_SPAWN_ROLES: ReadonlySet<SwimlaneRole> = new Set<SwimlaneRole>(['todo', 'done']);
 

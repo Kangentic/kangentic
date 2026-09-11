@@ -208,14 +208,21 @@ export const BOARD_COLUMN_ROLES = ['todo', 'done'] as const;
 
 export type BoardColumnRoleWire = (typeof BOARD_COLUMN_ROLES)[number];
 
-/** True for a column whose role is the system 'todo' role. Prefer this over a literal `=== 'todo'` comparison, which a typo makes silent. */
+// Pinned to `BoardColumnRoleWire` rather than compared as bare literals, so a
+// typo or a rename inside these predicates is a compile error here instead of
+// a predicate that silently returns false for every column. The parity test
+// keeps the role list itself matching the desktop's.
+const TODO_ROLE: BoardColumnRoleWire = 'todo';
+const DONE_ROLE: BoardColumnRoleWire = 'done';
+
+/** True for a column whose role is the system 'todo' role. Prefer this at a call site over a literal `=== 'todo'`, which the `(string & {})` widening leaves unchecked. */
 export function isTodoRole(role: string | null | undefined): boolean {
-  return role === 'todo';
+  return role === TODO_ROLE;
 }
 
-/** True for a column whose role is the system 'done' role. Prefer this over a literal `=== 'done'` comparison, which a typo makes silent. */
+/** True for a column whose role is the system 'done' role. Prefer this at a call site over a literal `=== 'done'`, which the `(string & {})` widening leaves unchecked. */
 export function isDoneRole(role: string | null | undefined): boolean {
-  return role === 'done';
+  return role === DONE_ROLE;
 }
 
 /** Phone-needed subset of the desktop's Swimlane row (snake_case preserved so the desktop mapper is a mechanical pick). */
@@ -243,10 +250,16 @@ export interface BoardColumnWire {
    * session, derived desktop-side from the column's `auto_spawn` flag and
    * role. This is INTENT, not a guarantee:
    *
-   * - `false` - no successor is coming. Every path that produces `false` is
-   *   decided by column config alone (a full reset into 'todo', an archive
-   *   into 'done', or `auto_spawn: false`), so a client MAY skip a
-   *   session-swap transition entirely on `false`.
+   * - `false` - this column does not intend to spawn. Reliable enough to act
+   *   on ONLY when the column's own `role` is 'todo' or 'done': those two
+   *   produce a full reset or an archive, and a Board Profile cannot change a
+   *   column's role, so a client MAY skip a session-swap transition entirely
+   *   for them. `role` rides this same object, so
+   *   `isTodoRole(column.role) || isDoneRole(column.role)` is how a client
+   *   recognizes that case. A `false` that came from `auto_spawn: false` on
+   *   any other column is intent only, exactly like `true`: a Board Profile
+   *   can set `autoSpawn: true` for one task on that column, and the move
+   *   then does spawn.
    * - `true` - this column intends to spawn, but a handful of desktop-side
    *   conditions can suspend the old session without a successor actually
    *   landing (a board profile disabling auto_spawn for this task, a failed
@@ -258,25 +271,19 @@ export interface BoardColumnWire {
    *   back to its pre-existing behavior, the same way an absent
    *   `pr_merge_readiness` reads as "never judged".
    *
-   * Declared OPTIONAL (`?`), unlike `pr_merge_readiness` (declared required
-   * even though its own doc comment above describes absence as a real
-   * state): a required field forces every TS call site that constructs a
-   * `BoardColumnWire` object literal - test fixtures, most visibly - to
-   * learn about a field it may not care about, which is exactly what broke
-   * when `pr_merge_readiness` shipped required. `parseBoardColumnWire`
-   * always populates this key from a real wire response regardless, so the
-   * optionality costs nothing at runtime; it only frees a hand-built
-   * literal from having to list it.
+   * Declared OPTIONAL (`?`) so a hand-built `BoardColumnWire` literal does
+   * not have to list it. `parseBoardColumnWire` populates the key from every
+   * real wire response regardless, so the optionality costs nothing at
+   * runtime. `docs/mobile-bridge.md` records why this differs from
+   * `pr_merge_readiness`, which shipped required.
    *
-   * Ordering precondition this field depends on: the phone must learn the
+   * Ordering precondition this field depends on: the phone must learn a
    * MOVE's destination column before the old session's `session-ended`
-   * arrives, or it cannot resolve `spawns_session` against the right
-   * column. That holds today because `handleTaskMove`
-   * (`src/main/ipc/handlers/task-move.ts`) emits the board-changed event at
-   * its commit point, before the slow suspend/worktree/spawn work in the
-   * same phase - see the comment above `emitBoardChanged()` there. A future
-   * change that moves that announce to settle time would break this field
-   * silently rather than loudly.
+   * arrives, or it cannot resolve `spawns_session` against the right column.
+   * That holds today because `handleTaskMove` emits its board-changed event
+   * at the commit point rather than at settle time. See the comment above
+   * `emitBoardChanged()` in `src/main/ipc/handlers/task-move.ts`, and
+   * `docs/mobile-bridge.md`.
    */
   spawns_session?: boolean | null;
 }
