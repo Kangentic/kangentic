@@ -1344,6 +1344,10 @@ export function runProjectMigrations(db: Database.Database): void {
   // link that predates this column); 'unknown' means the platform was asked and
   // has no verdict yet. Preserved by a resolve whose tier cannot judge it,
   // cleared with the other three PR columns on the confident-not-found clear.
+  // Unlike `pr_state`, the value is VIEWER-RELATIVE: with
+  // `git.prBypassCountsAsReady` on, the GitHub connector folds the resolving
+  // user's own merge bypass into 'ready', so the same PR can legitimately read
+  // 'ready' on one machine and 'blocked' on another.
   if (!taskInjectionColumns.includes('pr_merge_readiness')) {
     db.exec('ALTER TABLE tasks ADD COLUMN pr_merge_readiness TEXT DEFAULT NULL');
   }
