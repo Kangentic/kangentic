@@ -146,6 +146,16 @@ export interface ManagedSession {
    * which suppresses the crash toast but does not affect the code.
    */
   overrideExitCode?: number;
+  /**
+   * Epoch ms of the stream's FIRST alt-screen entry (the TUI's first composed
+   * frame), set once by the buffer manager's `onAltScreenEnter` and never
+   * updated. `kill()` reads it to decide whether the agent is still inside
+   * Claude Code's fullscreen boot-canary window (first frame plus 10 s), in
+   * which case the force-kill waits for the exit sequence to land instead of
+   * cutting the withdrawal short. See `lifecycle/deferred-kill.ts`. Lazily
+   * set; dies with the registry entry.
+   */
+  altScreenEnteredAt?: number;
 }
 
 /**

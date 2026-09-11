@@ -9,7 +9,7 @@ import {
   type RelocationPathPair,
 } from '../../shared/relocation-utils';
 import { claudeProjectSlug } from './transcript-parser';
-import { withClaudeJsonLock } from './trust-manager';
+import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 
 /**
  * Migrate Claude Code's per-project data when a Kangentic project is relocated.
@@ -43,11 +43,20 @@ import { withClaudeJsonLock } from './trust-manager';
  * we proceed. The consequence is limited to a re-shown trust prompt and lost
  * prompt history for the relocated project; session resume still works because
  * the transcript directory rename is independent of `~/.claude.json`. The
- * backup mitigates the rest. The module lock only guards Kangentic's own
- * writers (`ensureWorktreeTrust` / `ensureMcpServerTrust`).
+ * backup mitigates the rest. The lock (claude-json-lock.ts) serializes
+ * Kangentic's own writers AND takes Claude's `~/.claude.json.lock`, so a CLI
+ * write in flight at this moment is waited for rather than overwritten; the
+ * in-memory state of a session that saves later is what the caveat above is
+ * about. A lock held past its budget skips the whole migration (Claude's own
+ * final-ELOCKED policy), which degrades to the orphaned-data behavior.
  */
 export async function migrateClaudeProjectData(oldProjectPath: string, newProjectPath: string): Promise<void> {
-  return withClaudeJsonLock(() => migrateClaudeProjectDataSync(oldProjectPath, newProjectPath));
+  try {
+    await withClaudeJsonLock(() => migrateClaudeProjectDataSync(oldProjectPath, newProjectPath));
+  } catch (error) {
+    if (!isClaudeJsonLockError(error)) throw error;
+    console.warn(`[CLAUDE_RELOCATE] Skipping the ~/.claude.json migration; ${error.message}`);
+  }
 }
 
 function migrateClaudeProjectDataSync(oldProjectPath: string, newProjectPath: string): void {

@@ -386,6 +386,46 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
       handlerRegion,
       'the drain must receive killedCount as well as pids, or a kill with an unreadable child pid is drained as if nothing had been killed at all',
     ).toContain('killedCount: report.killedCount');
+    expect(
+      handlerRegion,
+      'the drain must receive deferredCount: a young session\'s kill rides a 1500 ms timer inside the drain, and without the deadline extension that count switches on, the drain gives up at the very instant the deferred kill lands',
+    ).toContain('deferredCount: report.deferredCount');
+  });
+
+  /**
+   * The exit-sequence grace at quit (pty-teardown-grace.md) is safe only where
+   * the drain follows the cleanup: the deferred kill fires on a timer the drain
+   * keeps the loop alive for. A route that exits without the loop must call
+   * performShutdown() bare, which flushes every parked PTY at once.
+   */
+  it('lets a young session\'s kill ride the drain only on the routes the drain follows', () => {
+    const beforeQuitStart = INDEX_SOURCE.indexOf("app.on('before-quit', createBeforeQuitHandler(");
+    const beforeQuitRegion = INDEX_SOURCE.slice(beforeQuitStart, INDEX_SOURCE.indexOf('}));', beforeQuitStart));
+    expect(
+      beforeQuitRegion,
+      'before-quit drains unless a Windows session-end disarmed it, so the grace is allowed exactly when the drain is',
+    ).toContain('performShutdown({ allowGrace: !osShutdownCannotBeDelayed })');
+
+    const powerMonitorStart = INDEX_SOURCE.indexOf("powerMonitor.on('shutdown'");
+    const powerMonitorRegion = sliceBalancedBlock(INDEX_SOURCE, powerMonitorStart);
+    expect(
+      powerMonitorRegion,
+      'the powerMonitor route asks the OS to wait and then app.quit()s into a normal drain, so it may defer',
+    ).toContain('performShutdown({ allowGrace: true })');
+
+    const windowsStart = INDEX_SOURCE.indexOf(".on('session-end'");
+    const windowsRegion = INDEX_SOURCE.slice(windowsStart, INDEX_SOURCE.indexOf('});', windowsStart));
+    expect(
+      windowsRegion,
+      'Windows session-end skips the drain, so nothing may stay deferred: it must call performShutdown() bare',
+    ).toContain('performShutdown();');
+    expect(windowsRegion).not.toContain('allowGrace');
+
+    const signalBlock = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM'] as const)"));
+    expect(
+      signalBlock,
+      'the signal route process.exit()s with no loop turn, so nothing may stay deferred there either',
+    ).not.toContain('allowGrace');
   });
 
   it('feeds the whole kill report the synchronous cleanup produced into the drain', () => {

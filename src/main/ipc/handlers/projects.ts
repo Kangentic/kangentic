@@ -139,6 +139,20 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     console.error('[PROJECT_DELETE] Failed to read tasks:', err);
   }
 
+  // Kill every session first, then wait for the exits together before the
+  // rows go: a young session's kill waits out its exit-sequence grace
+  // (SessionManager.kill), the worktree removal below needs the process gone,
+  // and awaitExit resolves at once for a row remove() has already deleted.
+  const sessionExits: Promise<void>[] = [];
+  for (const task of allTasks) {
+    if (task.session_id) {
+      try {
+        context.sessionManager.kill(task.session_id);
+        sessionExits.push(context.sessionManager.awaitExit(task.session_id));
+      } catch { /* may already be dead */ }
+    }
+  }
+  await Promise.all(sessionExits);
   for (const task of allTasks) {
     if (task.session_id) {
       try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }

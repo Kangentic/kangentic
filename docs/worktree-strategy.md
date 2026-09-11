@@ -464,7 +464,9 @@ Task deleted
 
 App closed
   → All sessions marked suspended in DB (synchronous)
-  → PTYs force-killed immediately (no graceful shutdown window)
+  → PTYs force-killed at once for a mature session; a young session (still inside Claude's
+    boot window) gets its exit sequence and a 1500 ms grace first, inside the quit's own
+    PTY drain (see Session Lifecycle > Shutdown)
   → Session files persist
 
 App reopened
@@ -517,7 +519,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
 - **Trust pre-population** -- `ensureWorktreeTrust()` adds worktree paths to `~/.claude.json` so Claude Code doesn't prompt for trust on first run.
-- **Synchronous shutdown** -- DB records marked suspended, PTYs force-killed immediately. No async graceful window. Files persist for recovery on next launch.
+- **Synchronous shutdown** -- DB records marked suspended, mature PTYs force-killed immediately. A young session's force-kill waits out a 1500 ms exit-sequence grace on a timer inside the bounded PTY drain the quit already holds for, never as an added async phase. Files persist for recovery on next launch.
 
 ## Test Coverage
 

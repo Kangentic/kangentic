@@ -429,24 +429,39 @@ export async function performSpawn(
     // silence this watchdog refresh.
     context.telemetry.activityEngine.markPtyOutput(id);
 
+    // A session remove()d while its PTY is still exiting (kill() parks a
+    // young session's PTY for the exit-sequence grace, so its exit screen
+    // arrives after the row and its caches are gone) must not re-create
+    // per-session state under a dead id. None of the consumers below guards
+    // its own existence: the transcript flush would write against a DB record
+    // the cleanup may already have deleted, the session-id scanner would arm
+    // a fresh rolling buffer, and the telemetry paths (setSessionUsage,
+    // ingestEvents, notifyPtyData) would re-create the usage / event caches
+    // remove() just cleared and push updates for a session the renderer no
+    // longer knows. markPtyOutput above is the one documented no-op for an
+    // unknown id, so it stays unguarded.
+    const rowStillRegistered = context.registry.has(id);
+
     // Transient sessions (command terminal) have no DB row - the
     // TranscriptWriter's lazy init will fail silently on first flush
     // (caught by try/catch in flush()), so we skip them entirely.
-    if (!session.transient) {
+    if (!session.transient && rowStillRegistered) {
       context.getTranscriptWriter()?.onData(id, data);
     }
 
     // Per-adapter session ID capture from PTY output. Handles chunk-
     // boundary safety (rolling buffer) and ANSI stripping (Windows
     // ConPTY cursor positioning that defeats raw regexes).
-    context.sessionIdManager.onData(id, data, session.agentParser);
+    if (rowStillRegistered) {
+      context.sessionIdManager.onData(id, data, session.agentParser);
+    }
 
     // Per-adapter stream telemetry (e.g. Cursor stream-json: model from
     // the init event, ToolStart/ToolEnd events for activity tracking).
     // Each adapter owns whatever carry-over state it needs across PTY
     // chunks (the parser is constructed lazily on first chunk).
     const streamFactory = input.agentParser?.runtime?.streamOutput;
-    if (streamFactory) {
+    if (streamFactory && rowStillRegistered) {
       if (!session.streamParser) {
         session.streamParser = streamFactory.createParser();
       }
@@ -463,7 +478,7 @@ export async function performSpawn(
     // strategies. For 'hooks_and_pty', yields to hook-based detection once
     // hooks deliver a thinking event.
     const strategy = input.agentParser?.runtime?.activity;
-    if (strategy && strategy.kind !== 'hooks') {
+    if (strategy && strategy.kind !== 'hooks' && rowStillRegistered) {
       if (strategy.detectIdle?.(data)) {
         context.telemetry.notifyPtyIdle(id);
       } else if (data.length > 0) {

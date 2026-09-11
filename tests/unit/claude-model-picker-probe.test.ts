@@ -35,6 +35,8 @@ interface FakePtyProcess {
   emitData: (data: string) => void;
   emitExit: () => void;
   writes: string[];
+  /** performance.now() at the moment each entry in `writes` was recorded. */
+  writeTimestamps: number[];
   killMock: ReturnType<typeof vi.fn>;
 }
 
@@ -52,6 +54,7 @@ function installFakePty(
     emitData: (data: string) => dataCallback?.(data),
     emitExit: () => exitCallback?.(),
     writes: [],
+    writeTimestamps: [],
     killMock: vi.fn(),
   };
   spawnMock.mockImplementation(() => {
@@ -65,6 +68,7 @@ function installFakePty(
       },
       write: (input: string) => {
         fake.writes.push(input);
+        fake.writeTimestamps.push(performance.now());
         onWrite?.(input, fake);
       },
       kill: fake.killMock,
@@ -96,8 +100,18 @@ beforeEach(() => {
     typeDelayMs: 5,
     settleIntervalMs: 5,
     overallTimeoutMs: 2000,
+    exitGraceMs: 5,
   });
 });
+
+/**
+ * The teardown is detached from the probe's result (the models are final
+ * before it runs), so the fallback kill lands a few ms after the promise
+ * resolves - poll for it rather than asserting synchronously.
+ */
+function expectFallbackKill(fake: FakePtyProcess): Promise<void> {
+  return vi.waitFor(() => expect(fake.killMock).toHaveBeenCalled());
+}
 
 describe('VirtualScreen', () => {
   it('renders cursor-forward gaps as spaces instead of dropping them', () => {
@@ -282,10 +296,80 @@ describe('probeModelPickerModels', () => {
       'claude-sonnet-4-6',
       'claude-haiku-4-5',
     ]);
-    // Opened with /model + Enter, closed with Esc (never a selecting Enter)
-    // and a kill.
-    expect(fake.writes).toEqual(['/model', '\r', '\x1b']);
-    expect(fake.killMock).toHaveBeenCalled();
+    // Opened with /model + Enter, closed with Esc (never a selecting Enter),
+    // then, a type delay later so the two cannot coalesce into one escape
+    // sequence, the CLI is asked to exit like a user would; the kill is only
+    // the fallback once the grace passes with no exit.
+    await expectFallbackKill(fake);
+    expect(fake.writes).toEqual(['/model', '\r', '\x1b', '/exit\r']);
+  });
+
+  it('waits the settle delay between closing the picker and sending /exit, so Esc and /exit cannot coalesce into one escape burst', async () => {
+    // A larger, explicit typeDelayMs than the shared beforeEach default, so
+    // the gap is comfortably measurable above event-loop jitter on a slow
+    // CI runner. Every field is restated because setModelPickerProbeTimingsForTests
+    // merges overrides onto DEFAULT_TIMINGS, not onto the current timings.
+    setModelPickerProbeTimingsForTests({
+      pollIntervalMs: 5,
+      typeDelayMs: 60,
+      settleIntervalMs: 5,
+      overallTimeoutMs: 2000,
+      exitGraceMs: 500,
+    });
+    const fake = installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(PICKER_FRAME);
+        if (input === '/exit\r') self.emitExit();
+      },
+    );
+
+    await probeModelPickerModels('/usr/bin/claude');
+    // The teardown's /exit write happens after the probe's own promise
+    // settles (see the module comment: detached on purpose), so poll for it
+    // rather than asserting synchronously.
+    await vi.waitFor(() => expect(fake.writes).toContain('/exit\r'));
+
+    const escapeIndex = fake.writes.indexOf('\x1b');
+    const exitIndex = fake.writes.indexOf('/exit\r');
+    expect(escapeIndex).toBeGreaterThanOrEqual(0);
+    expect(exitIndex).toBe(escapeIndex + 1);
+
+    const gapMs = fake.writeTimestamps[exitIndex] - fake.writeTimestamps[escapeIndex];
+    // Cross-platform: never assert an exact duration. The configured settle
+    // is 60 ms; a floor well below that (but far above the near-zero gap an
+    // unpaced write would produce) distinguishes the delay from its absence
+    // without flaking under CI load.
+    expect(gapMs).toBeGreaterThanOrEqual(30);
+  });
+
+  it('skips the fallback kill when the CLI exits on its own after /exit', async () => {
+    const fake = installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(PICKER_FRAME);
+        if (input === '/exit\r') self.emitExit();
+      },
+    );
+
+    const models = await probeModelPickerModels('/usr/bin/claude');
+    expect(models).toHaveLength(4);
+    // Well past the 5 ms test grace: a kill that was going to land has landed.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(fake.killMock).not.toHaveBeenCalled();
+  });
+
+  it('runs the CLI on the classic renderer, which never arms the fullscreen boot canary', async () => {
+    installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(PICKER_FRAME);
+      },
+    );
+
+    await probeModelPickerModels('/usr/bin/claude');
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(options.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1');
   });
 
   it('spawns the CLI with --safe-mode in the scratch cwd', async () => {
@@ -317,6 +401,10 @@ describe('probeModelPickerModels', () => {
     expect(models).toBeUndefined();
     expect(fake.writes).not.toContain('/model');
     expect(fake.writes).not.toContain('\r');
+    // No `/exit` either: its Enter would accept the trust dialog. With no
+    // prompt ever reached, nothing booted far enough to arm a canary, so the
+    // plain kill lands synchronously.
+    expect(fake.writes).not.toContain('/exit\r');
     expect(fake.killMock).toHaveBeenCalled();
   });
 
@@ -326,12 +414,15 @@ describe('probeModelPickerModels', () => {
       typeDelayMs: 5,
       settleIntervalMs: 5,
       overallTimeoutMs: 100,
+      exitGraceMs: 5,
     });
     const fake = installFakePty((self) => self.emitData(PROMPT_FRAME));
 
     const models = await probeModelPickerModels('/usr/bin/claude');
     expect(models).toBeUndefined();
-    expect(fake.killMock).toHaveBeenCalled();
+    // The prompt was reached, so the teardown still exits gracefully first.
+    await expectFallbackKill(fake);
+    expect(fake.writes).toContain('/exit\r');
   });
 
   it('returns undefined when the CLI exits before the prompt appears', async () => {
@@ -394,6 +485,7 @@ describe('probeModelPickerModels', () => {
       typeDelayMs: 5,
       settleIntervalMs: 5,
       overallTimeoutMs: 50,
+      exitGraceMs: 5,
     });
     installFakePty((self) => self.emitData(PROMPT_FRAME)); // picker never renders
 

@@ -687,10 +687,10 @@ If the project doesn't exist yet, it's created automatically. Without a path, Ka
 Sessions survive app restarts. When you close Kangentic:
 
 1. All running sessions are marked as `suspended` in the database
-2. PTY processes are force-killed (there is no graceful shutdown window)
+2. PTY processes are force-killed. A session still in its first moments after spawn gets a brief grace first (its exit command, then the force-kill about 1.5 s later) so Claude Code's own startup bookkeeping is not cut off mid-boot
 3. On next launch, sessions are automatically resumed via `--resume` using the saved session ID
 
-Because Claude Code supports `--resume`, conversation context is fully preserved despite the hard kill. If the app crashes, orphaned sessions are detected and recovered on the next launch.
+Because Claude Code supports `--resume`, conversation context is fully preserved even when a session is killed rather than exited. If the app crashes, orphaned sessions are detected and recovered on the next launch.
 
 ### User-Paused Sessions
 

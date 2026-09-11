@@ -30,18 +30,25 @@ synchronous.
 4. Set a hard failsafe timer (`taskkill /T /F` on Windows, `SIGKILL` of the process group
    elsewhere) as a backstop.
 
-This forfeits the 2-second graceful CLI exit window (`suspendAll`). Sessions stay resumable
-because DB records are marked `suspended` before PTYs are killed, and `--resume <id>` works from
-the saved session id.
+This forfeits the 2-second graceful CLI exit window (`suspendAll`) for a MATURE session. Sessions
+stay resumable because DB records are marked `suspended` before PTYs are killed, and
+`--resume <id>` works from the saved session id. A YOUNG session (inside Claude Code's fullscreen
+boot-canary window, see [[pty-teardown-grace]]) is the one exception, and it costs the quit no
+`await`: `killAll({ allowGrace: true })` writes its exit sequence and parks its force-kill on the
+deferred registry's 1500 ms timer, which fires INSIDE the drain below. The report's `deferredCount`
+extends the drain deadline by that grace, so the quit is still held until the child is gone.
+`allowGrace` is passed only where the drain follows; a Windows `session-end` and the signal
+handlers call `performShutdown()` bare and flush every parked PTY at once.
 
 ## The one exception: the PTY exit-callback drain
 
 `src/main/pty/shutdown/exit-callback-drain.ts`, wired by `createBeforeQuitHandler`
 (`src/main/pty/shutdown/before-quit-handler.ts`). After the synchronous cleanup has killed the
 PTYs, the handler calls `event.preventDefault()`, polls the killed children's pids every 25ms
-until every one is gone plus 100ms of further loop turns (deadline 1500ms), then calls
-`app.quit()` again. The second `before-quit` pass is a no-op and Electron proceeds. With no PTY
-killed, the quit is the plain synchronous one.
+until every one is gone plus 100ms of further loop turns (deadline 1500ms, plus the 1500ms kill
+grace when the report says a young session's kill is deferred to a timer inside the drain), then
+calls `app.quit()` again. The second `before-quit` pass is a no-op and Electron proceeds. With no
+PTY killed, the quit is the plain synchronous one.
 
 A killed PTY whose child pid was unreadable has no probe, so the drain spends a fixed 400ms blind
 budget for it instead of waiting on liveness. `killAllSessions` therefore returns a `PtyKillReport`

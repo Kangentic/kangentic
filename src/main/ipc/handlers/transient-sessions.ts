@@ -192,16 +192,26 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
     // Capture session info before removal for cleanup
     const session = context.sessionManager.getSession(sessionId);
+    // kill, capture the exit, THEN remove: awaitExit resolves at once for a
+    // row that is gone, and a young session's kill waits out its exit-sequence
+    // grace (SessionManager.kill). The handler still returns now - the window
+    // closes at once; only the directory delete waits for the shell.
+    context.sessionManager.kill(sessionId);
+    const sessionExited = context.sessionManager.awaitExit(sessionId);
     context.sessionManager.remove(sessionId);
 
-    // Clean up the transient session directory on disk
+    // Clean up the transient session directory on disk once the process is
+    // gone. Deleting it under a still-exiting Claude made its SessionEnd hook
+    // write into a missing directory.
     if (session?.transient) {
       const sessionDirectory = path.join(session.cwd, '.kangentic', 'sessions', session.taskId);
-      try {
-        fs.rmSync(sessionDirectory, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
-      }
+      void sessionExited.then(() => {
+        try {
+          fs.rmSync(sessionDirectory, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup
+        }
+      });
     }
   });
 

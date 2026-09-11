@@ -18,8 +18,9 @@ import { TranscriptWriter } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
-import { suspendAllSessions, killAllSessions } from './shutdown/session-shutdown';
+import { suspendAllSessions, killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
 import type { PtyKillReport } from './shutdown/session-shutdown';
+import { DeferredKillRegistry, isYoungSession } from './lifecycle/deferred-kill';
 import { ResizeManager } from './lifecycle/resize-manager';
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
@@ -131,6 +132,14 @@ const AGENT_SPAWN_GRACE_MS = 30_000;
 
 export class SessionManager extends EventEmitter {
   private registry = new SessionRegistry();
+  /**
+   * PTYs whose force-kill is waiting out the exit-sequence grace. Parked OUTSIDE
+   * the registry row: `kill()` nulls `session.pty` at once as it always did, so
+   * nothing that walks the registry (a respawn's sibling drain, `awaitExit`'s
+   * status checks) can see or cut short a deferred PTY. See
+   * lifecycle/deferred-kill.ts for why the grace exists.
+   */
+  private deferredKills = new DeferredKillRegistry({ killPty: safeKillPty });
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
   private firstOutputTracker = new FirstOutputTracker();
@@ -309,6 +318,14 @@ export class SessionManager extends EventEmitter {
         // preamble cannot fake (see the arming comment in resize()). This
         // trigger always disarms - a child that just switched buffers is
         // demonstrably parsing output, so the re-delivered geometry lands.
+        //
+        // Stamp the FIRST entry only: it is the upper bound on when Claude
+        // armed its fullscreen boot canary, which is what kill() reads to
+        // decide whether the force-kill must wait for the exit sequence. A
+        // later re-entry (a TUI that dropped to the normal buffer and came
+        // back) is not a boot and must not re-open the window.
+        const session = this.registry.get(sessionId);
+        if (session) session.altScreenEnteredAt ??= Date.now();
         this.reassertGeometryForBootingChild(sessionId, {
           trigger: 'alt-screen-enter',
           disarm: true,
@@ -499,6 +516,11 @@ export class SessionManager extends EventEmitter {
       this.backpressure.release(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
+      // A deferred force-kill whose PTY exited on its own inside the grace has
+      // nothing left to kill. The spawn flow's onExit stays attached through a
+      // kill() (only the quit path detaches it), so this event is the cancel
+      // signal - the registry deliberately attaches no PTY listener of its own.
+      this.deferredKills.cancel(sessionId);
     });
   }
 
@@ -1496,7 +1518,10 @@ export class SessionManager extends EventEmitter {
     const session = this.registry.get(sessionId);
     if (!session) return;
     session.overrideExitCode = 0;
-    this.kill(sessionId);
+    // Immediate: the agent is already gone, so the exit-sequence grace would
+    // only type `/exit` into a bare shell, and the `exited` stamp below would
+    // let a later awaitExit resolve while that shell still held the cwd.
+    this.kill(sessionId, { immediate: true });
     // Announce the retirement as a STATUS change, not just an exit.
     //
     // Measured in a live preview: without this, main and the DB were correct
@@ -1518,7 +1543,23 @@ export class SessionManager extends EventEmitter {
     this.emit('session-changed', sessionId, toSession(session));
   }
 
-  kill(sessionId: string): void {
+  /**
+   * End a session deliberately. Synchronous and never resumable (that is
+   * `suspend()`); the registry row survives until the PTY's onExit or a
+   * `remove()`, which is what lets `kill` -> `awaitExit` -> `remove` wait for
+   * the process before touching its cwd.
+   *
+   * A YOUNG session (inside Claude Code's fullscreen boot-canary window, see
+   * lifecycle/deferred-kill.ts) gets the adapter's exit sequence and a 1500 ms
+   * grace before the force-kill, exactly as `suspend()` gives every session; a
+   * mature one is killed at once as before. Either way `session.pty` is nulled
+   * synchronously, so `write()` / `resize()` no-op and a respawn cannot find the
+   * old PTY. `options.immediate` skips the grace for a caller that KNOWS the
+   * agent is already gone (the agent-absence sweep), where the exit sequence
+   * would only be typed into a bare shell and the caller stamps `exited` at
+   * once, which would let `awaitExit` resolve before the shell dies.
+   */
+  kill(sessionId: string, options?: { immediate?: boolean }): void {
     const session = this.registry.get(sessionId);
     // Every kill() is a deliberate Kangentic-initiated teardown (user kill,
     // session reset, task delete, worktree cleanup, move-to-To-Do/Backlog,
@@ -1544,8 +1585,23 @@ export class SessionManager extends EventEmitter {
     this.backpressure.release(sessionId);
     if (session?.pty) {
       const ptyRef = session.pty;
+      // Read before nulling: the quit drain probes the child pid, not the wrapper.
+      const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      safeKillPty(ptyRef);
+      if (options?.immediate !== true && isYoungSession(session)) {
+        // Written straight to the PTY, not through the write queue: the queue
+        // is disposed below and drains through `session.pty`, which is already
+        // null. The onData / onExit disposables move to the parked entry so the
+        // quit path can still detach them after remove() has deleted this row;
+        // they stay attached until then, because the onExit they carry is what
+        // emits 'exit' (awaitExit) and cancels the timer on a natural exit.
+        writeExitSequence(ptyRef, session.exitSequence);
+        const ptyDisposables = session.ptyDisposables;
+        session.ptyDisposables = undefined;
+        this.deferredKills.schedule({ sessionId, ptyRef, pid: childPid, ptyDisposables });
+      } else {
+        safeKillPty(ptyRef);
+      }
     }
     // Drop pending bytes; a stale drain loop scheduled via setImmediate will
     // observe the disposed flag on its next tick and exit cleanly.
@@ -2162,9 +2218,19 @@ export class SessionManager extends EventEmitter {
    * session-shutdown.killAllSessions and
    * .claude/rules/synchronous-shutdown.md. Returns the PtyKillReport the
    * before-quit exit-callback drain waits on.
+   *
+   * `allowGrace` lets a young session's force-kill ride the drain's own timer
+   * instead of landing now; pass it only on a route where the drain WILL run.
+   * Default false, so a caller that does not say so gets the instant kill and
+   * every previously deferred PTY flushed. `dispose()` deliberately leaves the
+   * deferred registry alone: it runs one statement after this, and a flush
+   * there would undo the deferral the drain is about to wait on.
    */
-  killAll(): PtyKillReport {
-    return killAllSessions(this.shutdownContext());
+  killAll(options?: { allowGrace?: boolean }): PtyKillReport {
+    return killAllSessions(this.shutdownContext(), {
+      allowGrace: options?.allowGrace === true,
+      deferredKills: this.deferredKills,
+    });
   }
 
   private shutdownContext() {

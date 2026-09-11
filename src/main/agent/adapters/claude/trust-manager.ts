@@ -2,13 +2,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { toForwardSlash } from '../../../../shared/paths';
-import { createSerialLock } from '../../shared/relocation-utils';
+import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 
-// Module-level promise chain serializing all ~/.claude.json access.
-// Both ensureWorktreeTrust and ensureMcpServerTrust target the same file,
-// so one lock covers both. Prevents concurrent read-modify-write races
-// when multiple tasks are spawned simultaneously.
-export const withClaudeJsonLock = createSerialLock();
+// Every ~/.claude.json read-modify-write in this adapter runs under one lock:
+// an in-process chain against our own writers, plus Claude's own
+// `~/.claude.json.lock` against the CLI's writes. Lives in claude-json-lock.ts;
+// re-exported so the other writers (diff-panel, project-relocation) keep their
+// import.
+export { withClaudeJsonLock };
+
+const LOG_TAG = '[CLAUDE_TRUST]';
 
 /**
  * Pre-populate Claude Code's trust entry for a worktree path so the
@@ -16,9 +19,18 @@ export const withClaudeJsonLock = createSerialLock();
  *
  * Claude Code stores per-directory trust in ~/.claude.json under
  * `projects[<resolved-path>].hasTrustDialogAccepted`.
+ *
+ * A lock that stays held past the budget skips the write (Claude's own policy
+ * on a final ELOCKED): the session then shows one trust prompt, which costs
+ * less than a write that could resurrect a withdrawn boot-canary record.
  */
 export async function ensureWorktreeTrust(worktreePath: string): Promise<void> {
-  return withClaudeJsonLock(() => ensureWorktreeTrustSync(worktreePath));
+  try {
+    await withClaudeJsonLock(() => ensureWorktreeTrustSync(worktreePath));
+  } catch (error) {
+    if (!isClaudeJsonLockError(error)) throw error;
+    console.warn(`${LOG_TAG} Skipping the worktree trust write; ${error.message}`);
+  }
 }
 
 function ensureWorktreeTrustSync(worktreePath: string): void {
@@ -72,7 +84,12 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
  * Called for all sessions (main repo and worktrees).
  */
 export async function ensureMcpServerTrust(projectPath: string): Promise<void> {
-  return withClaudeJsonLock(() => ensureMcpServerTrustSync(projectPath));
+  try {
+    await withClaudeJsonLock(() => ensureMcpServerTrustSync(projectPath));
+  } catch (error) {
+    if (!isClaudeJsonLockError(error)) throw error;
+    console.warn(`${LOG_TAG} Skipping the MCP server trust write; ${error.message}`);
+  }
 }
 
 function ensureMcpServerTrustSync(projectPath: string): void {
