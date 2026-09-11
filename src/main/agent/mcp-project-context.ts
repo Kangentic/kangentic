@@ -63,6 +63,16 @@ export function buildCommandContextForProject(
         return undefined;
       }
     },
+    // Same project binding and the same failure posture as the base branch:
+    // an unreadable config reads as every option off, never a failed call.
+    getPrResolveOptions: () => {
+      try {
+        const gitConfig = ipcContext.configManager.getEffectiveConfig(projectPath).git;
+        return { evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true };
+      } catch {
+        return {};
+      }
+    },
     // Explicit path, not the active project: a cross-project tool call must
     // resolve its profile selector against the board it is targeting. The same
     // reason applies to the write - an agent syncing profiles between projects

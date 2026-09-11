@@ -20,14 +20,14 @@
  * changing them.
  */
 
-import type { PRConnector, DetectedPR, ResolvedPR } from './shared/pr-connector';
+import type { PRConnector, DetectedPR, ResolvedPR, PRResolveOptions } from './shared/pr-connector';
 import { dispatchResolve, selectOwningConnectors, type ResolveKind } from './shared/pr-dispatch';
 import { readRemoteUrls } from '../git/git-remotes';
 import { gitHubPRConnector } from './adapters/github/github-connector';
 import { azureDevOpsPRConnector } from './adapters/azure-devops/azure-devops-connector';
 
 // Re-export the contract + errors so consumers have a single import surface.
-export type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness } from './shared/pr-connector';
+export type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness, PRResolveOptions } from './shared/pr-connector';
 export { PRResolverUnavailableError, PRResolverTransientError } from './shared/pr-errors';
 
 // --- Registry: add new providers here ---
@@ -97,16 +97,27 @@ export async function resolvePRForBranch(
   repoCwd: string,
   branchName: string,
   baseBranch?: string,
+  options?: PRResolveOptions,
 ): Promise<ResolvedPR | null> {
   // Non-null asserted: dispatchResolve only invokes connectors it filtered on `kind`.
   return resolveVia(repoCwd, 'resolveForBranch', (connector) =>
-    connector.resolveForBranch!(repoCwd, branchName, baseBranch),
+    connector.resolveForBranch!(repoCwd, branchName, baseBranch, options),
   );
 }
 
-/** Resolve a PR by number via the connectors that own this repo's remote. */
-export async function resolvePRByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
-  return resolveVia(repoCwd, 'resolveByNumber', (connector) => connector.resolveByNumber!(repoCwd, prNumber));
+/**
+ * Resolve a PR by number via the connectors that own this repo's remote.
+ * `options` is forwarded untouched (see `PRResolveOptions`); a caller that only
+ * needs the PR's state, like `local-only-commits.ts`, omits it.
+ */
+export async function resolvePRByNumber(
+  repoCwd: string,
+  prNumber: number,
+  options?: PRResolveOptions,
+): Promise<ResolvedPR | null> {
+  return resolveVia(repoCwd, 'resolveByNumber', (connector) =>
+    connector.resolveByNumber!(repoCwd, prNumber, options),
+  );
 }
 
 /**

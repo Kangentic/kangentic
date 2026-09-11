@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { BoardProfile, Task, Swimlane } from '../../../shared/types';
+import type { PRResolveOptions } from '../../pr/shared/pr-connector';
 
 export interface CommandContext {
   /**
@@ -24,6 +25,13 @@ export interface CommandContext {
    * a base tip from a task's own work. Optional so a test context can omit it.
    */
   getDefaultBaseBranch?: () => string | undefined;
+  /**
+   * This project's per-resolve PR settings (`git.prEvaluateBranchPolicies`),
+   * for the two `linkPRForTask` calls this module makes itself. Bound to the
+   * request's project like `getDefaultBaseBranch`. Optional so a test context
+   * can omit it; the linker treats absent as every option off.
+   */
+  getPrResolveOptions?: () => PRResolveOptions;
   /**
    * This project's Board Profiles, read from `kangentic.json`. Profiles are
    * config-only (no DB table), so `getProjectDb` cannot reach them.

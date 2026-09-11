@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   ghError: null as Error | null,
   lastArgs: [] as readonly string[],
   lastCwd: undefined as string | undefined,
+  lastOptions: undefined as { cwd?: string; timeout?: number; maxBuffer?: number } | undefined,
 }));
 
 /**
@@ -86,9 +87,14 @@ vi.mock('node:child_process', async (importOriginal) => {
       if (callback) callback(state.ghError, { stdout: state.ghStdout, stderr: '' });
     },
     {
-      [promisifyCustom]: (_file: string, args?: readonly string[] | unknown, opts?: { cwd?: string }) => {
+      [promisifyCustom]: (
+        _file: string,
+        args?: readonly string[] | unknown,
+        opts?: { cwd?: string; timeout?: number; maxBuffer?: number },
+      ) => {
         state.lastArgs = Array.isArray(args) ? (args as readonly string[]) : [];
         state.lastCwd = opts?.cwd;
+        state.lastOptions = opts;
         if (state.ghError) return Promise.reject(state.ghError);
         return Promise.resolve({ stdout: state.ghStdout, stderr: '' });
       },
@@ -137,6 +143,13 @@ describe('GitHubImporter.resolvePRByBranch', () => {
     expect(result[0].number).toBe(5);
     expect(state.lastArgs).toEqual(expect.arrayContaining(['pr', 'list', '--head', 'feat', '--state', 'all']));
     expect(state.lastCwd).toBe('/repo/worktree');
+    // The check rollup rides the same list call, so the in-flight distinction
+    // costs no extra call on the branch tier either.
+    const jsonFields = state.lastArgs[state.lastArgs.indexOf('--json') + 1];
+    expect(jsonFields.split(',')).toEqual(expect.arrayContaining(['mergeStateStatus', 'statusCheckRollup']));
+    // statusCheckRollup is a per-check-run array (~7KB on a PR with 26 checks),
+    // which can pass Node's 1MB execFile default on a busy branch.
+    expect(state.lastOptions?.maxBuffer).toBe(10 * 1024 * 1024);
   });
 
   it('returns [] when gh fails for a non-auth reason (no PR / not a gh repo)', async () => {
@@ -271,17 +284,21 @@ describe('GitHubImporter.resolvePRByNumber', () => {
     expect(state.lastArgs).toEqual(expect.arrayContaining(['pr', 'view', '42']));
   });
 
-  it('requests the mergeability triple on the number tier, and never statusCheckRollup', async () => {
+  it('requests the mergeability triple and the check rollup on the number tier', async () => {
     // The number tier is Tier 1 for an already-linked PR, so it is the hot path
     // that keeps merge readiness fresh; the fields ride the same `gh pr view`.
+    // `statusCheckRollup` is what tells a required check still running apart
+    // from one that failed, which `mergeStateStatus` folds into one BLOCKED.
     state.ghStdout = JSON.stringify(pr({ number: 42 }));
     const importer = new GitHubImporter();
     await importer.resolvePRByNumber('/repo', 42);
     const jsonFields = state.lastArgs[state.lastArgs.indexOf('--json') + 1];
     expect(jsonFields.split(',')).toEqual(
-      expect.arrayContaining(['mergeable', 'mergeStateStatus', 'reviewDecision']),
+      expect.arrayContaining(['mergeable', 'mergeStateStatus', 'reviewDecision', 'statusCheckRollup']),
     );
-    expect(jsonFields).not.toContain('statusCheckRollup');
+    // Same buffer bound as the branch tier, for the same reason: the rollup can
+    // pass Node's 1MB execFile default on a busy PR.
+    expect(state.lastOptions?.maxBuffer).toBe(10 * 1024 * 1024);
   });
 
   it('throws GhUnavailableError when gh is not installed', async () => {
@@ -434,8 +451,9 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
    * exercised. This drives a literal gh stdout string through the real
    * importer -> connector path, with no prototype spy.
    *
-   * Only the first case proves the named revert target (deleting
-   * `case 'BLOCKED':` in mapMergeStateStatus falls through to
+   * Only the first case proves the named revert target (deleting the BLOCKED
+   * short-circuit in mapMergeReadiness, `checksInFlight(...) ?? 'blocked'`,
+   * falls through mapMergeStateStatus, which maps no BLOCKED case, to
    * `mapMergeable('MERGEABLE')` -> 'unknown', not 'blocked'). The other two
    * guard adjacent behavior: the REVIEW_REQUIRED downgrade of an otherwise
    * clean/ready PR, and gh's '' rendering of "no review decision" read as
@@ -468,6 +486,120 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     },
   );
 
+  /** A `statusCheckRollup` entry as `gh` renders a GitHub Actions check run. */
+  const checkRun = (status: string, conclusion: string | null = null, name = 'CI') => ({
+    __typename: 'CheckRun', name, status, conclusion,
+  });
+  /** A legacy commit-status context entry. */
+  const statusContext = (state: string, context = 'ci/legacy') => ({ __typename: 'StatusContext', context, state });
+
+  /**
+   * BLOCKED is the one `mergeStateStatus` the triple cannot split: a required
+   * check still running, a required check that failed, and a review still
+   * required all report it. The rollup splits the first from the others, and a
+   * check in flight wins over a required review on purpose (the chip tracks CI
+   * while it runs, then flips to `blocked` when only the review remains); a
+   * failed check never yields to a running one. Every other state ignores the
+   * rollup: a CLEAN / UNSTABLE PR with checks running is `ready`, because the
+   * Merge button works and the checks in flight are therefore not required.
+   */
+  it.each([
+    ['BLOCKED with no rollup key', 'BLOCKED', '', undefined, 'blocked'],
+    ['BLOCKED with an empty rollup', 'BLOCKED', '', [], 'blocked'],
+    ['BLOCKED with every check green', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
+    ['BLOCKED with a check in progress', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS'), checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED with a queued check', 'BLOCKED', '', [checkRun('QUEUED')], 'queued'],
+    ['BLOCKED with a pending check', 'BLOCKED', '', [checkRun('PENDING')], 'queued'],
+    ['BLOCKED with a waiting check', 'BLOCKED', '', [checkRun('WAITING')], 'queued'],
+    ['BLOCKED with a requested check', 'BLOCKED', '', [checkRun('REQUESTED')], 'queued'],
+    ['BLOCKED with queued and in-progress checks', 'BLOCKED', '', [checkRun('QUEUED'), checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED with a pending status context', 'BLOCKED', '', [statusContext('PENDING')], 'queued'],
+    ['BLOCKED with an expected status context', 'BLOCKED', '', [statusContext('EXPECTED')], 'queued'],
+    ['BLOCKED with a failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a timed-out check beside a queued one', 'BLOCKED', '', [checkRun('COMPLETED', 'TIMED_OUT'), checkRun('QUEUED')], 'blocked'],
+    ['BLOCKED with a cancelled check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'CANCELLED'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with an action-required check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'ACTION_REQUIRED'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a startup-failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'STARTUP_FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with an errored status context beside a running check', 'BLOCKED', '', [statusContext('ERROR'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a failed status context beside a running check', 'BLOCKED', '', [statusContext('FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with skipped and neutral checks beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'SKIPPED'), checkRun('COMPLETED', 'NEUTRAL'), checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED by a required review with a check in progress', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'running'],
+    ['BLOCKED by a required review with a queued check', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('QUEUED')], 'queued'],
+    ['BLOCKED by a required review with every check green', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
+    ['BLOCKED by a required review with a failed check running again', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with an unrecognized check status', 'BLOCKED', '', [checkRun('SOMETHING_NEW')], 'blocked'],
+    ['BLOCKED with an unrecognized conclusion', 'BLOCKED', '', [checkRun('COMPLETED', 'SOMETHING_NEW')], 'blocked'],
+    ['CLEAN with a check in progress', 'CLEAN', '', [checkRun('IN_PROGRESS')], 'ready'],
+    ['UNSTABLE with a queued check', 'UNSTABLE', '', [checkRun('QUEUED')], 'ready'],
+    ['CLEAN with a check in progress and a required review', 'CLEAN', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'blocked'],
+    ['BEHIND with a check in progress', 'BEHIND', '', [checkRun('IN_PROGRESS')], 'blocked'],
+    ['DRAFT with a check in progress', 'DRAFT', '', [checkRun('IN_PROGRESS')], 'blocked'],
+    ['DIRTY with a check in progress', 'DIRTY', '', [checkRun('IN_PROGRESS')], 'conflicting'],
+    ['UNKNOWN with a check in progress', 'UNKNOWN', '', [checkRun('IN_PROGRESS')], 'unknown'],
+  ] as Array<[string, string, string, unknown[] | undefined, string]>)(
+    'resolveByNumber folds %s into %s',
+    async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({
+          number: 7,
+          mergeStateStatus,
+          mergeable: mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE',
+          reviewDecision,
+          ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
+        }),
+      );
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  /**
+   * Observed live on a review-required repository: every check run COMPLETED
+   * with SUCCESS, `mergeStateStatus` BLOCKED, `reviewDecision` REVIEW_REQUIRED.
+   * The rollup shape is what `gh pr view --json statusCheckRollup` printed.
+   */
+  it('resolveByNumber parses a literal gh rollup with every check green into blocked', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":45,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-10T22:42:48Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-10T22:41:34Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-10T22:43:28Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-10T22:43:04Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/45"}';
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 45);
+    expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  it('resolveByNumber parses a literal gh rollup with a check in progress into running', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":46,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-10T22:42:48Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-10T22:41:34Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":null,"conclusion":null,'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"UI Test (1/11)",'
+      + '"startedAt":"2026-09-10T22:43:04Z","status":"IN_PROGRESS","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/46"}';
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 46);
+    expect(result?.mergeReadiness).toBe('running');
+  });
+
+  it('accepts and ignores the branch-policy option: the verdict already carries policy', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: '' }),
+    );
+    const withOption = await gitHubPRConnector.resolveByNumber!('/r', 7, { evaluateBranchPolicies: true });
+    const without = await gitHubPRConnector.resolveByNumber!('/r', 7);
+    expect(withOption).toEqual(without);
+    expect(withOption?.mergeReadiness).toBe('ready');
+  });
+
   it('resolveByNumber omits the verdict when the item carries no mergeability at all', async () => {
     vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(pr({ number: 7 }));
     const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
@@ -481,6 +613,20 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
     expect(result?.number).toBe(2);
     expect(result).not.toHaveProperty('mergeReadiness');
+  });
+
+  it('resolveForBranch carries an in-flight verdict from the list tier', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({
+        number: 3,
+        mergeStateStatus: 'BLOCKED',
+        mergeable: 'MERGEABLE',
+        reviewDecision: 'REVIEW_REQUIRED',
+        statusCheckRollup: [checkRun('IN_PROGRESS')],
+      }),
+    ]);
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat');
+    expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'running' });
   });
 
   it('resolveForBranch carries the verdict from the list tier', async () => {

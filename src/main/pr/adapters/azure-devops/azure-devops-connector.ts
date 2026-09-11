@@ -1,6 +1,9 @@
 /**
  * Azure DevOps PR connector - resolves PRs via the `az` CLI (the `azure-devops`
- * extension, plus one `az rest` call) and detects PR URLs from terminal output.
+ * extension, plus two `az rest` calls: the commit tier's `pullrequestquery`
+ * and, behind `git.prEvaluateBranchPolicies`, the policy evaluations that
+ * decide whether a clean merge preview is `ready`) and detects PR URLs from
+ * terminal output.
  *
  * Detects `https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}`
  * and the legacy `https://{org}.visualstudio.com/...` spelling of the same.
@@ -29,13 +32,21 @@
  */
 
 import PQueue from 'p-queue';
-import type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness } from '../../shared/pr-connector';
+import type {
+  PRConnector,
+  DetectedPR,
+  ResolvedPR,
+  PRState,
+  PRMergeReadiness,
+  PRResolveOptions,
+} from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
 import {
   AzureDevOpsImporter,
   AzUnavailableError,
   AzTransientError,
   type AzurePrItem,
+  type AzurePolicyEvaluation,
 } from '../../../boards/adapters/azure-devops/client';
 import { readRemoteUrls } from '../../../git/git-remotes';
 import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
@@ -75,6 +86,25 @@ async function viaAz<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * The policy verdict for one chosen item, or undefined when the policy call
+ * is not warranted (see `needsPolicyEvaluation`). Called INSIDE the caller's
+ * `viaAz` slot, never through a `viaAz` of its own: `azQueue` allows two
+ * concurrent slots, and a nested `add` awaited from inside a running slot
+ * would let two overlapping resolves hold both slots while each waits on a
+ * queued child that can never start.
+ */
+async function policyVerdictFor(
+  item: AzurePrItem,
+  remote: AzureRemote,
+  options: PRResolveOptions | undefined,
+): Promise<PRMergeReadiness | undefined> {
+  if (!needsPolicyEvaluation(item, options)) return undefined;
+  return foldPolicyEvaluations(
+    await azImporter.resolvePolicyEvaluations(remote.org, item.projectId, item.number),
+  );
+}
+
+/**
  * The Azure org/project/repo for this checkout, or null when the repo is not
  * hosted on Azure DevOps.
  *
@@ -99,17 +129,92 @@ function mapState(item: AzurePrItem): PRState {
 }
 
 /**
+ * Azure policy types whose evaluation waits on PEOPLE rather than on a runner:
+ * "Minimum number of reviewers" and "Required reviewers". Both report `queued`
+ * while approvals are outstanding, which is a waiting review, not a check in
+ * flight, so it folds to `blocked` exactly as GitHub's `REVIEW_REQUIRED` does.
+ * Every other blocking evaluation still `queued` / `running` (Build, Status,
+ * Automatic Copilot code review, ...) is a check in flight. Type ids are fixed
+ * across organizations (`_apis/policy/types`).
+ */
+const REVIEWER_POLICY_TYPE_IDS: ReadonlySet<string> = new Set([
+  'fa4e907d-c16b-4a4c-9dfa-4906e5d171dd',
+  'fd2167ab-b0be-447a-8ec8-39368250530e',
+]);
+
+/**
+ * Whether the policy call can change this item's verdict at all, which is the
+ * gate `git.prEvaluateBranchPolicies` opens. Only an active, non-draft PR whose
+ * merge preview `succeeded` is worth the second `az` call: a draft never
+ * renders readiness, a completed or abandoned PR never changes, every other
+ * `mergeStatus` already decides the verdict on its own, and without the project
+ * GUID there is no artifact id to ask about.
+ */
+function needsPolicyEvaluation(
+  item: AzurePrItem,
+  options: PRResolveOptions | undefined,
+): item is AzurePrItem & { projectId: string } {
+  return options?.evaluateBranchPolicies === true
+    && item.state === 'active'
+    && !item.isDraft
+    && item.mergeStatus === 'succeeded'
+    && typeof item.projectId === 'string'
+    && item.projectId.length > 0;
+}
+
+/**
+ * Fold the PR's branch-policy evaluations into a verdict for a `succeeded`
+ * merge preview. Only blocking, enabled, live policies count (a non-blocking
+ * policy cannot stop Complete, and a disabled or soft-deleted one is not
+ * evaluated). Precedence, highest first:
+ *   - any `rejected` or `broken` is `blocked`: a broken blocking policy
+ *     disables Complete just as a rejection does;
+ *   - any non-reviewer evaluation still in flight is `running` (if any is
+ *     running) else `queued`: a check in flight, shown as such EVEN IF a review
+ *     is also outstanding, so the chip tracks CI while it runs;
+ *   - a reviewer policy still waiting for approvals is `blocked`;
+ *   - otherwise `ready`: every blocking policy is `approved` / `notApplicable`,
+ *     or there are none, and the preview merge already succeeded.
+ * `null` (no readable answer from the policy API) and an unrecognized status
+ * are `unknown`: Azure was asked, and the answer was not one this code can
+ * vouch for.
+ */
+function foldPolicyEvaluations(evaluations: AzurePolicyEvaluation[] | null): PRMergeReadiness {
+  if (evaluations === null) return 'unknown';
+  const blocking = evaluations.filter(
+    (evaluation) => evaluation.isBlocking && evaluation.isEnabled && !evaluation.isDeleted,
+  );
+  if (blocking.some((evaluation) => evaluation.status === 'rejected' || evaluation.status === 'broken')) {
+    return 'blocked';
+  }
+  const inFlight = blocking.filter(
+    (evaluation) => evaluation.status === 'queued' || evaluation.status === 'running',
+  );
+  const checksInFlight = inFlight.filter((evaluation) => !REVIEWER_POLICY_TYPE_IDS.has(evaluation.typeId));
+  if (checksInFlight.some((evaluation) => evaluation.status === 'running')) return 'running';
+  if (checksInFlight.length > 0) return 'queued';
+  if (inFlight.length > 0) return 'blocked';
+  const settled = blocking.every(
+    (evaluation) => evaluation.status === 'approved' || evaluation.status === 'notApplicable',
+  );
+  return settled ? 'ready' : 'unknown';
+}
+
+/**
  * Fold Azure's `mergeStatus` (the server-side merge preview) into the
  * normalized verdict, or undefined when the item carries none (the commit
- * tier). `succeeded` maps to `unknown`, NOT `ready`, on purpose: it says the
- * preview merge applied cleanly, and nothing here has evaluated branch policies
- * (`_apis/policy/evaluations`, which needs `api-version=7.0-preview.1` and the
- * project GUID - the follow-up), so `ready` would promise a Merge click this
- * code cannot vouch for. `queued` / `notSet` / null are "no verdict yet", and
- * an unrecognized status is `unknown` too: Azure was asked, and the answer was
- * not one this code understands.
+ * tier). `succeeded` says only that the preview merge applied cleanly, so it
+ * becomes whatever the branch-policy evaluations said (`policyVerdict`), and
+ * `unknown` when they were not consulted: `ready` would otherwise promise a
+ * Merge click that reviewer minimums or a required build can still refuse.
+ * `queued` / `notSet` / null are "no verdict yet", and an unrecognized status
+ * is `unknown` too: Azure was asked, and the answer was not one this code
+ * understands.
  */
-function mapMergeReadiness(item: AzurePrItem): PRMergeReadiness | undefined {
+function mapMergeReadiness(
+  item: AzurePrItem,
+  policyVerdict: PRMergeReadiness | undefined,
+): PRMergeReadiness | undefined {
   if (item.mergeStatus === undefined) return undefined;
   switch (item.mergeStatus) {
     case 'conflicts':
@@ -117,15 +222,20 @@ function mapMergeReadiness(item: AzurePrItem): PRMergeReadiness | undefined {
     case 'rejectedByPolicy':
     case 'failure':
       return 'blocked';
+    case 'succeeded':
+      return policyVerdict ?? 'unknown';
     default:
-      // succeeded (clean preview merge, policies unverified this pass), queued,
-      // notSet, null, and anything newer than this list.
+      // queued, notSet, null, and anything newer than this list.
       return 'unknown';
   }
 }
 
-function toResolvedPR(item: AzurePrItem, remote: AzureRemote): ResolvedPR {
-  const mergeReadiness = mapMergeReadiness(item);
+function toResolvedPR(
+  item: AzurePrItem,
+  remote: AzureRemote,
+  policyVerdict: PRMergeReadiness | undefined,
+): ResolvedPR {
+  const mergeReadiness = mapMergeReadiness(item, policyVerdict);
   return {
     // Constructed, not read: Azure returns null for _links.web.href, remoteUrl
     // AND repository.webUrl on every tier.
@@ -240,7 +350,12 @@ export const azureDevOpsPRConnector: PRConnector = {
     return lastMatch;
   },
 
-  async resolveForBranch(repoCwd: string, branchName: string, baseBranch?: string): Promise<ResolvedPR | null> {
+  async resolveForBranch(
+    repoCwd: string,
+    branchName: string,
+    baseBranch?: string,
+    options?: PRResolveOptions,
+  ): Promise<ResolvedPR | null> {
     const remote = await remoteFor(repoCwd);
     if (!remote) return null;
     return viaAz(async () => {
@@ -248,18 +363,22 @@ export const azureDevOpsPRConnector: PRConnector = {
       // Every item already matches the source branch; the hint also drops fork
       // PRs that share the branch name.
       const best = disambiguate(items, { baseBranch, branchHint: branchName });
-      return best ? toResolvedPR(best, remote) : null;
+      if (!best) return null;
+      // Policies are evaluated for the ONE chosen candidate, after
+      // disambiguation, so a branch shared by several PRs costs one call.
+      return toResolvedPR(best, remote, await policyVerdictFor(best, remote, options));
     });
   },
 
-  async resolveByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
+  async resolveByNumber(repoCwd: string, prNumber: number, options?: PRResolveOptions): Promise<ResolvedPR | null> {
     const remote = await remoteFor(repoCwd);
     if (!remote) return null;
     return viaAz(async () => {
       const item = await azImporter.resolvePRByNumber(remote.org, prNumber);
       // An explicit number is unambiguous within the organization, so the fork
       // guard is bypassed here exactly as it is on the GitHub side.
-      return item ? toResolvedPR(item, remote) : null;
+      if (!item) return null;
+      return toResolvedPR(item, remote, await policyVerdictFor(item, remote, options));
     });
   },
 
@@ -277,7 +396,9 @@ export const azureDevOpsPRConnector: PRConnector = {
       // API records associations at completion. Both filters would be dead
       // weight here, so neither is ported.
       const best = disambiguate(items, { branchHint });
-      return best ? toResolvedPR(best, remote) : null;
+      // No policy evaluation: these items carry no `mergeStatus` (the
+      // projection omits it), so the verdict is omitted whatever the setting.
+      return best ? toResolvedPR(best, remote, undefined) : null;
     });
   },
 };

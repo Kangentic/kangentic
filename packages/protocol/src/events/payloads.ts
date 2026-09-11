@@ -227,8 +227,10 @@ export interface BoardTaskWire {
   pr_state: string | null;
   /**
    * Normalized merge readiness of the linked PR: `ready` / `blocked` /
-   * `conflicting` / `unknown`, or null when never judged. Absent from desktops
-   * that predate it, which the parser reads as null.
+   * `conflicting` / `queued` / `running` / `unknown`, or null when never
+   * judged. `queued` and `running` mean a blocking check is still in flight.
+   * Absent from desktops that predate it, which the parser reads as null; a
+   * value a client does not know should render as plain open.
    */
   pr_merge_readiness: string | null;
   base_branch: string | null;

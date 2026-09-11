@@ -127,7 +127,7 @@ describe('prStatePresentation', () => {
  */
 describe('prStatePresentation with merge readiness', () => {
   const EVERY_READINESS: Array<PRMergeReadiness | null | undefined> = [
-    'ready', 'blocked', 'conflicting', 'unknown', null, undefined,
+    'ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown', null, undefined,
   ];
 
   it('open + ready keeps the open hue and relabels the chip', () => {
@@ -153,6 +153,17 @@ describe('prStatePresentation with merge readiness', () => {
     });
     expect(result.badgeClass).not.toContain('red');
   });
+
+  it.each(['queued', 'running'] as PRMergeReadiness[])(
+    'open + %s is sky, distinct from every pass / fail hue and from draft grey',
+    (readiness) => {
+      const result = prStatePresentation('open', readiness);
+      expect(result).toEqual({ label: readiness, badgeClass: 'bg-sky-400/10 text-sky-400 ring-1 ring-sky-400/20' });
+      for (const hue of ['emerald', 'amber', 'orange', 'red', 'purple', 'fg-muted']) {
+        expect(result.badgeClass, hue).not.toContain(hue);
+      }
+    },
+  );
 
   it.each([['unknown'], [null], [undefined]] as Array<[PRMergeReadiness | null | undefined]>)(
     'open + %s is byte-identical to the one-argument open chip',
@@ -182,13 +193,19 @@ describe('prStatePresentation with merge readiness', () => {
 });
 
 describe('prMergeReadinessTooltip', () => {
-  it.each(['ready', 'blocked', 'conflicting'] as PRMergeReadiness[])(
+  it.each(['ready', 'blocked', 'conflicting', 'queued', 'running'] as PRMergeReadiness[])(
     'names the caveat for an open PR judged %s',
     (readiness) => {
       const tooltip = prMergeReadinessTooltip('open', readiness);
       expect(tooltip).toContain('last PR refresh');
     },
   );
+
+  it('tells queued and running apart', () => {
+    expect(prMergeReadinessTooltip('open', 'queued')).toContain('queued');
+    expect(prMergeReadinessTooltip('open', 'running')).toContain('running');
+    expect(prMergeReadinessTooltip('open', 'queued')).not.toBe(prMergeReadinessTooltip('open', 'running'));
+  });
 
   it('says nothing while the verdict is pending or unjudged', () => {
     expect(prMergeReadinessTooltip('open', 'unknown')).toBeUndefined();

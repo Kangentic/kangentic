@@ -499,6 +499,8 @@ All permission modes are available in both the global App Settings dropdown and 
 | Copy Files | Files to copy from repo root into worktrees |
 | Post-Worktree Script | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
 | Link node_modules | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-Worktree Script install the worktree's own dependencies |
+| Auto-refresh PRs | How often the background sweep refreshes linked PRs' state and merge readiness (every 2, 5, 10, or 15 minutes, or off; the on-open sweep still runs) |
+| Evaluate branch policies | Off by default. Ask Azure DevOps to evaluate a PR's branch policies (reviewer minimums, required builds, work-item linking) so a clean PR can read `ready` instead of plain `open`, at one extra `az` call per open PR per refresh. GitHub already reports policy in its normal call and ignores this |
 
 ### Shortcuts
 

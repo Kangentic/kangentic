@@ -123,6 +123,8 @@ const preConfig = `
       { id: 'task-readiness-conflicting', number: 303, state: 'open', readiness: 'conflicting', sessionId: null, branch: 'feature/readiness-303' },
       { id: 'task-readiness-unknown', number: 304, state: 'open', readiness: 'unknown', sessionId: null, branch: 'feature/readiness-304' },
       { id: 'task-readiness-stale-merged', number: 305, state: 'merged', readiness: 'ready', sessionId: null, branch: 'feature/readiness-305' },
+      { id: 'task-readiness-queued', number: 306, state: 'open', readiness: 'queued', sessionId: null, branch: 'feature/readiness-306' },
+      { id: 'task-readiness-running', number: 307, state: 'open', readiness: 'running', sessionId: null, branch: 'feature/readiness-307' },
     ];
     readinessSeeds.forEach(function (seed, index) {
       state.tasks.push({
@@ -265,6 +267,19 @@ test.describe('PR merge readiness folds into the state chip', () => {
     const chip = chipFor('task-readiness-unknown');
     await expect(chip).toHaveText('open');
     await expect(chip).not.toHaveAttribute('title', /./);
+  });
+
+  test('queued and running are sky, so a check in flight reads as progress rather than pass or fail', async () => {
+    const queued = chipFor('task-readiness-queued');
+    await expect(queued).toHaveText('queued');
+    await expect(queued).toHaveClass(/text-sky-400/);
+    await expect(queued).toHaveAttribute('title', /queued as of the last PR refresh/);
+
+    const running = chipFor('task-readiness-running');
+    await expect(running).toHaveText('running');
+    await expect(running).toHaveClass(/text-sky-400/);
+    await expect(running).not.toHaveClass(/text-emerald-400|text-amber-400|text-orange-400|text-fg-muted/);
+    await expect(running).toHaveAttribute('title', /running as of the last PR refresh/);
   });
 
   test('a stale verdict on a merged PR never shows through', async () => {

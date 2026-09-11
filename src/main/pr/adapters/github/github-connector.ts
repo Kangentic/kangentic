@@ -14,9 +14,27 @@
  */
 
 import PQueue from 'p-queue';
-import type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness } from '../../shared/pr-connector';
+import type {
+  PRConnector,
+  DetectedPR,
+  ResolvedPR,
+  PRState,
+  PRMergeReadiness,
+  PRResolveOptions,
+} from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
-import { GitHubImporter, GhUnavailableError, GhTransientError, type GhPrListItem } from '../../../boards/adapters/github-common/gh-client';
+import {
+  GitHubImporter,
+  GhUnavailableError,
+  GhTransientError,
+  type GhPrListItem,
+  type GhMergeable,
+  type GhMergeStateStatus,
+  type GhCheckRunStatus,
+  type GhCheckRunConclusion,
+  type GhStatusState,
+  type GhStatusCheckRollupItem,
+} from '../../../boards/adapters/github-common/gh-client';
 import { isShaContainedInRef } from '../../../git/worktree-head';
 
 /**
@@ -71,20 +89,81 @@ function mapState(item: GhPrListItem): PRState {
  * `mergeable` is the fallback when `mergeStateStatus` is absent or a value this
  * code does not know. `reviewDecision` is compared against the one named value:
  * gh renders a null decision as ''.
+ *
+ * BLOCKED is the one state the triple cannot tell apart: a required check
+ * still running, a required check that failed, and a review still required all
+ * report it. The check rollup splits the first from the others (see
+ * `checksInFlight`), and a check in flight wins over a required review on
+ * purpose, so the chip tracks CI while it runs and flips to `blocked` when only
+ * the review remains. A failed check never yields to a running one.
  */
 function mapMergeReadiness(item: GhPrListItem): PRMergeReadiness | undefined {
   if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
+  if (item.mergeStateStatus === 'BLOCKED') return checksInFlight(item.statusCheckRollup) ?? 'blocked';
   const verdict = mapMergeStateStatus(item.mergeStateStatus) ?? mapMergeable(item.mergeable);
   return verdict === 'ready' && item.reviewDecision === 'REVIEW_REQUIRED' ? 'blocked' : verdict;
 }
 
-function mapMergeStateStatus(mergeStateStatus: string | undefined): PRMergeReadiness | undefined {
+/**
+ * CheckRun conclusions and StatusContext states that mean the check has FAILED,
+ * so the merge stays blocked. Typed on the gh unions rather than `string` so a
+ * misspelled member fails `tsc` instead of silently never matching.
+ */
+const FAILED_CHECK_RUN_CONCLUSIONS: ReadonlySet<GhCheckRunConclusion> = new Set<GhCheckRunConclusion>([
+  'FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE',
+]);
+const FAILED_STATUS_STATES: ReadonlySet<GhStatusState> = new Set<GhStatusState>(['ERROR', 'FAILURE']);
+/** CheckRun statuses short of IN_PROGRESS that still mean the check has not run yet. */
+const WAITING_CHECK_RUN_STATUSES: ReadonlySet<GhCheckRunStatus> = new Set<GhCheckRunStatus>([
+  'QUEUED', 'PENDING', 'WAITING', 'REQUESTED',
+]);
+const WAITING_STATUS_STATES: ReadonlySet<GhStatusState> = new Set<GhStatusState>(['PENDING', 'EXPECTED']);
+
+/**
+ * Whether a BLOCKED PR's checks are still in flight: `running` when any check
+ * run is IN_PROGRESS, `queued` when the only unfinished ones are waiting to
+ * start, and undefined when the rollup is absent, nothing is unfinished, or
+ * ANY check has failed (a failure is what blocks, whatever else is running).
+ *
+ * A heuristic, because `gh` carries no `isRequired` on the rollup: a BLOCKED
+ * PR whose only unfinished checks are optional reads `running` too, and a
+ * required check that GitHub still EXPECTS but that has not reported yet is
+ * not in the rollup at all, so it reads `blocked` for one sweep. Both correct
+ * themselves on the next resolve.
+ */
+function checksInFlight(rollup: GhStatusCheckRollupItem[] | undefined): 'queued' | 'running' | undefined {
+  if (!rollup || rollup.length === 0) return undefined;
+  let running = false;
+  let waiting = false;
+  for (const item of rollup) {
+    if (item.__typename === 'CheckRun') {
+      if (item.status === 'COMPLETED') {
+        if (item.conclusion !== null && FAILED_CHECK_RUN_CONCLUSIONS.has(item.conclusion)) return undefined;
+      } else if (item.status === 'IN_PROGRESS') {
+        running = true;
+      } else if (WAITING_CHECK_RUN_STATUSES.has(item.status)) {
+        waiting = true;
+      }
+    } else if (item.__typename === 'StatusContext') {
+      if (FAILED_STATUS_STATES.has(item.state)) return undefined;
+      if (WAITING_STATUS_STATES.has(item.state)) waiting = true;
+    }
+  }
+  if (running) return 'running';
+  if (waiting) return 'queued';
+  return undefined;
+}
+
+/**
+ * BLOCKED is deliberately absent: `mapMergeReadiness` folds it through the
+ * check rollup before this switch runs, so a case here would be unreachable.
+ */
+function mapMergeStateStatus(mergeStateStatus: GhMergeStateStatus | undefined): PRMergeReadiness | undefined {
   switch (mergeStateStatus) {
     case 'CLEAN':
     case 'HAS_HOOKS':
     case 'UNSTABLE':
       return 'ready';
-    case 'BLOCKED':
     case 'BEHIND':
     case 'DRAFT':
       return 'blocked';
@@ -98,7 +177,7 @@ function mapMergeStateStatus(mergeStateStatus: string | undefined): PRMergeReadi
   }
 }
 
-function mapMergeable(mergeable: string | undefined): PRMergeReadiness {
+function mapMergeable(mergeable: GhMergeable | undefined): PRMergeReadiness {
   return mergeable === 'CONFLICTING' ? 'conflicting' : 'unknown';
 }
 
@@ -290,7 +369,15 @@ export const gitHubPRConnector: PRConnector = {
     return lastMatch;
   },
 
-  async resolveForBranch(repoCwd: string, branchName: string, baseBranch?: string): Promise<ResolvedPR | null> {
+  // `options` (branch-policy evaluation) is accepted for contract parity and
+  // ignored: GitHub's verdict already carries policy through `mergeStateStatus`
+  // and `reviewDecision` on the same call, so there is nothing extra to spend.
+  async resolveForBranch(
+    repoCwd: string,
+    branchName: string,
+    baseBranch?: string,
+    _options?: PRResolveOptions,
+  ): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const items = await ghImporter.resolvePRByBranch(repoCwd, branchName);
       // Every item already matches head=branchName; the hint also drops fork PRs
@@ -300,7 +387,7 @@ export const gitHubPRConnector: PRConnector = {
     });
   },
 
-  async resolveByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
+  async resolveByNumber(repoCwd: string, prNumber: number, _options?: PRResolveOptions): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const item = await ghImporter.resolvePRByNumber(repoCwd, prNumber);
       // Explicit number lookup is unambiguous: a PR number is unique within the repo,

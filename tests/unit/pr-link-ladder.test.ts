@@ -1363,6 +1363,82 @@ describe('linkPR (IPC wrapper): preserveLinkOnNotFound reaches the backbone', ()
 });
 
 /**
+ * The per-project readiness settings reach every readiness-capable tier as a
+ * trailing options object the generic layer never inspects. The wrapper reads
+ * them off the same effective-config read as the default base branch, so a
+ * partial `git` stub (which most tests here use) must read as every option
+ * off, never as a thrown resolve.
+ */
+describe('linkPR (IPC wrapper): resolve options reach every readiness-capable tier', () => {
+  function contextFor(task: Task, gitConfig: Record<string, unknown>): IpcContext {
+    repos.value = { tasks: { getById: () => task, update: vi.fn((patch: Partial<Task>) => patch as Task) } as never };
+    return {
+      currentProjectId: 'proj-1',
+      projectRepo: { getById: () => ({ id: 'proj-1', path: '/repo' }) },
+      configManager: { getEffectiveConfig: () => ({ git: gitConfig }) },
+      boardConfigManager: { getDefaultBaseBranchForPath: () => undefined },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      sessionManager: { getSessionProjectId: () => null },
+    } as never;
+  }
+
+  it('forwards evaluateBranchPolicies=true to the number tier and the branch tier', async () => {
+    conn.byNumber = null;
+    conn.byBranch = resolved(7);
+    const task = worktreeTask({}, { pr_number: 7, pr_url: 'u7', pr_state: 'open' });
+    const context = contextFor(task, { defaultBaseBranch: 'main', prEvaluateBranchPolicies: true });
+
+    await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: true });
+    expect(conn.lastArgs.byBranch?.at(-1)).toEqual({ evaluateBranchPolicies: true });
+  });
+
+  it('forwards evaluateBranchPolicies=false when the key is absent, never undefined at the connector', async () => {
+    conn.byNumber = resolved(7);
+    const task = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
+    const context = contextFor(task, { defaultBaseBranch: 'main' });
+
+    await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: false });
+  });
+
+  it('an unreadable config reads as every option off and still resolves', async () => {
+    conn.byNumber = resolved(7);
+    const task = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
+    const context = contextFor(task, {});
+    (context.configManager as { getEffectiveConfig: () => unknown }).getEffectiveConfig = () => {
+      throw new Error('config unreadable');
+    };
+
+    const result = await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+
+    expect(result.status).toBe('unchanged');
+    expect(conn.lastArgs.byNumber?.at(-1)).toEqual({});
+  });
+
+  it('the re-poll timer carries the same options', async () => {
+    vi.useFakeTimers();
+    try {
+      conn.byNumber = { ...resolved(7), mergeReadiness: 'unknown' };
+      const task = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open', pr_merge_readiness: 'ready' });
+      const context = contextFor(task, { defaultBaseBranch: 'main', prEvaluateBranchPolicies: true });
+
+      await linkPR(context, { projectId: 'proj-1', taskId: task.id, force: true });
+      conn.lastArgs = {};
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(conn.lastArgs.byNumber?.at(-1)).toEqual({ evaluateBranchPolicies: true });
+    } finally {
+      cancelPendingVerdictRepolls();
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
  * Merge readiness has three rules `pr_state` never needed, because every tier
  * can determine a state and not every tier can determine readiness:
  *   - PRESERVE on undetermined (a tier that cannot judge it leaves the stored
@@ -1492,6 +1568,33 @@ describe('linkPRForTask merge readiness', () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'unknown' }));
     expect(task.pr_merge_readiness).toBe('unknown');
+  });
+
+  it.each(['queued', 'running'])('holds an in-flight %s verdict through a pending unknown like any determined one', async (inFlight) => {
+    // A blocking check in flight is a real answer whose next real answer is
+    // ready or blocked; a transient unknown (a policy call that gave no
+    // readable answer, GitHub recomputing) must not blank it.
+    vi.useFakeTimers();
+    conn.byNumber = withReadiness(10, 'unknown');
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    const task = linkedTask({ pr_merge_readiness: inFlight as Task['pr_merge_readiness'] });
+
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
+    expect(result.status).toBe('unchanged');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(task.pr_merge_readiness).toBe(inFlight);
+
+    conn.byNumber = withReadiness(10, 'ready');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'ready' }));
+  });
+
+  it('writes an in-flight verdict straight through: queued and running are answers, not holds', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.status).toBe('linked');
+    expect(result.task?.pr_merge_readiness).toBe('running');
   });
 
   it('does not hold a verdict for a terminal PR: unknown writes straight through', async () => {

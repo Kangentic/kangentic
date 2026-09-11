@@ -291,6 +291,53 @@ describe('buildCommandContextForProject - getDefaultBaseBranch', () => {
 });
 
 // ---------------------------------------------------------------------------
+// getPrResolveOptions
+//
+// The per-resolve PR settings for the two linkPRForTask calls the MCP command
+// handlers make themselves. Same project binding and failure posture as
+// getDefaultBaseBranch: read for the TARGET project's path, and an unreadable
+// config reads as every option off rather than a failed tool call.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - getPrResolveOptions', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  function makeOptionsContext(gitConfig: Record<string, unknown> | (() => never)) {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const getEffectiveConfig = vi.fn(() => {
+      if (typeof gitConfig === 'function') return gitConfig();
+      return { git: gitConfig };
+    });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      boardConfigManager: { getDefaultBaseBranchForPath: vi.fn(() => undefined) },
+      configManager: { getEffectiveConfig },
+    } as unknown as IpcContext;
+    return { ipcContext, getEffectiveConfig };
+  }
+
+  it('reads evaluateBranchPolicies from the target project path', () => {
+    const { ipcContext, getEffectiveConfig } = makeOptionsContext({ prEvaluateBranchPolicies: true });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: true });
+    expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
+  });
+
+  it('reads an absent key as off, never as undefined', () => {
+    const { ipcContext } = makeOptionsContext({ defaultBaseBranch: 'main' });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrResolveOptions!()).toEqual({ evaluateBranchPolicies: false });
+  });
+
+  it('returns every option off instead of throwing when the config is unreadable', () => {
+    const { ipcContext } = makeOptionsContext(() => { throw new Error('config unreadable'); });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(() => context!.getPrResolveOptions!()).not.toThrow();
+    expect(context!.getPrResolveOptions!()).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
 // onSwimlaneUpdated write-back
 //
 // Regression lock: an MCP update_column edits a swimlane row and fires
