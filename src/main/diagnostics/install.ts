@@ -12,8 +12,8 @@ import { installIpcRecorder } from './ipc-recorder';
  * Always installs:
  *   - IPC traffic recorder (patches `ipcMain.handle`; runtime gated)
  *   - log mirror (console.* → .kangentic/logs/<date>.log)
- *   - crash capture (uncaughtException, render-process-gone, preload-error,
- *     renderer window.onerror via IPC)
+ *   - crash capture (uncaughtException, render-process-gone, the GPU
+ *     child-process-gone, preload-error, renderer window.onerror via IPC)
  *   - debug-dump path resolver (for SessionTelemetry's ActivitySnapshotWriter)
  *
  * Verbosity / activation gates are read live via the callbacks so toggle
