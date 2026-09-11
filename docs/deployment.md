@@ -202,11 +202,14 @@ The installed app and `npm run dev` share the same data directory. Set `KANGENTI
 
 Run `npx kangentic@X.Y.Z` with the desired version to download and install that specific release.
 
-On Linux this installs cleanly only when the target version is NEWER than what is installed. Going
-backwards is a downgrade, which `dnf install`, `zypper install`, and `rpm -U` all refuse by default,
-so a Linux rollback needs the distro's explicit downgrade command (`sudo dnf downgrade <file>.rpm`,
-`sudo zypper install --oldpackage <file>.rpm`, or `sudo dpkg -i <file>.deb`) against the artifact
-downloaded from [GitHub Releases](https://github.com/Kangentic/kangentic/releases).
+On Linux the package managers disagree about going backwards. `dnf install` of a local rpm performs
+the downgrade without complaint, which the release workflow's rpm upgrade gate measured on
+`fedora:latest`, so on Fedora `npx kangentic@X.Y.Z` rolls back on its own. `apt install` refuses
+(exit 100, "Packages were downgraded and -y was used without --allow-downgrades"), and so do
+`zypper install` and `rpm -U`. On those a rollback needs the distro's explicit downgrade command
+(`sudo dpkg -i <file>.deb`, `sudo zypper install --oldpackage <file>.rpm`, or
+`sudo rpm -Uvh --oldpackage <file>.rpm`) against the artifact downloaded from
+[GitHub Releases](https://github.com/Kangentic/kangentic/releases).
 
 ### Clearing update cache
 
