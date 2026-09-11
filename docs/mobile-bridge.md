@@ -356,6 +356,12 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 - Residual, not fixed here: a phone on an older `PROTOCOL_VERSION` that dials anyway is now indistinguishable from a hostile frame. Its message 1 fails `readMessage` on the prologue mismatch and is ignored rather than ending the ceremony, so the desktop sits in `waiting-for-phone` until the token's 10-minute TTL instead of surfacing an error immediately, as it did before. The QR-scan version check is what is meant to catch this, and it lives in the mobile app: there is no desktop-side oracle that could separate "wrong version" from "wrong token" pre-authentication without also handing an attacker a probe.
 - Residual, not fixed here: `sas-pending` now accepts unbounded rejected confirm frames where it previously ended on the first, and `openPairingConfirm` runs its AEAD over the whole raw frame before any length check. `RelayClient` bounds only what it SENDS (`maxBytesPerSession`); its `onmessage` path has no size guard, and pairing frames never pass through `decodeMessage`'s `MAX_FRAME_LENGTH`. So an attacker who reaches the slot can spend main-process CPU proportional to frame size for the full 5-minute window. The bound belongs on the transport's receive path rather than in `PairingService`, which is why it is not fixed here.
 
+**Shipped (Protocol 0.13.0 - a board task carries its PR's merge verdict):**
+
+- Protocol: `pr_merge_readiness` on `BoardTaskWire` (`ready` / `blocked` / `conflicting` / `unknown`, or null when the desktop has never judged the PR). Additive; `PROTOCOL_VERSION` stays '3'. An older desktop omits the field and `parseBoardTaskWire` reads that as null, so a newer phone renders the plain open chip it always did.
+- Desktop: `wire-mappers.ts` copies `tasks.pr_merge_readiness` onto the board task, the same column the desktop's own PR pill folds into its state chip (see [PR Integration](pr-integration.md#merge-readiness)). No new verb and no new handler; the field rides every `read-board` snapshot and change event that already carried `pr_state`.
+- The phone-side rendering is the mobile app's own change and is gated on this package publishing.
+
 **Explicitly out of scope, later phases:**
 
 - **Bridge Phase 3 remainder:** full desktop static-key rotation and re-provisioning of remaining paired devices on revoke; fuller device-management UX beyond rename/revoke (grouping, a narrower capability preset such as "view only").
