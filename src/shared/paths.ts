@@ -60,6 +60,22 @@ export function resolveForwardSlash(p: string): string {
 }
 
 /**
+ * Whether two paths name the same on-disk location, whatever separators or
+ * drive-letter case each side used. Both sides are resolved, and case-folded
+ * on Windows, where the filesystem is case-insensitive. Use for comparing a
+ * path git printed (forward slashes, e.g. `git worktree list --porcelain`)
+ * against one Node wrote (backslashes), which a plain string compare never
+ * matches on Windows.
+ */
+export function isSamePath(left: string, right: string): boolean {
+  const normalize = (value: string): string => {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
+/**
  * True for Windows UNC paths: \\server\share or //server/share.
  * Always false on macOS/Linux (single leading slash is not UNC).
  */
