@@ -122,6 +122,7 @@ describe('pickOverridableSubset', () => {
         prRefreshIntervalMinutes: 10,
         autoFetchIntervalMinutes: null,
         prEvaluateBranchPolicies: true,
+        prBypassCountsAsReady: false,
       },
     } as unknown as Parameters<typeof pickOverridableSubset>[0];
 
@@ -139,6 +140,8 @@ describe('pickOverridableSubset', () => {
         // null is a real value ("off"), not an absence: pruneUndefined keeps it.
         autoFetchIntervalMinutes: null,
         prEvaluateBranchPolicies: true,
+        // false is a real value too: the project turned the default-on setting off.
+        prBypassCountsAsReady: false,
       },
     });
   });

@@ -95,6 +95,11 @@ export function GitTab({ config }: { config: AppConfig }) {
         checked={config.git.prEvaluateBranchPolicies}
         onChange={(value) => updateProject({ git: { prEvaluateBranchPolicies: value } })}
       />
+      <SettingToggleRow
+        {...settingProps('git.prBypassCountsAsReady')}
+        checked={config.git.prBypassCountsAsReady}
+        onChange={(value) => updateProject({ git: { prBypassCountsAsReady: value } })}
+      />
     </>
   );
 }
