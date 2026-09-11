@@ -734,4 +734,59 @@ describe('the commit signal fires when the row lands, before the slow work', () 
     expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
     expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
   });
+
+  it('fires onCommitted on a same-lane reorder, which commits and returns before any slow work', async () => {
+    // The reorder path sets moveCommitted and returns null immediately after,
+    // reaching the onCommitted call by a different route than every other case
+    // in this file (a real destination lane, Phase 2, or the Done cleanup).
+    // Without this, a change that special-cased onCommitted to skip a same-lane
+    // move - or moved the call below the early return - has no assertion here
+    // to catch it; the sibling "announces a within-column reorder" test above
+    // only pins the bus emit and the renderer push, never the caller's own
+    // commit signal.
+    const onCommitted = vi.fn();
+    const context = makeContext(makeTask());
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: SOURCE_LANE_ID, targetPosition: 0 },
+      'mobile',
+      undefined,
+      undefined,
+      { onCommitted },
+    );
+
+    expect(onCommitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires onCommitted before Phase 2 begins on an auto-spawn destination', async () => {
+    // The Done-cleanup test above proves onCommitted does not wait on the slow
+    // work reachable from INSIDE Phase 1's lock. This is the other motivating
+    // case from the doc comment on the `options` parameter: a destination that
+    // makes Phase 1 return a plan and carries into Phase 2 (worktree creation +
+    // spawn). Asserting from inside the ensureTaskWorktree mock, rather than
+    // just counting calls afterward, is what pins the ORDERING rather than
+    // just the total.
+    let committedBeforePhase2 = false;
+    const onCommitted = vi.fn(() => {
+      committedBeforePhase2 = true;
+    });
+    const context = makeContext(makeTask());
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      expect(committedBeforePhase2).toBe(true);
+      return null;
+    });
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: SPAWNING_TARGET_LANE_ID, targetPosition: 0 },
+      'mobile',
+      undefined,
+      undefined,
+      { onCommitted },
+    );
+
+    expect(onCommitted).toHaveBeenCalledTimes(1);
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+  });
 });
