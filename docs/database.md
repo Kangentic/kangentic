@@ -744,6 +744,10 @@ Operates on a per-project DB.
 | `list(swimlaneId?)` | Active (non-archived) tasks, optionally filtered by swimlane. Includes `attachment_count` via LEFT JOIN on `task_attachments`. |
 | `getById(id)` | Single task by ID (includes `attachment_count`) |
 | `getBySessionId(sessionId)` | Find the active (non-archived) task that owns a given PTY session |
+| `getByDisplayId(displayId)` | Single task by its `#N` display id, archived or not |
+| `getByBranchName(branchName)` | The active (non-archived) task owning a local branch, most recently updated first. Maps a branch back to a task with no live session |
+| `listByPRNumber(prNumber)` | Every task, archived included, whose `pr_number` is the given number, newest `updated_at` first. The PR linker's inferred tiers read it to refuse a PR another task on the board already holds; archived rows count because a Done task keeps its link |
+| `listByBranchOrPushedBranch(branchName)` | Every task, archived included, holding the name as its `branch_name` or its `pushed_branch`, newest first. The PR linker's remote-tip tier reads it to refuse a branch another task owns before any PR exists for it |
 | `create(input)` | Insert at the end of the target swimlane (next position). Transactional: allocates a monotonic `display_id` from `project_meta` in the same transaction as the INSERT |
 | `nextPositionInSwimlane(swimlaneId)` | The raw append position past everything in a swimlane, archived rows included. `create()`'s append anchor, and what MCP task placement resolves an out-of-range ordinal slot against |
 | `update(input)` | Partial update -- only provided fields are changed |

@@ -140,6 +140,32 @@ export class TaskRepository {
   }
 
   /**
+   * Every task, archived included, whose linked PR is `prNumber`, newest
+   * `updated_at` first. The PR linker's inferred tiers use it to refuse a PR
+   * another task on this board already holds; archived rows count because a
+   * Done task keeps its link. No `archived_at` filter, unlike `getByBranchName`.
+   */
+  listByPRNumber(prNumber: number): Task[] {
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE t.pr_number = ?
+      ORDER BY t.updated_at DESC`).all(prNumber) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /**
+   * Every task, archived included, that holds `branchName` as its local
+   * `branch_name` or as the `pushed_branch` its work went to, newest
+   * `updated_at` first. The PR linker's remote-tip tier uses it to refuse a
+   * branch another task on this board owns, before any PR exists for it.
+   */
+  listByBranchOrPushedBranch(branchName: string): Task[] {
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE (t.branch_name = ? OR t.pushed_branch = ?)
+      ORDER BY t.updated_at DESC`).all(branchName, branchName) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  /**
    * Allocate the next display_id. MONOTONIC: the high-water mark in
    * `project_meta` only moves forward, so deleting the highest-numbered task
    * never hands its number to the next one created. That matters because a

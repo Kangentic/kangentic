@@ -254,6 +254,34 @@ describe('TaskRepository SQL contracts', () => {
     });
   });
 
+  describe('the PR linker holder lookups', () => {
+    // Both must see archived rows. A Done task keeps its PR link and its pushed
+    // branch, and the linker's inferred tiers refuse a hit ANY other task on the
+    // board already holds. An `archived_at IS NULL` filter here would let a
+    // follower take a finished sibling's PR.
+    it('listByPRNumber queries pr_number across archived and active rows, newest first', () => {
+      repo.listByPRNumber(388);
+
+      const statement = tracker.statements.find((s) => s.sql.includes('WHERE t.pr_number = ?'));
+      expect(statement).toBeDefined();
+      expect(statement!.sql).not.toContain('archived_at');
+      expect(statement!.sql).toContain('ORDER BY t.updated_at DESC');
+      expect(statement!.args).toEqual([388]);
+    });
+
+    it('listByBranchOrPushedBranch matches either column with one name, across archived and active rows', () => {
+      repo.listByBranchOrPushedBranch('feat/a');
+
+      const statement = tracker.statements.find((s) =>
+        s.sql.includes('t.branch_name = ? OR t.pushed_branch = ?'),
+      );
+      expect(statement).toBeDefined();
+      expect(statement!.sql).not.toContain('archived_at');
+      expect(statement!.sql).toContain('ORDER BY t.updated_at DESC');
+      expect(statement!.args).toEqual(['feat/a', 'feat/a']);
+    });
+  });
+
   describe('listArchivedPreview', () => {
     it('counts all archived tasks and limits the returned rows', () => {
       const result = repo.listArchivedPreview(15);
