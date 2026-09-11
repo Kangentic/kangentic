@@ -106,6 +106,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 import { GitHubImporter, GhUnavailableError, GhTransientError } from '../../src/main/boards/adapters/github-common/gh-client';
 import { gitHubPRConnector } from '../../src/main/pr/adapters/github/github-connector';
 import { resolvePRForBranch, resolvePRByNumber, resolvePRByCommit, PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
+import type { PRResolveOptions } from '../../src/main/pr/pr-registry';
 
 function pr(overrides: Partial<GhPrListItem>): GhPrListItem {
   return {
@@ -267,6 +268,75 @@ describe('resolvePRForBranch registry', () => {
       baseRefName: 'main',
       updatedAt: '2026-01-01T00:00:00Z',
     });
+  });
+});
+
+/**
+ * `resolvePRForBranch` / `resolvePRByNumber` (pr-registry.ts) are pure
+ * forwarding wrappers around `connector.resolveForBranch!` /
+ * `connector.resolveByNumber!`, and nothing else in the suite exercises that
+ * specific link. `pr-link-ladder.test.ts` mocks `pr-registry` wholesale, so
+ * its options-forwarding tests only prove `pr-linking.ts` calls the MOCKED
+ * registry function correctly - they never run the registry's own body. Every
+ * connector-level options test in this file, in
+ * `azure-devops-pr-resolver.test.ts`, and in `pr-connector-gate.test.ts` calls
+ * `gitHubPRConnector.resolveForBranch!` / `.resolveByNumber!` (or Azure's
+ * equivalents) directly, bypassing the registry wrapper entirely. So a
+ * registry wrapper that dropped its `options` argument on the way to the
+ * connector call - or defaulted it to `{}` when the caller passed nothing -
+ * would ship with the whole suite green.
+ */
+describe('pr-registry wrappers forward options untouched to the connector', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * `toBe` on the options argument (not just `toHaveBeenCalledWith`'s
+   * structural equality) is deliberate: the header comment on
+   * `resolvePRByNumber` in pr-registry.ts promises "options is forwarded
+   * untouched", and a structural check alone would still pass a registry that
+   * reconstructed `{ evaluateBranchPolicies: options?.evaluateBranchPolicies }`
+   * instead of forwarding the same reference.
+   */
+  it('resolvePRForBranch forwards the exact options object to connector.resolveForBranch', async () => {
+    const spy = vi.spyOn(gitHubPRConnector, 'resolveForBranch').mockResolvedValue(null);
+    const options: PRResolveOptions = { evaluateBranchPolicies: true };
+
+    await resolvePRForBranch('/r', 'feat', 'main', options);
+
+    expect(spy).toHaveBeenCalledWith('/r', 'feat', 'main', options);
+    expect(spy.mock.calls[0][3]).toBe(options); // same reference, not a rebuilt copy
+  });
+
+  it('resolvePRByNumber forwards the exact options object to connector.resolveByNumber', async () => {
+    const spy = vi.spyOn(gitHubPRConnector, 'resolveByNumber').mockResolvedValue(null);
+    const options: PRResolveOptions = { evaluateBranchPolicies: true };
+
+    await resolvePRByNumber('/r', 42, options);
+
+    expect(spy).toHaveBeenCalledWith('/r', 42, options);
+    expect(spy.mock.calls[0][2]).toBe(options);
+  });
+
+  /**
+   * A caller that omits `options` (every production call site except
+   * pr-linking.ts's readiness-aware ladder tiers) must reach the connector as
+   * literal `undefined`, never a registry-invented `{}`. A connector's gate
+   * reads `options?.evaluateBranchPolicies === true`, so `undefined` and `{}`
+   * are behaviorally identical there today - but this pins the distinction at
+   * the one layer that could otherwise silently erase it for every future
+   * caller and every future gate.
+   */
+  it('resolvePRForBranch and resolvePRByNumber forward undefined when no options are given', async () => {
+    const branchSpy = vi.spyOn(gitHubPRConnector, 'resolveForBranch').mockResolvedValue(null);
+    const numberSpy = vi.spyOn(gitHubPRConnector, 'resolveByNumber').mockResolvedValue(null);
+
+    await resolvePRForBranch('/r', 'feat');
+    await resolvePRByNumber('/r', 42);
+
+    expect(branchSpy).toHaveBeenCalledWith('/r', 'feat', undefined, undefined);
+    expect(numberSpy).toHaveBeenCalledWith('/r', 42, undefined);
   });
 });
 
