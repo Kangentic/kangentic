@@ -121,6 +121,7 @@ describe('pickOverridableSubset', () => {
         linkNodeModules: false,
         prRefreshIntervalMinutes: 10,
         autoFetchIntervalMinutes: null,
+        prEvaluateBranchPolicies: true,
       },
     } as unknown as Parameters<typeof pickOverridableSubset>[0];
 
@@ -137,6 +138,7 @@ describe('pickOverridableSubset', () => {
         prRefreshIntervalMinutes: 10,
         // null is a real value ("off"), not an absence: pruneUndefined keeps it.
         autoFetchIntervalMinutes: null,
+        prEvaluateBranchPolicies: true,
       },
     });
   });

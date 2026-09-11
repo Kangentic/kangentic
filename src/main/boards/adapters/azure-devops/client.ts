@@ -88,6 +88,37 @@ function execAz(
 export type AzurePrStatus = 'active' | 'completed' | 'abandoned';
 
 /**
+ * Azure's `mergeStatus` (its `PullRequestAsyncStatus`), the server-side merge
+ * preview. Cast at the parse boundary like `AzurePrStatus`; the connector's
+ * fold keeps a default branch because the wire can carry a value newer than
+ * this list.
+ */
+export type AzurePrMergeStatus = 'succeeded' | 'conflicts' | 'rejectedByPolicy' | 'failure' | 'queued' | 'notSet';
+
+/**
+ * Azure's `PolicyEvaluationStatus`, one per branch policy per PR, as the
+ * policy evaluations API reports it. `queued` also covers "waiting for some
+ * event", which is how a reviewer policy waits for approvals.
+ */
+export type AzurePolicyEvaluationStatus = 'queued' | 'running' | 'approved' | 'rejected' | 'notApplicable' | 'broken';
+
+/**
+ * One branch-policy evaluation for a PR, projected raw from
+ * `_apis/policy/evaluations` and deliberately NOT folded here: this client is
+ * shared with the board importer, so the PR connector decides what a queued
+ * reviewer policy or a broken build means for merge readiness. `typeId` is the
+ * policy type GUID (`configuration.type.id`), which is how the connector tells
+ * a reviewer policy from a build.
+ */
+export interface AzurePolicyEvaluation {
+  status: AzurePolicyEvaluationStatus;
+  typeId: string;
+  isBlocking: boolean;
+  isEnabled: boolean;
+  isDeleted: boolean;
+}
+
+/**
  * A normalized Azure DevOps pull request, shaped to mirror `GhPrListItem` so
  * the connector's disambiguation logic reads identically for both providers.
  */
@@ -114,14 +145,20 @@ export interface AzurePrItem {
    */
   isCrossRepository?: boolean;
   /**
-   * Azure's `mergeStatus` (its `PullRequestAsyncStatus`: succeeded | conflicts |
-   * rejectedByPolicy | failure | queued | notSet). Present on the branch and
-   * number tiers, null when Azure returned none, and ABSENT on the commit tier,
-   * whose `pullrequestquery` projection omits it (that tier only matches
+   * Azure's `mergeStatus`, the server-side merge preview. Present on the branch
+   * and number tiers, null when Azure returned none, and ABSENT on the commit
+   * tier, whose `pullrequestquery` projection omits it (that tier only matches
    * completed PRs anyway). Raw vocabulary, deliberately NOT normalized here:
    * this client is shared with the board importer, so the PR connector maps it.
    */
-  mergeStatus?: string | null;
+  mergeStatus?: AzurePrMergeStatus | null;
+  /**
+   * The project GUID (`repository.project.id`), which the policy evaluations
+   * artifact id needs and the git remote cannot supply (it carries the project
+   * NAME). Present on the branch and number tiers, null when Azure returned
+   * none, absent on the commit tier for the same reason as `mergeStatus`.
+   */
+  projectId?: string | null;
 }
 
 /** The raw projection each resolver's `--query` produces. */
@@ -135,6 +172,16 @@ interface AzurePrRaw {
   closed?: string | null;
   fork?: unknown;
   merge?: string | null;
+  projectId?: string | null;
+}
+
+/** The raw projection `resolvePolicyEvaluations`'s `--query` produces, one per evaluation record. */
+interface AzurePolicyEvaluationRaw {
+  status?: unknown;
+  typeId?: unknown;
+  isBlocking?: unknown;
+  isEnabled?: unknown;
+  isDeleted?: unknown;
 }
 
 /** `az` is missing, unauthenticated, or lacks the azure-devops extension. */
@@ -237,24 +284,91 @@ function normalizeAzurePr(raw: AzurePrRaw): AzurePrItem | null {
     // `--query` projects a null source as null, not absent, so the key is
     // present (string or null) wherever the projection asks for it and absent
     // only on the commit tier, whose projection does not.
-    ...(raw.merge === undefined ? {} : { mergeStatus: raw.merge }),
+    ...(raw.merge === undefined ? {} : { mergeStatus: raw.merge as AzurePrMergeStatus | null }),
+    ...(raw.projectId === undefined ? {} : { projectId: raw.projectId }),
   };
 }
 
 /** Shared field projection; `az` applies --query in-process, so stdout stays small. */
 const AZ_PR_FIELDS =
-  '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate,fork:forkSource,merge:mergeStatus}';
+  '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate,fork:forkSource,merge:mergeStatus,projectId:repository.project.id}';
 /**
  * The commit tier's payload has no forkSource, so its projection omits it. It
- * omits mergeStatus too: `pullrequestquery` matches completed PRs only, so a
- * verdict there is moot, and leaving the key absent is what tells the PR
- * connector "this tier cannot judge readiness" rather than "no verdict yet".
+ * omits mergeStatus and projectId too: `pullrequestquery` matches completed
+ * PRs only, so a verdict there is moot, and leaving the key absent is what
+ * tells the PR connector "this tier cannot judge readiness" rather than "no
+ * verdict yet".
  */
 const AZ_PR_FIELDS_NO_FORK =
   '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate}';
 
+/**
+ * The policy evaluations projection. Keys match `AzurePolicyEvaluation` so the
+ * normalizer only has to type-check them.
+ */
+const AZ_POLICY_EVALUATION_FIELDS =
+  '{status:status,typeId:configuration.type.id,isBlocking:configuration.isBlocking,isEnabled:configuration.isEnabled,isDeleted:configuration.isDeleted}';
+
+/**
+ * Pinned separately from the `7.0` the other calls use: the evaluations API
+ * rejects `api-version=7.0` with `VssInvalidPreviewVersionException`, and
+ * `7.0-preview.1` is the version that works.
+ */
+const POLICY_EVALUATIONS_API_VERSION = '7.0-preview.1';
+
+/** A project GUID as Azure returns it; the artifact id and URL path both embed it verbatim. */
+const AZURE_GUID_PATTERN = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 /** Azure PR payloads embed full descriptions; the projection shrinks stdout, this is the backstop. */
 const PR_MAX_BUFFER = 10 * 1024 * 1024;
+
+function normalizeAzurePolicyEvaluation(raw: AzurePolicyEvaluationRaw): AzurePolicyEvaluation | null {
+  if (typeof raw.status !== 'string') return null;
+  return {
+    status: raw.status as AzurePolicyEvaluationStatus,
+    typeId: typeof raw.typeId === 'string' ? raw.typeId : '',
+    isBlocking: raw.isBlocking === true,
+    isEnabled: raw.isEnabled === true,
+    isDeleted: raw.isDeleted === true,
+  };
+}
+
+/**
+ * Policy-evaluation failures are logged once per distinct message, not once per
+ * PR per sweep: a permission failure on the policy API would otherwise print
+ * twenty lines every five minutes. Bounded like `resolverUnavailableHintsShown`
+ * in pr-linking.ts: insertion-ordered, evicting the oldest when full.
+ */
+const policyWarningsShown = new Set<string>();
+const MAX_POLICY_WARNINGS = 32;
+
+/**
+ * The one line that names WHY an `az` call failed. An execFile rejection's
+ * `message` opens with the whole command line, which embeds the PR id and so
+ * would defeat the once-per-cause dedupe below; Azure's reason (`ERROR: Not
+ * Found(...)`, `ERROR: Please run az login`) is the first non-empty line of
+ * stderr. Falls back to the message's first line for errors this module
+ * raised itself (a `JSON.parse` failure has no stderr).
+ */
+function describeAzFailure(error: unknown): string {
+  const failure = error as { message?: string; stderr?: string };
+  const stderrLine = failure.stderr?.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
+  if (stderrLine) return stderrLine;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split('\n')[0];
+}
+
+function warnPolicyEvaluationOnce(prNumber: number, message: string): void {
+  // Keyed on the failure text alone, so one repo-wide cause (a revoked scope,
+  // a rejected API version) prints once however many PRs it touches.
+  if (policyWarningsShown.has(message)) return;
+  if (policyWarningsShown.size >= MAX_POLICY_WARNINGS) {
+    const oldest = policyWarningsShown.values().next().value;
+    if (oldest !== undefined) policyWarningsShown.delete(oldest);
+  }
+  policyWarningsShown.add(message);
+  console.warn(`[azure-devops] policy evaluations unavailable for PR #${prNumber}, merge readiness stays unknown: ${message}`);
+}
 
 function azureOrgUrl(organization: string): string {
   return `https://dev.azure.com/${encodeURIComponent(organization)}`;
@@ -515,6 +629,62 @@ export class AzureDevOpsImporter {
     } catch (error) {
       const toThrow = azErrorToThrow(error);
       if (toThrow) throw toThrow;
+      return null;
+    }
+  }
+
+  /**
+   * Branch-policy evaluations for one PR (`_apis/policy/evaluations`), the
+   * second `az rest` call in this client. The artifact id needs the project
+   * GUID, which is why `AZ_PR_FIELDS` projects `repository.project.id`; the
+   * GUID also serves as the URL's project segment, so no project name is
+   * needed or encoded.
+   *
+   * Returns `[]` when the PR has no policy evaluations (nothing blocks it) and
+   * `null` when Azure gave no readable answer, and the two are deliberately
+   * distinct. EVERY failure is contained as `null`: this is an enrichment of a
+   * PR row that was already read, and a throw here would fail the whole
+   * resolve. The ladder remembers a degrade and rethrows it once no tier
+   * resolves, so a persistently forbidden policy API (HTTP 403 classifies as
+   * transient) would freeze the task's `pr_state` and a merged PR would never
+   * show merged. A blank readiness chip is the smaller loss. The caller folds
+   * `null` to `unknown`, which the linker's hold-and-re-poll already covers.
+   * No `requireAz` either: the row fetch a moment earlier proved `az` runs.
+   *
+   * Both query parameters ride `--url-parameters`, never the URL: `execAz`
+   * goes through `cmd.exe /c` on Windows, where `&` splits the command.
+   */
+  async resolvePolicyEvaluations(
+    organization: string,
+    projectId: string,
+    prNumber: number,
+  ): Promise<AzurePolicyEvaluation[] | null> {
+    // Both values are embedded verbatim in the artifact id and the URL path.
+    if (!AZURE_GUID_PATTERN.test(projectId) || !Number.isInteger(prNumber) || prNumber <= 0) return null;
+    try {
+      const { stdout } = await execAz(
+        [
+          'rest', '--method', 'get',
+          '--url', `${azureOrgUrl(organization)}/${projectId}/_apis/policy/evaluations`,
+          '--resource', AZURE_DEVOPS_RESOURCE_ID,
+          '--url-parameters',
+          `artifactId=vstfs:///CodeReview/CodeReviewId/${projectId}/${prNumber}`,
+          `api-version=${POLICY_EVALUATIONS_API_VERSION}`,
+          '--output', 'json',
+          '--query', `value[].${AZ_POLICY_EVALUATION_FIELDS}`,
+        ],
+        { timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
+      );
+      // A payload without the `value` wrapper projects to nothing (empty
+      // stdout, which JSON.parse rejects) or to null; neither is "zero
+      // policies", so only a real array counts.
+      const parsed = JSON.parse(stdout) as AzurePolicyEvaluationRaw[] | null;
+      if (!Array.isArray(parsed)) return null;
+      return parsed
+        .map(normalizeAzurePolicyEvaluation)
+        .filter((evaluation): evaluation is AzurePolicyEvaluation => evaluation !== null);
+    } catch (error) {
+      warnPolicyEvaluationOnce(prNumber, describeAzFailure(error));
       return null;
     }
   }

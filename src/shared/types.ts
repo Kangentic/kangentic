@@ -294,15 +294,19 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
  * Normalized, platform-agnostic merge readiness: would clicking Merge right now
  * succeed? Orthogonal to `PRState`, which stays the gate for the terminal
  * short-circuits. `ready` means a Merge click would succeed; `blocked` means no
- * conflicts but reviews, checks, policy, or a stale base stop it; `conflicting`
- * means merge conflicts; `unknown` means the platform was asked and has no
- * verdict (GitHub `UNKNOWN` while it recomputes, Azure `queued` / `notSet`, and
- * Azure `succeeded` until branch policies are evaluated). It is distinct from a
- * null column, which means never checked or no PR. The runtime list comes first
- * so `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
- * connector registry; the type is derived from it.
+ * conflicts but a failed check, a rejected or waiting review, a policy, or a
+ * stale base stops it; `conflicting` means merge conflicts; `queued` and
+ * `running` mean a blocking check or policy has not finished (queued for a
+ * runner, or running), so the merge would not succeed yet but nothing has
+ * failed, and an in-flight check outranks a waiting review so the chip tracks
+ * CI while it runs; `unknown` means the platform was asked and has no verdict
+ * (GitHub `UNKNOWN` while it recomputes, Azure `queued` / `notSet`, and Azure
+ * `succeeded` while branch-policy evaluation is off or unreadable). It is
+ * distinct from a null column, which means never checked or no PR. The runtime
+ * list comes first so `tests/unit/pr-connector-gate.test.ts` can assert
+ * membership over the real connector registry; the type is derived from it.
  */
-export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'unknown'] as const;
+export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
 export type PRMergeReadiness = (typeof PR_MERGE_READINESS_VALUES)[number];
 
 /**
@@ -2673,6 +2677,14 @@ export interface AppConfig {
      * sweep only). The sweep only fetches; it never pulls, merges, or rebases.
      */
     autoFetchIntervalMinutes: number | null;
+    /**
+     * Ask the host to evaluate branch policies when judging merge readiness,
+     * where that costs a call of its own (Azure DevOps: one `az rest` per open
+     * PR per sweep, roughly a second each). Off by default for that cost; a
+     * host whose verdict already carries policy (GitHub) ignores it. Without
+     * it an Azure PR's clean merge preview stays `unknown` rather than `ready`.
+     */
+    prEvaluateBranchPolicies: boolean;
   };
 
   mcpServer: {
@@ -3178,6 +3190,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     linkNodeModules: true,
     prRefreshIntervalMinutes: 5,
     autoFetchIntervalMinutes: 5,
+    prEvaluateBranchPolicies: false,
   },
   mcpServer: {
     enabled: true,

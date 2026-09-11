@@ -50,10 +50,37 @@ interface GitHubProjectItemRaw {
 const COMMAND_TIMEOUT = 15_000;
 
 /**
- * Raw PR shape from `gh pr list --json number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository,mergeable,mergeStateStatus,reviewDecision`.
- * `state` is GitHub's uppercase enum: OPEN | CLOSED | MERGED. `isCrossRepository`
- * is true for PRs opened from a fork - the disambiguator filters those out so a
- * fork PR that happens to share a branch name can't be mislinked.
+ * GitHub's raw mergeability vocabularies, as `gh pr list --json` renders them.
+ * Cast at the `JSON.parse` boundary; every consumer keeps a fallback branch
+ * because the wire can carry a value newer than these lists. `reviewDecision`
+ * includes `''`, which is how `gh` renders a null decision (no review required
+ * and none left).
+ */
+export type GhMergeable = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+export type GhMergeStateStatus = 'BEHIND' | 'BLOCKED' | 'CLEAN' | 'DIRTY' | 'DRAFT' | 'HAS_HOOKS' | 'UNKNOWN' | 'UNSTABLE';
+export type GhReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | '';
+export type GhCheckRunStatus = 'QUEUED' | 'IN_PROGRESS' | 'COMPLETED' | 'WAITING' | 'PENDING' | 'REQUESTED';
+export type GhCheckRunConclusion =
+  | 'ACTION_REQUIRED' | 'TIMED_OUT' | 'CANCELLED' | 'FAILURE' | 'SUCCESS' | 'NEUTRAL' | 'SKIPPED' | 'STARTUP_FAILURE' | 'STALE';
+export type GhStatusState = 'EXPECTED' | 'ERROR' | 'FAILURE' | 'PENDING' | 'SUCCESS';
+
+/**
+ * One entry of `statusCheckRollup`: a check run (GitHub Actions and other
+ * Checks API apps, with a lifecycle `status` and a `conclusion` once complete)
+ * or a legacy commit status context (a single `state`). `gh` carries no
+ * `isRequired` on either, so the connector cannot tell a required check from
+ * an optional one and reads the rollup only when `mergeStateStatus` already
+ * says the PR is BLOCKED.
+ */
+export type GhStatusCheckRollupItem =
+  | { __typename: 'CheckRun'; name: string; status: GhCheckRunStatus; conclusion: GhCheckRunConclusion | null }
+  | { __typename: 'StatusContext'; context: string; state: GhStatusState };
+
+/**
+ * Raw PR shape from `gh pr list --json` with `PR_JSON_FIELDS`. `state` is
+ * GitHub's uppercase enum: OPEN | CLOSED | MERGED. `isCrossRepository` is true
+ * for PRs opened from a fork - the disambiguator filters those out so a fork
+ * PR that happens to share a branch name can't be mislinked.
  */
 export interface GhPrListItem {
   number: number;
@@ -73,31 +100,35 @@ export interface GhPrListItem {
    */
   mergeCommitOid?: string;
   /**
-   * GitHub's mergeability triple, requested on the `gh pr list` / `gh pr view`
-   * paths and left undefined on the commit-pulls REST path, which does not
-   * carry them (the mirror of `mergeCommitOid`, populated on that path only).
-   * Raw GitHub vocabulary, deliberately NOT normalized here: this client is
-   * shared with the board importers, so PR semantics stay in the PR connector.
-   *   mergeable:        MERGEABLE | CONFLICTING | UNKNOWN
-   *   mergeStateStatus: BEHIND | BLOCKED | CLEAN | DIRTY | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE
-   *   reviewDecision:   APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED, or '' when
-   *                     the repository requires no review and none was left
-   * Typed as strings because they come off `JSON.parse`, and a value this code
-   * does not know must fall through the connector's fallback rather than be
-   * hidden by a union.
+   * GitHub's mergeability triple plus the check rollup, requested on the
+   * `gh pr list` / `gh pr view` paths and left undefined on the commit-pulls
+   * REST path, which does not carry them (the mirror of `mergeCommitOid`,
+   * populated on that path only). Raw GitHub vocabulary, deliberately NOT
+   * normalized here: this client is shared with the board importers, so PR
+   * semantics stay in the PR connector. The unions name the values this code
+   * knows; the cast happens where `JSON.parse` returns, and the connector's
+   * fallback branches catch anything newer.
    */
-  mergeable?: string;
-  mergeStateStatus?: string;
-  reviewDecision?: string;
+  mergeable?: GhMergeable;
+  mergeStateStatus?: GhMergeStateStatus;
+  reviewDecision?: GhReviewDecision;
+  statusCheckRollup?: GhStatusCheckRollupItem[];
 }
 
 /**
  * JSON field set requested from `gh pr list` / `gh pr view`. Both commands
- * accept the same field list, so the mergeability triple costs no extra call.
- * `statusCheckRollup` is deliberately absent: it is a per-check-run array on
- * every PR in the list, and `mergeStateStatus` already folds the checks in.
+ * accept the same field list, so the mergeability triple and the check rollup
+ * cost no extra call. `statusCheckRollup` is a per-check-run array on every
+ * PR in the list (about 7 KB for a PR with 26 checks), which is the price of
+ * telling "a required check is still running" apart from "a required check
+ * failed": `mergeStateStatus` folds both into BLOCKED. `--limit 30` on the
+ * list path and `PR_MAX_BUFFER` on both bound the payload.
  */
-const PR_JSON_FIELDS = 'number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository,mergeable,mergeStateStatus,reviewDecision';
+const PR_JSON_FIELDS =
+  'number,url,state,isDraft,headRefName,baseRefName,updatedAt,isCrossRepository,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup';
+
+/** With the check rollup in the projection a busy branch can pass Node's 1 MB default; matches the Azure client's cap. */
+const PR_MAX_BUFFER = 10 * 1024 * 1024;
 
 /**
  * Thrown by resolver paths when the `gh` CLI is missing or unauthenticated, so
@@ -276,7 +307,7 @@ export class GitHubImporter {
           '--json', PR_JSON_FIELDS,
           '--limit', '30',
         ],
-        { cwd, timeout: COMMAND_TIMEOUT },
+        { cwd, timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
       );
       const parsed = JSON.parse(stdout) as GhPrListItem[];
       return Array.isArray(parsed) ? parsed : [];
@@ -308,7 +339,7 @@ export class GitHubImporter {
           'pr', 'view', String(prNumber),
           '--json', PR_JSON_FIELDS,
         ],
-        { cwd, timeout: COMMAND_TIMEOUT },
+        { cwd, timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
       );
       return JSON.parse(stdout) as GhPrListItem;
     } catch (error: unknown) {

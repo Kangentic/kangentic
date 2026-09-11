@@ -45,6 +45,30 @@ export interface ResolvedPR {
   mergeReadiness?: PRMergeReadiness;
 }
 
+/**
+ * Per-resolve options the generic layer forwards from project config. The
+ * linker reads them once per resolve (`git.*` in the effective config) and
+ * hands the same object to every tier; it never knows which provider will
+ * answer, and a connector never reads config itself.
+ *
+ * Only `resolveForBranch` and `resolveByNumber` take them. `resolveByCommit`
+ * does not, deliberately: the commit tier cannot judge merge readiness on any
+ * shipped connector (Azure's `pullrequestquery` matches completed PRs only and
+ * projects no `mergeStatus`; GitHub's REST commit-pulls payload carries no
+ * mergeability fields), so there is nothing an option could change there. Add
+ * it to that method when a connector can use it, not before.
+ */
+export interface PRResolveOptions {
+  /**
+   * Spend an extra provider call per PR to evaluate branch policies when
+   * judging readiness. `git.prEvaluateBranchPolicies`, default off. Azure
+   * DevOps is the connector that pays for it (one `az rest` per open PR per
+   * sweep); a connector whose verdict already carries policy (GitHub, via
+   * `mergeStateStatus`) ignores it.
+   */
+  evaluateBranchPolicies?: boolean;
+}
+
 export interface PRConnector {
   /** Platform name for logging (e.g. "GitHub", "GitLab") */
   name: string;
@@ -78,16 +102,23 @@ export interface PRConnector {
    * inside the repo/worktree at `repoCwd`. Returns null when no PR matches the
    * head ref; throws `PRResolverUnavailableError` when the CLI is unavailable so
    * the caller can degrade to `extract`. Optional - platforms without an API
-   * resolver are skipped.
+   * resolver are skipped. `options` carries the per-project readiness settings
+   * (see `PRResolveOptions`).
    */
-  resolveForBranch?(repoCwd: string, branchName: string, baseBranch?: string): Promise<ResolvedPR | null>;
+  resolveForBranch?(
+    repoCwd: string,
+    branchName: string,
+    baseBranch?: string,
+    options?: PRResolveOptions,
+  ): Promise<ResolvedPR | null>;
 
   /**
    * Resolve a PR by its number - the most exact anchor, immune to branch renames.
    * Used to refresh an already-linked PR's state. Returns null if the number no
    * longer exists; throws `PRResolverUnavailableError` when the CLI is unavailable.
+   * `options` carries the per-project readiness settings (see `PRResolveOptions`).
    */
-  resolveByNumber?(repoCwd: string, prNumber: number): Promise<ResolvedPR | null>;
+  resolveByNumber?(repoCwd: string, prNumber: number, options?: PRResolveOptions): Promise<ResolvedPR | null>;
 
   /**
    * Resolve the PR associated with a commit SHA. An immutable anchor that

@@ -1,6 +1,8 @@
 import type { PRMergeReadiness, PRState } from '../../shared/types';
 
 const OPEN_BADGE_CLASS = 'bg-emerald-400/10 text-emerald-400 ring-1 ring-emerald-400/20';
+/** In flight: sky, so it reads as progress rather than as any of the pass / fail hues. */
+const IN_FLIGHT_BADGE_CLASS = 'bg-sky-400/10 text-sky-400 ring-1 ring-sky-400/20';
 
 /**
  * Shared presentation for a PR state, so the board card badge and the task
@@ -13,11 +15,13 @@ const OPEN_BADGE_CLASS = 'bg-emerald-400/10 text-emerald-400 ring-1 ring-emerald
  *
  * While the PR is OPEN, merge readiness folds into this same chip rather than
  * adding a second element and a second hue: `ready` keeps the open green (it
- * is the promise "a Merge click would succeed"), `blocked` is amber, and
+ * is the promise "a Merge click would succeed"), `blocked` is amber,
  * `conflicts` is orange, chosen over red so it does not read as `closed` at a
- * glance. `unknown` (the host has no verdict yet) and null (never judged) keep
- * plain `open`, and the non-open states ignore readiness entirely: a stale
- * verdict on a merged PR must never show through.
+ * glance, and `queued` / `running` (a blocking check still in flight) are sky,
+ * distinct from every pass / fail hue and from draft's grey. `unknown` (the
+ * host has no verdict yet) and null (never judged) keep plain `open`, and the
+ * non-open states ignore readiness entirely: a stale verdict on a merged PR
+ * must never show through.
  */
 export function prStatePresentation(
   state: PRState | null | undefined,
@@ -32,6 +36,10 @@ export function prStatePresentation(
           return { label: 'blocked', badgeClass: 'bg-amber-400/10 text-amber-400 ring-1 ring-amber-400/20' };
         case 'conflicting':
           return { label: 'conflicts', badgeClass: 'bg-orange-400/10 text-orange-400 ring-1 ring-orange-400/20' };
+        case 'queued':
+          return { label: 'queued', badgeClass: IN_FLIGHT_BADGE_CLASS };
+        case 'running':
+          return { label: 'running', badgeClass: IN_FLIGHT_BADGE_CLASS };
         default:
           return { label: 'open', badgeClass: OPEN_BADGE_CLASS };
       }
@@ -66,6 +74,10 @@ export function prMergeReadinessTooltip(
       return 'Merge blocked by reviews, checks, or branch rules as of the last PR refresh';
     case 'conflicting':
       return 'Merge conflicts with the base branch as of the last PR refresh';
+    case 'queued':
+      return 'Required checks or policies are queued as of the last PR refresh';
+    case 'running':
+      return 'Required checks or policies are running as of the last PR refresh';
     default:
       return undefined;
   }

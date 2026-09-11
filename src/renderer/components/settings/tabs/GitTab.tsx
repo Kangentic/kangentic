@@ -90,6 +90,11 @@ export function GitTab({ config }: { config: AppConfig }) {
           ))}
         </Select>
       </SettingRow>
+      <SettingToggleRow
+        {...settingProps('git.prEvaluateBranchPolicies')}
+        checked={config.git.prEvaluateBranchPolicies}
+        onChange={(value) => updateProject({ git: { prEvaluateBranchPolicies: value } })}
+      />
     </>
   );
 }

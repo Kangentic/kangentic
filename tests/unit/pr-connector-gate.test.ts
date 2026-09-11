@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { registeredPRConnectors, commitAnchorSelfVerifies } from '../../src/main/pr/pr-registry';
+import { registeredPRConnectors, commitAnchorSelfVerifies, type PRResolveOptions } from '../../src/main/pr/pr-registry';
 import { PR_MERGE_READINESS_VALUES } from '../../src/shared/types';
 import { GitHubImporter } from '../../src/main/boards/adapters/github-common/gh-client';
 import { AzureDevOpsImporter } from '../../src/main/boards/adapters/azure-devops/client';
@@ -199,14 +199,27 @@ describe('commitAnchorSelfVerifies', () => {
  * declares its own driver. Omission is a valid ANSWER on the wire (`undefined`
  * means preserve), but it must not be a way to skip the QUESTION here, exactly
  * as `verifiesCommitOwnership` cannot be skipped above.
+ *
+ * Every row stubs EVERY importer method its connector may call, whether or
+ * not the row's gate lets the call happen: this suite mocks neither `which`
+ * nor `child_process`, and `beforeEach` restores all mocks, so an unstubbed
+ * secondary call (Azure's policy evaluations) would spawn the real CLI on a
+ * developer machine and degrade silently on CI.
  */
+interface ReadinessRow {
+  /** The raw item the importer's number resolver answers with. */
+  item: unknown;
+  /** The per-resolve options the generic layer would forward. */
+  options?: PRResolveOptions;
+  /** Stub every importer method the connector may call for this row. */
+  stub: () => void;
+}
+
 interface ReadinessDriver {
   /** Remotes the connector must own, so `remoteFor`-style self-gates pass. */
   remoteUrls: string[];
-  /** Raw items spanning every platform value, including absent and unrecognized. */
-  rawItems: unknown[];
-  /** Stub the importer's number resolver to answer with one raw item. */
-  stub: (item: unknown) => void;
+  /** Rows spanning every platform value, including absent and unrecognized, times every option. */
+  rows: ReadinessRow[];
 }
 
 const GH_BASE_ITEM = {
@@ -228,50 +241,103 @@ const AZ_BASE_ITEM = {
   baseRefName: 'main',
   updatedAt: '2026-01-01T00:00:00Z',
   isCrossRepository: false,
+  projectId: '00000000-0000-4000-8000-000000000001',
 };
+
+const EVALUATE_POLICIES: PRResolveOptions = { evaluateBranchPolicies: true };
 
 function cartesian<T>(...axes: T[][]): T[][] {
   return axes.reduce<T[][]>((rows, axis) => rows.flatMap((row) => axis.map((value) => [...row, value])), [[]]);
 }
 
-/** Every combination of GitHub's three raw fields, with `undefined` meaning "key absent". */
-function gitHubRawItems(): unknown[] {
+/** Every shape a `statusCheckRollup` entry can take, with `undefined` meaning "key absent". */
+const GH_ROLLUPS: unknown[] = [
+  undefined,
+  [],
+  [{ __typename: 'CheckRun', name: 'ci', status: 'IN_PROGRESS', conclusion: null }],
+  [{ __typename: 'CheckRun', name: 'ci', status: 'QUEUED', conclusion: null }],
+  [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+  [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'FAILURE' }, { __typename: 'CheckRun', name: 'ui', status: 'IN_PROGRESS', conclusion: null }],
+  [{ __typename: 'StatusContext', context: 'ci', state: 'PENDING' }],
+  [{ __typename: 'StatusContext', context: 'ci', state: 'ERROR' }],
+  [{ __typename: 'CheckRun', name: 'ci', status: 'SOMETHING_NEW', conclusion: null }],
+  [{ __typename: 'SomethingNew' }],
+];
+
+/**
+ * Every combination of GitHub's three raw fields and the rollup, with
+ * `undefined` meaning "key absent", each run with and without the
+ * branch-policy option (which GitHub must ignore).
+ */
+function gitHubRows(): ReadinessRow[] {
   const mergeStateStatuses = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BLOCKED', 'BEHIND', 'DRAFT', 'DIRTY', 'UNKNOWN', 'SOMETHING_NEW', undefined];
   const mergeables = ['MERGEABLE', 'CONFLICTING', 'UNKNOWN', undefined];
   const reviewDecisions = ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED', '', undefined];
-  return cartesian<string | undefined>(mergeStateStatuses, mergeables, reviewDecisions).map(
-    ([mergeStateStatus, mergeable, reviewDecision]) => ({
+  const items = cartesian<unknown>(mergeStateStatuses, mergeables, reviewDecisions, GH_ROLLUPS).map(
+    ([mergeStateStatus, mergeable, reviewDecision, statusCheckRollup]) => ({
       ...GH_BASE_ITEM,
       ...(mergeStateStatus === undefined ? {} : { mergeStateStatus }),
       ...(mergeable === undefined ? {} : { mergeable }),
       ...(reviewDecision === undefined ? {} : { reviewDecision }),
+      ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
     }),
   );
+  return items.flatMap((item) => [undefined, EVALUATE_POLICIES].map((options) => ({
+    item,
+    options,
+    stub: () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
+    },
+  })));
 }
 
-function azureRawItems(): unknown[] {
+const AZ_REVIEWER_TYPE = 'fa4e907d-c16b-4a4c-9dfa-4906e5d171dd';
+const AZ_BUILD_TYPE = '0609b952-1397-4640-95ec-e00a01b2c241';
+function azEvaluation(status: string, typeId = AZ_BUILD_TYPE, isBlocking = true) {
+  return { status, typeId, isBlocking, isEnabled: true, isDeleted: false };
+}
+
+/**
+ * Every answer the policy evaluations call can give, with `undefined` meaning
+ * "the setting is off, so the call is never made".
+ */
+const AZ_POLICY_ANSWERS: unknown[] = [
+  undefined,
+  null,
+  [],
+  [azEvaluation('approved')],
+  [azEvaluation('rejected')],
+  [azEvaluation('broken')],
+  [azEvaluation('queued')],
+  [azEvaluation('running')],
+  [azEvaluation('notApplicable')],
+  [azEvaluation('queued', AZ_REVIEWER_TYPE)],
+  [azEvaluation('rejected', AZ_BUILD_TYPE, false)],
+  [azEvaluation('somethingNew')],
+];
+
+function azureRows(): ReadinessRow[] {
   const mergeStatuses = ['succeeded', 'conflicts', 'rejectedByPolicy', 'failure', 'queued', 'notSet', null, 'somethingNew', undefined];
-  return mergeStatuses.map((mergeStatus) => ({
-    ...AZ_BASE_ITEM,
-    ...(mergeStatus === undefined ? {} : { mergeStatus }),
-  }));
+  return cartesian<unknown>(mergeStatuses, AZ_POLICY_ANSWERS).map(([mergeStatus, policyAnswer]) => {
+    const item = { ...AZ_BASE_ITEM, ...(mergeStatus === undefined ? {} : { mergeStatus }) };
+    return {
+      item,
+      options: policyAnswer === undefined ? undefined : EVALUATE_POLICIES,
+      stub: () => {
+        vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
+        // Stubbed on every row, including the ones whose gate never reaches
+        // it (see the suite comment): the real method would spawn `az`.
+        vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePolicyEvaluations').mockResolvedValue(
+          (policyAnswer ?? null) as never,
+        );
+      },
+    };
+  });
 }
 
 const READINESS_DRIVERS: Record<string, ReadinessDriver> = {
-  GitHub: {
-    remoteUrls: PROVIDER_REMOTES.github,
-    rawItems: gitHubRawItems(),
-    stub: (item) => {
-      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
-    },
-  },
-  'Azure DevOps': {
-    remoteUrls: PROVIDER_REMOTES.azure,
-    rawItems: azureRawItems(),
-    stub: (item) => {
-      vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
-    },
-  },
+  GitHub: { remoteUrls: PROVIDER_REMOTES.github, rows: gitHubRows() },
+  'Azure DevOps': { remoteUrls: PROVIDER_REMOTES.azure, rows: azureRows() },
 };
 
 describe('every registered connector reports merge readiness from the normalized enum', () => {
@@ -297,21 +363,28 @@ describe('every registered connector reports merge readiness from the normalized
       expect(driver).toBeDefined();
       expect(connector.resolveByNumber).toBeDefined();
       remotes.urls = driver.remoteUrls;
-      const verdicts: unknown[] = [];
-      for (const rawItem of driver.rawItems) {
-        driver.stub(rawItem);
-        const resolvedPr = await connector.resolveByNumber!('C:/repo', 1);
-        expect(resolvedPr, `${name} resolved nothing for ${JSON.stringify(rawItem)}`).not.toBeNull();
+      const verdicts = new Set<unknown>();
+      for (const row of driver.rows) {
+        row.stub();
+        const resolvedPr = await connector.resolveByNumber!('C:/repo', 1, row.options);
+        const rowLabel = `${JSON.stringify(row.item)} with options ${JSON.stringify(row.options)}`;
+        expect(resolvedPr, `${name} resolved nothing for ${rowLabel}`).not.toBeNull();
         const verdict = resolvedPr?.mergeReadiness;
-        verdicts.push(verdict);
+        verdicts.add(verdict);
         expect(
           verdict === undefined || (PR_MERGE_READINESS_VALUES as readonly string[]).includes(verdict),
-          `${name} returned mergeReadiness ${String(verdict)} for ${JSON.stringify(rawItem)}`,
+          `${name} returned mergeReadiness ${String(verdict)} for ${rowLabel}`,
         ).toBe(true);
       }
-      // Not vacuous: a connector that omits the verdict for every input would
-      // pass the loop above, so deleting the mapping must fail here.
-      expect(verdicts.some((verdict) => verdict !== undefined)).toBe(true);
+      // Not vacuous, and not partial: a connector that omits the verdict for
+      // every input would pass the loop above, so deleting the mapping must
+      // fail here, and a member of the enum that no input can reach is a chip
+      // word that never lights up (before branch-policy evaluation, Azure could
+      // not reach `ready`; before the check rollup, neither host could reach
+      // `queued` or `running`).
+      for (const value of PR_MERGE_READINESS_VALUES) {
+        expect(verdicts.has(value), `${name} never reports ${value}`).toBe(true);
+      }
     },
   );
 });

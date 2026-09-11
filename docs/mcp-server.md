@@ -491,7 +491,7 @@ agree, and that is the natural way to write "stop pinning this and go back to th
 
 ### kangentic_link_pr
 
-Authoritatively resolve and link the pull request for a task through the repository's PR host (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in `docs/pr-integration.md`: PR number, worktree branch, commit, stored branch, pushed branch, remote tip. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR's state (`open`/`draft`/`merged`/`closed`) and merge readiness (`ready`/`blocked`/`conflicting`/`unknown`, see [PR Integration](pr-integration.md#merge-readiness)). Use after opening a PR, or to backfill a task whose PR was never linked.
+Authoritatively resolve and link the pull request for a task through the repository's PR host (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in `docs/pr-integration.md`: PR number, worktree branch, commit, stored branch, pushed branch, remote tip. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR's state (`open`/`draft`/`merged`/`closed`) and merge readiness (`ready`/`blocked`/`conflicting`/`queued`/`running`/`unknown`, see [PR Integration](pr-integration.md#merge-readiness)). Use after opening a PR, or to backfill a task whose PR was never linked.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

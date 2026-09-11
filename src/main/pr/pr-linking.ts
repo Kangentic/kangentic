@@ -12,6 +12,7 @@ import {
   PRResolverUnavailableError,
   PRResolverTransientError,
 } from './pr-registry';
+import type { PRResolveOptions } from './pr-registry';
 import { createDeferredDegrade } from './shared/pr-dispatch';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
@@ -55,22 +56,29 @@ const RESOLVE_TTL_MS = 60_000;
 /**
  * Hold-and-re-poll for a PENDING merge verdict. GitHub answers `UNKNOWN` for a
  * few seconds after every push while it recomputes mergeability, and Azure's
- * `succeeded` is `unknown` until branch policies are evaluated. Writing that
- * over a determined `ready` / `blocked` / `conflicting` on first sight blanks
- * the card's chip for a whole sweep interval and then restores it: a flicker,
- * not news. So a resolve that meets a pending answer on a determined verdict
- * KEEPS the stored value and asks again after each of these delays; only when
- * the budget is spent does `unknown` land. That final write is what lets an
- * Azure PR that left `conflicting` clear its chip, since Azure never answers
- * anything stronger than `unknown` this pass. Bounded per task, one timer in
+ * `succeeded` is `unknown` whenever branch policies are not evaluated (the
+ * setting is off, or the policy call gave no readable answer). Writing that
+ * over a determined verdict on first sight blanks the card's chip for a whole
+ * sweep interval and then restores it: a flicker, not news. So a resolve that
+ * meets a pending answer on a determined verdict KEEPS the stored value and
+ * asks again after each of these delays; only when the budget is spent does
+ * `unknown` land. That final write is what lets a chip clear once its host
+ * really has stopped answering, such as an Azure PR whose policy evaluation
+ * was switched off after it read `ready`. Bounded per task, one timer in
  * flight at a time, `unref()`'d so it never holds a quit, and cleared by the
  * refresh scheduler on project switch / shutdown.
  */
 const PENDING_VERDICT_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000];
 const pendingVerdictRepolls = new Map<string, { attempt: number; timer: NodeJS.Timeout | null }>();
 
+/**
+ * A verdict worth holding through a transient `unknown`. `queued` / `running`
+ * count: a blocking check in flight is a real answer, and its next real answer
+ * is `ready` or `blocked`, not `unknown`.
+ */
 function isDeterminedVerdict(value: PRMergeReadiness | null): boolean {
-  return value === 'ready' || value === 'blocked' || value === 'conflicting';
+  return value === 'ready' || value === 'blocked' || value === 'conflicting'
+    || value === 'queued' || value === 'running';
 }
 
 function schedulePendingVerdictRepoll(taskId: string, deps: PRLinkDeps): void {
@@ -120,6 +128,12 @@ export interface PRLinkDeps {
    * Falls back to 'main' when absent.
    */
   defaultBaseBranch?: string;
+  /**
+   * Per-project readiness settings (from config), handed unchanged to every
+   * resolve tier that can judge readiness. Read alongside `defaultBaseBranch`
+   * by `resolveProjectLinkSettings`; absent means every option off.
+   */
+  resolveOptions?: PRResolveOptions;
   /**
    * Notify the renderer that the task's PR link or state changed. Every
    * production caller routes this to the toast-free TASK_PR_LINK_CHANGED: the
@@ -242,10 +256,12 @@ async function resolvePRViaLadder(args: {
   recordPushedBranch: RecordPushedBranch;
   findOtherTaskHoldingPR: FindOtherTaskHoldingPR;
   findOtherTaskHoldingBranch: FindOtherTaskHoldingBranch;
+  /** Forwarded to every readiness-capable tier; the ladder never inspects it. */
+  resolveOptions: PRResolveOptions;
 }): Promise<LinkedPR | null> {
   const {
     task, cwd, projectPath, branch, effectiveSha, baseBranch, baseBranchIsKnown, recordPushedBranch,
-    findOtherTaskHoldingPR, findOtherTaskHoldingBranch,
+    findOtherTaskHoldingPR, findOtherTaskHoldingBranch, resolveOptions,
   } = args;
   /**
    * The base to hand the branch resolvers for `disambiguate`'s base-match bonus.
@@ -298,11 +314,11 @@ async function resolvePRViaLadder(args: {
   };
 
   if (task.pr_number != null) {
-    const byNumber = await degrade.attempt(() => resolvePRByNumber(cwd, task.pr_number as number));
+    const byNumber = await degrade.attempt(() => resolvePRByNumber(cwd, task.pr_number as number, resolveOptions));
     if (byNumber) return byNumber;
   }
   if (task.worktree_path && branch) {
-    const byBranch = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase));
+    const byBranch = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase, resolveOptions));
     if (byBranch) return byBranch;
   }
   // Kept lazy, and its answer remembered for Tier 6's capture rule: computing it
@@ -335,7 +351,7 @@ async function resolvePRViaLadder(args: {
     if (byCommit && !refusedAsHeldByAnotherTask(byCommit, 'by commit')) return byCommit;
   }
   if (!task.worktree_path && branch) {
-    const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase));
+    const bySlug = await degrade.attempt(() => resolvePRForBranch(cwd, branch, knownBase, resolveOptions));
     if (bySlug) return bySlug;
   }
   // Tier 5: the branch we already established this task's work was PUSHED to,
@@ -344,7 +360,7 @@ async function resolvePRViaLadder(args: {
   // remote branch is deleted, because a PR keeps its source branch name.
   if (task.pushed_branch && task.pushed_branch !== branch) {
     const byPushed = await degrade.attempt(() =>
-      resolvePRForBranch(cwd, task.pushed_branch as string, knownBase),
+      resolvePRForBranch(cwd, task.pushed_branch as string, knownBase, resolveOptions),
     );
     if (byPushed) return byPushed;
   }
@@ -383,7 +399,7 @@ async function resolvePRViaLadder(args: {
       const hits: Array<{ candidate: string; pr: LinkedPR }> = [];
       for (const candidate of candidates) {
         const hit = await degrade.attempt(() =>
-          resolvePRForBranch(cwd, candidate, knownBase),
+          resolvePRForBranch(cwd, candidate, knownBase, resolveOptions),
         );
         if (hit) hits.push({ candidate, pr: hit });
       }
@@ -582,6 +598,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
           deps.tasks.listByPRNumber(prNumber).find((other) => other.id !== task.id),
         findOtherTaskHoldingBranch: (branchName) =>
           deps.tasks.listByBranchOrPushedBranch(branchName).find((other) => other.id !== task.id),
+        resolveOptions: deps.resolveOptions ?? {},
       });
       if (found) next = { url: found.url, number: found.number, state: found.state, mergeReadiness: found.mergeReadiness };
     } catch (error) {
@@ -725,9 +742,20 @@ interface LinkPROptions {
   preserveLinkOnNotFound?: boolean;
 }
 
+/** The two per-project settings the linker reads from config, off one effective-config read. */
+interface ProjectLinkSettings {
+  defaultBaseBranch: string | undefined;
+  resolveOptions: PRResolveOptions;
+}
+
 /**
- * The project's default base branch for the ladder's base-relative guards.
- * Board default first, then the effective config, matching
+ * The project's default base branch for the ladder's base-relative guards,
+ * plus the per-resolve options every readiness-capable tier receives. One
+ * `getEffectiveConfig` read serves both: it is uncached (a `readFileSync` and
+ * `JSON.parse` of `.kangentic/config.json` per call), and this runs once per
+ * task per sweep.
+ *
+ * The base branch is board default first, then the effective config, matching
  * `resolveEffectiveBaseBranch` (ipc/helpers/task-git.ts), which is what decides
  * the base a worktree is actually cut from. Reading the config alone reported
  * `main` for a project whose kangentic.json says `develop`, so the linker
@@ -740,15 +768,21 @@ interface LinkPROptions {
  * would win, and an empty base defeats the base-tip bail outright, since none
  * of its three ref forms can match `refs/heads/` or `refs/remotes/<remote>/`
  * with nothing after the prefix.
+ *
+ * An unreadable config leaves the linker on its 'main' fallback with every
+ * option off; it never fails the resolve.
  */
-function resolveProjectDefaultBaseBranch(context: IpcContext, projectPath: string | null): string | undefined {
+function resolveProjectLinkSettings(context: IpcContext, projectPath: string | null): ProjectLinkSettings {
+  if (!projectPath) return { defaultBaseBranch: undefined, resolveOptions: {} };
   try {
-    return projectPath
-      ? context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
-        || context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
-      : undefined;
+    const gitConfig = context.configManager.getEffectiveConfig(projectPath).git;
+    return {
+      defaultBaseBranch: context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
+        || gitConfig?.defaultBaseBranch,
+      resolveOptions: { evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true },
+    };
   } catch {
-    return undefined;
+    return { defaultBaseBranch: undefined, resolveOptions: {} };
   }
 }
 
@@ -793,7 +827,7 @@ export async function recordPushedBranchForSession(
   if (!task) return;
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
-  const defaultBaseBranch = resolveProjectDefaultBaseBranch(context, projectPath);
+  const { defaultBaseBranch } = resolveProjectLinkSettings(context, projectPath);
 
   await withTaskLock(task.id, async () => {
     const fresh = tasks.getById(task.id);
@@ -831,12 +865,13 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
   if (!task) return { status: 'no-anchor', task: null };
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
-  const defaultBaseBranch = resolveProjectDefaultBaseBranch(context, projectPath);
+  const { defaultBaseBranch, resolveOptions } = resolveProjectLinkSettings(context, projectPath);
 
   return linkPRForTask(task.id, {
     tasks,
     projectPath,
     defaultBaseBranch,
+    resolveOptions,
     force: options.force,
     bypassThrottle: options.bypassThrottle,
     preserveLinkOnNotFound: options.preserveLinkOnNotFound,

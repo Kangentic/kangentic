@@ -154,6 +154,7 @@
       linkNodeModules: true,
       prRefreshIntervalMinutes: 5,
       autoFetchIntervalMinutes: 5,
+      prEvaluateBranchPolicies: false,
     },
     mcpServer: {
       enabled: true,
@@ -338,6 +339,7 @@
       linkNodeModules: git.linkNodeModules,
       prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
       autoFetchIntervalMinutes: git.autoFetchIntervalMinutes,
+      prEvaluateBranchPolicies: git.prEvaluateBranchPolicies,
     });
     if (pickedGit) result.git = pickedGit;
     return result;
