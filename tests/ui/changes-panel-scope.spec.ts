@@ -8,7 +8,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { pressResizeHandle, waitForViteReady } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -193,16 +193,13 @@ test.describe('Changes panel: diff scope selector', () => {
     await fileTree.waitFor({ state: 'visible', timeout: 8000 });
     const beforeWidth = (await fileTree.boundingBox())!.width;
 
-    // Drag the divider 120px to the right to widen the tree. `hover()` waits
-    // for the handle's box to stop moving before pressing, and the
-    // `data-resizing` assertions confirm the drag is genuinely in flight before
-    // any move is dispatched - see the same guard in commit-graph-panel.spec.ts,
-    // where this shape produced a CI flake.
+    // Drag the divider 120px to the right to widen the tree. `pressResizeHandle`
+    // hovers, presses, and re-presses when the drag has not armed, so no move
+    // is dispatched before the handler installs its document listeners - the
+    // same guard as commit-graph-panel.spec.ts, where this shape produced the
+    // CI flakes the helper's docblock describes.
     const handle = page.locator('[data-testid="changes-tree-resize"]');
-    await handle.hover();
-    const handleBox = (await handle.boundingBox())!;
-    await page.mouse.down();
-    await expect(handle).toHaveAttribute('data-resizing', 'true');
+    const handleBox = await pressResizeHandle(page, '[data-testid="changes-tree-resize"]');
     await page.mouse.move(handleBox.x + 120, handleBox.y + handleBox.height / 2, { steps: 6 });
     await page.mouse.up();
     await expect(handle).toHaveAttribute('data-resizing', 'false');
