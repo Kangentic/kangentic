@@ -651,6 +651,22 @@ resolved ref.
 - Lists every attempted default-chain candidate and points at the settings fix
 - Formats a two-item attempted list without an Oxford comma before "or"
 
+### Background remote refresh (`git-fetch-scheduler.test.ts`, `fetch-throttle.test.ts`)
+
+`git-fetch-scheduler.test.ts` mocks `WorktreeManager.withGitLock` and `fetchAllRemotesIfStale`
+and drives the timers with fake time:
+- Runs an immediate sweep and arms a periodic timer at the configured interval
+- Sweeps through the git lock at `BACKGROUND` priority with `nonInteractive: true`
+- A rejected lock never escapes the tick as an unhandled rejection
+- Off (`null` interval) runs the on-load sweep but arms no timer
+- `stop()` clears the periodic timer; `stop(projectId)` only stops when that project owns it
+- Switching projects tears down the prior timer and arms the new one
+- Skips a tick when the project is no longer the current one
+
+`fetch-throttle.test.ts` pins the env the fetch runs under: the default inherits `process.env` so a
+user-driven fetch can still prompt, and `nonInteractive` hands BOTH git calls (the common-dir probe
+and the fetch) an env with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`.
+
 ### Hook Manager (`hook-manager.test.ts`)
 
 - Inject event hooks creates correct hook entries
