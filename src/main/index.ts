@@ -65,6 +65,7 @@ import { drainPtyExitCallbacks } from './pty/shutdown/exit-callback-drain';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
 import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
+import { gitFetchScheduler } from './git/git-fetch-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
@@ -1837,9 +1838,10 @@ function getShutdownDependencies() {
         clearInterval(runUptimeCheckpointInterval);
         runUptimeCheckpointInterval = null;
       }
-      // Stop the background PR-refresh timer (also .unref()'d, but clear it
-      // explicitly so no tick fires mid-shutdown).
+      // Stop the background PR-refresh and remote-fetch timers (both
+      // .unref()'d, but clear them explicitly so no tick fires mid-shutdown).
       prRefreshScheduler.stop();
+      gitFetchScheduler.stop();
       // Stop conversation-memory indexing synchronously: drop pending finalize
       // timers and abandon any in-flight sweep (recovered on next open).
       retrievalService.dispose();

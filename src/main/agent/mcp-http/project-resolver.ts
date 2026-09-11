@@ -17,11 +17,16 @@
  * named like a UUID is still reachable via its real id.
  */
 import type { IpcContext } from '../../ipc/ipc-context';
-import type { Project } from '../../../shared/types';
+import type { Project, Task } from '../../../shared/types';
 import type { CommandContext } from '../commands';
 import { buildCommandContextForProject } from '../mcp-project-context';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import type { Embedder } from '../../retrieval/types';
+import { getProjectDb } from '../../db/database';
+import { TaskRepository } from '../../db/repositories/task-repository';
+import { resolveProjectDefaultBaseBranch } from '../../ipc/helpers/default-base-branch';
+import { isSamePath } from '../../../shared/paths';
+import type { WorktreeBaseRefInput } from '../../git/worktree-list';
 
 export interface ResolvedProject {
   context: CommandContext;
@@ -39,6 +44,10 @@ export interface ProjectSummary {
   isActive: boolean;
 }
 
+function findTaskByWorktreePath(tasks: readonly Task[], worktreePath: string): Task | undefined {
+  return tasks.find((task) => task.worktree_path != null && isSamePath(task.worktree_path, worktreePath));
+}
+
 /**
  * Cheap UUID v4 shape check - good enough to distinguish a selector
  * that looks like an id vs. one that looks like a project name. Not a
@@ -52,6 +61,7 @@ export class RequestResolver {
   private readonly defaultProjectId: string;
   private readonly defaultProjectName: string;
   private cachedProjects: Project[] | null = null;
+  private readonly cachedTasksByProject = new Map<string, Task[]>();
 
   constructor(params: {
     ipcContext: IpcContext;
@@ -199,6 +209,60 @@ export class RequestResolver {
       // "cannot verify", which is the module's accept-on-empty contract.
       return { cliPathOverrides: {}, discoveredModelsByAgent: {} };
     }
+  }
+
+  /**
+   * The base branch a worktree's work is based on, for `kangentic_list_worktrees`
+   * (the `resolveBaseRef` hook of `enumerateWorktrees`).
+   *
+   * A task worktree takes its task's own base when one was named, else the base
+   * it was actually cut from (`resolved_base_branch`), else the project default.
+   * The task is found by `worktree_path` first (it survives an agent renaming
+   * the branch; compared as resolved paths, case-folded on Windows, because the
+   * porcelain listing prints forward slashes and the column was written by
+   * Node), then by branch name. The main checkout and an unmapped worktree get
+   * the project default, which is the case that matters most: a Command
+   * Terminal sitting on a feature branch of the main checkout must read its
+   * distance from the base, not from its own remote.
+   *
+   * `git config kangentic.baseBranch` is deliberately NOT consulted: it is
+   * written to the SHARED `.git/config`, so it holds whichever worktree was
+   * created last, not this one's base.
+   *
+   * Null (never a throw) when the project's state is unreadable, so the caller
+   * degrades to the upstream count. Note `getProjectDb` opens, and migrates,
+   * the DB of every project the tool enumerates; the same side effect
+   * `buildCommandContextForProject` already has for a cross-project call.
+   */
+  resolveWorktreeBaseRef(input: WorktreeBaseRefInput): string | null {
+    try {
+      if (!input.isMainCheckout) {
+        const tasks = new TaskRepository(getProjectDb(input.projectId));
+        const task = findTaskByWorktreePath(this.loadTasks(input.projectId, tasks), input.worktreePath)
+          ?? (input.branch ? tasks.getByBranchName(input.branch) : undefined);
+        if (task?.base_branch) return task.base_branch;
+        if (task?.resolved_base_branch) return task.resolved_base_branch;
+      }
+      return resolveProjectDefaultBaseBranch(this.ipcContext, input.projectPath);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * One task-list read per project per request. `enumerateWorktrees` asks
+   * once per worktree, and `list()` is a full table scan on the synchronous
+   * main thread, so W worktrees would otherwise scan the same table W times.
+   * The resolver is built fresh for every MCP call, so the cache cannot
+   * outlive the request.
+   */
+  private loadTasks(projectId: string, tasks: TaskRepository): Task[] {
+    let cached = this.cachedTasksByProject.get(projectId);
+    if (!cached) {
+      cached = tasks.list();
+      this.cachedTasksByProject.set(projectId, cached);
+    }
+    return cached;
   }
 
   private loadProjects(): Project[] {

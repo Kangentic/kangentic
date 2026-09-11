@@ -33,6 +33,7 @@ import { getIsHmrReload } from '../../utils/hmr-flag';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
 import { commandTerminalTitle } from '../../../shared/command-terminal-name';
+import { resolveProjectRoot } from '../../../shared/git-utils';
 
 /** The single command-terminal slot anchor (Phase 1 is one window; Phase 2 adds
  *  more slots). The on-disk layout is anchored by this stable id, not a task. */
@@ -253,13 +254,49 @@ function useHideLayerWhenEmpty(onHide: () => void): void {
   }, [onHide]);
 }
 
+/** Keep every window's branch pill honest while the layer is on screen.
+ *
+ *  The pill is a per-project fact (all of a project's terminals share the main
+ *  checkout's HEAD), so ONE tracker per layer re-derives it, not one per window:
+ *  once on mount, which is every reattach after a hide, and then on every
+ *  diff-watcher fire, which already covers HEAD / logs/HEAD moves and debounces.
+ *  The subscription is ref-counted per path in main and shared with a Changes
+ *  panel open on the same root, so this adds no second fs.watch. The layer
+ *  unmounts on hide, so the cost exists only while the terminals are visible.
+ *  A reattach never CHECKS OUT anything: the read is the whole action, so HEAD
+ *  can never move out from under a running agent. */
+function useTrackHeadBranch(): void {
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const rawProjectPath = useProjectStore((state) => state.currentProject?.path ?? null);
+  const refreshBranches = useSessionStore((state) => state.refreshTransientBranchesFromHead);
+  useEffect(() => {
+    if (!projectId || !rawProjectPath) return;
+    const projectRoot = resolveProjectRoot(rawProjectPath);
+    // StrictMode runs mount / cleanup / mount; the flag drops the discarded
+    // run's fires, and the refcount tolerates the paired subscribe/unsubscribe.
+    let cancelled = false;
+    const refresh = (): void => {
+      if (!cancelled) void refreshBranches(projectId, projectRoot);
+    };
+    refresh();
+    window.electronAPI.git.subscribeDiff(projectRoot);
+    const unsubscribe = window.electronAPI.git.onDiffChanged(refresh);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      window.electronAPI.git.unsubscribeDiff(projectRoot);
+    };
+  }, [projectId, rawProjectPath, refreshBranches]);
+}
+
 /** Layer bridges: ensure the window exists, persist the global layout, hide the
- *  layer when the last terminal is Stopped, and bind Escape to hide. Mounted
- *  inside the layer's portal. */
+ *  layer when the last terminal is Stopped, keep the branch pills honest, and
+ *  bind Escape to hide. Mounted inside the layer's portal. */
 function CommandBridges({ onHide }: { onHide: () => void }): null {
   useEnsureCommandWindow();
   useCommandWorkspacePersistence();
   useHideLayerWhenEmpty(onHide);
+  useTrackHeadBranch();
   // The panel-close combo hides the whole layer (keeps the PTY alive). Capture
   // phase so it beats the embedded xterm's key handling. Ctrl+Shift+P (toggle) is
   // bound by `useCommandBar`; a backdrop click also hides.

@@ -1905,6 +1905,23 @@ export interface GitBranchSummaryResult {
   lastCommit: GitLastCommit | null;
 }
 
+/** Input for `git:worktreeHead`: the checkout whose live HEAD to read. */
+export interface GitWorktreeHeadInput {
+  path: string;
+}
+
+/**
+ * A checkout's live HEAD. Two rev-parse calls, no fetch, no rev-list. `branch`
+ * is null on a detached HEAD or a git error; `sha` is null only on a git
+ * error, so the pair tells "detached" from "unknown". The Command Terminal's
+ * branch pill is re-derived from this, since the terminal shares the main
+ * checkout's HEAD with the user's own git usage and every other terminal.
+ */
+export interface GitWorktreeHeadResult {
+  branch: string | null;
+  sha: string | null;
+}
+
 /**
  * Input for the commit-graph reader that powers the task-detail Graph pane.
  * Local-only and cheap (no fetch / `gh` lookup), mirroring {@link
@@ -2649,6 +2666,13 @@ export interface AppConfig {
     linkNodeModules: boolean;
     /** Minutes between background PR-state refresh sweeps for the open project. null = off (on-open sweep only). */
     prRefreshIntervalMinutes: number | null;
+    /**
+     * Minutes between background `git fetch --all --prune` sweeps of the open
+     * project's remotes, so ahead/behind counts and base-drift checks read
+     * current remote refs without anyone opening a panel. null = off (on-open
+     * sweep only). The sweep only fetches; it never pulls, merges, or rebases.
+     */
+    autoFetchIntervalMinutes: number | null;
   };
 
   mcpServer: {
@@ -3153,6 +3177,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     initScript: null,
     linkNodeModules: true,
     prRefreshIntervalMinutes: 5,
+    autoFetchIntervalMinutes: 5,
   },
   mcpServer: {
     enabled: true,
@@ -4939,6 +4964,11 @@ export interface ElectronAPI {
      *  renderer reload. Fire-and-forget: the renderer has already applied it
      *  locally, and main only retains it for recovery. */
     setTransientLabel: (sessionId: string, label: string) => Promise<void>;
+    /** Mirror where a Command Terminal's checkout actually sits, re-derived
+     *  from live HEAD by the renderer, onto its live registry row so the
+     *  Monitor row and a post-reload adopt agree with the pill. Last write
+     *  wins, unlike the label: HEAD moves, and the newest reading is true. */
+    setTransientBranch: (sessionId: string, branch: string) => Promise<void>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of
@@ -5113,6 +5143,7 @@ export interface ElectronAPI {
     onDiffChanged: (callback: () => void) => () => void;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
+    worktreeHead: (input: GitWorktreeHeadInput) => Promise<GitWorktreeHeadResult>;
     commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
     fileHistory: (input: GitFileHistoryInput) => Promise<GitFileHistoryResult>;
     blame: (input: GitBlameInput) => Promise<GitBlameResult>;
@@ -5945,16 +5976,29 @@ export interface WorktreeRecord {
   /** Currently checked-out branch name, or null for detached HEAD. */
   branch: string | null;
   /**
-   * Configured base branch the worktree compares against (if recorded
-   * in kangentic state for this worktree's task). null for the main
-   * checkout or unmapped worktrees.
+   * The base branch this worktree's work is based on, and the ref the two
+   * counts below are measured against: the task's own base when one was
+   * named, else the base it was actually cut from, else the project default.
+   * The main checkout gets the project default too, so a Command Terminal on
+   * a feature branch reads its distance from the base and not from its own
+   * remote. null when no base resolved in the repo (then the counts are
+   * upstream-relative) or the project's state was unreadable.
    */
   baseRef: string | null;
   /** True when the working tree has uncommitted modifications. */
   dirty: boolean;
-  /** Commits ahead of `baseRef` (or upstream when no base). null when unknown. */
+  /**
+   * Commits reachable from HEAD but not from `baseRef` (`origin/<baseRef>`,
+   * else the local ref), or from the branch's upstream when `baseRef` is
+   * null. null when neither exists.
+   */
   commitsAhead: number | null;
-  /** Commits behind `baseRef` (or upstream when no base). null when unknown. */
+  /**
+   * Commits reachable from `baseRef` but not from HEAD: how far behind the
+   * base this tree is. Upstream-relative only when `baseRef` is null, which
+   * then says how current the branch is with its OWN remote, a different
+   * question. null when neither exists.
+   */
   commitsBehind: number | null;
   /** ISO 8601 timestamp of the last commit on the current branch. */
   lastCommitTs: string | null;

@@ -1006,7 +1006,7 @@ Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jso
 
 ### kangentic_list_worktrees
 
-Enumerate worktrees for one or every registered project. Each `WorktreeRecord` carries path, branch, baseRef, dirty flag, commits ahead/behind upstream, and last-commit timestamp. Pure read-only, useful for finding a task's branch, locating dirty work, or reasoning about merge state.
+Enumerate worktrees for one or every registered project. Each `WorktreeRecord` carries path, branch, the base branch its work is based on (`baseRef`: the task's own base, else the base it was cut from, else the project default; the main checkout included), dirty flag, commits ahead/behind that base (measured against `origin/<base>` first, then the local ref; the branch's own upstream only when no base resolves, which then says how current the branch is with its own remote rather than with the base), and last-commit timestamp. Pure read-only and never fetches: the counts are as current as the remote-tracking refs, which the background fetch scheduler keeps refreshed for the focused project. Useful for finding a task's branch, locating dirty work, or checking whether a tree is behind the base it was cut from.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

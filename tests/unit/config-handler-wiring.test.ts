@@ -91,6 +91,19 @@ vi.mock('../../src/main/pr/pr-refresh-scheduler', () => ({
   },
 }));
 
+// The remote-fetch scheduler is a STATIC import in system.ts. Left unmocked,
+// its startForProject would defer a real sweep onto the `class {}` stub this
+// file installs for WorktreeManager (withGitLock is not a function there), and
+// that TypeError fires inside a setImmediate callback, uncaught, failing the
+// whole shard. Same spy shape as the PR scheduler above.
+const fetchStartForProjectSpy = vi.fn();
+vi.mock('../../src/main/git/git-fetch-scheduler', () => ({
+  gitFetchScheduler: {
+    startForProject: (...args: unknown[]) => fetchStartForProjectSpy(...args),
+    stop: vi.fn(),
+  },
+}));
+
 // Same treatment for the sibling lazy import inside CONFIG_SET_PROJECT_BY_PATH:
 // system.ts re-runs the conversation-memory sweep via
 // `void import('../../retrieval/retrieval-service')`. Left unmocked, the real
@@ -445,6 +458,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
     startForProjectSpy.mockClear();
+    fetchStartForProjectSpy.mockClear();
   });
 
   it('calls startForProject with (context, project) when path is the currently-open project', async () => {
@@ -466,6 +480,22 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     expect(projectArg.path).toBe(projectPath);
   });
 
+  it('re-arms the remote-fetch scheduler too, so a changed git.autoFetchIntervalMinutes takes effect at once', () => {
+    const projectPath = '/repo/active';
+    const context = makeContext({
+      currentProjectPath: projectPath,
+      projectPaths: [projectPath],
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:setProjectByPath', projectPath, { git: { autoFetchIntervalMinutes: 2 } });
+
+    // Static import, so the re-arm is synchronous with the handler.
+    expect(fetchStartForProjectSpy).toHaveBeenCalledTimes(1);
+    const [_contextArg, projectArg] = fetchStartForProjectSpy.mock.calls[0] as [unknown, { path: string }];
+    expect(projectArg.path).toBe(projectPath);
+  });
+
   it('does NOT call startForProject for a background (non-current) project', async () => {
     const backgroundPath = '/repo/other';
     const currentPath = '/repo/active';
@@ -484,6 +514,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     await Promise.resolve();
 
     expect(startForProjectSpy).not.toHaveBeenCalled();
+    expect(fetchStartForProjectSpy).not.toHaveBeenCalled();
     // saveProjectOverrides is still called for background projects.
     expect(context.configManager.saveProjectOverrides).toHaveBeenCalledWith(
       backgroundPath,

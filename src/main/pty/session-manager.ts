@@ -1924,6 +1924,26 @@ export class SessionManager extends EventEmitter {
     session.commandTerminalLabel = trimmed;
   }
 
+  /**
+   * Record where a Command Terminal's checkout actually sits now.
+   *
+   * The spawn stamps the branch it checked out, but the main checkout's HEAD is
+   * shared with the user's own git usage, non-worktree task spawns, and every
+   * other terminal, so that stamp goes stale the moment any of them moves it.
+   * The renderer re-derives the branch from live HEAD (on reattach and on every
+   * watcher fire) and mirrors it here, so the Monitor row and a post-reload
+   * adopt name the branch the repo is on. LAST write wins, the opposite of the
+   * label: HEAD moves, and the newest reading is the true one. Blank values and
+   * unknown or non-transient sessions are ignored.
+   */
+  setCommandTerminalBranch(sessionId: string, branch: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.transient) return;
+    const trimmed = branch.trim();
+    if (!trimmed) return;
+    session.commandTerminalBranch = trimmed;
+  }
+
   /** Return cached activity state for all sessions (survives renderer reloads). */
   getActivityCache(): Record<string, ActivityState> {
     return this.telemetry.getActivityCache();

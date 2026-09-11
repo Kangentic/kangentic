@@ -78,6 +78,9 @@ const ALLOWLIST_CHANNELS = new Set([
   // name is retained on the in-memory registry row so it survives a renderer
   // reload. A Command Terminal has no task and no project-scoped record.
   'SESSION_SET_TRANSIENT_LABEL',
+  // Same shape as the label: the live checkout's branch, re-derived by the
+  // renderer and mirrored onto the registry row. No DB, no project semantics.
+  'SESSION_SET_TRANSIENT_BRANCH',
 ]);
 
 interface InvokeCall {

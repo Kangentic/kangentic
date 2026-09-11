@@ -1097,7 +1097,15 @@ mounts before recovery runs adopts an unpaired live PTY for its slot rather than
 
 ### Spawn Flow (`SESSION_SPAWN_TRANSIENT`)
 
-1. Optionally checkout a target branch (falls back to current branch on failure)
+1. Resolve the target branch: the picker's choice, else the project default base
+   (`resolveProjectDefaultBaseBranch`: board default for the path, then `git.defaultBaseBranch`,
+   then `main`), after a throttled `fetchIfStale` of that branch. When the tree is on another
+   branch, no branch was picked, and there are uncommitted TRACKED changes, it stays put and the
+   response carries a `checkoutError` the renderer toasts ("Staying on ..."); nothing else runs.
+   Otherwise the handler checks out the target if needed, then fast-forwards it onto
+   `origin/<target>` (`--ff-only`, failure ignored) whenever the fetch produced a remote start
+   point. A checkout failure falls back to the current branch with a `checkoutError`. This runs
+   on a cold spawn only; a reattach never fetches or checks out
 2. Create a session directory at `.kangentic/sessions/<transientTaskId>/` for bridge files
 3. `await adapter.ensureTrust(projectRoot)` - trust pre-population, `kangentic` MCP enablement,
    and for Claude the diff-panel write (see

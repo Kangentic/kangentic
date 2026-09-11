@@ -153,6 +153,7 @@
       initScript: null,
       linkNodeModules: true,
       prRefreshIntervalMinutes: 5,
+      autoFetchIntervalMinutes: 5,
     },
     mcpServer: {
       enabled: true,
@@ -336,6 +337,7 @@
       initScript: git.initScript,
       linkNodeModules: git.linkNodeModules,
       prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
+      autoFetchIntervalMinutes: git.autoFetchIntervalMinutes,
     });
     if (pickedGit) result.git = pickedGit;
     return result;
@@ -1961,6 +1963,20 @@
           session.commandTerminalLabel = trimmed;
         }
       },
+      setTransientBranch: async function (sessionId, branch) {
+        // Mirrors main: the renderer re-derives the branch from live HEAD and
+        // main records the newest reading (LAST write wins, unlike the label).
+        // Call log for assertions: window.__mockSetTransientBranchCalls.
+        if (typeof window !== 'undefined') {
+          window.__mockSetTransientBranchCalls = window.__mockSetTransientBranchCalls || [];
+          window.__mockSetTransientBranchCalls.push({ sessionId: sessionId, branch: branch });
+        }
+        var session = sessions.find(function (session) { return session.id === sessionId; });
+        var trimmed = (branch || '').trim();
+        if (trimmed && session && session.transient) {
+          session.commandTerminalBranch = trimmed;
+        }
+      },
       killTransient: async function (sessionId) {
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
         if (index !== -1) sessions.splice(index, 1);
@@ -2916,6 +2932,16 @@
           return window.__mockBranchSummary;
         }
         return { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
+      },
+      worktreeHead: async function () {
+        // Test hook: window.__mockWorktreeHead = { branch, sha } drives the
+        // Command Terminal's branch-pill re-derive. Both null means "unknown",
+        // which the renderer treats as keep-what-we-have, so a spec that never
+        // sets it sees the spawn-time branch exactly as before.
+        if (typeof window !== 'undefined' && window.__mockWorktreeHead) {
+          return window.__mockWorktreeHead;
+        }
+        return { branch: null, sha: null };
       },
       commitGraph: async function () {
         // Test hook: seed the commit-graph pane via window.__mockCommitGraph =

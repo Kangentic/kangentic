@@ -13,6 +13,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { DEFAULT_AGENT, type Task, type WorktreeSkipReason } from '../../../shared/types';
 import { getProjectRepos } from './project-repos';
+import { resolveProjectDefaultBaseBranch } from './default-base-branch';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from './task-profile';
 import type { IpcContext } from '../ipc-context';
@@ -361,18 +362,11 @@ function makeBaseFetchOutcomeHandler(
  * freshness against AND the actual ref git mutations act on (the start point
  * a custom-branch cut is created from, and the ref TASK_UPDATE_FROM_BASE
  * fetches and fast-forwards the worktree to). Resolution: the task's own
- * base, else the team-shared board default for THIS project's path, else the
- * effective config default, else 'main'. Board-before-config matches how
- * CONFIG_GET and the transition-engine factory overlay the board default onto
- * `git.defaultBaseBranch`. The ForPath variant matters because MCP auto-spawn
- * can target a background project, where the ACTIVE board's default belongs to
- * the wrong board.
+ * base, else the project default chain in `resolveProjectDefaultBaseBranch`
+ * (board default for THIS project's path, effective config default, 'main').
  */
 export function resolveEffectiveBaseBranch(context: IpcContext, task: Task, projectPath: string): string {
-  return task.base_branch
-    || context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
-    || context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch
-    || 'main';
+  return task.base_branch || resolveProjectDefaultBaseBranch(context, projectPath);
 }
 
 /**

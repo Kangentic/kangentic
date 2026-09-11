@@ -182,7 +182,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (38 channels)
+### Sessions (39 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -219,9 +219,10 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:getSummary` | invoke | Get summary of a single session |
 | `session:listSummaries` | invoke | Get summaries of multiple sessions |
 | `session:getToolBreakdown` | invoke | Fetch live per-tool call breakdown for an active session (from the in-memory accumulator, not the DB) |
-| `session:spawnTransient` | invoke | Spawn ephemeral command terminal session (no task, no DB) |
+| `session:spawnTransient` | invoke | Spawn an ephemeral Command Terminal session (no task, no DB) at the project root. A cold spawn with no branch picked checks out the project's default base (board default, then config, then `main`) and fast-forwards it; when tracked files are modified it stays on the current branch instead and says so through `checkoutError`, since a checkout with no gesture behind it would carry that work onto the base. A picked branch keeps git's own behavior. Reattaching to a live PTY never runs any of this |
 | `session:killTransient` | invoke | Kill a transient session and clean up session directory |
 | `session:setTransientLabel` | invoke | Record a Command Terminal's auto-derived name on its live registry row (first write wins). The renderer derives the name and has already applied it locally; main retains it purely so it survives a renderer reload, alongside the slot and branch that `toSession` carries. |
+| `session:setTransientBranch` | invoke | Record the branch a Command Terminal's checkout is actually on, re-derived from live HEAD by the renderer, on its live registry row. Last write wins, unlike the label: HEAD moves, and the newest reading is the true one. Main holds it passively for the Monitor row and a post-reload adopt. |
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
 
 ### Usage Stats (1 channel)
@@ -350,7 +351,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 |---------|---------|---------|
 | `font:getAvailable` | invoke | List detected system fonts (monospace-filtered when detectable) for the Terminal tab's Font Family picker |
 
-### Git (12 channels)
+### Git (13 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
@@ -362,6 +363,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
 | `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire. An optional `refreshRemote` flag makes the handler run the throttled all-remotes fetch first so `behind` reflects the actual remote; the panel passes it once per mount, never on watcher fires |
+| `git:worktreeHead` | invoke | A checkout's live HEAD (`branch`, `sha`): two rev-parse calls, no fetch. `branch` is null on a detached HEAD or a git error and `sha` is null only on a git error, so the pair tells the two apart. The Command Terminal layer re-derives every window's branch pill from it on reattach and on every `git:diffChanged`. Unqueued, like `git:branchSummary` |
 | `git:commitGraph` | invoke | Topo-ordered commit history (commits with parent links plus resolved tip / base / merge-base anchors) for the Changes panel's commit-history browser. Local-only and fail-safe, like `git:branchSummary` |
 | `git:fileHistory` | invoke | Commits touching a single file (`git log --follow`), newest first, for the Changes panel's per-file history popover. Local-only and fail-safe |
 | `git:blame` | invoke | Per-line blame (`git blame --line-porcelain`) - short hash, author, date per line of the file's current content - for the DiffViewer blame gutter. Local-only and fail-safe |

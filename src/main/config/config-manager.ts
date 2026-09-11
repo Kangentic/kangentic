@@ -88,6 +88,7 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
     initScript: source.git?.initScript,
     linkNodeModules: source.git?.linkNodeModules,
     prRefreshIntervalMinutes: source.git?.prRefreshIntervalMinutes,
+    autoFetchIntervalMinutes: source.git?.autoFetchIntervalMinutes,
   });
   if (git) result.git = git;
 

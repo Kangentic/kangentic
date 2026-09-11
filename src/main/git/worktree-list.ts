@@ -1,15 +1,24 @@
 import * as fs from 'node:fs';
-import simpleGit from 'simple-git';
+import simpleGit, { type SimpleGit } from 'simple-git';
 import { ProjectRepository } from '../db/repositories/project-repository';
+import { isSamePath } from '../../shared/paths';
 import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';
 
 /**
  * Enumerate worktrees across one project or every registered project.
- * Each worktree record carries its branch, dirty state, and commit
- * delta vs. its tracked upstream - enough for an agent to find a task's
- * branch, locate dirty work, or reason about merge state.
+ * Each worktree record carries its branch, dirty state, and commit delta
+ * vs. the base branch its work is based on (falling back to its tracked
+ * upstream only when no base is known) - enough for an agent to find a
+ * task's branch, locate dirty work, or tell whether its tree is behind the
+ * base it was cut from.
  *
- * Pure read-only. Uses `simple-git` (already a project dep, used by
+ * The base is INJECTED (`resolveBaseRef`), not resolved here: it lives in
+ * the task DB and the board/config defaults, and keeping those imports out
+ * of this module is what lets its unit test run on a mocked git alone.
+ *
+ * Pure read-only. Never fetches; the counts are as current as the remote-
+ * tracking refs, which the background fetch scheduler keeps refreshed for
+ * the focused project. Uses `simple-git` (already a project dep, used by
  * `WorktreeManager` and `DiffService`). Each worktree spawns a couple of
  * git invocations; for a project with many worktrees the calls run in
  * parallel via `Promise.all`.
@@ -27,9 +36,29 @@ interface ParsedWorktree {
   isMainCheckout: boolean;
 }
 
+/** What the base resolver is told about the worktree it is asked about. */
+export interface WorktreeBaseRefInput {
+  projectId: string;
+  projectPath: string;
+  worktreePath: string;
+  /** Checked-out branch, or null for a detached HEAD. */
+  branch: string | null;
+  isMainCheckout: boolean;
+}
+
 export interface EnumerateWorktreesOptions {
   /** Limit to a single project. When omitted, enumerates every registered project. */
   projectId?: string;
+  /**
+   * The base branch a worktree's work is BASED ON (a task's base, else the
+   * project default), or null when unknown. When absent or null the record
+   * falls back to the branch's own upstream, which measures how current the
+   * branch is with ITS remote, not with the base it was cut from: a branch
+   * can be 0 behind its remote and 200 behind the base, and only the second
+   * number answers "is my tree up to date". A throwing resolver counts as
+   * null.
+   */
+  resolveBaseRef?: (input: WorktreeBaseRefInput) => string | null;
 }
 
 export async function enumerateWorktrees(
@@ -55,7 +84,7 @@ export async function enumerateWorktrees(
 
     const parsed = await parseWorktreeList(project.path);
     const records = await Promise.all(
-      parsed.map(async (entry) => buildRecord(entry, project.path)),
+      parsed.map(async (entry) => buildRecord(entry, project.id, project.path, options.resolveBaseRef)),
     );
     results.push({
       projectId: project.id,
@@ -80,12 +109,12 @@ async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]>
   const blocks = raw.split(/\r?\n\r?\n/).map((block) => block.trim()).filter(Boolean);
   const parsed: ParsedWorktree[] = [];
   for (const block of blocks) {
-    let path: string | null = null;
+    let worktreePath: string | null = null;
     let head: string | null = null;
     let branch: string | null = null;
     for (const line of block.split(/\r?\n/)) {
       if (line.startsWith('worktree ')) {
-        path = line.slice('worktree '.length);
+        worktreePath = line.slice('worktree '.length);
       } else if (line.startsWith('HEAD ')) {
         head = line.slice('HEAD '.length);
       } else if (line.startsWith('branch ')) {
@@ -93,19 +122,47 @@ async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]>
         branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
       }
     }
-    if (path) {
+    if (worktreePath) {
       parsed.push({
-        path,
+        path: worktreePath,
         head,
         branch,
-        isMainCheckout: path === projectPath,
+        // Compared as resolved paths: the porcelain listing prints forward
+        // slashes while the project row was written by Node, so on Windows a
+        // plain string compare never matched and every main checkout read as
+        // a worktree.
+        isMainCheckout: isSamePath(worktreePath, projectPath),
       });
     }
   }
   return parsed;
 }
 
-async function buildRecord(entry: ParsedWorktree, _projectPath: string): Promise<WorktreeRecord> {
+/**
+ * `git rev-list --left-right --count <ref>...HEAD` returns `<behind>\t<ahead>`
+ * (left = reachable from `ref` only, right = from HEAD only). null when the
+ * ref does not exist (no remote, base never fetched) or the output is not two
+ * integers, so a caller can try the next candidate.
+ */
+async function countLeftRight(git: SimpleGit, ref: string): Promise<{ behind: number; ahead: number } | null> {
+  try {
+    const counts = (await git.raw(['rev-list', '--left-right', '--count', `${ref}...HEAD`])).trim();
+    const [behindText, aheadText] = counts.split(/\s+/);
+    const behind = Number.parseInt(behindText ?? '', 10);
+    const ahead = Number.parseInt(aheadText ?? '', 10);
+    if (!Number.isFinite(behind) || !Number.isFinite(ahead)) return null;
+    return { behind, ahead };
+  } catch {
+    return null;
+  }
+}
+
+async function buildRecord(
+  entry: ParsedWorktree,
+  projectId: string,
+  projectPath: string,
+  resolveBaseRef: EnumerateWorktreesOptions['resolveBaseRef'],
+): Promise<WorktreeRecord> {
   const baseRecord: WorktreeRecord = {
     path: entry.path,
     branch: entry.branch,
@@ -144,30 +201,58 @@ async function buildRecord(entry: ParsedWorktree, _projectPath: string): Promise
     lastCommitTs = null;
   }
 
-  // Commits ahead/behind the upstream tracking branch. `git rev-list
-  // --left-right --count <upstream>...HEAD` returns `<behind>\t<ahead>`.
+  // Ahead/behind, against the BASE the work is based on when one is known:
+  // `origin/<base>` first (the local ref may be stale), then the local
+  // `<base>`, the same order branch-summary.ts and diff-service.ts use. Only
+  // when no base resolves does it fall back to the branch's own upstream. The
+  // two answer different questions: a branch current with its remote can be
+  // far behind the base it was cut from, and reporting the first as "0 behind"
+  // is exactly the false reassurance an agent takes at face value.
+  let baseRef: string | null = null;
   let commitsAhead: number | null = null;
   let commitsBehind: number | null = null;
+  let baseBranch: string | null = null;
   try {
-    const upstream = (
-      await worktreeGit.raw(['rev-parse', '--abbrev-ref', '@{upstream}'])
-    ).trim();
-    if (upstream) {
-      const counts = (
-        await worktreeGit.raw(['rev-list', '--left-right', '--count', `${upstream}...HEAD`])
-      ).trim();
-      const [behindStr, aheadStr] = counts.split(/\s+/);
-      const behind = Number.parseInt(behindStr ?? '', 10);
-      const ahead = Number.parseInt(aheadStr ?? '', 10);
-      commitsBehind = Number.isFinite(behind) ? behind : null;
-      commitsAhead = Number.isFinite(ahead) ? ahead : null;
-    }
+    baseBranch = resolveBaseRef?.({
+      projectId,
+      projectPath,
+      worktreePath: entry.path,
+      branch: entry.branch,
+      isMainCheckout: entry.isMainCheckout,
+    }) ?? null;
   } catch {
-    // No upstream configured (common for fresh task worktrees) - leave as null.
+    baseBranch = null;
+  }
+  if (baseBranch) {
+    for (const candidate of [`origin/${baseBranch}`, baseBranch]) {
+      const counts = await countLeftRight(worktreeGit, candidate);
+      if (!counts) continue;
+      baseRef = baseBranch;
+      commitsBehind = counts.behind;
+      commitsAhead = counts.ahead;
+      break;
+    }
+  }
+  if (baseRef === null) {
+    try {
+      const upstream = (
+        await worktreeGit.raw(['rev-parse', '--abbrev-ref', '@{upstream}'])
+      ).trim();
+      if (upstream) {
+        const counts = await countLeftRight(worktreeGit, upstream);
+        if (counts) {
+          commitsBehind = counts.behind;
+          commitsAhead = counts.ahead;
+        }
+      }
+    } catch {
+      // No upstream configured (common for fresh task worktrees) - leave as null.
+    }
   }
 
   return {
     ...baseRecord,
+    baseRef,
     dirty,
     lastCommitTs,
     commitsAhead,

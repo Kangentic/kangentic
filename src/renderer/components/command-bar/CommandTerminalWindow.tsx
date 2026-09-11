@@ -121,7 +121,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const { hideLayer } = useCommandTerminalLayer();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [branch, setBranch] = useState<string | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // Stop is async (kill IPC, then close). Without a pending state the button looks
   // inert for the duration, which is exactly how a DROPPED click presented, so the
@@ -217,6 +216,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // identical across a project's terminals by construction. `commandTerminalTitle`
   // is shared with the Agent Monitor so both surfaces print the same name.
   const windowTitle = transientLabel ?? commandTerminalTitle(slot);
+  // The branch is read from the pairing map, never held here: every path that
+  // used to set it locally (spawn, adopt, a picker switch) already writes the
+  // map entry, and the layer's HEAD tracker (`useTrackHeadBranch`) corrects
+  // that entry on reattach and on every watcher fire. A per-window copy would
+  // be a second, stale answer to a per-project question. The ref bridges the
+  // one gap: a picker switch scrubs the entry before the respawn writes the new
+  // one, and the pill should not flash the default branch in between.
+  const mapBranch = useSessionStore((state) =>
+    projectId ? state.transientSessions[transientKey(projectId, slot)]?.branch ?? null : null,
+  );
+  const lastKnownBranchRef = useRef<string | null>(null);
+  if (mapBranch) lastKnownBranchRef.current = mapBranch;
+  const branch = mapBranch ?? lastKnownBranchRef.current;
 
   // Spawn this slot's transient session on mount, or reattach to an existing one
   // (the PTY survives a layer hide, so reopening reattaches instead of
@@ -238,8 +250,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       // while stashed) falls through to a fresh spawn.
       const alive = state.sessions.find((session) => session.id === existing.sessionId && session.status === 'running');
       if (alive) {
+        // Reattach only. No fetch, no checkout: the PTY may be running an agent,
+        // and moving HEAD under it is the class of thing #558 refused. The branch
+        // pill is corrected from live HEAD by the layer's tracker instead.
         setSessionId(existing.sessionId);
-        setBranch(existing.branch);
         setTerminalReady(true);
         return;
       }
@@ -257,7 +271,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     if (adoptable) {
       state.adoptTransientSession(currentProjectId, slot, adoptable);
       setSessionId(adoptable.id);
-      setBranch(adoptable.commandTerminalBranch ?? null);
       setTerminalReady(true);
       return;
     }
@@ -265,7 +278,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     state.spawnTransientSession(slot)
       .then((result) => {
         setSessionId(result.session.id);
-        setBranch(result.branch);
         if (result.checkoutError) {
           useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
         }
@@ -378,7 +390,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       setTerminalReady(false);
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
       setSessionId(result.session.id);
-      setBranch(result.branch);
       if (result.checkoutError) {
         useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
       }
@@ -725,10 +736,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                   </div>
                 }
               >
+                {/* The effective base (board-overlaid), not "HEAD": the Working and
+                    Staged scopes never read baseBranch, and the Branch scope, the
+                    ahead/behind, and the base badge all measure against it. A literal
+                    "HEAD" resolved origin/HEAD, the remote's default branch, which is
+                    not the project's base when the two differ. */}
                 <ChangesPanel
                   entityId={commandTerminalEntityId}
                   projectPath={projectPath}
-                  baseBranch="HEAD"
+                  baseBranch={defaultBranch}
                 />
               </Suspense>
             </PanelErrorBoundary>

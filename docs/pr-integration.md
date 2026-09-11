@@ -294,10 +294,12 @@ A task is eligible when its PR can still change or be found: a non-terminal link
 
 `prRefreshScheduler` keeps a single active timer (Kangentic focuses one project at a time):
 
-- `startForProject(context, project)` tears down any prior timer, defers an immediate sweep off the IPC critical path (`setImmediate`), then arms a periodic `setInterval` from the per-project `git.prRefreshIntervalMinutes` config (null / `<= 0` means on-load sweep only, no timer). It is called on every `PROJECT_OPEN` (cold restart and warm switch-back), after a config change, and on system resume.
+- `startForProject(context, project)` tears down any prior timer, defers an immediate sweep off the IPC critical path (`setImmediate`), then arms a periodic `setInterval` from the per-project `git.prRefreshIntervalMinutes` config (null / `<= 0` means on-load sweep only, no timer). It is called on every `PROJECT_OPEN` (cold restart and warm switch-back) and after a config change (`CONFIG_SET_PROJECT_BY_PATH`). There is no system-resume caller: `powerMonitor`'s suspend handler only tracks the heartbeat.
 - `stop(projectId?)` clears the active timer. With a `projectId` it no-ops unless that project owns the active timer; with no argument it always stops (shutdown / unconditional). Called on project switch/delete and on shutdown.
 
 Timer-leak safety: the interval is created outside `runWithProjectLogContext` (each tick wraps its own work inside it), is `.unref()`'d so it never blocks a clean quit, and is explicitly cleared on switch/delete/shutdown. A stale-switch guard skips a sweep whose project is no longer focused.
+
+The background remote-fetch scheduler (`src/main/git/git-fetch-scheduler.ts`, documented under [Background remote refresh](worktree-strategy.md#background-remote-refresh)) mirrors this lifecycle exactly and is started, re-armed, and stopped at the same four sites.
 
 ## Where PR State Is Persisted
 
