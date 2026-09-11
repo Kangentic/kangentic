@@ -1,16 +1,20 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 // A gate that stops gating without saying so is worse than no gate, because it still reads as
-// coverage. release.yml has been bitten by that twice.
+// coverage. release.yml has been bitten by that four times now. The first two shapes are below;
+// the later describe blocks pin the published-release re-run (v0.39.0) and the two upgrade-gate
+// baselines (v0.39.0 upgrading from itself, v0.39.x downgrading from v0.40.0).
 //
-// The subtle one is `always()`. GitHub normally skips a job when anything in its `needs:` failed,
-// but `always()` overrides exactly that, so a job listed in `needs:` and NOT also named in the
-// `if:` still runs when its dependency FAILED. release.yml carries `always()` on two jobs to
-// tolerate the conditional create-tag, which means every future `needs:` entry added to them has
-// to be repeated in the `if:` by hand. The comment above create-draft-release warns about this;
-// this test is what makes the warning binding.
+// The subtle one is the status-check function. GitHub normally skips a job when anything in its
+// `needs:` failed, but naming always(), cancelled(), or failure() in the `if:` replaces that
+// implied success() gate, so a job listed in `needs:` and NOT also named in the `if:` still runs
+// when its dependency FAILED. release.yml carries always() on two jobs to tolerate the conditional
+// create-tag and `!cancelled()` on the two publish jobs, which means every future `needs:` entry
+// added to any of the four has to be repeated in the `if:` by hand. The comment above
+// create-draft-release warns about this; this test is what makes the warning binding.
 //
 // The blunt one is a gate simply going missing: preflight-symbols exists because v0.37.0 and
 // v0.38.0 both shipped with zero sourcemaps and zero native debug files, the KANGENTIC_SENTRY_TOKEN
@@ -120,33 +124,55 @@ describe('release.yml job graph', () => {
 
   // buildJob reads `if:` with a single-line regex, so a condition folded onto
   // continuation lines (`if: >`, `if: |`) would parse as just the fold marker.
-  // An always() job folded that way would stop being RECOGNIZED as always() and
-  // drop out of the check below entirely - the silent no-op this rule exists to
-  // stop, in the test that enforces it. Fail loudly instead of quietly skipping.
+  // A job folded that way would stop being RECOGNIZED as carrying a status
+  // function and drop out of the check below entirely - the silent no-op this
+  // rule exists to stop, in the test that enforces it. Fail loudly instead of
+  // quietly skipping.
   it('keeps every if: on one line, which is what the condition regex can read', () => {
     for (const job of jobs) {
       if (job.condition === null) continue;
       expect(
         job.condition,
         `Job "${job.name}" folds its if: onto continuation lines. buildJob only reads the first `
-          + 'line, so this job would silently stop being checked for always()/needs: parity. '
+          + 'line, so this job would silently stop being checked for status-function/needs: parity. '
           + 'Put the condition back on one line, or teach buildJob to join continuations.',
       ).not.toMatch(/^[>|]/);
     }
   });
 
-  // The load-bearing one. Without this, adding a dependency to an always() job reads as a gate
+  // GitHub implies success() on a job with no status-check function in its if:, and that implied
+  // gate is what skips a job when a dependency failed. Naming ANY of always(), cancelled(), or
+  // failure() replaces it, so every such job has to re-state each needs: entry by hand.
+  // `!cancelled()` is the easy one to miss: it reads like a cancellation guard rather than a
+  // dependency gate, but it defeats the implicit skip exactly the way always() does.
+  const STATUS_FUNCTION_PATTERN = /\b(always|cancelled|failure)\(\)/;
+  const selfGatedJobs = jobs.filter((job) => STATUS_FUNCTION_PATTERN.test(job.condition ?? ''));
+
+  // An empty or shrunken filter would turn the it.each below into zero tests, which passes. The
+  // four jobs that carry a status function are named here so dropping one from the workflow, or
+  // a parse regression that stops recognizing one, fails rather than quietly reducing coverage.
+  it('selects every job whose if: replaces the implied success() gate', () => {
+    expect(selfGatedJobs.map((job) => job.name).sort()).toEqual([
+      'create-draft-release',
+      'publish-npm',
+      'publish-release',
+      'release',
+    ]);
+  });
+
+  // The load-bearing one. Without this, adding a dependency to one of those jobs reads as a gate
   // while doing nothing.
-  it.each(jobs.filter((job) => job.condition?.includes('always()')).map((job) => [job.name, job]))(
-    '%s uses always(), so every needs: entry is also named in its if:',
+  it.each(selfGatedJobs.map((job) => [job.name, job] as const))(
+    '%s replaces the implied success() gate, so every needs: entry is also named in its if:',
     (_name, job: WorkflowJob) => {
       expect(job.needs.length).toBeGreaterThan(0);
+      const statusFunction = job.condition?.match(STATUS_FUNCTION_PATTERN)?.[0];
       for (const dependency of job.needs) {
         expect(
           job.condition,
           `Job "${job.name}" lists "${dependency}" in needs: but never references it in its if:. `
-            + 'always() defeats the implicit "skip me if a dependency failed" behaviour, so this '
-            + `job would still run when ${dependency} FAILED. Add `
+            + `${statusFunction} defeats the implicit "skip me if a dependency failed" behaviour, `
+            + `so this job would still run when ${dependency} FAILED. Add `
             + `"&& needs.${dependency}.result == 'success'" (or the branch you actually want).`,
         ).toContain(`needs.${dependency}.result`);
       }
@@ -227,26 +253,66 @@ describe('release.yml cannot build into a published release', () => {
   });
 });
 
-// The upgrade gates resolved their baseline through /releases/latest, which returns the release
-// being built the moment anything publishes it. The gate then upgraded a version from ITSELF:
-// dnf/apt install the same package twice, the version assertion passes, and the run reports green
-// while testing nothing. That fires on any re-run of a finished release, with no manual click.
-describe('release.yml upgrade gates never upgrade a version from itself', () => {
-  const upgradeSteps = [
-    ['rpm', stepBody('release', 'Verify rpm upgrades from the previous release')],
-    ['deb', stepBody('release', 'Verify deb upgrades from the previous release')],
-  ] as const;
+// The upgrade gates have picked a wrong baseline twice, in two directions. Through v0.39.0 they
+// read /releases/latest, which returns the release being built the moment anything publishes it,
+// so a re-run upgraded a version from ITSELF: dnf/apt install the same package twice, the version
+// assertion passes, and the run reports green while testing nothing. Through v0.40.0 they took the
+// newest published tag that was not their own, so re-running v0.39.1 after v0.40.0 had shipped
+// baselined on v0.40.0 and ran 0.40.0 -> 0.39.1: apt refused the downgrade (red, and correct),
+// while dnf downgraded without complaint and `rpm -q kangentic-0.39.1` passed (green, and wrong).
+// That is what the 2026-09-10 tag scrub did to v0.39.0 and v0.39.1, and it recurs on any full
+// re-run of an older tag, which the release skill prescribes for recovery.
+//
+// The baseline is now the newest published release whose version is numerically LOWER than the
+// build's. The program is pinned whole below AND executed against fixtures, because a string pin
+// proves only that the text did not change, not that the rule is the one the incident needs.
+const BASELINE_PROGRAM =
+  "'def ver: ltrimstr(\"v\") | split(\".\") | map(tonumber); "
+  + '[.[] | select(.draft == false and .prerelease == false) | '
+  + 'select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | '
+  + 'select((.tag_name | ver) < ($self | ver))] | max_by(.tag_name | ver) | .tag_name // empty\'';
 
-  it.each(upgradeSteps)('the %s gate excludes this build\'s own tag from the baseline', (_name, body) => {
-    // Resolved from the built artifact's version, so the exclusion holds however the ref is spelled.
+const IGNORED_TAGS_PROGRAM =
+  "'[.[] | select(.draft == false and .prerelease == false) | "
+  + 'select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$") | not) | .tag_name] | join(" ")\'';
+
+const upgradeSteps = [
+  ['rpm', stepBody('release', 'Verify rpm upgrades from the previous release')],
+  ['deb', stepBody('release', 'Verify deb upgrades from the previous release')],
+] as const;
+
+describe('release.yml upgrade gates baseline on the newest release OLDER than the build', () => {
+  it.each(upgradeSteps)('the %s gate resolves the baseline by version, below this build\'s own', (_name, body) => {
+    // Resolved from the built artifact's version, so the comparison holds however the ref is spelled.
     expect(body).toContain('--arg self "v$new_version"');
-    // The whole jq program, not the exclusion clause alone. `.draft == false` is what keeps the
-    // release under construction out of its own baseline on the normal path, `.prerelease` keeps
-    // a beta out, and `[0]` is what makes it the NEWEST rather than some other match. Asserting
-    // fragments lets any of the others be dropped while the test stays green.
-    expect(body).toContain(
-      "'[.[] | select(.draft == false and .prerelease == false and .tag_name != $self)][0].tag_name // empty'"
-    );
+    // The whole jq program, not a clause of it. `.draft == false` keeps the release under
+    // construction out of its own baseline on the normal path, `.prerelease` keeps a beta out, the
+    // regex gate keeps `tonumber` off a tag it cannot parse, `< ($self | ver)` is the older-than
+    // rule this block exists for, and `max_by` is what makes it the NEWEST whatever order the API
+    // lists releases in. Asserting fragments lets any of the others be dropped while the test
+    // stays green.
+    expect(body).toContain(BASELINE_PROGRAM);
+  });
+
+  it.each(upgradeSteps)('the %s gate names the published tags it could not compare', (_name, body) => {
+    // The regex gate above drops a tag it cannot parse rather than aborting on it. Dropping is
+    // the right call, and it is also exactly the kind of silent narrowing this rule forbids, so
+    // the step has to say which tags it ignored, on every run where it ignored any.
+    expect(body).toContain(IGNORED_TAGS_PROGRAM);
+    expect(body).toContain('Ignoring published release(s) whose tag is not a plain vX.Y.Z');
+  });
+
+  it.each(upgradeSteps)('the %s gate rejects a built version it cannot compare numerically', (_name, body) => {
+    // The API tags get the regex gate; the build's own version cannot be dropped the same way,
+    // because dropping it would leave nothing to compare against and skip the gate. It is
+    // asserted instead. Without this the step still fails on a non-triple version, but on jq's
+    // raw "Cannot parse" text, which names neither the version nor the step that produced it.
+    expect(body).toContain("grep -qE '^[0-9]+\\.[0-9]+\\.[0-9]+$'");
+    // Anchored to the echo line, not the bare phrase, for the same reason as the
+    // /releases/latest test below: the comments around this guard discuss the shape it rejects,
+    // and a phrase-only pin would stay green against a step that kept the comment and lost the
+    // exit.
+    expect(body).toMatch(/echo "::error::Built version '\$new_version' is not a plain X\.Y\.Z/);
   });
 
   it.each(upgradeSteps)('the %s gate reads the release LIST, not /releases/latest', (_name, body) => {
@@ -257,10 +323,10 @@ describe('release.yml upgrade gates never upgrade a version from itself', () => 
   });
 
   it.each(upgradeSteps)('the %s gate still fails rather than skips on a transport failure', (_name, body) => {
-    // Only "no published release other than this one" may skip. A 403 from the shared runner IP
+    // Only "no published release older than this one" may skip. A 403 from the shared runner IP
     // used to be the way this went quiet.
     expect(body).toContain('Refusing to skip the upgrade check on a transport failure');
-    expect(body).toMatch(/No published release other than v\$new_version/);
+    expect(body).toMatch(/No published release older than v\$new_version/);
   });
 
   it.each(upgradeSteps)('the %s gate says how many releases it saw when it skips', (_name, body) => {
@@ -270,6 +336,136 @@ describe('release.yml upgrade gates never upgrade a version from itself', () => 
     // .tag_name would skip every release from then on and still report green. The count is what
     // makes the log able to tell them apart.
     expect(body).toContain("jq 'length' /tmp/releases.json");
+  });
+});
+
+// The pins above prove the text. This block proves the rule, by running the program the workflow
+// actually carries through a real jq against release lists shaped like the incidents. jq is
+// preinstalled on ubuntu-latest, where CI's unit job runs (and where release.yml itself calls it
+// with no install step); a developer machine without it gets the skip notice below rather than a
+// silent pass.
+const HAS_JQ = (() => {
+  try {
+    execFileSync('jq', ['--version'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+const RUNNING_ON_CI = Boolean(process.env.CI);
+
+interface ReleaseRow {
+  tag_name: string;
+  draft: boolean;
+  prerelease: boolean;
+}
+
+function published(tagName: string): ReleaseRow {
+  return { tag_name: tagName, draft: false, prerelease: false };
+}
+
+/**
+ * The single-quoted jq program out of a step's `<assignment>jq -r ... '<program>' /tmp/releases.json)`
+ * command substitution, with the bash quotes stripped so it can be handed to jq as one argument.
+ *
+ * Throws on a miss, and throws on a program missing its load-bearing operator, for the same reason
+ * stepBody throws: a stale regex that returned '' or a fragment would hand jq an identity filter,
+ * and an identity filter over these fixtures prints something rather than failing outright.
+ */
+function extractProgram(body: string, assignment: string, loadBearingOperator: string): string {
+  const escaped = assignment.replace(/[$()]/g, '\\$&');
+  const match = body.match(new RegExp(`${escaped}jq -r[^\\n]*\\\\\\n\\s*'([^']+)' \\\\\\n\\s*/tmp/releases\\.json\\)`));
+  if (!match) {
+    throw new Error(`Could not find the ${assignment} jq program in the step body; the extraction regex is stale.`);
+  }
+  if (!match[1].includes(loadBearingOperator)) {
+    throw new Error(`The ${assignment} jq program no longer contains "${loadBearingOperator}"; the extraction caught a fragment.`);
+  }
+  return match[1];
+}
+
+function runJq(program: string, releases: ReleaseRow[], jqArguments: string[]): string {
+  return execFileSync('jq', ['-r', ...jqArguments, program], {
+    input: JSON.stringify(releases),
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).trim();
+}
+
+describe.runIf(HAS_JQ)('release.yml upgrade baseline program, executed', () => {
+  const programs = upgradeSteps.map(([name, body]) => [
+    name,
+    extractProgram(body, 'prev_tag=$(', 'max_by'),
+    extractProgram(body, 'ignored_tags=$(', '| not'),
+  ] as const);
+
+  const baselineFor = (program: string, self: string, releases: ReleaseRow[]): string =>
+    runJq(program, releases, ['--arg', 'self', self]);
+
+  it.each(programs)('the %s gate re-run of v0.39.1 after v0.40.0 shipped upgrades FROM v0.39.0', (_name, program) => {
+    // The incident. The old rule returned v0.40.0 here and the gate downgraded.
+    const releases = [published('v0.40.0'), published('v0.39.1'), published('v0.39.0')];
+    expect(baselineFor(program, 'v0.39.1', releases)).toBe('v0.39.0');
+  });
+
+  it.each(programs)('the %s gate normal path still picks the newest shipped release', (_name, program) => {
+    const releases = [published('v0.40.0'), published('v0.39.1'), published('v0.39.0')];
+    expect(baselineFor(program, 'v0.41.0', releases)).toBe('v0.40.0');
+  });
+
+  it.each(programs)('the %s gate compares versions numerically, not as text', (_name, program) => {
+    // "v0.9.1" sorts ABOVE "v0.10.0" as a string, which would make v0.10.0 skip its upgrade check
+    // with "no older release" while nine of them exist.
+    const releases = [published('v0.9.1'), published('v0.9.0')];
+    expect(baselineFor(program, 'v0.10.0', releases)).toBe('v0.9.1');
+  });
+
+  it.each(programs)('the %s gate does not depend on the order the API lists releases in', (_name, program) => {
+    // The documented recovery (gh release delete, then a full re-run) re-creates the release
+    // object for an OLD tag, and the list endpoint orders by object creation, so that old
+    // release sits first. `[0]` would have handed it to the next build as the baseline.
+    const releases = [published('v0.39.0'), published('v0.40.0'), published('v0.39.1')];
+    expect(baselineFor(program, 'v0.41.0', releases)).toBe('v0.40.0');
+  });
+
+  it.each(programs)('the %s gate skips drafts, prereleases, and tags it cannot parse, and names the last', (_name, program, ignoredProgram) => {
+    // v0.41.0-rc1 carries no prerelease flag and protocol-v1.2.0 is not a desktop version at all.
+    // Either would throw inside tonumber and abort the step if the regex gate were not in front of
+    // it. Both are reported by the companion program rather than dropped in silence.
+    const releases = [
+      { tag_name: 'v0.41.0', draft: true, prerelease: false },
+      { tag_name: 'v0.40.1', draft: false, prerelease: true },
+      published('v0.41.0-rc1'),
+      published('protocol-v1.2.0'),
+      published('v0.40.0'),
+      published('v0.39.1'),
+    ];
+    expect(baselineFor(program, 'v0.41.0', releases)).toBe('v0.40.0');
+    expect(runJq(ignoredProgram, releases, [])).toBe('v0.41.0-rc1 protocol-v1.2.0');
+  });
+
+  it.each(programs)('the %s gate returns nothing for the first release ever, which is the one green skip', (_name, program) => {
+    const releases = [published('v0.40.0'), published('v0.1.0')];
+    expect(baselineFor(program, 'v0.1.0', releases)).toBe('');
+  });
+});
+
+describe.runIf(!HAS_JQ)('release.yml upgrade baseline program, executed (skipped)', () => {
+  it('skipped - jq is not on PATH; CI runs this on ubuntu-latest where it is preinstalled', () => {
+    expect(HAS_JQ).toBe(false);
+  });
+});
+
+// A local machine without jq may skip the executed block; CI may not. The comment above HAS_JQ
+// rests on ubuntu-latest shipping jq, and if that ever stops being true the six behavioural cases
+// go uncollected and the file still reports green - the "reads as coverage but is not" shape this
+// whole file exists to forbid. Nothing above can catch it, because the only assertion on HAS_JQ
+// lives in the branch that runs when it is already false. This is the check that makes the
+// comment binding, for the same reason the four-job list above pins its own filter.
+describe.runIf(RUNNING_ON_CI)('release.yml upgrade baseline program, executed (CI invariant)', () => {
+  it('finds jq on PATH, so CI never skips the executed block', () => {
+    expect(HAS_JQ).toBe(true);
   });
 });
 
@@ -301,6 +497,28 @@ describe('stepBody keeps the assertions above honest', () => {
     // Unbounded, every negative assertion on the deb gate is quietly reading another job.
     expect(stepBody('release', 'Verify deb upgrades from the previous release')).not.toContain(
       'Publish the draft release'
+    );
+  });
+
+  // extractProgram feeds the executed block, so it carries the same hazard: returning '' or a
+  // fragment on a stale regex would hand jq an identity filter and let the rule's own test pass
+  // against the wrong program.
+  it('extractProgram throws on an assignment that is not in the step', () => {
+    expect(() => extractProgram(upgradeSteps[0][1], 'renamed_away=$(', 'max_by')).toThrow(
+      /extraction regex is stale/
+    );
+  });
+
+  it('extractProgram throws when the program it found lacks its load-bearing operator', () => {
+    // A body shaped exactly like the workflow's, with the program cut down to a fragment that
+    // would still run under jq (and print every tag name, rather than nothing).
+    const fragmentBody = [
+      '          prev_tag=$(jq -r --arg self "v$new_version" \\',
+      "            '[.[] | .tag_name][0] // empty' \\",
+      '            /tmp/releases.json)',
+    ].join('\n');
+    expect(() => extractProgram(fragmentBody, 'prev_tag=$(', 'max_by')).toThrow(
+      /caught a fragment/
     );
   });
 });

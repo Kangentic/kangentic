@@ -407,15 +407,18 @@ jobs:
       # fail where a fresh install succeeds: file conflicts between versions,
       # scriptlet ordering, or a dependency only the old package pulled in.
       #
-      # The baseline is the newest published release that is NOT this build's own
-      # tag, so it upgrades from what users are running today. It read
+      # The baseline is the newest published release whose version is LOWER than
+      # this build's, so it upgrades from what users are running today. It read
       # /releases/latest until v0.39.0, on the reasoning that the release being
       # built is still a draft and that endpoint skips drafts. That is true only
       # while nothing has published it, and both a re-run of a finished release and
       # a hand publish mid-run break it - after which the gate upgraded a version
-      # from itself and passed without testing anything.
+      # from itself and passed without testing anything. Until v0.40.0 it then took
+      # the newest published tag that was not its own, which is the same defect one
+      # release later: re-run an older tag after a newer version has shipped and
+      # the "upgrade" is a downgrade. See the baseline lookup below.
       #
-      # Skipping is deliberately narrow: only "there is no published release other
+      # Skipping is deliberately narrow: only "there is no published release older
       # than this one to upgrade FROM" skips, which happens once, on the first
       # release ever. A baseline that exists but whose package cannot be downloaded
       # FAILS, because the only ways that happens are an incomplete previous release
@@ -438,6 +441,16 @@ jobs:
           rpm_path=$(ls out/kangentic-*-1.x86_64.rpm)
           new_file=$(basename "$rpm_path")
           new_version=$(echo "$new_file" | sed -E 's/^kangentic-(.+)-1\.x86_64\.rpm$/\1/')
+          # The baseline lookup below feeds $new_version through jq's tonumber. The tags it
+          # reads from the API get a regex gate first; this one is the build's own version and
+          # cannot be dropped the same way, because dropping it would leave nothing to compare
+          # against and skip the gate. So assert it instead: every other failure in this step
+          # names its cause, and without this one a non-triple version aborts on jq's raw
+          # "Cannot parse" text with no hint of where it came from.
+          if ! printf '%s' "$new_version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Built version '$new_version' is not a plain X.Y.Z, so the upgrade baseline cannot be resolved by comparing versions."
+            exit 1
+          fi
           # Authenticated, and branching on the HTTP status rather than on curl's
           # exit code. Unauthenticated api.github.com is 60 req/hour per runner IP
           # and shared with every other job on that host, so a bare `if curl` folds
@@ -452,18 +465,38 @@ jobs:
             echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
             exit 1
           fi
-          # Excluding this build's OWN tag is the load-bearing part. This used to read
-          # /releases/latest, on the reasoning that the release under construction is
-          # still a draft and that endpoint skips drafts. The reasoning holds only
-          # until the release is published, which happens on a re-run of a finished
-          # release and happened once by a hand publish mid-run. Then the baseline
-          # resolves to this very version and the "upgrade" installs the same package
-          # twice and passes, which is the silent loss of coverage this gate exists
-          # to prevent. The list endpoint returns newest first.
+          # Excluding this build's OWN tag is necessary and not sufficient. Until
+          # v0.39.0 this read /releases/latest, which returns the release under
+          # construction the moment anything publishes it, so a re-run upgraded a
+          # version from itself. Until v0.40.0 it took the newest published tag that
+          # was not its own, which is the same defect one release later: re-run
+          # v0.39.1 after v0.40.0 has shipped and the baseline is v0.40.0, so the
+          # "upgrade" is a DOWNGRADE. That is what the 2026-09-10 tag scrub did to
+          # v0.39.0 and v0.39.1 when it force-pushed their tags and re-ran all three
+          # releases. The baseline is therefore the newest published release whose
+          # version is numerically LOWER than this build's.
+          #
+          # max_by, not [0]. The list endpoint orders by release-object creation,
+          # not by version, and the documented recovery (gh release delete, then a
+          # full re-run) re-creates a release object for an OLD tag, which then
+          # sits first. [0] would hand a later build that re-created old release as
+          # its baseline.
+          #
+          # Compared as numeric arrays, not strings: "v0.9.1" > "v0.10.0" as text.
+          # A tag that is not a plain vX.Y.Z (an -rc suffix without the prerelease
+          # flag, a protocol-v* tag if one ever becomes a release) cannot be
+          # compared, so the regex gate drops it BEFORE tonumber sees it and the
+          # log below names it, rather than the step aborting on a parse error.
           prev_tag=$(jq -r --arg self "v$new_version" \
-            '[.[] | select(.draft == false and .prerelease == false and .tag_name != $self)][0].tag_name // empty' \
+            'def ver: ltrimstr("v") | split(".") | map(tonumber); [.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | select((.tag_name | ver) < ($self | ver))] | max_by(.tag_name | ver) | .tag_name // empty' \
             /tmp/releases.json)
-          # Narrow on purpose: only "there is no published release other than this
+          ignored_tags=$(jq -r \
+            '[.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$") | not) | .tag_name] | join(" ")' \
+            /tmp/releases.json)
+          if [ -n "$ignored_tags" ]; then
+            echo "Ignoring published release(s) whose tag is not a plain vX.Y.Z, so its version cannot be compared: $ignored_tags"
+          fi
+          # Narrow on purpose: only "there is no published release older than this
           # one to upgrade FROM" skips. A baseline that exists but whose package
           # cannot be downloaded still FAILS below.
           if [ -z "$prev_tag" ]; then
@@ -473,7 +506,7 @@ jobs:
             # returns null for an unknown field rather than erroring, so a later typo in
             # .draft / .prerelease / .tag_name would skip forever and still read as coverage.
             # A count next to the skip line is what lets whoever reads the log see which it was.
-            echo "No published release other than v$new_version; skipping rpm upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
+            echo "No published release older than v$new_version; skipping rpm upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
             exit 0
           fi
           prev_version="${prev_tag#v}"
@@ -488,6 +521,15 @@ jobs:
           # `rpm -q kangentic-$new_version` asks for that exact name-version rather
           # than grepping the full NVR, where an unanchored pattern would let the
           # version's dots match any character.
+          #
+          # dnf cannot catch a wrong baseline. Handed a local rpm with a LOWER
+          # version, `dnf install` downgrades without complaint ("Downgrading:
+          # kangentic 0.39.1-1 replacing 0.40.0-1 ... Complete!"), and `rpm -q`
+          # then confirms the downgrade. So the assertion here proves only that the
+          # new package is what ended up installed; the baseline lookup above is
+          # what makes it an upgrade. apt does refuse (exit 100, "Packages were
+          # downgraded and -y was used without --allow-downgrades"), which is how
+          # the 2026-09-10 re-runs went red on deb and silently green on rpm.
           docker run --rm -v "$PWD/out:/out:ro" -v "$PWD/prev:/prev:ro" fedora:latest sh -c \
             "dnf install -y --nogpgcheck /prev/$prev_file && dnf install -y --nogpgcheck /out/$new_file && rpm -q kangentic-$new_version"
 
@@ -497,12 +539,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Built version first, then the baseline that excludes it - same ordering
-          # and same reasons as the rpm step above.
+          # Built version first, then the baseline whose version is lower than it - same
+          # ordering and same reasons as the rpm step above.
           # Two-step assignment for the same set -e reason as the rpm step above.
           deb_path=$(ls out/kangentic_*_amd64.deb)
           new_file=$(basename "$deb_path")
           new_version=$(echo "$new_file" | sed -E 's/^kangentic_(.+)_amd64\.deb$/\1/')
+          # Same assertion as the rpm step above, and for the same reason: the baseline lookup
+          # parses this version numerically, so a non-triple has to name itself here rather
+          # than surface as a jq parse error.
+          if ! printf '%s' "$new_version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Built version '$new_version' is not a plain X.Y.Z, so the upgrade baseline cannot be resolved by comparing versions."
+            exit 1
+          fi
           # Same status-code branching as the rpm step above: a transport failure
           # fails rather than skipping.
           status=$(curl -sSL -o /tmp/releases.json -w '%{http_code}' \
@@ -514,16 +563,25 @@ jobs:
             echo "::error::Refusing to skip the upgrade check on a transport failure - that would report green without testing anything."
             exit 1
           fi
-          # Excludes this build's own tag, so a published or re-run release cannot
-          # become its own upgrade baseline. See the rpm step for the full reasoning.
+          # The newest published release whose version is numerically LOWER than
+          # this build's, so neither a re-run of a finished release nor a re-run of
+          # an OLDER tag after a newer one shipped can hand this gate itself or a
+          # downgrade as the baseline. Same program as the rpm step, which carries
+          # the full reasoning.
           prev_tag=$(jq -r --arg self "v$new_version" \
-            '[.[] | select(.draft == false and .prerelease == false and .tag_name != $self)][0].tag_name // empty' \
+            'def ver: ltrimstr("v") | split(".") | map(tonumber); [.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | select((.tag_name | ver) < ($self | ver))] | max_by(.tag_name | ver) | .tag_name // empty' \
             /tmp/releases.json)
+          ignored_tags=$(jq -r \
+            '[.[] | select(.draft == false and .prerelease == false) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$") | not) | .tag_name] | join(" ")' \
+            /tmp/releases.json)
+          if [ -n "$ignored_tags" ]; then
+            echo "Ignoring published release(s) whose tag is not a plain vX.Y.Z, so its version cannot be compared: $ignored_tags"
+          fi
           if [ -z "$prev_tag" ]; then
             # Prints the total for the same reason as the rpm step above: an empty filter result
             # means either "no baseline exists yet" or "the filter is broken", and only the log
             # can tell them apart.
-            echo "No published release other than v$new_version; skipping deb upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
+            echo "No published release older than v$new_version; skipping deb upgrade check. The API returned $(jq 'length' /tmp/releases.json) release(s) in total."
             exit 0
           fi
           prev_version="${prev_tag#v}"
