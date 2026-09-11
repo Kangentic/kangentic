@@ -217,6 +217,18 @@ export interface TransientSessionSlice {
   killTransientSessionForProject: (projectId: string) => Promise<void>;
   /** Set the derived label on a transient session entry (first prompt wins). */
   setTransientSessionLabel: (sessionId: string, label: string) => void;
+  /** Re-derive every one of a project's Command Terminal branches from the
+   *  checkout's live HEAD, and mirror each change to main.
+   *
+   *  The branch is a PER-PROJECT fact: every Command Terminal of a project runs
+   *  in the same project root, so they all share one HEAD, and that HEAD is also
+   *  moved by the user's own git usage, non-worktree task spawns, and the agents
+   *  inside the terminals. The spawn-time stamp therefore goes stale, and this is
+   *  what makes the pill honest again: the layer calls it on mount (a reattach)
+   *  and on every diff-watcher fire. One git read per project per fire, however
+   *  many terminals are open. An unknown HEAD (git error) leaves the entries as
+   *  they are; a detached HEAD reads as the short sha. */
+  refreshTransientBranchesFromHead: (projectId: string, projectPath: string) => Promise<void>;
   /** Inject a live model/effort change into a transient session's PTY (no DB persistence).
    *  Surfaces a toast on failure; the live pill updates when the CLI echoes the new value. */
   injectTransientSettings: (input: SessionInjectSettingsInput) => Promise<void>;
@@ -241,6 +253,12 @@ export interface TransientSessionSlice {
 export function createTransientSessionSlice(preserved: {
   transientSessions: Record<string, TransientSessionEntry>;
 } | undefined): StateCreator<SessionStore, [], [], TransientSessionSlice> {
+  // In-flight HEAD refreshes by project id; the value records whether a fire
+  // arrived mid-read, so the read repeats once more instead of running twice
+  // at once. Function-scoped, not module-scoped: it belongs to this store
+  // instance, which is pinned across HMR with the rest of the session store.
+  const headRefreshRerun = new Map<string, boolean>();
+
   return (set, get) => ({
     commandBarVisible: false,
     setCommandBarVisible: (visible) => set({ commandBarVisible: visible }),
@@ -377,6 +395,63 @@ export function createTransientSessionSlice(preserved: {
       void window.electronAPI.sessions.setTransientLabel(sessionId, trimmed).catch(() => {
         // Best-effort - the label is already applied locally.
       });
+    },
+
+    refreshTransientBranchesFromHead: async (projectId, projectPath) => {
+      // Nothing to correct without an entry: skip the git read outright (the
+      // layer's mount fire lands before a cold spawn has written its entry).
+      const hasEntry = Object.values(get().transientSessions).some((entry) => entry.projectId === projectId);
+      if (!hasEntry) return;
+      // Guarded, not assumed: a renderer hot-swapped ahead of its preload would
+      // otherwise throw here and take the layer down with it.
+      const readHead = window.electronAPI.git.worktreeHead;
+      const mirrorBranch = window.electronAPI.sessions.setTransientBranch;
+      if (typeof readHead !== 'function') return;
+
+      if (headRefreshRerun.has(projectId)) {
+        headRefreshRerun.set(projectId, true);
+        return;
+      }
+      try {
+        do {
+          headRefreshRerun.set(projectId, false);
+          let head: { branch: string | null; sha: string | null };
+          try {
+            head = await readHead({ path: projectPath });
+          } catch {
+            // Best-effort: an unreachable main leaves the entries as they are.
+            return;
+          }
+          // A detached HEAD shows as its short sha rather than as the default
+          // branch name the picker would otherwise fall back to, which is the
+          // one thing the pill must never claim.
+          const value = head.branch ?? (head.sha ? head.sha.slice(0, 7) : null);
+          if (!value) continue;
+
+          const changedSessionIds: string[] = [];
+          set((state) => {
+            let next: Record<string, TransientSessionEntry> | null = null;
+            for (const [key, entry] of Object.entries(state.transientSessions)) {
+              if (entry.projectId !== projectId || entry.branch === value) continue;
+              if (!next) next = { ...state.transientSessions };
+              next[key] = { ...entry, branch: value };
+              changedSessionIds.push(entry.sessionId);
+            }
+            return next ? { transientSessions: next } : state;
+          });
+          // Mirror to main only on a real change, so a steady HEAD issues no
+          // IPC per fire. Main holds it passively for the Monitor row and a
+          // post-reload adopt; nothing here waits on it.
+          if (typeof mirrorBranch !== 'function') continue;
+          for (const sessionId of changedSessionIds) {
+            void mirrorBranch(sessionId, value).catch(() => {
+              // Best-effort - the branch is already applied locally.
+            });
+          }
+        } while (headRefreshRerun.get(projectId) === true);
+      } finally {
+        headRefreshRerun.delete(projectId);
+      }
     },
 
     injectTransientSettings: async (input) => {

@@ -3,8 +3,9 @@ import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
-/** Preset cadences for the background PR-state refresh timer. "off" disables the timer (the on-open sweep still runs). */
-const PR_REFRESH_OPTIONS: { value: string; label: string }[] = [
+/** Preset cadences for the two background timers (PR-state refresh, remote
+ *  fetch). "off" disables the timer; the on-open sweep still runs for both. */
+const INTERVAL_OPTIONS: { value: string; label: string }[] = [
   { value: '2', label: 'Every 2 minutes' },
   { value: '5', label: 'Every 5 minutes' },
   { value: '10', label: 'Every 10 minutes' },
@@ -71,7 +72,20 @@ export function GitTab({ config }: { config: AppConfig }) {
             updateProject({ git: { prRefreshIntervalMinutes: raw === 'off' ? null : parseInt(raw, 10) } });
           }}
         >
-          {PR_REFRESH_OPTIONS.map((option) => (
+          {INTERVAL_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </Select>
+      </SettingRow>
+      <SettingRow {...settingProps('git.autoFetchIntervalMinutes')}>
+        <Select
+          value={config.git.autoFetchIntervalMinutes == null ? 'off' : String(config.git.autoFetchIntervalMinutes)}
+          onChange={(event) => {
+            const raw = event.target.value;
+            updateProject({ git: { autoFetchIntervalMinutes: raw === 'off' ? null : parseInt(raw, 10) } });
+          }}
+        >
+          {INTERVAL_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </Select>

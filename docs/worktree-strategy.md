@@ -244,6 +244,40 @@ the tree is dirty. A base fetch that genuinely fails (network, credentials) duri
 decorates the labels with `(base fetch failed)` and pushes one cooldown-guarded `task:spawnWarning`
 toast per project per reason class, so "started from a stale base" is never silent.
 
+### Background remote refresh
+
+Every "behind" number the app shows (the Changes panel header, the spawn-time drift note above,
+`kangentic_list_worktrees`) is measured against remote-tracking refs, and until this scheduler
+those refs were only refreshed when someone opened a Changes panel or dropped a task on Done, so a
+project nobody had touched in a week reported week-old counts. `src/main/git/git-fetch-scheduler.ts`
+sweeps the FOCUSED project's remotes on every `PROJECT_OPEN` and then on a timer set by
+`git.autoFetchIntervalMinutes` (default 5, `null` = off; the on-open sweep still runs). It mirrors
+`prRefreshScheduler` ([pr-integration.md](pr-integration.md#the-scheduler)) line for line: one active
+timer, an immediate deferred sweep, re-armed after a config change, torn down on project switch,
+project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogContext` with each tick
+wrapped inside it.
+
+A sweep is one `fetchAllRemotesIfStale(projectPath, { nonInteractive: true })`, the same throttled,
+5s-bounded, never-rejecting `git fetch --all --prune` the Changes panel mount and the Done probe run,
+queued through `WorktreeManager.withGitLock` at BACKGROUND priority so it never delays a waiting
+user-initiated git op and never contends with a `worktree add` on the `.git` lock. The 30s throttle
+is a floor under the schedule, not the schedule. `--prune` therefore runs periodically now, not only
+on the Done probe: a remote-deleted branch loses its `origin/<branch>` ref within one interval.
+
+Two things are deliberate. The scheduler's fetches run with `GIT_TERMINAL_PROMPT=0` and
+`GCM_INTERACTIVE=never` (`nonInteractiveGitEnv` in `fetch-throttle.ts`): a fetch on a timer has no
+user gesture behind it, so git's own terminal prompt and Git Credential Manager's dialog are
+disabled rather than merely unlikely. An expired credential classifies as `auth`, leaves the
+throttle cache unset, and degrades to "no refresh". An inherited `GIT_ASKPASS` / `SSH_ASKPASS`
+helper or an ssh passphrase prompt is not suppressed; the fetch's 5s timeout bounds those. And the
+sweep only fetches. It never pulls, merges, or rebases:
+keeping a tree current under a running agent is out of scope (#558), so this keeps the signal
+current while the action stays explicit ("Update from base").
+
+Only the focused project is swept. Sweeping every registered repo multiplies network cost by the
+project count and risks prompting on repos the user is not looking at; it is deferred, not
+forgotten.
+
 The two failure modes:
 
 - **A stale directory** at the computed worktree path could not be removed and is not an empty,

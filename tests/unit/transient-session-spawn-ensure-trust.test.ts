@@ -58,11 +58,13 @@ vi.mock('node:fs', () => ({
 vi.mock('uuid', () => ({ v4: vi.fn(() => 'mock-transient-task-id') }));
 
 const gitRevparseMock = vi.fn(async () => 'main\n');
+const gitStatusMock = vi.fn(async () => ({ files: [] }));
 const gitCheckoutMock = vi.fn(async () => undefined);
 const gitMergeMock = vi.fn(async () => undefined);
 vi.mock('simple-git', () => ({
   default: vi.fn(() => ({
     revparse: gitRevparseMock,
+    status: gitStatusMock,
     checkout: gitCheckoutMock,
     merge: gitMergeMock,
   })),
@@ -109,6 +111,7 @@ interface MockContext {
   currentProjectId: string | null;
   projectRepo: { getById: ReturnType<typeof vi.fn> };
   configManager: { getEffectiveConfig: ReturnType<typeof vi.fn> };
+  boardConfigManager: { getDefaultBaseBranchForPath: ReturnType<typeof vi.fn> };
   mcpServerHandle: null;
   sessionManager: { spawn: ReturnType<typeof vi.fn>; getShell: ReturnType<typeof vi.fn> };
 }
@@ -132,6 +135,9 @@ function createMockContext(): MockContext {
         mcpServer: { enabled: false },
       })),
     },
+    // The checkout target resolves the board-shared default first
+    // (resolveProjectDefaultBaseBranch); none here, so config's 'main' wins.
+    boardConfigManager: { getDefaultBaseBranchForPath: vi.fn(() => undefined) },
     mcpServerHandle: null,
     sessionManager: {
       spawn: vi.fn(async () => ({ id: 'session-1' })),

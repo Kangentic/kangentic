@@ -327,6 +327,32 @@ describe('fetchAllRemotesIfStale', () => {
     );
   });
 
+  it('inherits the process env by default, so a user-driven fetch can still prompt', async () => {
+    routeByGitSubcommand(() => Promise.resolve({ stdout: '', stderr: '' }));
+
+    await fetchAllRemotesIfStale(WORKTREE_PATH);
+
+    for (const call of mockRunGitWithTimeout.mock.calls) {
+      expect((call[2] as { env?: unknown }).env).toBeUndefined();
+    }
+  });
+
+  it('nonInteractive hands BOTH git calls an env that can never raise a credential prompt', async () => {
+    routeByGitSubcommand(() => Promise.resolve({ stdout: '', stderr: '' }));
+
+    await fetchAllRemotesIfStale(WORKTREE_PATH, { nonInteractive: true });
+
+    // The identity probe and the fetch itself: a prompt on either would hang a
+    // timer-driven sweep with no user gesture behind it.
+    expect(mockRunGitWithTimeout).toHaveBeenCalledTimes(2);
+    for (const call of mockRunGitWithTimeout.mock.calls) {
+      const env = (call[2] as { env?: NodeJS.ProcessEnv }).env;
+      expect(env).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
+      // A copy of the inherited env, not a replacement: git still needs PATH, HOME, and friends.
+      expect(env?.PATH ?? env?.Path).toBe(process.env.PATH ?? process.env.Path);
+    }
+  });
+
   it('throttles by common dir: two worktrees of the same repo share one fetch', async () => {
     routeByGitSubcommand(() => Promise.resolve({ stdout: '', stderr: '' }));
 

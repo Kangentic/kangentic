@@ -100,7 +100,18 @@ won't be found.
   `projectId` + `slot` so consumers can filter by project. There is no singleton pointer. The map is
   preserved across HMR via `import.meta.hot.data`; on a hard reload `syncSessions()` best-effort
   re-pairs surviving transient PTYs to slots. Hiding the layer (Ctrl+Shift+P / Ctrl+Shift+W /
-  backdrop click) keeps every PTY alive in the background; reopening reattaches each slot. There is
+  backdrop click) keeps every PTY alive in the background; reopening reattaches each slot. A
+  reattach NEVER fetches or checks out: the default-base checkout (plus its dirty-tree stay-put
+  guard) runs on a COLD spawn only, because moving HEAD under a running agent is the class of
+  thing #558 refused. The branch a window shows is a PER-PROJECT fact, not a per-window one
+  (every terminal of a project runs in the same project root and shares one HEAD), so the window
+  keeps no local branch state: the pill reads its map entry's `branch`, and ONE layer bridge
+  (`useTrackHeadBranch` in `CommandTerminalLayer.tsx`) re-derives every entry of the project from
+  live HEAD (`git:worktreeHead`) on mount and on every `git:diffChanged`, mirroring each change to
+  main (`session:setTransientBranch`, last write wins) so the Monitor row and a post-reload adopt
+  agree with the pill. The Changes panel embed passes the effective default base as
+  `baseBranch`, never `"HEAD"`: Working and Staged ignore it, and the Branch tab, the ahead/behind,
+  and the base badge all measure against it. There is
   NO per-window X/hide button (removed to avoid the task-detail "close this window" confusion). A
   window's Stop control destroys THAT window's session and closes the window; Stopping the last
   window hides the layer. The header is responsive (priority-plus via `useHeaderPillOverflow`): only

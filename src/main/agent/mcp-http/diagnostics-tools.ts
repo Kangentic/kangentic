@@ -222,7 +222,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_list_worktrees',
     {
       description:
-        'Enumerate worktrees for one or every registered project. Each record carries path, branch, dirty flag, commits ahead/behind upstream, and last-commit timestamp. Pure read-only - useful for finding a task\'s branch, locating dirty work, or reasoning about merge state. Pass `project` to limit to one project; omit to enumerate every project.',
+        'Enumerate worktrees for one or every registered project. Each record carries path, branch, the base branch its work is based on (`baseRef`: the task\'s base, else the base it was cut from, else the project default; the main checkout included), dirty flag, commits ahead/behind that base (the branch\'s own upstream only when no base resolves), and last-commit timestamp. Pure read-only, never fetches - useful for finding a task\'s branch, locating dirty work, or checking whether a tree is behind the base it was cut from. Pass `project` to limit to one project; omit to enumerate every project.',
       inputSchema: z.object({
         project: z
           .string()
@@ -242,7 +242,12 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         }
         projectId = resolved.projectId;
       }
-      const results = await enumerateWorktrees(projectId ? { projectId } : {});
+      const results = await enumerateWorktrees({
+        ...(projectId ? { projectId } : {}),
+        // The base a tree is based on lives in the task DB and the board /
+        // config defaults; the resolver reaches both, the list module neither.
+        resolveBaseRef: (input) => resolver.resolveWorktreeBaseRef(input),
+      });
       return textResult(JSON.stringify(results, null, 2), { items: results });
     },
   );

@@ -162,6 +162,10 @@ vi.mock('../../src/main/pr/pr-refresh-scheduler', () => ({
   prRefreshScheduler: { startForProject: vi.fn(), stop: vi.fn() },
 }));
 
+vi.mock('../../src/main/git/git-fetch-scheduler', () => ({
+  gitFetchScheduler: { startForProject: vi.fn(), stop: vi.fn() },
+}));
+
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { startForProject: vi.fn(), stop: vi.fn(), reconcileEmbedWorker: vi.fn() },
 }));
@@ -201,6 +205,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 
 import { trackEvent } from '../../src/main/analytics/analytics';
 import { isShuttingDown } from '../../src/main/shutdown-state';
+import { gitFetchScheduler } from '../../src/main/git/git-fetch-scheduler';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   registerProjectHandlers,
@@ -400,6 +405,25 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     if (!handler) throw new Error('PROJECT_OPEN handler was not registered');
     await handler(null, project.id);
   }
+
+  it('starts the git-fetch scheduler for the opened project', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+
+    await registerAndOpen(context, project);
+
+    expect(vi.mocked(gitFetchScheduler.startForProject)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(gitFetchScheduler.startForProject)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: project.id, path: project.path }),
+    );
+
+    // Let the deferred cold-open block finish so it does not leak into the
+    // next test.
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  });
 
   it('adds recoveredProjects synchronously, before the deferred cold-open block runs', async () => {
     const context = createMockContext();
@@ -759,6 +783,22 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     await vi.waitFor(() => {
       expect(state.callOrder).toContain('autoSpawnTasks');
     }, { timeout: 2000 });
+  });
+
+  it('cleanupProject stops the git-fetch scheduler even when the project path no longer exists on disk', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    // cleanupProject calls boardConfigManager.detach() unconditionally; the
+    // shared mock context does not define it.
+    Object.assign(context.boardConfigManager, { detach: vi.fn() });
+    // Deliberately NOT added to state.existingPaths: simulates a project
+    // whose folder was moved or deleted, driving the path-exists guard's
+    // early return branch. gitFetchScheduler.stop must still run - it sits
+    // BEFORE that guard in cleanupProject, alongside prRefreshScheduler.stop.
+
+    await cleanupProject(asIpcContext(context), project.id, project.path);
+
+    expect(vi.mocked(gitFetchScheduler.stop)).toHaveBeenCalledWith(project.id);
   });
 });
 

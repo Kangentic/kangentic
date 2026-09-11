@@ -25,6 +25,7 @@ import { DEFAULT_SWIMLANES } from '../../db/migrations/default-data';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
+import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
@@ -102,9 +103,11 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // factory stops resolving CommandContexts for this project.
   context.boardConfigManager.detach();
 
-  // Stop this project's background PR-refresh timer (no-op if it is not the
-  // active one). Before the path-exists guard so both cleanup paths tear it down.
+  // Stop this project's background PR-refresh and remote-fetch timers (no-op if
+  // it is not the active one). Before the path-exists guard so both cleanup
+  // paths tear them down.
   prRefreshScheduler.stop(projectId);
+  gitFetchScheduler.stop(projectId);
   retrievalService.stop(projectId);
 
   // Guard: project path must exist
@@ -736,6 +739,12 @@ export function registerProjectHandlers(context: IpcContext): void {
     // merged off-app while away is reflected on return; the sweep is deferred off
     // the IPC critical path and the timer is torn down on switch/delete/shutdown.
     prRefreshScheduler.startForProject(context, project);
+
+    // Background remote-tracking refresh, same lifecycle: an immediate deferred
+    // `git fetch --all --prune` so every "behind" count is measured against
+    // current refs the moment a project opens, then the periodic timer. Fetch
+    // only; nothing is pulled, merged, or rebased.
+    gitFetchScheduler.startForProject(context, project);
 
     // Background conversation-memory indexing: a deferred, switch-guarded
     // backfill sweep of unindexed sessions. Live sessions are indexed via the

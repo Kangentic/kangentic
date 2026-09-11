@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
-import simpleGit from 'simple-git';
+import simpleGit, { type SimpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { fetchIfStale } from '../../git/fetch-throttle';
+import { resolveProjectDefaultBaseBranch } from '../helpers/default-base-branch';
 import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
@@ -49,8 +50,13 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
 
     // Fetch latest from origin and checkout the requested branch before spawning.
     // This ensures Claude Code loads up-to-date commands/skills from the remote.
+    // This runs on a COLD spawn only: reattaching to a live PTY never touches
+    // git, so a reattach can never move HEAD out from under a running agent.
     const git = simpleGit(projectRoot);
-    const targetBranch = input.branch || config.git.defaultBaseBranch || 'main';
+    // The board-overlaid default, the same chain every task spawn and the
+    // renderer's branch pill resolve, so main's checkout target and the pill's
+    // default cannot disagree when kangentic.json sets the base.
+    const targetBranch = input.branch || resolveProjectDefaultBaseBranch(context, projectRoot);
 
     // Best-effort fetch from origin (throttled, network-failure-safe)
     const startPoint = await fetchIfStale(git, projectRoot, targetBranch);
@@ -59,17 +65,32 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     let checkoutError: string | undefined;
     try {
       const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-      if (currentBranch !== targetBranch) {
-        await git.checkout(targetBranch);
-      }
-      branch = targetBranch;
+      // An AUTO checkout (no branch picked) has no user gesture behind it beyond
+      // opening a terminal, and a plain `git checkout` carries non-conflicting
+      // uncommitted changes onto the base branch silently, so someone with work
+      // in progress on a feature branch would find it sitting on the base. Stay
+      // put when tracked files are modified. An explicit picker choice keeps
+      // git's own behavior (and the failure toast below). Probed only when a
+      // switch is actually due; untracked files do not count, matching
+      // WorktreeManager.checkoutBranch.
+      const stayPut = currentBranch !== targetBranch && !input.branch && (await hasTrackedChanges(git));
+      if (stayPut) {
+        branch = currentBranch;
+        checkoutError = `Staying on "${currentBranch}": the working tree has uncommitted changes, so this terminal did not switch to "${targetBranch}".`;
+      } else {
+        if (currentBranch !== targetBranch) {
+          await git.checkout(targetBranch);
+        }
+        branch = targetBranch;
 
-      // Fast-forward merge to incorporate fetched remote changes
-      if (startPoint.startsWith('origin/')) {
-        try {
-          await git.merge([startPoint, '--ff-only']);
-        } catch {
-          // ff-only failed (dirty tree, diverged history) - use local state
+        // Fast-forward merge to incorporate fetched remote changes. Skipped on
+        // the stay-put path above: it would fast-forward the WRONG branch.
+        if (startPoint.startsWith('origin/')) {
+          try {
+            await git.merge([startPoint, '--ff-only']);
+          } catch {
+            // ff-only failed (dirty tree, diverged history) - use local state
+          }
         }
       }
     } catch (error) {
@@ -161,6 +182,13 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     context.sessionManager.setCommandTerminalLabel(sessionId, label);
   });
 
+  // The branch the terminal's checkout is actually on, re-derived from live
+  // HEAD by the renderer. Same passive-holder shape as the label, but last
+  // write wins: the Monitor row and a post-reload adopt read it back.
+  ipcMain.handle(IPC.SESSION_SET_TRANSIENT_BRANCH, (_, sessionId: string, branch: string) => {
+    context.sessionManager.setCommandTerminalBranch(sessionId, branch);
+  });
+
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
     // Capture session info before removal for cleanup
     const session = context.sessionManager.getSession(sessionId);
@@ -234,4 +262,16 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       return { ok: true, injected: true };
     },
   );
+}
+
+/**
+ * Whether the working tree has modifications to TRACKED files (staged or not).
+ * Untracked files are ignored: a checkout carries them along harmlessly, and
+ * counting them would pin every terminal to its current branch the moment a
+ * build artifact appears. The same filter `WorktreeManager.checkoutBranch` and
+ * `TASK_UPDATE_FROM_BASE` use.
+ */
+async function hasTrackedChanges(git: SimpleGit): Promise<boolean> {
+  const status = await git.status();
+  return status.files.some((file) => file.index !== '?' && file.working_dir !== '?');
 }

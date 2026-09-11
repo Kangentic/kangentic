@@ -39,7 +39,7 @@ vi.mock('../../src/main/git/diff-service', () => ({
   },
 }));
 
-vi.mock('../../src/main/git/worktree-head', () => ({ readWorktreeHead: vi.fn() }));
+vi.mock('../../src/main/git/worktree-head', () => ({ readWorktreeHead: vi.fn(), readWorktreeHeadUnqueued: vi.fn() }));
 vi.mock('../../src/main/git/branch-summary', () => ({ getBranchSummary: vi.fn() }));
 vi.mock('../../src/main/git/commit-graph', () => ({ getCommitGraph: vi.fn() }));
 vi.mock('../../src/main/git/file-history', () => ({ getFileHistory: vi.fn() }));
@@ -50,6 +50,7 @@ vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }
 
 import { registerGitDiffHandlers } from '../../src/main/ipc/handlers/git-diff';
 import { getBranchSummary } from '../../src/main/git/branch-summary';
+import { readWorktreeHeadUnqueued } from '../../src/main/git/worktree-head';
 import { fetchAllRemotesIfStale } from '../../src/main/git/fetch-throttle';
 
 const WORKTREE_PATH_A = '/mock/worktrees/task-a';
@@ -263,5 +264,39 @@ describe('registerGitDiffHandlers GIT_BRANCH_SUMMARY refreshRemote flag', () => 
     await handler(null, { projectPath: '/mock/project', baseBranch: 'main', refreshRemote: true });
 
     expect(fetchAllRemotesIfStale).toHaveBeenCalledWith('/mock/project');
+  });
+});
+
+describe('registerGitDiffHandlers GIT_WORKTREE_HEAD', () => {
+  type HeadHandler = (event: unknown, input: { path: string }) => Promise<unknown>;
+
+  function getHeadHandler(): HeadHandler {
+    const entry = mockHandle.mock.calls.find((call) => call[0] === IPC.GIT_WORKTREE_HEAD);
+    if (!entry) throw new Error('ipcMain.handle was never called with IPC.GIT_WORKTREE_HEAD');
+    return entry[1] as HeadHandler;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readWorktreeHeadUnqueued).mockResolvedValue({ branch: 'feature/auth', sha: 'abc1234def' });
+    vi.mocked(fetchAllRemotesIfStale).mockResolvedValue(undefined);
+
+    const context = {
+      mainWindow: {},
+      diffWatcher: { subscribe: vi.fn(() => vi.fn()) },
+    } as unknown as IpcContext;
+    registerGitDiffHandlers(context);
+  });
+
+  it('reads the live HEAD of the given path through the UNQUEUED reader, never fetching', async () => {
+    const handler = getHeadHandler();
+
+    const result = await handler(null, { path: '/mock/project' });
+
+    // Unqueued: the branch pill's refresh is an interactive path and must not
+    // wait behind the global read cap (the same contract as the branch summary).
+    expect(readWorktreeHeadUnqueued).toHaveBeenCalledWith('/mock/project');
+    expect(fetchAllRemotesIfStale).not.toHaveBeenCalled();
+    expect(result).toEqual({ branch: 'feature/auth', sha: 'abc1234def' });
   });
 });

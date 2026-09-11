@@ -3,14 +3,14 @@ import simpleGit from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { DiffSubscriptionRegistry } from '../../git/diff-subscription-registry';
-import { readWorktreeHead } from '../../git/worktree-head';
+import { readWorktreeHead, readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { getBranchSummary } from '../../git/branch-summary';
 import { getCommitGraph } from '../../git/commit-graph';
 import { getFileHistory } from '../../git/file-history';
 import { getBlame } from '../../git/blame';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
-import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
+import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitPendingChangesInput, GitPendingChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 
@@ -174,6 +174,13 @@ export function registerGitDiffHandlers(context: IpcContext): void {
       await fetchAllRemotesIfStale(input.worktreePath ?? input.projectPath);
     }
     return getBranchSummary(input);
+  });
+
+  // The Command Terminal's branch pill re-derives from this on reattach and on
+  // every watcher fire. Unqueued for the same reason as the branch summary: an
+  // interactive refresh must not wait behind the global read cap. Never fetches.
+  ipcMain.handle(IPC.GIT_WORKTREE_HEAD, (_, input: GitWorktreeHeadInput): Promise<GitWorktreeHeadResult> => {
+    return readWorktreeHeadUnqueued(input.path);
   });
 
   ipcMain.handle(IPC.GIT_COMMIT_GRAPH, (_, input: GitCommitGraphInput) => {

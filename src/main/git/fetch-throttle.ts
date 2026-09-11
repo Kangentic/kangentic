@@ -128,6 +128,31 @@ export function clearFetchCache(): void {
   inFlightAllRemoteFetches.clear();
 }
 
+/**
+ * Environment for a fetch that runs with no user gesture behind it (the
+ * background scheduler). `GIT_TERMINAL_PROMPT=0` makes git fail instead of
+ * prompting on the terminal path (stdin is already closed, so that path could
+ * only ever hang), and `GCM_INTERACTIVE=never` stops Git Credential Manager,
+ * a GUI helper that does not read stdin, from raising a credentials dialog
+ * for a repo whose token has expired. The failure classifies as `auth`, the
+ * throttle cache stays unset, and the repo degrades to "no refresh" rather
+ * than a dialog or a retry loop. User-driven fetches keep the inherited env:
+ * a prompt that follows a click is at least explicable.
+ *
+ * Those two variables cover git's own prompt and GCM only. An inherited
+ * `GIT_ASKPASS` / `SSH_ASKPASS` helper (an integrated terminal sets one), a
+ * `core.askPass` setting, and an ssh passphrase prompt are not suppressed
+ * here; the 5s timeout is what bounds those.
+ */
+export function nonInteractiveGitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+}
+
+export interface FetchAllRemotesOptions {
+  /** Run with `nonInteractiveGitEnv()` so the fetch can never prompt. */
+  nonInteractive?: boolean;
+}
+
 function fetchCacheKey(projectPath: string, branch: string): string {
   const normalizedPath = process.platform === 'win32' ? projectPath.toLowerCase() : projectPath;
   return `${normalizedPath}:${branch}`;
@@ -214,13 +239,20 @@ export async function fetchIfStale(
  * Failure semantics: this never rejects. Any failure (no remote, offline,
  * timeout, ref-lock contention) is swallowed so the probe falls back to the
  * existing local refs - the behavior before this refresh existed.
+ *
+ * The in-flight dedup is shared across callers whatever their `options`: a
+ * panel-mount fetch that lands while the scheduler's non-interactive fetch is
+ * in flight rides that promise. Acceptable, because a failure leaves the cache
+ * unset and the next user-driven call retries with prompts allowed.
  */
-export async function fetchAllRemotesIfStale(checkPath: string): Promise<void> {
+export async function fetchAllRemotesIfStale(checkPath: string, options?: FetchAllRemotesOptions): Promise<void> {
+  const env = options?.nonInteractive ? nonInteractiveGitEnv() : undefined;
   let repoIdentityPath = checkPath;
   try {
     const commonDirOutput = (
       await runGitWithTimeout(checkPath, ['rev-parse', '--git-common-dir'], {
         timeoutMs: PROBE_FETCH_TIMEOUT_MS,
+        env,
       })
     ).stdout.trim();
     if (commonDirOutput) {
@@ -247,6 +279,7 @@ export async function fetchAllRemotesIfStale(checkPath: string): Promise<void> {
     try {
       await runGitWithTimeout(checkPath, ['fetch', '--all', '--prune', '--quiet'], {
         timeoutMs: PROBE_FETCH_TIMEOUT_MS,
+        env,
       });
       fetchCache.set(cacheKey, Date.now());
     } catch (error) {

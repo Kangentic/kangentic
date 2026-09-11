@@ -120,6 +120,7 @@ describe('pickOverridableSubset', () => {
         initScript: null,
         linkNodeModules: false,
         prRefreshIntervalMinutes: 10,
+        autoFetchIntervalMinutes: null,
       },
     } as unknown as Parameters<typeof pickOverridableSubset>[0];
 
@@ -134,6 +135,8 @@ describe('pickOverridableSubset', () => {
         initScript: null,
         linkNodeModules: false,
         prRefreshIntervalMinutes: 10,
+        // null is a real value ("off"), not an absence: pruneUndefined keeps it.
+        autoFetchIntervalMinutes: null,
       },
     });
   });

@@ -6,6 +6,7 @@ import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcu
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
+import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { isGitRepo } from '../../git/git-checks';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
@@ -201,6 +202,10 @@ export function registerSystemHandlers(context: IpcContext): void {
       void import('../../pr/pr-refresh-scheduler').then(({ prRefreshScheduler }) => {
         prRefreshScheduler.startForProject(context, project);
       });
+      // Re-arm the background remote-fetch timer for the same reason. A static
+      // import: the scheduler's graph (worktree manager, fetch throttle) is
+      // already part of this module's, so there is no runtime to keep out.
+      gitFetchScheduler.startForProject(context, project);
       // Re-run the conversation-memory sweep so toggling memory.indexingEnabled
       // on takes effect without reopening the project.
       void import('../../retrieval/retrieval-service').then(({ retrievalService }) => {

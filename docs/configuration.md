@@ -56,7 +56,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 
 - `theme`
 - `agent.permissionMode`
-- `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prRefreshIntervalMinutes`
+- `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prRefreshIntervalMinutes`, `git.autoFetchIntervalMinutes`
 - `browser.enabled`, `browser.defaultUrl`
 - `agent.execution` (per-agent local/remote mode + server working directory; editable inline in the Agent tab for the currently-selected agent, but NOT seeded into new projects - see below)
 
@@ -189,6 +189,7 @@ When a project's mode for an agent is `remote`:
 | `git.initScript` | string \| null | `null` | Shell script run in each new worktree after creation (and after `node_modules` linking). Runs via the platform shell (cmd.exe on Windows, sh on POSIX). A non-zero exit, timeout (10 min cap), or cancellation fails worktree creation. |
 | `git.linkNodeModules` | boolean | `true` | Symlink the root `node_modules` into each worktree so agents skip a fresh install. Disable to let `git.initScript` install dependencies inside the worktree instead. |
 | `git.prRefreshIntervalMinutes` | number \| null | `5` | Minutes between background PR sweeps while the project is open. Each sweep refreshes linked PRs' state and merge readiness, and discovers/links a PR for an unlinked task with a live worktree. `null` = off (the on-open sweep still runs) |
+| `git.autoFetchIntervalMinutes` | number \| null | `5` | Minutes between background `git fetch --all --prune` sweeps of the open project's remotes, so ahead/behind counts and base-drift checks read current remote refs without anyone opening a panel. Fetch only, never a pull, merge, or rebase; the fetch runs with credential prompts disabled. `null` = off (the on-open sweep still runs). See [worktree-strategy.md](worktree-strategy.md#background-remote-refresh) |
 
 ### Shortcuts
 
