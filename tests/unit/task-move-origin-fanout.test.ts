@@ -27,6 +27,16 @@
  *      inside its own try/catch - so "the move threw" does not imply "the DB is
  *      unchanged". Announcing only on success would silently reproduce the very
  *      bug this whole mechanism exists to prevent.
+ *   4. WHEN the bus hears about it. The bus emits TWICE per committed move: once
+ *      at the commit point inside Phase 1, before any of the slow work (a Done
+ *      move's suspend + reap + worktree removal, an auto-spawn move's worktree
+ *      creation + spawn), and once from the settle-time `finally`. The first is
+ *      what lets a paired phone settle an optimistic move without waiting out
+ *      the desktop's tail; the second is what corrects a committed-then-rolled-
+ *      back move. The origin-keyed renderer push fires at settle time ONLY,
+ *      because two of the origin channels toast per push. The commit point also
+ *      fires the `onCommitted` option, which is how the mobile bridge verb
+ *      answers the phone inside its 10s budget.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -108,6 +118,10 @@ vi.mock('../../src/main/agent/shared', () => ({
 
 const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
+// The Done path's slow step. Default resolves at once; the commit-signal suite
+// swaps in a hand-resolved gate so it can assert what happened BEFORE the
+// removal finished.
+const mockDeleteTaskWorktree = vi.fn(async (): Promise<boolean> => true);
 
 vi.mock('../../src/main/ipc/helpers/index', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -116,8 +130,12 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   spawnAgent: vi.fn(async () => {}),
   createTransitionEngine: vi.fn(() => ({})),
   cleanupTaskResources: vi.fn(async () => {}),
-  deleteTaskWorktree: vi.fn(async () => true),
+  deleteTaskWorktree: (...args: unknown[]) => mockDeleteTaskWorktree(...args),
   autoSpawnForTask: vi.fn(async () => {}),
+  // Inert here: the Done path calls both on its way to deleteTaskWorktree, and
+  // their ordering has its own wiring test (session-leftover-reap-wiring).
+  captureSessionLeftovers: vi.fn(() => null),
+  reapSessionLeftovers: vi.fn(async () => {}),
 }));
 
 const mockAutoLinkPRForTask = vi.fn();
@@ -133,6 +151,7 @@ const TASK_TITLE = 'Move me';
 const SOURCE_LANE_ID = 'lane-source';
 const QUIET_TARGET_LANE_ID = 'lane-no-spawn';
 const SPAWNING_TARGET_LANE_ID = 'lane-spawning';
+const DONE_LANE_ID = 'lane-done';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -211,6 +230,8 @@ function makeContext(task: Task | null) {
       list: vi.fn(() => (task ? [{ ...task }] : [])),
       archive: vi.fn(),
       clearArchived: vi.fn(),
+      // The Done path clears the skip reason on its way out.
+      setWorktreeSkipReason: vi.fn(),
     },
     swimlanes: {
       getById: vi.fn((id: string) =>
@@ -222,6 +243,9 @@ function makeContext(task: Task | null) {
           // auto_spawn:true makes Phase 1 return a plan and carry into Phase 2,
           // which is the only way to reach the abort path.
           [SPAWNING_TARGET_LANE_ID]: makeSwimlane(SPAWNING_TARGET_LANE_ID, { auto_spawn: true }),
+          // role:done is the one destination whose slow work (suspend, reap,
+          // worktree removal) runs INSIDE the Phase 1 lock, after the commit.
+          [DONE_LANE_ID]: makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false }),
         })[id] ?? null,
       ),
       list: vi.fn(() => []),
@@ -450,7 +474,8 @@ describe('a committed move announces even when the move later fails', () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    // Commit-time emit plus the settle-time one; the push is settle-only.
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
     expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
     // moveSucceeded is set once runMove resolves without throwing, and the
     // abort path returns rather than throwing - so PR linking, which is gated
@@ -473,8 +498,9 @@ describe('a committed move announces even when the move later fails', () => {
     ).rejects.toThrow('Worktree setup failed');
 
     // The rollback is best-effort and its CAS can decline to revert, so a
-    // throw is not proof the DB is unchanged.
-    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    // throw is not proof the DB is unchanged. Two emits: the commit-time one
+    // fired before Phase 2 threw, and the settle-time one after the rollback.
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
 
     // PR linking is the one thing that stays success-only, matching what the
     // call sites did before they handed this over.
@@ -571,6 +597,141 @@ describe('the announce block never clobbers the move outcome', () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the commit signal fires when the row lands, before the slow work', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    mockDeleteTaskWorktree.mockResolvedValue(true);
+  });
+
+  /** Drain microtasks until `condition` holds, or fail loudly instead of spinning. */
+  async function settleUntil(condition: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (condition()) return;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    throw new Error('condition never became true');
+  }
+
+  it('emits on the bus before Phase 2 starts, and again once the move settles', async () => {
+    // The spawning lane makes Phase 1 return a plan and carry into Phase 2, so
+    // ensureTaskWorktree is the first slow step. Recording the bus count from
+    // INSIDE it is what pins the ordering, not just the total.
+    let emitsSeenByPhase2 = -1;
+    const context = makeContext(makeTask());
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      emitsSeenByPhase2 = context.boardEvents.emitBoardChanged.mock.calls.length;
+      return null;
+    });
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: SPAWNING_TARGET_LANE_ID, targetPosition: 0 },
+      'renderer',
+    );
+
+    expect(emitsSeenByPhase2).toBe(1);
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
+    // Both emits carry the same shape: same row, same kind.
+    expect(context.boardEvents.emitBoardChanged.mock.calls[0]).toEqual(context.boardEvents.emitBoardChanged.mock.calls[1]);
+  });
+
+  it('fires onCommitted on a Done move while the worktree removal is still running', async () => {
+    // The Done path is the one that hurts: suspend, reap and deleteTaskWorktree
+    // all run INSIDE the Phase 1 lock, after the commit. Holding the removal
+    // open by hand (rather than a 15s fake timer) proves the ack does not wait
+    // on it at all, with no dependency on what the lock's queue schedules.
+    let releaseRemoval: (deleted: boolean) => void = () => {};
+    mockDeleteTaskWorktree.mockImplementation(
+      () => new Promise<boolean>((resolve) => { releaseRemoval = resolve; }),
+    );
+    const onCommitted = vi.fn();
+    const context = makeContext(makeTask({ worktree_path: '/mock/project/.kangentic/worktrees/1' }));
+
+    let movePromiseSettled = false;
+    const move = handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'mobile',
+      undefined,
+      undefined,
+      { onCommitted },
+    ).finally(() => { movePromiseSettled = true; });
+
+    // Released in a `finally` so a failed assertion here cannot leave the
+    // move holding TASK_ID's lifecycle lock and time out every later case
+    // that moves the same task.
+    try {
+      await settleUntil(() => mockDeleteTaskWorktree.mock.calls.length > 0);
+
+      // The removal is in flight and the move has NOT settled, yet the caller
+      // has its commit signal and the bus has its first emit.
+      expect(movePromiseSettled).toBe(false);
+      expect(onCommitted).toHaveBeenCalledTimes(1);
+      expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+      expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledWith({
+        projectId: 'proj-test',
+        change: 'task-updated',
+        ids: [TASK_ID],
+      });
+      // The renderer push is settle-only, so nothing yet.
+      expect(pushedChannels(context)).toEqual([]);
+      // And the row really did land before the signal: move + archive both ran.
+      const { tasks } = mockGetProjectRepos.mock.results[0].value;
+      expect(tasks.move).toHaveBeenCalledTimes(1);
+      expect(tasks.archive).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseRemoval(true);
+    }
+    await move;
+
+    expect(onCommitted).toHaveBeenCalledTimes(1);
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+  });
+
+  it('does not fire onCommitted when the move never committed', async () => {
+    const onCommitted = vi.fn();
+    const context = makeContext(null);
+    await expect(
+      handleTaskMove(
+        context as never,
+        { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+        'mobile',
+        undefined,
+        undefined,
+        { onCommitted },
+      ),
+    ).rejects.toThrow();
+
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+  });
+
+  it('a throwing onCommitted callback neither rejects the move nor skips the settle announce', async () => {
+    // The callback runs inside the Phase 1 lock, right before the Done cleanup.
+    // A throw there that escaped would leave the task archived with its PTY
+    // still running and the worktree still on disk.
+    const context = makeContext(makeTask({ worktree_path: '/mock/project/.kangentic/worktrees/1' }));
+
+    await expect(
+      handleTaskMove(
+        context as never,
+        { taskId: TASK_ID, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+        'mobile',
+        undefined,
+        undefined,
+        { onCommitted: () => { throw new Error('caller exploded'); } },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockDeleteTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
   });
 });
