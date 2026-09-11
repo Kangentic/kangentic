@@ -3483,5 +3483,93 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test('the pill keeps the pre-switch branch while the respawn is pending, not the project default', async () => {
+      // CommandTerminalWindow reads the branch from the transientSessions map
+      // entry, never a local copy - EXCEPT for one gap: killTransientSessionBySlot
+      // deletes the map entry synchronously (before handleBranchChange's second
+      // await even starts), and the entry does not reappear until the respawn's
+      // IPC round trip resolves. Without `lastKnownBranchRef`, the pill would fall
+      // through to BranchPicker's `defaultBranch` fallback for that whole window.
+      //
+      // The project's configured default ('trunk') is deliberately different from
+      // the pre-switch branch ('main'): a broken implementation (no ref, falls to
+      // defaultBranch) and the fixed one (holds 'main') then assert to different
+      // strings instead of coincidentally agreeing.
+      const preConfigWithHeldRespawn = branchSwitchPreConfig() + `
+        window.__mockPreConfigure(function (state) {
+          state.config.git.defaultBaseBranch = 'trunk';
+        });
+
+        // Wrap the counter-based spawnTransient from branchSwitchPreConfig: the
+        // FIRST call (cold spawn) passes straight through; the SECOND call (the
+        // branch-switch respawn) is held open until the test explicitly releases
+        // it via window.__resolveHeldRespawn(), so the gap between the kill's
+        // scrub and the respawn's write is observable instead of a same-tick
+        // flicker.
+        var __originalSpawnTransient = window.electronAPI.sessions.spawnTransient;
+        var __spawnAttempts = 0;
+        window.__respawnPending = false;
+        window.electronAPI.sessions.spawnTransient = function (input) {
+          __spawnAttempts += 1;
+          if (__spawnAttempts === 1) return __originalSpawnTransient(input);
+          window.__respawnPending = true;
+          return new Promise(function (resolve) {
+            window.__resolveHeldRespawn = function () {
+              __originalSpawnTransient(input).then(function (result) {
+                window.__respawnPending = false;
+                resolve(result);
+              });
+            };
+          });
+        };
+      `;
+
+      const { browser, page } = await launchWithState(preConfigWithHeldRespawn);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+
+        const chip = page.getByTestId('branch-picker-chip');
+        await expect(chip).toContainText('main', { timeout: 8000 });
+
+        await chip.click();
+        const developButton = page.locator('button:has-text("develop")');
+        await developButton.waitFor({ state: 'visible' });
+        await developButton.click();
+
+        // The respawn attempt has been made and is now held pending. Because
+        // handleBranchChange awaits the kill before ever calling
+        // spawnTransientSession, reaching this point proves the kill's
+        // synchronous map-entry scrub has already run.
+        await expect.poll(
+          async () => page.evaluate(() => (window as unknown as { __respawnPending?: boolean }).__respawnPending === true),
+          { timeout: 8000 },
+        ).toBe(true);
+
+        // The map entry is genuinely gone during the gap - this is not a
+        // same-tick flicker a poll could race past.
+        const entriesDuringGap = await transientEntriesFor(page, BRANCH_SWITCH_PROJECT_ID);
+        expect(entriesDuringGap).toEqual([]);
+
+        // The pill still names the branch the terminal was actually on, not the
+        // project's configured default and not empty.
+        await expect(chip).toContainText('main');
+        await expect(chip).not.toContainText('trunk');
+
+        // Release the held respawn: the new entry lands and the pill follows it.
+        await page.evaluate(() => (window as unknown as { __resolveHeldRespawn: () => void }).__resolveHeldRespawn());
+
+        await expect.poll(async () => {
+          const entries = await transientEntriesFor(page, BRANCH_SWITCH_PROJECT_ID);
+          return entries[0]?.branch;
+        }, { timeout: 8000 }).toBe('develop');
+        await expect(chip).toContainText('develop', { timeout: 8000 });
+      } finally {
+        await browser.close();
+      }
+    });
   });
 });
