@@ -1109,6 +1109,39 @@ describe('linkPRForTask inferred tiers never take a PR or branch another task ho
     }));
     expect(refusalLines()).toHaveLength(1);
   });
+
+  it('tier 6: a refused hit does not swallow a degrade on the OTHER candidate, and records no branch for either', async () => {
+    // Two branches share the tip. One resolves to a PR another task already
+    // holds (refused); the other's resolve degrades (say `az` timed out on the
+    // second candidate in the same pass). A refusal must fall through to the
+    // ladder's end-of-function `degrade.pending()` rethrow, not return early:
+    // an early `return null` on refusal would swallow the pending degrade, and
+    // the pass would read as a confident `not-found` (which clears a real
+    // stale link) instead of `resolver-unavailable` (which preserves it).
+    git.sha = HEX_SHA;
+    git.aheadCount = '2';
+    conn.byCommit = null;
+    git.pointsAtRefs = ['refs/remotes/origin/held-branch', 'refs/remotes/origin/flaky-branch'];
+    conn.byBranch = (_cwd: unknown, branch: unknown) => {
+      if (branch === 'held-branch') return resolved(388);
+      if (branch === 'flaky-branch') return new PRResolverUnavailableError('az timed out');
+      return null;
+    };
+    const holder = holderOfPR();
+    const updateSpy = vi.fn();
+    const task = worktreeTask({ headSha: HEX_SHA });
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy, siblings: [holder] }));
+    // Both candidates ran - the degrade on the second one did not abort the loop.
+    expect(queriedBranches()).toEqual(['real-branch', 'held-branch', 'flaky-branch']);
+    expect(result.status).toBe('resolver-unavailable');
+    expect(result.message).toMatch(/az timed out/);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result.task?.pr_number).toBeNull();
+    expect(result.task?.pushed_branch).toBeNull();
+    const lines = refusalLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Refused PR #388 by remote tip');
+  });
 });
 
 /**
