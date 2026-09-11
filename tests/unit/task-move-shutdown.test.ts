@@ -439,6 +439,15 @@ describe('handleTaskMove shutdown protection', () => {
     expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(1);
     // Phase 3 spawn must NOT run.
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+
+    // The two announce points straddle the flip: the commit-time bus emit
+    // fired inside Phase 1, before ensureTaskWorktree flipped the flag, and
+    // the settle-time emit plus the renderer push were then gated. Exactly one
+    // emit pins that the shared closure re-reads isShuttingDown() on EVERY
+    // call rather than capturing it once: a captured value would emit twice,
+    // and dropping the commit-time emit would emit zero times.
+    expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
     // The Phase 3 try/finally still clears spawn progress so the renderer UI
     // doesn't get stuck on "starting agent".
     expect(mockClearSpawnProgress).toHaveBeenCalledWith(
