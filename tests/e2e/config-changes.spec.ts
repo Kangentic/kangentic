@@ -73,6 +73,36 @@ async function waitForRunningCount(page: Page, count: number, timeoutMs = 15000)
 }
 
 /**
+ * Wait for one session to leave `running` via IPC.
+ *
+ * A kill on a just-spawned session writes the agent's exit sequence and
+ * force-kills the PTY 1500 ms later (SessionManager.kill's young-session
+ * grace, .claude/rules/pty-teardown-grace.md). The mock CLI exits on the
+ * sequence at once, but the shell hosting it lives until the force-kill, and
+ * the row stays `running` until the PTY itself exits. So a caller that reads
+ * the running set after a kill must wait for THIS, not a fixed sleep.
+ *
+ * expect.poll, not page.waitForFunction: waitForFunction resolves on the FIRST
+ * evaluation of an async predicate whatever it resolves to (measured: it
+ * returned in 3 ms with the session still running), while expect.poll awaits
+ * the predicate and keeps polling until it is true.
+ */
+async function waitForSessionExited(page: Page, sessionId: string, timeoutMs = 15000): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const sessions = await page.evaluate(async () => {
+          return (window as any).electronAPI.sessions.list();
+        });
+        const session = sessions.find((s: any) => s.id === sessionId);
+        return !session || session.status !== 'running';
+      },
+      { timeout: timeoutMs, intervals: [100, 250, 500] },
+    )
+    .toBe(true);
+}
+
+/**
  * Get session counts by status via IPC.
  */
 async function getSessionCounts(page: Page): Promise<{ running: number; queued: number; exited: number }> {
@@ -221,12 +251,17 @@ test.describe('Claude Agent -- Config Changes During Active Sessions', () => {
     });
     expect(runningSessions.length).toBeGreaterThanOrEqual(2);
 
-    // Kill all running sessions except one
+    // Kill all running sessions except one. Wait for each kill to land
+    // (the row leaves `running` only when the PTY exits, up to 1500 ms after
+    // the kill for a young session) before the next read of the running set;
+    // a fixed sleep shorter than that re-listed the killed session as running,
+    // and Step 7 then re-killed it instead of the survivor.
     for (let index = 0; index < runningSessions.length - 1; index++) {
-      await page.evaluate(async (sessionId) => {
-        await window.electronAPI.sessions.kill(sessionId);
-      }, runningSessions[index]);
-      await page.waitForTimeout(1000);
+      const sessionId = runningSessions[index];
+      await page.evaluate(async (id) => {
+        await window.electronAPI.sessions.kill(id);
+      }, sessionId);
+      await waitForSessionExited(page, sessionId);
     }
 
     // After killing all but one, should have exactly 1 running (maxConcurrent=1)
