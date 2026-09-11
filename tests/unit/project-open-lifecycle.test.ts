@@ -214,6 +214,7 @@ import {
   cleanupProject,
 } from '../../src/main/ipc/handlers/projects';
 import { ensureGitignore } from '../../src/main/ipc/helpers';
+import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project } from '../../src/shared/types';
@@ -799,6 +800,65 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     await cleanupProject(asIpcContext(context), project.id, project.path);
 
     expect(vi.mocked(gitFetchScheduler.stop)).toHaveBeenCalledWith(project.id);
+  });
+
+  it('kills and captures awaitExit for every task session before removing any, and removes wait for both exits', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    // cleanupProject calls boardConfigManager.detach() unconditionally; the
+    // shared mock context does not define it.
+    Object.assign(context.boardConfigManager, { detach: vi.fn() });
+    state.existingPaths.add(project.path);
+
+    const timeline: string[] = [];
+    const exitDeferreds = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+    Object.assign(context.sessionManager, {
+      kill: vi.fn((sessionId: string) => { timeline.push(`kill:${sessionId}`); }),
+      awaitExit: vi.fn((sessionId: string) => {
+        timeline.push(`awaitExit:${sessionId}`);
+        const deferred = createDeferred();
+        exitDeferreds.set(sessionId, deferred);
+        return deferred.promise;
+      }),
+      remove: vi.fn((sessionId: string) => { timeline.push(`remove:${sessionId}`); }),
+    });
+
+    // The mocked TaskRepository class only defines countAll (see the module
+    // mock above); patch `list` on its prototype for this test only so
+    // cleanupProject sees two tasks with live sessions, then remove the patch
+    // so later tests keep relying on taskRepo.list() throwing (see the two
+    // cleanupProject tests above).
+    const tasks = [
+      { id: 'task-1', session_id: 'session-1', worktree_path: null },
+      { id: 'task-2', session_id: 'session-2', worktree_path: null },
+    ];
+    (TaskRepository.prototype as unknown as { list: () => typeof tasks }).list = () => tasks;
+
+    try {
+      const cleanupPromise = cleanupProject(asIpcContext(context), project.id, project.path);
+
+      // The kill-then-capture loop has no await inside it, so by the time the
+      // call above returns control, both sessions have already been killed
+      // and their exits captured - before the code ever reaches
+      // `await Promise.all(sessionExits)`.
+      expect(timeline).toEqual([
+        'kill:session-1', 'awaitExit:session-1',
+        'kill:session-2', 'awaitExit:session-2',
+      ]);
+      expect(context.sessionManager.remove).not.toHaveBeenCalled();
+
+      exitDeferreds.get('session-1')!.resolve();
+      exitDeferreds.get('session-2')!.resolve();
+      await cleanupPromise;
+
+      expect(timeline).toEqual([
+        'kill:session-1', 'awaitExit:session-1',
+        'kill:session-2', 'awaitExit:session-2',
+        'remove:session-1', 'remove:session-2',
+      ]);
+    } finally {
+      delete (TaskRepository.prototype as unknown as { list?: unknown }).list;
+    }
   });
 });
 

@@ -171,7 +171,8 @@ function makeContext(options: ContextOptions = {}) {
     sessionManager: {
       listSessions: vi.fn(() => options.sessions ?? []),
       suspend: vi.fn(async () => { callOrder.push('suspend'); }),
-      kill: vi.fn(async () => { callOrder.push('kill'); }),
+      kill: vi.fn(() => { callOrder.push('kill'); }),
+      awaitExit: vi.fn(async () => { callOrder.push('awaitExit'); }),
     },
     recoveredProjects: new Set<string>(['project-1']),
     snapshottedProjects: new Set<string>(['project-1']),
@@ -190,6 +191,12 @@ function makeContext(options: ContextOptions = {}) {
 
 function asIpcContext(context: ReturnType<typeof makeContext>): IpcContext {
   return context as unknown as IpcContext;
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolveFn) => { resolve = resolveFn; });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -332,6 +339,60 @@ describe('relocateProject', () => {
     // Other projects' and already-exited sessions are untouched.
     expect(context.sessionManager.suspend).toHaveBeenCalledTimes(1);
     expect(context.sessionManager.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('kills and captures awaitExit for every transient session before suspending any task session, waiting for both exits', async () => {
+    const timeline: string[] = [];
+    const exitDeferreds = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+
+    const transientSessionA = {
+      id: 'pty-transient-a', taskId: '', projectId: 'project-1', status: 'running', transient: true,
+    } as unknown as Session;
+    const transientSessionB = {
+      id: 'pty-transient-b', taskId: '', projectId: 'project-1', status: 'running', transient: true,
+    } as unknown as Session;
+    const taskSession = {
+      id: 'pty-task', taskId: 'task-1', projectId: 'project-1', status: 'running',
+    } as unknown as Session;
+
+    const context = makeContext({
+      sessions: [transientSessionA, transientSessionB, taskSession],
+    });
+    context.sessionManager.kill.mockImplementation((sessionId: string) => {
+      timeline.push(`kill:${sessionId}`);
+    });
+    context.sessionManager.awaitExit.mockImplementation((sessionId: string) => {
+      timeline.push(`awaitExit:${sessionId}`);
+      const deferred = createDeferred();
+      exitDeferreds.set(sessionId, deferred);
+      return deferred.promise;
+    });
+    context.sessionManager.suspend.mockImplementation(async (sessionId: string) => {
+      timeline.push(`suspend:${sessionId}`);
+    });
+
+    const relocatePromise = relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
+
+    // The kill/awaitExit loop over every transient session is fully
+    // synchronous (no await inside it), so both entries are already on the
+    // timeline before the code ever reaches `await Promise.all(transientExits)`.
+    expect(timeline).toEqual([
+      'kill:pty-transient-a', 'awaitExit:pty-transient-a',
+      'kill:pty-transient-b', 'awaitExit:pty-transient-b',
+    ]);
+    // The task-session suspend loop follows the awaited Promise.all and must
+    // not have run while both exits are still pending.
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+
+    exitDeferreds.get('pty-transient-a')!.resolve();
+    exitDeferreds.get('pty-transient-b')!.resolve();
+    await relocatePromise;
+
+    expect(timeline).toEqual([
+      'kill:pty-transient-a', 'awaitExit:pty-transient-a',
+      'kill:pty-transient-b', 'awaitExit:pty-transient-b',
+      'suspend:pty-task',
+    ]);
   });
 
   it('updates currentProjectPath and detaches the board watcher for the current project', async () => {

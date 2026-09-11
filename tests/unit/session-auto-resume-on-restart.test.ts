@@ -76,6 +76,7 @@ function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
     stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
+    allowGrace: false,
   };
 }
 

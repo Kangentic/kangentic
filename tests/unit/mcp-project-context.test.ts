@@ -86,8 +86,16 @@ import {
   propagateStrategyToLiveSessions,
   buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
+import { reapSessionLeftovers } from '../../src/main/ipc/helpers';
+import { WorktreeManager } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project, Swimlane } from '../../src/shared/types';
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolveFn) => { resolve = resolveFn; });
+  return { promise, resolve };
+}
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -706,5 +714,113 @@ describe('buildCommandContextForProject - onTasksReordered', () => {
     context.onTasksReordered(fakeSwimlane(), ['task-a']);
 
     expect(writeBackForProject).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onTaskDeleted - worktree teardown ordering (pty-teardown-grace)
+//
+// The exit promise is captured BETWEEN the kill and the remove: `remove()`
+// itself does not wait (the deferred PTY lives outside the registry row, so
+// deleting the row cannot cut its grace short), but the filesystem-touching
+// work that follows - reapSessionLeftovers and the worktree removal inside
+// worktreeManager.withLock - must wait for the real process exit, not for
+// the kill() call. The wait happens BEFORE the per-project git lock is
+// entered, so a young session's grace never head-of-line-blocks every other
+// task's worktree work in the project.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - onTaskDeleted worktree teardown ordering', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('waits for the killed session to exit before reaping leftovers or entering the worktree lock', async () => {
+    const timeline: string[] = [];
+    const exitDeferred = createDeferred();
+
+    const withLockMock = vi.fn(async (fn: () => Promise<void>) => {
+      timeline.push('withLock:enter');
+      await fn();
+      timeline.push('withLock:exit');
+    });
+    const removeWorktreeMock = vi.fn(async () => {
+      timeline.push('removeWorktree');
+      return false;
+    });
+    // A plain function expression, not an arrow function: vi.fn() invokes the
+    // implementation with `new`, and an arrow function can never be a
+    // constructor - it would throw "is not a constructor" the moment
+    // onTaskDeleted reaches `new WorktreeManager(projectPath)`.
+    vi.mocked(WorktreeManager).mockImplementationOnce(function mockWorktreeManager() {
+      return {
+        withLock: withLockMock,
+        removeWorktree: removeWorktreeMock,
+        pruneWorktrees: vi.fn(async () => {}),
+        removeBranch: vi.fn(async () => {}),
+      };
+    } as unknown as typeof WorktreeManager);
+
+    vi.mocked(reapSessionLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapSessionLeftovers');
+    });
+
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn((sessionId: string) => { timeline.push(`kill:${sessionId}`); }),
+        awaitExit: vi.fn((sessionId: string) => {
+          timeline.push(`awaitExit:${sessionId}`);
+          return exitDeferred.promise;
+        }),
+        remove: vi.fn((sessionId: string) => { timeline.push(`remove:${sessionId}`); }),
+        removeByTaskId: vi.fn(),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskDeleted({
+      id: 'task-1',
+      title: 'Task One',
+      session_id: 'session-1',
+      worktree_path: '/projects/example/.kangentic/worktrees/task-1',
+      branch_name: null,
+    } as never);
+
+    // onTaskDeleted's synchronous body (kill, capture awaitExit, remove) has
+    // already run by the time the call above returns.
+    expect(timeline).toEqual(['kill:session-1', 'awaitExit:session-1', 'remove:session-1']);
+
+    // Drain a couple of microtask ticks: the detached async IIFE must still
+    // be parked on `await sessionExited`, so neither the reap nor the
+    // worktree lock has run yet.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(timeline).toEqual(['kill:session-1', 'awaitExit:session-1', 'remove:session-1']);
+    expect(reapSessionLeftovers).not.toHaveBeenCalled();
+    expect(withLockMock).not.toHaveBeenCalled();
+
+    exitDeferred.resolve();
+    await vi.waitFor(() => {
+      expect(timeline).toContain('withLock:exit');
+    });
+
+    expect(timeline).toEqual([
+      'kill:session-1',
+      'awaitExit:session-1',
+      'remove:session-1',
+      'reapSessionLeftovers',
+      'withLock:enter',
+      'removeWorktree',
+      'withLock:exit',
+    ]);
   });
 });
