@@ -38,7 +38,10 @@ describe('handleReadBoard', () => {
     // detail_view_state / handoff_context / external_metadata are renderer- or
     // desktop-internal fields the wire mappers must strip from the snapshot.
     tasksList.mockReset().mockReturnValue([{ id: 't-1', session_id: 'sess-1', detail_view_state: 'renderer-only-blob' }]);
-    swimlanesList.mockReset().mockReturnValue([{ id: 'lane-1', handoff_context: true }]);
+    // role/auto_spawn given explicit values (rather than left undefined) so
+    // toBoardColumnWire's spawns_session computes a real, assertable boolean
+    // instead of silently deriving one from an absent field.
+    swimlanesList.mockReset().mockReturnValue([{ id: 'lane-1', handoff_context: true, role: null, auto_spawn: true }]);
     backlogList.mockReset().mockReturnValue([{ id: 'b-1', external_metadata: { secret: true } }]);
   });
 
@@ -104,7 +107,7 @@ describe('handleReadBoard', () => {
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({
       projectId: 'proj-1',
-      columns: [{ id: 'lane-1' }],
+      columns: [{ id: 'lane-1', role: null, spawns_session: true }],
       tasks: [{ id: 't-1', session_id: 'sess-1' }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),

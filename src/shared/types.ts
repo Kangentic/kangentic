@@ -623,6 +623,24 @@ export function normalizeSwimlaneRole(value: unknown): SwimlaneRole | null {
 }
 
 /**
+ * Columns that never auto-spawn, whatever the flag says.
+ *
+ * The Board Manager strips `auto_spawn` for a role column and `apply-config.ts`
+ * forces it false, but the MCP `update_column` tool writes the field with no
+ * role validation - so `update_column({ column: 'To Do', autoSpawn: true })`
+ * would otherwise spawn an agent, and a worktree, for every card in To Do.
+ * Those sessions are also unreachable afterwards: `SESSION_RESUME` refuses
+ * role 'todo', and a To Do card relies on having no session to open straight
+ * into the edit form.
+ *
+ * Also the ground truth for `spawns_session` on the mobile bridge's
+ * `BoardColumnWire` (`toBoardColumnWire` in
+ * src/main/mobile-bridge/handlers/wire-mappers.ts): a column in this set
+ * never delivers a successor session, whatever `auto_spawn` says.
+ */
+export const NEVER_AUTO_SPAWN_ROLES: ReadonlySet<SwimlaneRole> = new Set<SwimlaneRole>(['todo', 'done']);
+
+/**
  * Which session track a task runs on when it enters a column.
  * - 'main' (default): the task's main conversation (Anthropic's "main agent"),
  *   resumed as the task moves between normal columns.

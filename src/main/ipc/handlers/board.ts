@@ -56,9 +56,18 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.SWIMLANE_CREATE, (_, input) => {
-    const { swimlanes } = getProjectRepos(context);
+    // Synchronous handler: the ambient projectId cannot move under this call
+    // the way an async mutation's can (project-scoped-ipc.md), so no
+    // renderer-forwarded id is needed for the emit below.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     const result = swimlanes.create(input);
     triggerWriteBack(context);
+    // A paired phone's board snapshot is stale until it hears about a column
+    // change; only agent/MCP column edits emitted this before. The event is
+    // an invalidation signal only ({ change, ids }), so the phone re-fetches
+    // read-board rather than reading the row by id.
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [result.id] });
     return result;
   });
 
@@ -103,11 +112,19 @@ export function registerBoardHandlers(context: IpcContext): void {
       projectId,
     );
 
+    // A paired phone's board snapshot (including `spawns_session`) is stale
+    // until it hears about this edit; only agent/MCP column edits emitted
+    // this before. Invalidation signal only - the phone re-fetches read-board.
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [result.id] });
+
     return result;
   });
 
   ipcMain.handle(IPC.SWIMLANE_DELETE, (_, id) => {
-    const { swimlanes } = getProjectRepos(context);
+    // Synchronous handler: see the SWIMLANE_CREATE comment above for why the
+    // ambient projectId is safe to capture here.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     // Snapshot before the delete: pruning profiles needs the name, which is gone
     // from the DB once the row is.
     const swimlaneToDelete = swimlanes.getById(id);
@@ -125,12 +142,21 @@ export function registerBoardHandlers(context: IpcContext): void {
       );
     }
     triggerWriteBack(context);
+    // Same invalidation signal as SWIMLANE_CREATE/UPDATE. There is no
+    // 'swimlane-deleted' member on BoardChangedEvent's change union, so this
+    // names the deleted row's id under 'swimlane-updated'; a paired phone
+    // never reads that row by id, it re-fetches the whole snapshot, so the
+    // id pointing at a row that no longer exists is harmless.
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [id] });
   });
 
   ipcMain.handle(IPC.SWIMLANE_REORDER, (_, ids) => {
-    const { swimlanes } = getProjectRepos(context);
+    // Synchronous handler: see the SWIMLANE_CREATE comment above.
+    const projectId = context.currentProjectId;
+    const { swimlanes } = getProjectRepos(context, projectId);
     swimlanes.reorder(ids);
     triggerWriteBack(context);
+    if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids });
   });
 
   // === Actions ===

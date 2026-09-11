@@ -197,17 +197,88 @@ export interface SessionEventWire {
 
 // === Board ===
 
+/**
+ * The system column roles, mirroring the desktop's `SWIMLANE_ROLES` /
+ * `SwimlaneRole` (`src/shared/types.ts`). This package cannot import that
+ * file (see the module doc), so the two lists are a deliberate mirror, kept
+ * in sync by `tests/unit/protocol/board-column-role-parity.test.ts` on the
+ * desktop side rather than by a shared import.
+ */
+export const BOARD_COLUMN_ROLES = ['todo', 'done'] as const;
+
+export type BoardColumnRoleWire = (typeof BOARD_COLUMN_ROLES)[number];
+
+/** True for a column whose role is the system 'todo' role. Prefer this over a literal `=== 'todo'` comparison, which a typo makes silent. */
+export function isTodoRole(role: string | null | undefined): boolean {
+  return role === 'todo';
+}
+
+/** True for a column whose role is the system 'done' role. Prefer this over a literal `=== 'done'` comparison, which a typo makes silent. */
+export function isDoneRole(role: string | null | undefined): boolean {
+  return role === 'done';
+}
+
 /** Phone-needed subset of the desktop's Swimlane row (snake_case preserved so the desktop mapper is a mechanical pick). */
 export interface BoardColumnWire {
   id: string;
   name: string;
   description: string | null;
-  role: string | null;
+  /**
+   * `'todo'` / `'done'` are the system roles; anything else (including a
+   * future role this package predates) is a custom or not-yet-known column,
+   * which is exactly what the `(string & {})` escape hatch preserves - the
+   * literal union alone would reject a value a newer desktop legitimately
+   * sends. That widening does NOT make a typo'd comparison a compile error
+   * (a string literal is assignable to `string & {}`), so call sites should
+   * use `isTodoRole` / `isDoneRole` rather than `=== 'todo'` / `=== 'done'`.
+   */
+  role: BoardColumnRoleWire | (string & {}) | null;
   position: number;
   color: string;
   icon: string | null;
   is_archived: boolean;
   is_ghost: boolean;
+  /**
+   * Whether moving a task into this column spawns a successor agent
+   * session, derived desktop-side from the column's `auto_spawn` flag and
+   * role. This is INTENT, not a guarantee:
+   *
+   * - `false` - no successor is coming. Every path that produces `false` is
+   *   decided by column config alone (a full reset into 'todo', an archive
+   *   into 'done', or `auto_spawn: false`), so a client MAY skip a
+   *   session-swap transition entirely on `false`.
+   * - `true` - this column intends to spawn, but a handful of desktop-side
+   *   conditions can suspend the old session without a successor actually
+   *   landing (a board profile disabling auto_spawn for this task, a failed
+   *   worktree checkout that reverts the move, a shutdown or a newer move
+   *   racing this one). A client MUST NOT treat `true` as a promise; keep
+   *   whatever timeout already bounds a session-swap wait and let `true`
+   *   only skip a redundant one.
+   * - `null` / absent - a desktop that predates this field. A client falls
+   *   back to its pre-existing behavior, the same way an absent
+   *   `pr_merge_readiness` reads as "never judged".
+   *
+   * Declared OPTIONAL (`?`), unlike `pr_merge_readiness` (declared required
+   * even though its own doc comment above describes absence as a real
+   * state): a required field forces every TS call site that constructs a
+   * `BoardColumnWire` object literal - test fixtures, most visibly - to
+   * learn about a field it may not care about, which is exactly what broke
+   * when `pr_merge_readiness` shipped required. `parseBoardColumnWire`
+   * always populates this key from a real wire response regardless, so the
+   * optionality costs nothing at runtime; it only frees a hand-built
+   * literal from having to list it.
+   *
+   * Ordering precondition this field depends on: the phone must learn the
+   * MOVE's destination column before the old session's `session-ended`
+   * arrives, or it cannot resolve `spawns_session` against the right
+   * column. That holds today because `handleTaskMove`
+   * (`src/main/ipc/handlers/task-move.ts`) emits the board-changed event at
+   * its commit point, before the slow suspend/worktree/spawn work in the
+   * same phase - see the comment above `emitBoardChanged()` there. A future
+   * change that moves that announce to settle time would break this field
+   * silently rather than loudly.
+   */
+  spawns_session?: boolean | null;
 }
 
 /** Phone-needed subset of the desktop's Task row. A non-null `session_id` is the live-session signal the phone's triage view keys on. */
@@ -492,6 +563,11 @@ function nullableNumber(record: Record<string, unknown>, field: string): number 
   return typeof value === 'number' ? value : null;
 }
 
+function nullableBoolean(record: Record<string, unknown>, field: string): boolean | null {
+  const value = record[field];
+  return typeof value === 'boolean' ? value : null;
+}
+
 /** Narrows one board-column row. Throws on a malformed required field. */
 export function parseBoardColumnWire(value: JsonValue): BoardColumnWire {
   if (!isRecord(value)) throw new Error('board column must be an object');
@@ -499,12 +575,16 @@ export function parseBoardColumnWire(value: JsonValue): BoardColumnWire {
     id: requireString(value, 'id', 'board column'),
     name: requireString(value, 'name', 'board column'),
     description: nullableString(value, 'description'),
+    // An unrecognized role passes through rather than throwing: it is a
+    // custom column (or a future system role this package predates), not a
+    // malformed payload. See the BoardColumnRoleWire doc comment.
     role: nullableString(value, 'role'),
     position: requireNumber(value, 'position', 'board column'),
     color: requireString(value, 'color', 'board column'),
     icon: nullableString(value, 'icon'),
     is_archived: requireBoolean(value, 'is_archived', 'board column'),
     is_ghost: requireBoolean(value, 'is_ghost', 'board column'),
+    spawns_session: nullableBoolean(value, 'spawns_session'),
   };
 }
 
