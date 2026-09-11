@@ -56,9 +56,12 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.SWIMLANE_CREATE, (_, input) => {
-    // Synchronous handler: the ambient projectId cannot move under this call
-    // the way an async mutation's can (project-scoped-ipc.md), so no
-    // renderer-forwarded id is needed for the emit below.
+    // The ambient projectId, not a renderer-forwarded one: project-scoped-ipc.md
+    // enumerates its mutation set as task and session channels only, and a
+    // column edit is neither. The `if (projectId)` below narrows `string | null`
+    // for the event payload rather than guarding a reachable no-project path:
+    // with no project open, the getProjectRepos call on the next line throws
+    // first.
     const projectId = context.currentProjectId;
     const { swimlanes } = getProjectRepos(context, projectId);
     const result = swimlanes.create(input);
@@ -121,8 +124,7 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.SWIMLANE_DELETE, (_, id) => {
-    // Synchronous handler: see the SWIMLANE_CREATE comment above for why the
-    // ambient projectId is safe to capture here.
+    // Ambient projectId: see the SWIMLANE_CREATE comment above.
     const projectId = context.currentProjectId;
     const { swimlanes } = getProjectRepos(context, projectId);
     // Snapshot before the delete: pruning profiles needs the name, which is gone
@@ -151,7 +153,7 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.SWIMLANE_REORDER, (_, ids) => {
-    // Synchronous handler: see the SWIMLANE_CREATE comment above.
+    // Ambient projectId: see the SWIMLANE_CREATE comment above.
     const projectId = context.currentProjectId;
     const { swimlanes } = getProjectRepos(context, projectId);
     swimlanes.reorder(ids);

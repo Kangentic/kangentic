@@ -290,6 +290,22 @@ describe('board row guards', () => {
     expect(parseBoardColumnWire(column).spawns_session).toBe(true);
   });
 
+  it('reads a present but non-boolean spawns_session as null rather than coercing it', () => {
+    const column: JsonValue = {
+      id: 'lane-1',
+      name: 'Executing',
+      description: null,
+      role: null,
+      position: 2,
+      color: '#0000ff',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      spawns_session: 'true',
+    };
+    expect(parseBoardColumnWire(column).spawns_session).toBeNull();
+  });
+
   it('passes through an unrecognized role rather than throwing', () => {
     const column: JsonValue = {
       id: 'lane-1',
@@ -307,6 +323,15 @@ describe('board row guards', () => {
     expect(parsed.role).toBe('archive');
     expect(isTodoRole(parsed.role)).toBe(false);
     expect(isDoneRole(parsed.role)).toBe(false);
+  });
+
+  it('isTodoRole and isDoneRole return false rather than throwing on null or undefined', () => {
+    expect(isTodoRole(null)).toBe(false);
+    expect(isTodoRole(undefined)).toBe(false);
+    expect(isDoneRole(null)).toBe(false);
+    expect(isDoneRole(undefined)).toBe(false);
+    expect(isTodoRole('todo')).toBe(true);
+    expect(isDoneRole('done')).toBe(true);
   });
 
   it('parses a backlog row', () => {

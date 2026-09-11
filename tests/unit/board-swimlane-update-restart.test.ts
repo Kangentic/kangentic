@@ -795,7 +795,14 @@ describe('SWIMLANE_CREATE/UPDATE/DELETE/REORDER handlers - board-changed emit', 
     });
   });
 
-  it('does not emit with no project open', () => {
+  it('suppresses the emit when projectId is null, a state only the mocked repo layer reaches', () => {
+    // Reachable here only because this suite mocks getProjectRepos into
+    // succeeding. In production src/main/ipc/helpers/project-repos.ts resolves
+    // `projectId ?? context.currentProjectId` and throws 'No project is
+    // currently open' on the line before, so the handler's `if (projectId)` is
+    // narrowing `string | null` to `string` for the event payload rather than
+    // gating a runtime path. Kept so a future edit cannot drop the narrowing
+    // and start emitting a null projectId.
     context = createMockContext({ currentProjectId: null });
     registerBoardHandlers(context as never);
     const repos = buildProjectRepos(null, createSwimlaneBefore(), []);
