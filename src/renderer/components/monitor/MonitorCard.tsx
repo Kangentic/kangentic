@@ -306,7 +306,13 @@ function MonitorCardInner({
 
       {row.prUrl && (
         <div className="flex items-center gap-2 mt-1.5">
-          <PrLink prUrl={row.prUrl} prNumber={row.prNumber} prState={row.prState} testId="monitor-card-pr-link" />
+          <PrLink
+            prUrl={row.prUrl}
+            prNumber={row.prNumber}
+            prState={row.prState}
+            prMergeReadiness={row.prMergeReadiness}
+            testId="monitor-card-pr-link"
+          />
         </div>
       )}
 

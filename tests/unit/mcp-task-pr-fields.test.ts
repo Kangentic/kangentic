@@ -289,19 +289,19 @@ describe('handleCreateTask PR fields', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleUpdateTask PR fields', () => {
-  it('nulls pr_state when the PR URL is set, so a stale merged never lingers', () => {
+  it('nulls pr_state and pr_merge_readiness when the PR URL is set, so a stale merged never lingers', () => {
     handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ pr_url: REVIEWED_PR_URL, pr_state: null }),
+      expect.objectContaining({ pr_url: REVIEWED_PR_URL, pr_state: null, pr_merge_readiness: null }),
     );
   });
 
-  it('nulls pr_state when only the PR number is set', () => {
+  it('nulls pr_state and pr_merge_readiness when only the PR number is set', () => {
     handleUpdateTask(updateTaskParams({ prNumber: 98 }), makeContext());
 
     expect(mockTaskRepoUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ pr_number: 98, pr_state: null }),
+      expect.objectContaining({ pr_number: 98, pr_state: null, pr_merge_readiness: null }),
     );
   });
 
@@ -333,11 +333,12 @@ describe('handleUpdateTask PR fields', () => {
     );
   });
 
-  it('leaves pr_state alone on an update that does not touch the PR', () => {
+  it('leaves pr_state and pr_merge_readiness alone on an update that does not touch the PR', () => {
     handleUpdateTask(updateTaskParams({ title: 'Renamed' }), makeContext());
 
     const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
     expect(patch).not.toHaveProperty('pr_state');
+    expect(patch).not.toHaveProperty('pr_merge_readiness');
   });
 
   it('treats omitted PR keys the same as the explicit nulls the tool layer forwards', () => {
@@ -352,6 +353,7 @@ describe('handleUpdateTask PR fields', () => {
     expect(patch).not.toHaveProperty('pr_url');
     expect(patch).not.toHaveProperty('pr_number');
     expect(patch).not.toHaveProperty('pr_state');
+    expect(patch).not.toHaveProperty('pr_merge_readiness');
   });
 });
 
@@ -376,7 +378,7 @@ describe('handleUpdateTask: a PR link write that re-points nothing', () => {
     });
   }
 
-  it('keeps pr_state and skips the resolve when both fields match the stored row', async () => {
+  it('keeps pr_state and pr_merge_readiness and skips the resolve when both fields match the stored row', async () => {
     alreadyLinked();
 
     handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL, prNumber: 98 }), makeContext());
@@ -384,6 +386,7 @@ describe('handleUpdateTask: a PR link write that re-points nothing', () => {
 
     const patch = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
     expect(patch).not.toHaveProperty('pr_state');
+    expect(patch).not.toHaveProperty('pr_merge_readiness');
     expect(mockLinkPRForTask).not.toHaveBeenCalled();
   });
 
@@ -409,7 +412,7 @@ describe('handleUpdateTask: a PR link write that re-points nothing', () => {
     );
     await flushLinkTimeResolve();
 
-    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ pr_state: null }));
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ pr_state: null, pr_merge_readiness: null }));
     expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
   });
 
@@ -826,5 +829,44 @@ describe('handleLinkPr: refuses a branch equal to the effective base branch', ()
     expect(response.success).toBe(true);
     expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
     expect(mockLinkPRForTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleLinkPr - the response message and data surface the resolved PR's
+// merge readiness, same suffix shape as the linker's own log line.
+// ---------------------------------------------------------------------------
+
+describe('handleLinkPr: reports merge readiness', () => {
+  function linkedTask(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'task-uuid-1',
+      display_id: 7,
+      title: 'Review PR #98',
+      pr_url: REVIEWED_PR_URL,
+      pr_number: 98,
+      pr_state: 'open',
+      pr_merge_readiness: null,
+      ...overrides,
+    };
+  }
+
+  it('appends ", merge <readiness>" to the message and carries it in data', async () => {
+    mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: linkedTask({ pr_merge_readiness: 'blocked' }) });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.message).toContain('(open, merge blocked)');
+    expect((response.data as Record<string, unknown>).prMergeReadiness).toBe('blocked');
+  });
+
+  it('omits the merge suffix and reports null when the PR has no judged readiness', async () => {
+    mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: linkedTask({ pr_merge_readiness: null }) });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.message).toContain('(open)');
+    expect(response.message).not.toMatch(/merge/);
+    expect((response.data as Record<string, unknown>).prMergeReadiness).toBeNull();
   });
 });

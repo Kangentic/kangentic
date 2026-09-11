@@ -1,13 +1,21 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
-import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit, PRState } from '../../../../../shared/types';
+import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit, PRMergeReadiness, PRState } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
 import { PrLink } from '../../../PrLink';
 import { OverlayPopover } from '../../../OverlayPopover';
 import { usePopoverPosition } from '../../../../hooks/usePopoverPosition';
 import { CountBadge } from '../../../CountBadge';
+
+/** Linked-PR chip data, declared once so the panel prop and the header prop cannot drift. */
+interface PrLinkData {
+  url: string;
+  number: number | null;
+  state: PRState | null | undefined;
+  mergeReadiness: PRMergeReadiness | null | undefined;
+}
 
 /** Diff scope options for the segmented control (single-select among 3 fixed values). */
 const SCOPE_OPTIONS: { value: GitDiffScope; label: string }[] = [
@@ -48,7 +56,7 @@ interface FileTreePanelProps {
   /** Linked-PR chip data for the branch header, so every mount that shows the
    *  built-in header (standalone dialog, whole-panel pop-out) gets the same PR
    *  affordance the task-detail embed shows in its surface header. */
-  prLink?: { url: string; number: number | null; state: PRState | null | undefined };
+  prLink?: PrLinkData;
   /** Whether the first file-list fetch has settled. Before it has, an empty
    *  list renders skeleton rows rather than the settled "0 files" empty shape
    *  (which would otherwise flash a false negative during the initial load).
@@ -820,7 +828,7 @@ function BranchHeader({
   branchSummary?: GitBranchSummaryResult | null;
   baseLabel?: string;
   baseLabelCustom?: boolean;
-  prLink?: { url: string; number: number | null; state: PRState | null | undefined };
+  prLink?: PrLinkData;
 }) {
   const branch = branchSummary?.currentBranch;
   const ahead = branchSummary?.ahead ?? 0;
@@ -865,7 +873,14 @@ function BranchHeader({
           </span>
         )}
         {prLink && (
-          <PrLink prUrl={prLink.url} prNumber={prLink.number} prState={prLink.state} testId="changes-pr-link" className="shrink-0" />
+          <PrLink
+            prUrl={prLink.url}
+            prNumber={prLink.number}
+            prState={prLink.state}
+            prMergeReadiness={prLink.mergeReadiness}
+            testId="changes-pr-link"
+            className="shrink-0"
+          />
         )}
       </div>
       {lastCommit && (

@@ -15,7 +15,7 @@ import {
 import { createDeferredDegrade } from './shared/pr-dispatch';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
-import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
+import type { Task, PRState, PRMergeReadiness, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
 
 export interface PRLinkResult {
@@ -51,6 +51,64 @@ const MAX_RESOLVER_HINTS = 32;
  */
 const lastResolveAt = new Map<string, number>();
 const RESOLVE_TTL_MS = 60_000;
+
+/**
+ * Hold-and-re-poll for a PENDING merge verdict. GitHub answers `UNKNOWN` for a
+ * few seconds after every push while it recomputes mergeability, and Azure's
+ * `succeeded` is `unknown` until branch policies are evaluated. Writing that
+ * over a determined `ready` / `blocked` / `conflicting` on first sight blanks
+ * the card's chip for a whole sweep interval and then restores it: a flicker,
+ * not news. So a resolve that meets a pending answer on a determined verdict
+ * KEEPS the stored value and asks again after each of these delays; only when
+ * the budget is spent does `unknown` land. That final write is what lets an
+ * Azure PR that left `conflicting` clear its chip, since Azure never answers
+ * anything stronger than `unknown` this pass. Bounded per task, one timer in
+ * flight at a time, `unref()`'d so it never holds a quit, and cleared by the
+ * refresh scheduler on project switch / shutdown.
+ */
+const PENDING_VERDICT_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000];
+const pendingVerdictRepolls = new Map<string, { attempt: number; timer: NodeJS.Timeout | null }>();
+
+function isDeterminedVerdict(value: PRMergeReadiness | null): boolean {
+  return value === 'ready' || value === 'blocked' || value === 'conflicting';
+}
+
+function schedulePendingVerdictRepoll(taskId: string, deps: PRLinkDeps): void {
+  const existing = pendingVerdictRepolls.get(taskId);
+  // One in flight is enough: a sweep landing while a re-poll is pending must
+  // not consume the budget or move the deadline.
+  if (existing?.timer) return;
+  const attempt = existing?.attempt ?? 0;
+  const delay = PENDING_VERDICT_RETRY_DELAYS_MS[attempt];
+  if (delay === undefined) return;
+  const timer = setTimeout(() => {
+    const entry = pendingVerdictRepolls.get(taskId);
+    if (entry) entry.timer = null;
+    // Forced: the re-poll must bypass the 60s coalesce that would otherwise
+    // swallow it. It runs outside the task lock the scheduling resolve held.
+    // A rejection never reaches the clear at the end of `linkPRForTask`, so
+    // drop the entry here: an orphaned `{ attempt, timer: null }` would carry
+    // a half-spent budget into the next hold for this task.
+    void linkPRForTask(taskId, { ...deps, force: true }).catch((error) => {
+      clearPendingVerdictRepoll(taskId);
+      console.error(`[pr-linking] merge-readiness re-poll failed for task ${taskId.slice(0, 8)}:`, error);
+    });
+  }, delay);
+  timer.unref();
+  pendingVerdictRepolls.set(taskId, { attempt: attempt + 1, timer });
+}
+
+function clearPendingVerdictRepoll(taskId: string): void {
+  const entry = pendingVerdictRepolls.get(taskId);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  pendingVerdictRepolls.delete(taskId);
+}
+
+/** Drop every pending merge-verdict re-poll (project switch, delete, shutdown). */
+export function cancelPendingVerdictRepolls(): void {
+  for (const taskId of [...pendingVerdictRepolls.keys()]) clearPendingVerdictRepoll(taskId);
+}
 
 export interface PRLinkDeps {
   tasks: TaskRepository;
@@ -104,8 +162,12 @@ export interface PRLinkDeps {
  * A PR linked to a task: the subset of `ResolvedPR` the linker persists. `state`
  * is nullable here (unlike `ResolvedPR.state`) because the scrollback degradation
  * fallback links url+number even when the PR's state cannot be confirmed.
+ * `mergeReadiness` stays optional: `undefined` means the tier that answered
+ * cannot judge it (the commit tier, a connector without the field, the
+ * scrollback scraper), and the linker decides below whether that preserves the
+ * stored verdict (same PR) or starts from null (a different PR).
  */
-type LinkedPR = { url: string; number: number; state: PRState | null };
+type LinkedPR = { url: string; number: number; state: PRState | null; mergeReadiness?: PRMergeReadiness };
 
 /**
  * Told the moment Tier 6 establishes which remote branch a task's work lives
@@ -331,7 +393,13 @@ async function resolvePRViaLadder(args: {
 export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<PRLinkResult> {
   return withTaskLock(taskId, async (): Promise<PRLinkResult> => {
     const task = deps.tasks.getById(taskId);
-    if (!task) return { status: 'no-anchor', task: null };
+    if (!task) {
+      // A task deleted mid-hold still fires its re-poll timer; nothing below
+      // runs, so the entry it left behind is dropped here rather than lingering
+      // until the next project switch clears every re-poll at once.
+      clearPendingVerdictRepoll(taskId);
+      return { status: 'no-anchor', task: null };
+    }
 
     // Auto triggers: skip terminal PRs (merged/closed can't change) and coalesce
     // rapid re-resolves. Explicit user/agent actions (force) always run fresh;
@@ -446,13 +514,15 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         // the ladder still leaves the identity here to persist below.
         recordPushedBranch: (branchName) => { discoveredPushedBranch = branchName; },
       });
-      if (found) next = { url: found.url, number: found.number, state: found.state };
+      if (found) next = { url: found.url, number: found.number, state: found.state, mergeReadiness: found.mergeReadiness };
     } catch (error) {
       if (error instanceof PRResolverUnavailableError || error instanceof PRResolverTransientError) {
         degradeStatus = error instanceof PRResolverTransientError ? 'transient-error' : 'resolver-unavailable';
         degradeMessage = error.message;
         // Degrade to the scrollback scraper (url+number only; preserve a known
-        // state when the URL is unchanged).
+        // state when the URL is unchanged). Merge readiness is left undefined:
+        // the same-PR rule below preserves it exactly as the state is preserved
+        // here, and nulls it when the scrape names a different PR.
         const scraped = deps.getScrollback ? detectPR(deps.getScrollback() ?? '') : null;
         if (scraped) {
           next = { url: scraped.url, number: scraped.number, state: scraped.url === task.pr_url ? task.pr_state : null };
@@ -471,28 +541,64 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       }
     }
 
+    // Merge readiness has three rules of its own, none of which `pr_state`
+    // needs, because every tier can determine a state and not every tier can
+    // determine readiness:
+    //  - PRESERVE on undetermined. A tier whose connector cannot judge it (the
+    //    commit tier on both providers, the scrollback scraper) says nothing
+    //    about the stored verdict, so `undefined` keeps it: the `pushed_branch`
+    //    rule below, applied to a column. A link that moved to a DIFFERENT PR
+    //    starts from null instead, since the old verdict describes the old PR.
+    //  - HOLD through a pending answer (see `PENDING_VERDICT_RETRY_DELAYS_MS`):
+    //    a platform `unknown` on a determined verdict of the SAME open PR keeps
+    //    the stored value and schedules a bounded re-poll; only when the budget
+    //    is spent does `unknown` land. A terminal PR is never held: the chip
+    //    does not render readiness there, and GitHub never recomputes it.
+    //  - Everything else writes, including `unknown` over null, so "asked, no
+    //    verdict yet" is recorded and distinguishable from never checked.
+    const samePr = next != null && next.url === task.pr_url && next.number === task.pr_number;
+    const holdsPendingVerdict = next != null
+      && next.mergeReadiness === 'unknown'
+      && samePr
+      && (next.state === 'open' || next.state === 'draft')
+      && isDeterminedVerdict(task.pr_merge_readiness)
+      && (pendingVerdictRepolls.get(taskId)?.attempt ?? 0) < PENDING_VERDICT_RETRY_DELAYS_MS.length;
+    let nextMergeReadiness: PRMergeReadiness | null;
+    if (next == null) {
+      nextMergeReadiness = task.pr_merge_readiness;
+    } else if (next.mergeReadiness === undefined || holdsPendingVerdict) {
+      nextMergeReadiness = samePr ? task.pr_merge_readiness : null;
+    } else {
+      nextMergeReadiness = next.mergeReadiness;
+    }
+
     // Build a single update for any changed PR fields and/or the freshly-read SHA.
     const patch: TaskUpdateInput = { id: task.id };
     const prChanged = next != null
-      && (task.pr_url !== next.url || task.pr_number !== next.number || task.pr_state !== next.state);
+      && (task.pr_url !== next.url || task.pr_number !== next.number || task.pr_state !== next.state
+        || task.pr_merge_readiness !== nextMergeReadiness);
     if (prChanged && next) {
       patch.pr_url = next.url;
       patch.pr_number = next.number;
       patch.pr_state = next.state;
+      patch.pr_merge_readiness = nextMergeReadiness;
     }
     // Confident not-found: the resolver ran cleanly (no transient / unavailable
     // degrade) and matched no PR, yet the task still carries a link. Clear it so
     // a stale `merged` (or any orphaned link) never lingers - pr_number, pr_url,
-    // and pr_state always agree, written atomically in the same update below. A
-    // degraded resolve never clears (the link is preserved, as before), and
-    // neither does a link-time resolve (`preserveLinkOnNotFound`), which would
-    // otherwise undo the very write that triggered it.
-    const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null;
+    // pr_state, and pr_merge_readiness always agree, written atomically in the
+    // same update below. A degraded resolve never clears (the link is preserved,
+    // as before), and neither does a link-time resolve
+    // (`preserveLinkOnNotFound`), which would otherwise undo the very write that
+    // triggered it.
+    const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null
+      || task.pr_merge_readiness != null;
     const prCleared = next == null && !degradeStatus && !resolveFailed && hadLink && !deps.preserveLinkOnNotFound;
     if (prCleared) {
       patch.pr_url = null;
       patch.pr_number = null;
       patch.pr_state = null;
+      patch.pr_merge_readiness = null;
     }
     const shaChanged = freshSha != null && freshSha !== task.head_sha;
     if (shaChanged) patch.head_sha = freshSha;
@@ -506,11 +612,19 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     if (prChanged || prCleared || shaChanged || pushedBranchChanged) {
       updatedTask = deps.tasks.update(patch);
     }
+    // A held verdict re-asks on a timer; any other outcome (a determined
+    // verdict, a preserve, a clear, a miss) ends the hold and drops the budget.
+    if (holdsPendingVerdict) {
+      schedulePendingVerdictRepoll(taskId, deps);
+    } else {
+      clearPendingVerdictRepoll(taskId);
+    }
     if (prChanged && next) {
-      console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}) to "${task.title}": ${next.url}`);
-      // Adoption signal on a real link only: the automatic sweeps that return
-      // early above and the stale-link clear below are not uses. Main dedups
-      // to once per day.
+      const readinessNote = nextMergeReadiness ? `, merge ${nextMergeReadiness}` : '';
+      console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}${readinessNote}) to "${task.title}": ${next.url}`);
+      // Adoption signal on a real or refreshed link only: the automatic sweeps
+      // that return early above and the stale-link clear below are not uses.
+      // Main dedups to once per day.
       trackFeatureUsed('pull_request');
       deps.onLinked(updatedTask);
     } else if (prCleared) {

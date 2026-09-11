@@ -92,6 +92,7 @@ function row(overrides: Record<string, unknown> = {}) {
     created: '2026-09-04T16:54:23Z',
     closed: '2026-09-04T17:09:11Z',
     fork: null,
+    merge: 'succeeded',
     ...overrides,
   };
 }
@@ -144,8 +145,20 @@ describe('AzureDevOpsImporter PR resolvers (mocked az)', () => {
         baseRefName: 'develop',
         updatedAt: '2026-09-04T17:09:11Z',
         isCrossRepository: false,
+        mergeStatus: 'succeeded',
       },
     ]);
+  });
+
+  it('resolvePRByBranch projects mergeStatus, and a null source stays a present null', async () => {
+    // `--query` projects a null source as null rather than dropping the key, so
+    // the item carries `mergeStatus: null` here and the connector reads that as
+    // "no verdict yet", never as "this tier cannot judge it".
+    state.azStdout = JSON.stringify([row({ merge: null })]);
+    const items = await importer().resolvePRByBranch(ORG, PROJECT, REPO, 'anything');
+    expect(items[0]).toHaveProperty('mergeStatus', null);
+    const query = state.azArgs[state.azArgs.indexOf('--query') + 1];
+    expect(query).toContain('merge:mergeStatus');
   });
 
   it('resolvePRByBranch treats an empty array as a clean miss', async () => {
@@ -194,6 +207,20 @@ describe('AzureDevOpsImporter PR resolvers (mocked az)', () => {
     await expect(
       importer().resolvePRByCommit(ORG, PROJECT, REPO, '0000000000000000000000000000000000000000'),
     ).resolves.toEqual([]);
+  });
+
+  it('resolvePRByCommit does not project mergeStatus, so commit-tier items carry no key at all', async () => {
+    // The commit tier only ever matches completed PRs, so a verdict there is
+    // moot, and leaving the key absent is what lets the connector omit the
+    // verdict (preserve) instead of writing `unknown` over a real one.
+    const projected = row();
+    delete (projected as Record<string, unknown>).merge;
+    delete (projected as Record<string, unknown>).fork;
+    state.azStdout = JSON.stringify([projected]);
+    const items = await importer().resolvePRByCommit(ORG, PROJECT, REPO, 'f7d613cc5a74b784bb258da4dae0d1032c7d484f');
+    expect(items[0]).not.toHaveProperty('mergeStatus');
+    const query = state.azArgs[state.azArgs.indexOf('--query') + 1];
+    expect(query).not.toContain('mergeStatus');
   });
 
   // Also the injection guard for the JSON --body.
@@ -419,6 +446,36 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     );
     const resolvedPr = await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343);
     expect(resolvedPr?.number).toBe(1343);
+  });
+
+  /**
+   * The verdict is folded HERE and never leaves the adapter as a raw
+   * `mergeStatus`. `succeeded` is `unknown` on purpose: it only says the preview
+   * merge applied cleanly, and branch policies are not evaluated this pass, so
+   * `ready` would promise a Merge click this code cannot vouch for.
+   */
+  it.each([
+    ['succeeded', 'unknown'],
+    ['conflicts', 'conflicting'],
+    ['rejectedByPolicy', 'blocked'],
+    ['failure', 'blocked'],
+    ['queued', 'unknown'],
+    ['notSet', 'unknown'],
+    [null, 'unknown'],
+    ['somethingNew', 'unknown'],
+  ] as Array<[string | null, string]>)('resolveByNumber folds mergeStatus=%s into %s', async (mergeStatus, expected) => {
+    vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      item({ state: 'active', mergeStatus }) as never,
+    );
+    const resolvedPr = await azureDevOpsPRConnector.resolveByNumber!(AZURE_CWD, 1343);
+    expect(resolvedPr?.mergeReadiness).toBe(expected);
+  });
+
+  it('omits the verdict when the item carries no mergeStatus key (the commit tier)', async () => {
+    stubCommit([item()]);
+    const resolvedPr = await azureDevOpsPRConnector.resolveByCommit!(AZURE_CWD, 'abcdef1234567');
+    expect(resolvedPr?.number).toBe(1343);
+    expect(resolvedPr).not.toHaveProperty('mergeReadiness');
   });
 
   it('translates Azure errors into the platform-agnostic ones', async () => {

@@ -15,7 +15,7 @@
  *
  * It matters because a clean miss is destructive. `pr-linking.ts` treats
  * `null` + no degrade as "confidently no PR" and CLEARS the task's
- * `pr_url` / `pr_number` / `pr_state`. Catch-and-continue on its own would
+ * `pr_url` / `pr_number` / `pr_state` / `pr_merge_readiness`. Catch-and-continue on its own would
  * therefore wipe a manually pasted PR link the moment the owning connector's
  * CLI was missing.
  */

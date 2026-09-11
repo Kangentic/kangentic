@@ -106,7 +106,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'git.copyFiles', tabId: 'git', label: 'Copy Files', description: 'Additional files copied into each worktree', scope: 'project', keywords: ['env', 'dotfiles'] },
   { id: 'git.initScript', tabId: 'git', label: 'Post-Worktree Script', description: 'Shell script to run after worktree creation. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over.', scope: 'project', keywords: ['install', 'setup', 'hook'] },
   { id: 'git.linkNodeModules', tabId: 'git', label: 'Link node_modules', description: 'Symlink the root node_modules into each worktree so agents skip a fresh install. Disable to let the Post-Worktree Script install dependencies in the worktree itself.', scope: 'project', keywords: ['symlink', 'junction', 'deps', 'install', 'node_modules'] },
-  { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale'] },
+  { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state and merge readiness in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale', 'mergeable', 'ready', 'conflicts'] },
 
   // ── Browser ──
   { id: 'browser.enabled', tabId: 'browser', label: 'Enable Browser Pane', description: 'Show the Browser pill in task detail headers, and let agents open the pane themselves. Disable for security-sensitive projects that should not embed external sites.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security', 'agent'] },

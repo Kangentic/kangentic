@@ -1334,6 +1334,18 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN worktree_skip_reason TEXT DEFAULT NULL');
   }
 
+  // Migration: add 'pr_merge_readiness' - the normalized merge-readiness verdict
+  // of the linked PR ('ready' | 'blocked' | 'conflicting' | 'unknown', the
+  // `PRMergeReadiness` union), computed inside each PR connector from its own
+  // platform's mergeability fields. Orthogonal to `pr_state`, which stays the
+  // gate for the terminal short-circuits. NULL means never judged (no PR, or a
+  // link that predates this column); 'unknown' means the platform was asked and
+  // has no verdict yet. Preserved by a resolve whose tier cannot judge it,
+  // cleared with the other three PR columns on the confident-not-found clear.
+  if (!taskInjectionColumns.includes('pr_merge_readiness')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN pr_merge_readiness TEXT DEFAULT NULL');
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

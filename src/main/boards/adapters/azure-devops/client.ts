@@ -113,6 +113,15 @@ export interface AzurePrItem {
    * exactly as GitHub's own optional `isCrossRepository` does.
    */
   isCrossRepository?: boolean;
+  /**
+   * Azure's `mergeStatus` (its `PullRequestAsyncStatus`: succeeded | conflicts |
+   * rejectedByPolicy | failure | queued | notSet). Present on the branch and
+   * number tiers, null when Azure returned none, and ABSENT on the commit tier,
+   * whose `pullrequestquery` projection omits it (that tier only matches
+   * completed PRs anyway). Raw vocabulary, deliberately NOT normalized here:
+   * this client is shared with the board importer, so the PR connector maps it.
+   */
+  mergeStatus?: string | null;
 }
 
 /** The raw projection each resolver's `--query` produces. */
@@ -125,6 +134,7 @@ interface AzurePrRaw {
   created?: string;
   closed?: string | null;
   fork?: unknown;
+  merge?: string | null;
 }
 
 /** `az` is missing, unauthenticated, or lacks the azure-devops extension. */
@@ -224,13 +234,22 @@ function normalizeAzurePr(raw: AzurePrRaw): AzurePrItem | null {
     baseRefName: stripRefsHeads(raw.tgt ?? ''),
     updatedAt: raw.closed ?? raw.created ?? '',
     ...(raw.fork === undefined ? {} : { isCrossRepository: raw.fork != null }),
+    // `--query` projects a null source as null, not absent, so the key is
+    // present (string or null) wherever the projection asks for it and absent
+    // only on the commit tier, whose projection does not.
+    ...(raw.merge === undefined ? {} : { mergeStatus: raw.merge }),
   };
 }
 
 /** Shared field projection; `az` applies --query in-process, so stdout stays small. */
 const AZ_PR_FIELDS =
-  '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate,fork:forkSource}';
-/** The commit tier's payload has no forkSource, so its projection omits it. */
+  '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate,fork:forkSource,merge:mergeStatus}';
+/**
+ * The commit tier's payload has no forkSource, so its projection omits it. It
+ * omits mergeStatus too: `pullrequestquery` matches completed PRs only, so a
+ * verdict there is moot, and leaving the key absent is what tells the PR
+ * connector "this tier cannot judge readiness" rather than "no verdict yet".
+ */
 const AZ_PR_FIELDS_NO_FORK =
   '{id:pullRequestId,status:status,draft:isDraft,src:sourceRefName,tgt:targetRefName,created:creationDate,closed:closedDate}';
 

@@ -101,6 +101,7 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.pr_number !== next.pr_number ||
     previous.pr_url !== next.pr_url ||
     previous.pr_state !== next.pr_state ||
+    previous.pr_merge_readiness !== next.pr_merge_readiness ||
     previous.head_sha !== next.head_sha ||
     previous.pushed_branch !== next.pushed_branch ||
     previous.external_id !== next.external_id ||

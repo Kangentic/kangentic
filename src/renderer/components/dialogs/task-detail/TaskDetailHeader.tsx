@@ -18,6 +18,7 @@ import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { useSessionStore } from '../../../stores/session-store';
 import { captureTerminalScrollback } from '../../../utils/terminal-capture-registry';
+import { prStatePresentation } from '../../../lib/pr-state';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
 /**
@@ -701,8 +702,12 @@ function TaskDetailKebabItems({
           variant: 'info',
         });
       } else if (result.linked && result.task?.pr_number != null) {
+        // The same word the card's chip shows, so a refresh that changed only
+        // the merge verdict still reports a visible result ("blocked", not a
+        // second "open"). A null state falls back to "open" as before.
+        const chipWord = prStatePresentation(result.task.pr_state, result.task.pr_merge_readiness).label || 'open';
         useToastStore.getState().addToast({
-          message: `Linked PR #${result.task.pr_number} (${result.task.pr_state ?? 'open'})`,
+          message: `Linked PR #${result.task.pr_number} (${chipWord})`,
           variant: 'success',
         });
       } else {
@@ -817,7 +822,8 @@ function TaskDetailKebabItems({
       {/* Link / refresh PR (authoritative branch->PR resolve; works with no live
           session). Shown for any anchor the ladder can search by, so a task with
           no worktree whose push was recorded, or that names its PR by number,
-          gets the control too. */}
+          gets the control too. For a linked PR it is the one control that
+          re-checks merge readiness between background sweeps. */}
       {(task.branch_name || task.worktree_path || task.pushed_branch || task.pr_number != null) && (
         <KebabMenuItem
           icon={linkingPr ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}

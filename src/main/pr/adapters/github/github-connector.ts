@@ -14,7 +14,7 @@
  */
 
 import PQueue from 'p-queue';
-import type { PRConnector, DetectedPR, ResolvedPR, PRState } from '../../shared/pr-connector';
+import type { PRConnector, DetectedPR, ResolvedPR, PRState, PRMergeReadiness } from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
 import { GitHubImporter, GhUnavailableError, GhTransientError, type GhPrListItem } from '../../../boards/adapters/github-common/gh-client';
 import { isShaContainedInRef } from '../../../git/worktree-head';
@@ -59,14 +59,61 @@ function mapState(item: GhPrListItem): PRState {
   return item.isDraft ? 'draft' : 'open';
 }
 
+/**
+ * Fold GitHub's mergeability triple into the normalized verdict, or undefined
+ * when the item carries none (the commit tier's REST payload). The promise is
+ * "a Merge click would succeed", read literally: UNSTABLE is `ready` because the
+ * button works with failing NON-required checks (required ones report BLOCKED
+ * instead), and a `ready` verdict is downgraded to `blocked` only when a review
+ * is still REQUIRED. CHANGES_REQUESTED is deliberately not a downgrade: where
+ * reviews are required GitHub already reports BLOCKED, and where they are not
+ * the button works, so calling it `blocked` would break the promise.
+ * `mergeable` is the fallback when `mergeStateStatus` is absent or a value this
+ * code does not know. `reviewDecision` is compared against the one named value:
+ * gh renders a null decision as ''.
+ */
+function mapMergeReadiness(item: GhPrListItem): PRMergeReadiness | undefined {
+  if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
+  const verdict = mapMergeStateStatus(item.mergeStateStatus) ?? mapMergeable(item.mergeable);
+  return verdict === 'ready' && item.reviewDecision === 'REVIEW_REQUIRED' ? 'blocked' : verdict;
+}
+
+function mapMergeStateStatus(mergeStateStatus: string | undefined): PRMergeReadiness | undefined {
+  switch (mergeStateStatus) {
+    case 'CLEAN':
+    case 'HAS_HOOKS':
+    case 'UNSTABLE':
+      return 'ready';
+    case 'BLOCKED':
+    case 'BEHIND':
+    case 'DRAFT':
+      return 'blocked';
+    case 'DIRTY':
+      return 'conflicting';
+    case 'UNKNOWN':
+      return 'unknown';
+    default:
+      // Absent or unrecognized: fall back to `mergeable`.
+      return undefined;
+  }
+}
+
+function mapMergeable(mergeable: string | undefined): PRMergeReadiness {
+  return mergeable === 'CONFLICTING' ? 'conflicting' : 'unknown';
+}
+
 /** Project a raw gh PR item into the platform-agnostic ResolvedPR shape. */
 function toResolvedPR(item: GhPrListItem): ResolvedPR {
+  const mergeReadiness = mapMergeReadiness(item);
   return {
     url: item.url,
     number: item.number,
     state: mapState(item),
     baseRefName: item.baseRefName,
     updatedAt: item.updatedAt,
+    // Conditional spread, not `mergeReadiness: undefined`: an absent key is what
+    // "this tier cannot judge it" looks like to the linker and to exact-shape tests.
+    ...(mergeReadiness === undefined ? {} : { mergeReadiness }),
   };
 }
 

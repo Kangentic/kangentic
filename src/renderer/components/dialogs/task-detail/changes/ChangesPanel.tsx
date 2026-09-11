@@ -849,7 +849,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         </span>
       )}
       {task?.pr_url && (
-        <PrLink prUrl={task.pr_url} prNumber={task.pr_number} prState={task.pr_state} testId="changes-pr-link" className="shrink-0" />
+        <PrLink
+          prUrl={task.pr_url}
+          prNumber={task.pr_number}
+          prState={task.pr_state}
+          prMergeReadiness={task.pr_merge_readiness}
+          testId="changes-pr-link"
+          className="shrink-0"
+        />
       )}
       {(surfaceHeaderAhead > 0 || surfaceHeaderBehind > 0) && (
         <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0 text-[11px]" title={`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
@@ -979,7 +986,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               onScopeChange={changesSelectedCommit ? undefined : handleScopeChange}
               baseLabel={changesSelectedCommit ? undefined : baseLabel}
               baseLabelCustom={changesSelectedCommit ? undefined : isCustomBase}
-              prLink={task?.pr_url ? { url: task.pr_url, number: task.pr_number, state: task.pr_state } : undefined}
+              prLink={task?.pr_url
+                ? { url: task.pr_url, number: task.pr_number, state: task.pr_state, mergeReadiness: task.pr_merge_readiness }
+                : undefined}
               loaded={loaded}
               worktreePath={worktreePath}
               projectPath={projectPath}

@@ -271,6 +271,19 @@ describe('GitHubImporter.resolvePRByNumber', () => {
     expect(state.lastArgs).toEqual(expect.arrayContaining(['pr', 'view', '42']));
   });
 
+  it('requests the mergeability triple on the number tier, and never statusCheckRollup', async () => {
+    // The number tier is Tier 1 for an already-linked PR, so it is the hot path
+    // that keeps merge readiness fresh; the fields ride the same `gh pr view`.
+    state.ghStdout = JSON.stringify(pr({ number: 42 }));
+    const importer = new GitHubImporter();
+    await importer.resolvePRByNumber('/repo', 42);
+    const jsonFields = state.lastArgs[state.lastArgs.indexOf('--json') + 1];
+    expect(jsonFields.split(',')).toEqual(
+      expect.arrayContaining(['mergeable', 'mergeStateStatus', 'reviewDecision']),
+    );
+    expect(jsonFields).not.toContain('statusCheckRollup');
+  });
+
   it('throws GhUnavailableError when gh is not installed', async () => {
     state.whichResult = new Error('not found');
     const importer = new GitHubImporter();
@@ -313,6 +326,14 @@ describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
     expect(result[0].mergeCommitOid).toBe('merge-sha-1');     // merge_commit_sha -> mergeCommitOid
     expect(result[1].mergeCommitOid).toBeUndefined();         // absent in raw -> undefined
     expect(result.every((item) => item.isCrossRepository === false)).toBe(true);
+    // The REST commit-pulls payload carries no mergeability, so the three raw
+    // fields stay ABSENT (not empty strings): that absence is what tells the
+    // connector "this tier cannot judge readiness" rather than "no verdict".
+    for (const item of result) {
+      expect(item).not.toHaveProperty('mergeable');
+      expect(item).not.toHaveProperty('mergeStateStatus');
+      expect(item).not.toHaveProperty('reviewDecision');
+    }
   });
 
   it('flags a fork PR as cross-repository when head and base repos differ', async () => {
@@ -365,6 +386,109 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ]);
     const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
     expect(result?.number).toBe(2); // prefers OPEN over merged
+  });
+
+  /**
+   * The verdict is folded HERE, beside `mapState`, and never leaves the adapter
+   * as a raw `mergeStateStatus`. The promise is "a Merge click would succeed",
+   * read literally: UNSTABLE counts as ready because the button works with
+   * failing non-required checks (required ones report BLOCKED), only a still
+   * REQUIRED review downgrades a `ready` (CHANGES_REQUESTED without required
+   * reviews leaves the button working, so it stays `ready`), and an
+   * unrecognized status falls back to `mergeable`.
+   */
+  it.each([
+    ['CLEAN', 'MERGEABLE', 'APPROVED', 'ready'],
+    ['CLEAN', 'MERGEABLE', '', 'ready'],
+    ['HAS_HOOKS', 'MERGEABLE', '', 'ready'],
+    ['UNSTABLE', 'MERGEABLE', '', 'ready'],
+    ['BLOCKED', 'MERGEABLE', 'APPROVED', 'blocked'],
+    ['BEHIND', 'MERGEABLE', '', 'blocked'],
+    ['DRAFT', 'MERGEABLE', '', 'blocked'],
+    ['DIRTY', 'CONFLICTING', '', 'conflicting'],
+    ['UNKNOWN', 'UNKNOWN', '', 'unknown'],
+    ['CLEAN', 'MERGEABLE', 'REVIEW_REQUIRED', 'blocked'],
+    ['UNSTABLE', 'MERGEABLE', 'REVIEW_REQUIRED', 'blocked'],
+    ['CLEAN', 'MERGEABLE', 'CHANGES_REQUESTED', 'ready'],
+    ['DIRTY', 'CONFLICTING', 'REVIEW_REQUIRED', 'conflicting'],
+    ['SOMETHING_NEW', 'CONFLICTING', '', 'conflicting'],
+    ['SOMETHING_NEW', 'MERGEABLE', '', 'unknown'],
+    [undefined, 'CONFLICTING', '', 'conflicting'],
+    [undefined, 'MERGEABLE', '', 'unknown'],
+  ] as Array<[string | undefined, string, string, string]>)(
+    'resolveByNumber folds mergeStateStatus=%s mergeable=%s reviewDecision=%s into %s',
+    async (mergeStateStatus, mergeable, reviewDecision, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({ number: 7, mergeStateStatus, mergeable, reviewDecision }),
+      );
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  /**
+   * Real-shape fixture per the external-input-parser convention: every case in
+   * the it.each table above stubs GitHubImporter.resolvePRByNumber directly, so
+   * gh's actual `pr view --json` stdout is never JSON.parse'd here, and gh's
+   * real rendering of a null review decision as an empty string is never
+   * exercised. This drives a literal gh stdout string through the real
+   * importer -> connector path, with no prototype spy.
+   *
+   * Only the first case proves the named revert target (deleting
+   * `case 'BLOCKED':` in mapMergeStateStatus falls through to
+   * `mapMergeable('MERGEABLE')` -> 'unknown', not 'blocked'). The other two
+   * guard adjacent behavior: the REVIEW_REQUIRED downgrade of an otherwise
+   * clean/ready PR, and gh's '' rendering of "no review decision" read as
+   * ready rather than as a truthy value.
+   */
+  it.each([
+    [
+      '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","number":42,"reviewDecision":"","state":"OPEN","updatedAt":"2026-09-04T16:54:23Z","url":"https://github.com/owner/repo/pull/42"}',
+      'blocked',
+    ],
+    [
+      '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","number":43,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN","updatedAt":"2026-09-04T16:54:23Z","url":"https://github.com/owner/repo/pull/43"}',
+      'blocked',
+    ],
+    [
+      '{"baseRefName":"main","headRefName":"feat/readiness","isCrossRepository":false,"isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","number":44,"reviewDecision":"","state":"OPEN","updatedAt":"2026-09-04T16:54:23Z","url":"https://github.com/owner/repo/pull/44"}',
+      'ready',
+    ],
+  ] as Array<[string, string]>)(
+    'resolveByNumber parses literal gh stdout into mergeReadiness=%s',
+    async (ghStdoutFixture, expectedReadiness) => {
+      state.whichResult = '/usr/bin/gh';
+      state.ghError = null;
+      state.ghStdout = ghStdoutFixture;
+
+      const result = await gitHubPRConnector.resolveByNumber!('/repo', 42);
+
+      expect(result?.mergeReadiness).toBe(expectedReadiness);
+      expect(result?.state).toBe('open');
+    },
+  );
+
+  it('resolveByNumber omits the verdict when the item carries no mergeability at all', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(pr({ number: 7 }));
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+    // Absent key, not `mergeReadiness: undefined`: the linker reads an absent
+    // verdict as "keep what is stored", and exact-shape callers see no key.
+    expect(result).not.toHaveProperty('mergeReadiness');
+  });
+
+  it('resolveByCommit omits the verdict, since the REST payload cannot judge it', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([pr({ number: 2, state: 'OPEN' })]);
+    const result = await gitHubPRConnector.resolveByCommit!('/r', 'sha');
+    expect(result?.number).toBe(2);
+    expect(result).not.toHaveProperty('mergeReadiness');
+  });
+
+  it('resolveForBranch carries the verdict from the list tier', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([
+      pr({ number: 3, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED' }),
+    ]);
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat');
+    expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'blocked' });
   });
 
   it('translates GhUnavailableError into the generic PRResolverUnavailableError', async () => {

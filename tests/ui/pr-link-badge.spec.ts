@@ -9,6 +9,13 @@
  * PR #287 in browser" tooltip) and the detail header's `...` kebab "View PR #287"
  * entry (which opens the same URL). The header's compact icon bar itself has no
  * PR pill - that affordance is intentionally only on the card and in the kebab.
+ *
+ * The second describe seeds five more linked tasks into the Testing lane to pin
+ * how merge readiness folds into the SAME chip: `ready` keeps the open hue,
+ * `blocked` is amber, `conflicts` is orange (never closed's red), a pending
+ * `unknown` keeps plain `open`, and a stale verdict on a merged PR never shows.
+ * Each is scoped by `data-task-id`, since the first test locates the Code
+ * Review card's pill with no `.first()`.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -86,10 +93,57 @@ const preConfig = `
       pr_number: 287,
       pr_url: 'https://github.com/owner/repo/pull/287',
       pr_state: 'open',
+      // Never judged: pins that a null verdict still reads as plain "open".
+      pr_merge_readiness: null,
       base_branch: 'main',
       archived_at: null,
       created_at: ts,
       updated_at: ts,
+    });
+
+    // Merge-readiness matrix, one card per verdict, in a lane the first test
+    // never scopes into. The ready task is linked by PR NUMBER ONLY (no
+    // branch, no worktree) and carries a running session, so its detail opens
+    // on the header and the kebab test below can prove "Refresh PR" is offered
+    // for a task whose only anchor is the stored number.
+    state.sessions.push({
+      id: 'sess-readiness-ready',
+      taskId: 'task-readiness-ready',
+      projectId: '${PROJECT_ID}',
+      pid: 9998,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/pr-link-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    var readinessSeeds = [
+      { id: 'task-readiness-ready', number: 301, state: 'open', readiness: 'ready', sessionId: 'sess-readiness-ready', branch: null },
+      { id: 'task-readiness-blocked', number: 302, state: 'open', readiness: 'blocked', sessionId: null, branch: 'feature/readiness-302' },
+      { id: 'task-readiness-conflicting', number: 303, state: 'open', readiness: 'conflicting', sessionId: null, branch: 'feature/readiness-303' },
+      { id: 'task-readiness-unknown', number: 304, state: 'open', readiness: 'unknown', sessionId: null, branch: 'feature/readiness-304' },
+      { id: 'task-readiness-stale-merged', number: 305, state: 'merged', readiness: 'ready', sessionId: null, branch: 'feature/readiness-305' },
+    ];
+    readinessSeeds.forEach(function (seed, index) {
+      state.tasks.push({
+        id: seed.id,
+        title: 'Readiness ' + seed.readiness + ' ' + seed.state,
+        description: '',
+        swimlane_id: laneIds['Testing'],
+        position: index,
+        agent: 'claude',
+        session_id: seed.sessionId,
+        worktree_path: null,
+        branch_name: seed.branch,
+        pr_number: seed.number,
+        pr_url: 'https://github.com/owner/repo/pull/' + seed.number,
+        pr_state: seed.state,
+        pr_merge_readiness: seed.readiness,
+        base_branch: 'main',
+        archived_at: null,
+        created_at: ts,
+        updated_at: ts,
+      });
     });
 
     return { currentProjectId: '${PROJECT_ID}' };
@@ -172,6 +226,71 @@ test.describe('PR link: state badge and clickable affordance', () => {
     // Use Control+Shift+W (capture-phase) rather than Escape: the task-detail
     // window has a running session, so Escape via the bubble-phase listener can
     // be intercepted on CI Linux (bubble-phase Escape is not capture-safe).
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+});
+
+test.describe('PR merge readiness folds into the state chip', () => {
+  const chipFor = (taskId: string) =>
+    page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"] [data-testid="pr-state-badge"]`);
+  const pillFor = (taskId: string) =>
+    page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"]`);
+
+  test('ready keeps the open hue, relabels the chip, and names the caveat in the chip tooltip', async () => {
+    const chip = chipFor('task-readiness-ready');
+    await expect(chip).toHaveText('ready');
+    await expect(chip).toHaveClass(/text-emerald-400/);
+    await expect(chip).toHaveAttribute('title', /last PR refresh/);
+    // The caveat lives on the chip; the pill keeps its own action tooltip.
+    await expect(pillFor('task-readiness-ready')).toHaveAttribute('title', 'Open PR #301 in browser');
+  });
+
+  test('blocked is amber', async () => {
+    const chip = chipFor('task-readiness-blocked');
+    await expect(chip).toHaveText('blocked');
+    await expect(chip).toHaveClass(/text-amber-400/);
+    await expect(chip).toHaveAttribute('title', /Merge blocked/);
+  });
+
+  test('conflicts is orange, never the red that closed uses', async () => {
+    const chip = chipFor('task-readiness-conflicting');
+    await expect(chip).toHaveText('conflicts');
+    await expect(chip).toHaveClass(/text-orange-400/);
+    await expect(chip).not.toHaveClass(/text-red-400/);
+    await expect(chip).toHaveAttribute('title', /Merge conflicts/);
+  });
+
+  test('a pending unknown verdict keeps plain open', async () => {
+    const chip = chipFor('task-readiness-unknown');
+    await expect(chip).toHaveText('open');
+    await expect(chip).not.toHaveAttribute('title', /./);
+  });
+
+  test('a stale verdict on a merged PR never shows through', async () => {
+    const chip = chipFor('task-readiness-stale-merged');
+    await expect(chip).toHaveText('merged');
+    await expect(chip).toHaveClass(/text-purple-400/);
+    await expect(chip).not.toHaveAttribute('title', /./);
+  });
+
+  test('the kebab offers Refresh PR for a task linked by PR number alone', async () => {
+    // No branch and no worktree: before readiness this task had no manual
+    // refresh at all, and the background sweep was its only freshness path.
+    // The stored number is a Tier-1 anchor, so the control must be there.
+    // Click the title, not the card centroid: on a card this short the centroid
+    // lands on the PR pill, whose own click opens the PR and stops propagation.
+    await page.locator('[data-task-id="task-readiness-ready"]').locator('text=Readiness ready open').first().click();
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await dialog.locator('[title="Actions"]').click();
+    await expect(page.getByRole('button', { name: 'Refresh PR', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'View PR #301', exact: true })).toBeVisible();
+
+    // Same close as the header test above: Control+Shift+W, since a running
+    // session's xterm can intercept a bubble-phase Escape.
+    await page.keyboard.press('Escape');
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });

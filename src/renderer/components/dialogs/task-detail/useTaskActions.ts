@@ -269,14 +269,18 @@ export function useTaskActions(input: {
   };
 
   /**
-   * Build the pr_url/pr_number/pr_state fields if the PR URL changed. All three
-   * move together, exactly as the linker writes them: leaving a stale `pr_state`
-   * behind produces the inconsistent row the linker forbids, and a terminal
-   * `merged`/`closed` value short-circuits every non-force resolve, freezing the
-   * task on a PR it no longer points at. The state is nulled on both branches
-   * (cleared and re-pointed) and refilled by the next resolve.
+   * Build the pr_url/pr_number/pr_state/pr_merge_readiness fields if the PR URL
+   * changed. All four move together, exactly as the linker writes them: leaving
+   * a stale `pr_state` behind produces the inconsistent row the linker forbids,
+   * a terminal `merged`/`closed` value short-circuits every non-force resolve,
+   * freezing the task on a PR it no longer points at, and a stale verdict would
+   * describe the PR the task no longer points at. Both are nulled on both
+   * branches (cleared and re-pointed) and refilled by the next resolve.
    */
-  const buildPrFields = (): Pick<Parameters<typeof host.updateTask>[0], 'pr_url' | 'pr_number' | 'pr_state'> => {
+  const buildPrFields = (): Pick<
+    Parameters<typeof host.updateTask>[0],
+    'pr_url' | 'pr_number' | 'pr_state' | 'pr_merge_readiness'
+  > => {
     const trimmedPrUrl = input.prUrl.trim();
     if (trimmedPrUrl === (input.task.pr_url ?? '')) return {};
     if (trimmedPrUrl) {
@@ -288,9 +292,10 @@ export function useTaskActions(input: {
         // is an anchor Tier 1 of the resolver ladder can never use.
         pr_number: prNumberFromUrl(trimmedPrUrl),
         pr_state: null,
+        pr_merge_readiness: null,
       };
     }
-    return { pr_url: null, pr_number: null, pr_state: null };
+    return { pr_url: null, pr_number: null, pr_state: null, pr_merge_readiness: null };
   };
 
   const executeSave = async (

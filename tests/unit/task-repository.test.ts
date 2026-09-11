@@ -120,6 +120,7 @@ function makeTaskRow(overrides: Partial<TaskRow> = {}): TaskRow {
     pr_number: null,
     pr_url: null,
     pr_state: null,
+    pr_merge_readiness: null,
     head_sha: null,
     external_id: null,
     external_source: null,
@@ -144,6 +145,25 @@ function makeTaskRow(overrides: Partial<TaskRow> = {}): TaskRow {
   const pinsAnyField = merged.agent_override !== null || merged.model_override !== null
     || merged.effort_override !== null || merged.permission_mode !== null;
   return { run_mode: pinsAnyField ? 'agent_override' : 'column_settings', ...merged };
+}
+
+/**
+ * Column names from an `UPDATE tasks SET a = ?, b = ?, ... WHERE ...` statement,
+ * in SET-list order. Bound args line up positionally with this list (the WHERE
+ * clause's own `?` bindings come after), which is what lets a test derive an
+ * arg's index instead of hardcoding it.
+ */
+function extractSetColumns(sql: string): string[] {
+  const match = sql.match(/SET\s+([\s\S]*?)\s+WHERE/);
+  if (!match) throw new Error(`No SET clause found in: ${sql}`);
+  return match[1].split(',').map((entry) => entry.trim().split('=')[0].trim());
+}
+
+/** Column names from an `INSERT INTO tasks (a, b, ...) VALUES (...)` statement. */
+function extractInsertColumns(sql: string): string[] {
+  const match = sql.match(/INSERT INTO tasks \(([\s\S]*?)\)/);
+  if (!match) throw new Error(`No column list found in: ${sql}`);
+  return match[1].split(',').map((entry) => entry.trim());
 }
 
 describe('TaskRepository SQL contracts', () => {
@@ -346,6 +366,19 @@ describe('TaskRepository SQL contracts', () => {
       const updatedAtArg = args[args.length - 1];
       expect(createdAtArg).toBe('2020-01-01T00:00:00.000Z');
       expect(updatedAtArg).not.toBe('2020-01-01T00:00:00.000Z');
+    });
+  });
+
+  describe('create - pr_merge_readiness column', () => {
+    it('names pr_merge_readiness in the INSERT column list and binds null for a new task', () => {
+      repo.create({ title: 'New task', description: '', swimlane_id: 'lane-1' });
+
+      const insertStatement = tracker.statements.find((s) => s.sql.includes('INSERT INTO tasks'));
+      expect(insertStatement).toBeDefined();
+      const columns = extractInsertColumns(insertStatement!.sql);
+      const columnIndex = columns.indexOf('pr_merge_readiness');
+      expect(columnIndex).toBeGreaterThanOrEqual(0);
+      expect(insertStatement!.args[columnIndex]).toBeNull();
     });
   });
 
@@ -566,6 +599,22 @@ describe('TaskRepository SQL contracts', () => {
         const updateStatement = tracker.statements.find((statement) => statement.sql.includes('UPDATE tasks SET title'));
         expect(updateStatement!.sql).toContain('run_mode = ?');
         expect(updateStatement!.args).toContain('agent_override');
+      });
+
+      it('persists pr_merge_readiness in the UPDATE statement, not just the returned object', () => {
+        // Same shape as the run_mode guard above, but derives the bound arg's
+        // position from the SET list itself rather than hardcoding an index,
+        // so the assertion survives a future column reorder.
+        tracker.setExistingRow(makeTaskRow());
+
+        repo.update({ id: 'task-1', pr_merge_readiness: 'ready' });
+
+        const updateStatement = tracker.statements.find((statement) => statement.sql.includes('UPDATE tasks SET title'));
+        expect(updateStatement).toBeDefined();
+        const setColumns = extractSetColumns(updateStatement!.sql);
+        const columnIndex = setColumns.indexOf('pr_merge_readiness');
+        expect(columnIndex).toBeGreaterThanOrEqual(0);
+        expect(updateStatement!.args[columnIndex]).toBe('ready');
       });
     });
 

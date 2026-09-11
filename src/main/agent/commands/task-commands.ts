@@ -455,10 +455,10 @@ export const handleUpdateTask: CommandHandler = (
   if (newPrNumber !== null) updates.pr_number = Number(newPrNumber);
   else if (newPrUrl !== null) updates.pr_number = prNumberFromUrl(String(newPrUrl));
   // Re-pointing the link invalidates any state carried over from the old PR. The
-  // three fields must always agree (the linker writes them atomically), and a
+  // four PR fields must always agree (the linker writes them atomically), and a
   // stale terminal `merged`/`closed` would otherwise short-circuit every
   // non-force resolve, freezing the task on a PR it no longer points at. The
-  // link-time resolve scheduled below refills it.
+  // link-time resolve scheduled below refills them.
   //
   // Unless the write re-points nothing. A `/pull-request` flow routinely writes
   // the link a sweep or auto-link already discovered, and nulling `pr_state`
@@ -477,7 +477,10 @@ export const handleUpdateTask: CommandHandler = (
     && typeof effectivePrNumber === 'number'
     && effectivePrNumber === task.pr_number
     && task.pr_state != null;
-  if ((newPrUrl !== null || newPrNumber !== null) && !prLinkUnchanged) updates.pr_state = null;
+  if ((newPrUrl !== null || newPrNumber !== null) && !prLinkUnchanged) {
+    updates.pr_state = null;
+    updates.pr_merge_readiness = null;
+  }
   if (newAgent !== null) updates.agent = newAgent;
   if (newPriority !== null) updates.priority = Number(newPriority);
   if (newLabels !== null) updates.labels = newLabels;
@@ -622,7 +625,7 @@ function describeSearchedAnchors(task: Task): string {
  * (PR number -> worktree branch -> commit SHA -> stored branch -> pushed
  * branch -> remote tip). Works without a live session, picks up human/web-UI-
  * created PRs the scraper misses, and refreshes the linked PR's state
- * (open/draft/merged/closed) on re-run.
+ * (open/draft/merged/closed) and merge readiness on re-run.
  *
  * `branch` (optional) is the remote branch the work was pushed to. It is
  * recorded as the task's `pushed_branch` before the ladder runs, which is how
@@ -681,18 +684,21 @@ export const handleLinkPr: CommandHandler = async (
   }
 
   const linkedTask = result.task;
+  // Same suffix shape as the linker's own log line, so the two stay in step.
+  const readinessNote = linkedTask?.pr_merge_readiness ? `, merge ${linkedTask.pr_merge_readiness}` : '';
   switch (result.status) {
     case 'linked':
     case 'unchanged':
       return {
         success: true,
-        message: `PR #${linkedTask?.pr_number} (${linkedTask?.pr_state ?? 'open'}) linked to "${task.title}".`,
+        message: `PR #${linkedTask?.pr_number} (${linkedTask?.pr_state ?? 'open'}${readinessNote}) linked to "${task.title}".`,
         data: {
           id: linkedTask?.id,
           displayId: linkedTask?.display_id,
           prUrl: linkedTask?.pr_url,
           prNumber: linkedTask?.pr_number,
           prState: linkedTask?.pr_state,
+          prMergeReadiness: linkedTask?.pr_merge_readiness,
         },
       };
     case 'resolver-unavailable':

@@ -476,7 +476,7 @@ counterparts (see [Call-time override validation](#kangentic_create_task)). Only
 on the call are checked - a task's stored pins are never re-validated, so a labels-only follow-up
 still succeeds on a task carrying a since-deprecated model.
 
-Setting `prUrl` or `prNumber` also clears the task's stored PR state, so the three PR columns never disagree; a forced resolve fires immediately after the write and fills the state back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
+Setting `prUrl` or `prNumber` also clears the task's stored PR state and merge readiness, so the four PR columns never disagree; a forced resolve fires immediately after the write and fills both back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
 
 `profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:
 "agent_override"` (and the task's `agent_override`): setting a profile clears the pins and forces
@@ -491,7 +491,7 @@ agree, and that is the natural way to write "stop pinning this and go back to th
 
 ### kangentic_link_pr
 
-Authoritatively resolve and link the pull request for a task through the repository's PR host (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in `docs/pr-integration.md`: PR number, worktree branch, commit, stored branch, pushed branch, remote tip. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR's state (`open`/`draft`/`merged`/`closed`). Use after opening a PR, or to backfill a task whose PR was never linked.
+Authoritatively resolve and link the pull request for a task through the repository's PR host (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in `docs/pr-integration.md`: PR number, worktree branch, commit, stored branch, pushed branch, remote tip. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR's state (`open`/`draft`/`merged`/`closed`) and merge readiness (`ready`/`blocked`/`conflicting`/`unknown`, see [PR Integration](pr-integration.md#merge-readiness)). Use after opening a PR, or to backfill a task whose PR was never linked.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -499,7 +499,7 @@ Authoritatively resolve and link the pull request for a task through the reposit
 | `branch` | string | No | The remote branch the work was pushed to (the PR source branch). Recorded as the task's `pushed_branch` before resolving. A task with no worktree has nothing to search by until a push is recorded, so pass this when the auto-capture from the agent's own `git push` did not fire |
 | `project` | string | No | Project selector to target a different project |
 
-Returns the linked PR (number, url, state) on success. "Searched and found nothing" is a normal result naming the anchors it searched by. "Nothing to search by" (no PR number, worktree, branch, commit, or pushed branch on the task) is a refusal with `isError: true` that names the two remedies: pass `branch`, or set `prUrl` / `prNumber` with `kangentic_update_task`. A resolver that is unavailable or errored transiently is a refusal too.
+Returns the linked PR (number, url, state, merge readiness) on success. "Searched and found nothing" is a normal result naming the anchors it searched by. "Nothing to search by" (no PR number, worktree, branch, commit, or pushed branch on the task) is a refusal with `isError: true` that names the two remedies: pass `branch`, or set `prUrl` / `prNumber` with `kangentic_update_task`. A resolver that is unavailable or errored transiently is a refusal too.
 
 ### kangentic_move_task
 
