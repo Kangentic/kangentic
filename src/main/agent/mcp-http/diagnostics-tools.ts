@@ -90,7 +90,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_get_recent_crashes',
     {
       description:
-        'List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`. Each record contains the timestamp, kind (main-uncaught-exception, render-process-gone, preload-error, renderer-window-error, etc.), source-mapped stack, and version info captured at crash time. Always-on capture; no toggle required. Pass `project` to inspect another project\'s crashes.',
+        'List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`. Each record contains the timestamp, kind (main-uncaught-exception, render-process-gone, gpu-process-gone, preload-error, renderer-window-error, etc.), source-mapped stack, and version info captured at crash time. Always-on capture; no toggle required. Pass `project` to inspect another project\'s crashes.',
       inputSchema: z.object({
         limit: z
           .number()

@@ -5822,11 +5822,12 @@ export interface CrashRecord {
     | 'main-uncaught-exception'
     | 'main-unhandled-rejection'
     | 'render-process-gone'
+    | 'gpu-process-gone'
     | 'preload-error'
     | 'renderer-window-error'
     | 'renderer-unhandled-rejection';
   /** Process source. For renderer errors this is the webContents id. */
-  source: 'main' | 'renderer' | 'preload';
+  source: 'main' | 'renderer' | 'preload' | 'gpu';
   message: string;
   /** Source-mapped stack when available. */
   stack: string | null;

@@ -46,6 +46,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // A test that pins Date with fake timers must not leak the fake clock into
+  // the next test if it throws before its own inline restore runs.
+  vi.useRealTimers();
   try {
     fs.rmSync(tempDirectory, { recursive: true, force: true });
   } catch {
@@ -111,5 +114,61 @@ describe('crash-capture', () => {
     const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
     startCrashCapture({ getProjectRoot: () => tempDirectory });
     expect(appListeners.has('web-contents-created')).toBe(true);
+  });
+
+  it('records a GPU process death from child-process-gone, and ignores clean exits and other child types', async () => {
+    // The GPU process is not a webContents, so the app-level event is the
+    // only place its death is visible; a crash or kill puts every terminal on
+    // the DOM renderer for the next two minutes (terminal-webgl.ts), so the
+    // record is what lets that be diagnosed locally after the fact.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
+      startCrashCapture({ getProjectRoot: () => tempDirectory });
+
+      const handler = appListeners.get('child-process-gone');
+      expect(handler).toBeDefined();
+      const directory = path.join(tempDirectory, '.kangentic', 'logs', 'crashes');
+
+      // Not recorded: another child type, and the GPU process exiting cleanly
+      // (which happens on app quit and must not leave a crash record per run).
+      handler!({}, { type: 'Utility', reason: 'crashed', exitCode: 1, serviceName: 'network' });
+      handler!({}, { type: 'GPU', reason: 'clean-exit', exitCode: 0 });
+      expect(fs.existsSync(directory)).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      // Recorded: a GPU crash, and a GPU kill (Chromium treats both alike).
+      // Filenames derive from the record timestamp, so pin Date between the
+      // two calls; in the same millisecond the second would overwrite the first.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-09-10T22:29:17.000Z'));
+      handler!({}, { type: 'GPU', reason: 'crashed', exitCode: 5 });
+      vi.setSystemTime(new Date('2026-09-10T22:29:18.000Z'));
+      handler!({}, { type: 'GPU', reason: 'killed', exitCode: 1 });
+      vi.useRealTimers();
+      const files = fs.readdirSync(directory).sort();
+      expect(files).toHaveLength(2);
+      const records = files.map((file) => JSON.parse(fs.readFileSync(path.join(directory, file), 'utf-8')) as CrashRecord);
+      // Pins the record to the fake clock rather than a constant or stale
+      // value: a handler that wrote either would still produce two distinct
+      // filenames only by accident.
+      expect(records.map((record) => record.ts)).toEqual([
+        '2026-09-10T22:29:17.000Z',
+        '2026-09-10T22:29:18.000Z',
+      ]);
+      expect(records.map((record) => record.kind)).toEqual(['gpu-process-gone', 'gpu-process-gone']);
+      expect(records.map((record) => record.source)).toEqual(['gpu', 'gpu']);
+      expect(records.map((record) => record.context)).toEqual([
+        { reason: 'crashed', exitCode: 5 },
+        { reason: 'killed', exitCode: 1 },
+      ]);
+      expect(records[0]!.message).toBe('GPU process gone: crashed');
+      expect(records[0]!.versions.kangentic).toBe('1.2.3');
+      // The persisted log gets one warn per death (warn lines always persist).
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(String(warnSpy.mock.calls[0]![0])).toContain('[gpu] GPU process gone: crashed (exit code 5)');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

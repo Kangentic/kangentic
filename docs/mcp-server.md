@@ -980,7 +980,7 @@ Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/lo
 
 ### kangentic_get_recent_crashes
 
-List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`. Each record contains the timestamp, kind (`main-uncaught-exception`, `main-unhandled-rejection`, `render-process-gone`, `preload-error`, `renderer-window-error`, `renderer-unhandled-rejection`), source-mapped stack, and version info captured at crash time. Always-on capture - no toggle required.
+List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`. Each record contains the timestamp, kind (`main-uncaught-exception`, `main-unhandled-rejection`, `render-process-gone`, `gpu-process-gone`, `preload-error`, `renderer-window-error`, `renderer-unhandled-rejection`), source-mapped stack, and version info captured at crash time. Always-on capture - no toggle required.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

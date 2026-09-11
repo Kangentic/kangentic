@@ -7,24 +7,29 @@ import { traceTerminalRenderer } from './terminal-grid-registry';
  * attachment budget.
  *
  * xterm's WebGL renderer is 10-50x faster than its DOM fallback for output
- * bursts. The GPU can drop the WebGL context (driver reset, tab throttling,
- * memory pressure); when it does, the addon fires `onContextLoss`. The old code
- * just `dispose()`d the addon on loss, silently and permanently reverting the
- * terminal to the DOM renderer for the rest of the session - so every later
- * burst became far more expensive with nothing recorded. This module retries
- * re-initializing WebGL after a loss (with a short backoff), logs what happened,
- * and tracks the live renderer type so devtools can observe a degraded terminal.
+ * bursts. The GPU can drop the WebGL context (a GPU process crash, a driver
+ * reset, memory pressure). blink restores a lost context on its own within
+ * about a second whenever Chromium allows it, and the addon fires
+ * `onContextLoss` only when no restore arrived inside 3s. That callback
+ * therefore almost always means Chromium is REFUSING the context, not that the
+ * GPU is gone, and the refusal is time-bounded (see the comment above
+ * `DEFAULT_RETRY_DELAYS_MS`). This module re-acquires on a backoff schedule
+ * whose tail outlasts that refusal and never stops trying: a terminal on the
+ * DOM renderer for any reason other than a deliberate budget suspend always has
+ * a retry armed. It used to stop after two retries and latch the terminal onto
+ * the DOM renderer for the rest of the session (Sentry DESKTOP-T: a GPU process
+ * crash-looping once a minute burned both retries inside Chromium's block, and
+ * the terminal never came back even after the GPU was healthy again).
  *
  * The budget exists because Chromium caps live WebGL contexts per page (~16)
  * and silently drops the OLDEST when a new one is created - which lands here as
- * a context loss on some other terminal and, after the retries re-trip the cap,
- * a permanent DOM fallback. With windowed terminals the page can host far more
- * xterms than the cap, so attachments above `WEBGL_ATTACH_BUDGET` start
- * suspended, and a coordinator (useFocusedSessionsSync) applies an LRU plan via
- * `applyWebglAttachmentPlan` to keep the most-recently-focused terminals on
- * WebGL. A budget-driven suspend is NOT a context loss: it never touches
- * `contextLossCount` or `permanentDomFallback`, and the terminal re-attaches on
- * its next `resume()`.
+ * a context loss on some other terminal. With windowed terminals the page can
+ * host far more xterms than the cap, so attachments above `WEBGL_ATTACH_BUDGET`
+ * start suspended, and a coordinator (useFocusedSessionsSync) applies an LRU
+ * plan via `applyWebglAttachmentPlan` to keep the most-recently-focused
+ * terminals on WebGL. A budget-driven suspend is NOT a context loss: it never
+ * touches `contextLossCount`, does not advance the retry schedule, and the
+ * terminal re-attaches on its next `resume()`.
  */
 
 export type TerminalRendererType = 'webgl' | 'dom';
@@ -32,10 +37,17 @@ export type TerminalRendererType = 'webgl' | 'dom';
 export interface TerminalRendererStatus {
   /** The renderer currently backing this terminal. */
   renderer: TerminalRendererType;
-  /** How many WebGL context losses this terminal has seen. */
+  /** How many WebGL context losses this terminal has seen (cumulative). */
   contextLossCount: number;
-  /** True once retries are exhausted and the terminal is DOM-only for good. */
-  permanentDomFallback: boolean;
+  /**
+   * Consecutive failed WebGL acquisitions since the last successful attach: a
+   * context loss the addon could not restore, a re-init that threw, a resume
+   * that threw. Picks the retry slot. Reset only by a successful attach, so a
+   * budget suspend/resume cycle mid-schedule does not restart the schedule.
+   */
+  failedAttempts: number;
+  /** True while a re-acquisition timer is pending. */
+  retryArmed: boolean;
   /**
    * True while the WebGL attachment budget has this terminal temporarily on
    * the DOM renderer. Not a failure state: the coordinator resumes the
@@ -55,25 +67,64 @@ interface AttachWebglOptions {
   /** Addon factory, injectable for tests. Defaults to a real `WebglAddon`. */
   createAddon?: () => WebglAddonLike;
   /**
-   * Backoff schedule for post-context-loss re-inits. Its length also caps the
-   * number of retries: after this many losses the terminal stays DOM-only.
-   * Default: retry once after 2s, once more after 10s, then give up.
+   * Backoff schedule for re-acquisition attempts, indexed by the number of
+   * consecutive failures. The last delay repeats indefinitely; the length does
+   * NOT cap the number of retries.
    */
   retryDelaysMs?: number[];
   /** Live-attachment cap, injectable for tests. Defaults to WEBGL_ATTACH_BUDGET. */
   attachBudget?: number;
 }
 
-const DEFAULT_RETRY_DELAYS_MS = [2_000, 10_000];
+/**
+ * Re-acquisition schedule, sized against Chromium's 3D-API block rather than
+ * against the GPU process relaunch (which takes about a second).
+ *
+ * Chromium (content/browser/gpu/gpu_data_manager_impl_private.cc, read at
+ * 146.0.7680.166, the Chromium inside Electron 41.1.1) records one block entry
+ * for the page's domain every time a live WebGL context is lost to a GPU
+ * process crash or a driver reset, and answers `getContext('webgl2')` with null
+ * while TWO or more entries are younger than `kBlockedDomainExpirationPeriod`
+ * (2 minutes): "Allow one context loss per domain, so block if there are two or
+ * more." The domain key is the URL host (empty for the file:// page production
+ * loads), so every terminal on the page is blocked together. A single loss is
+ * restored by blink itself within a second, so `onContextLoss` (fired only when
+ * no restore arrived in 3s) almost always means the SECOND loss inside two
+ * minutes, and the block lifts when the OLDER entry ages out: up to 120s after
+ * the second-most-recent crash, which is no later than about 117s after the
+ * addon's callback. No retry inside that window can succeed, which is why the
+ * old 2s/10s pair always failed in exactly the case it ran in.
+ *
+ * Cumulative: 2, 12, 42, 72, 132, 252, 372... seconds. The first two slots are
+ * the original transient calibration; 132s is the first attempt guaranteed past
+ * the block when no further crash extends it; after that the last slot repeats
+ * at the block's own period. A probe while blocked is a sync round trip to the
+ * browser process that returns null, sub-millisecond and no GPU work, so the
+ * unending tail costs nothing in an environment where WebGL never comes back
+ * (headless, blocklisted GPU). The numbers are not load-bearing: if Chromium's
+ * expiry changes, recovery slips by at most one tail slot.
+ *
+ * Do not "fix" this by calling `app.disableDomainBlockingFor3DAPIs()` in main.
+ * If WebGL use is what trips the driver, the block is the only thing pacing the
+ * crashes: without it the terminal re-trips the driver every second, and
+ * Chromium's own crash counter (3 in 5 minutes) drops the whole app to software
+ * compositing. With the block, each successful re-attach can still yield a
+ * crash pair in that environment and the counter still converges the same way
+ * over a few cycles; the old latch did not prevent that either, it only left
+ * the terminal slow afterwards.
+ */
+const DEFAULT_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 30_000, 60_000, 120_000];
 
 /**
  * Max simultaneous live WebGL attachments on this page. Chromium's own cap is
- * ~16 per page; terminals are the page's only WebGL consumers (pop-outs are
- * separate pages and never host terminals; the changes panel is Monaco). 8
- * covers every realistic fully-visible layout (task-detail windows + max 4
- * command terminals + the bottom panel's single collapsed xterm) while leaving
- * half of Chromium's budget as headroom for suspend/resume transitions, so
- * Chromium's silent oldest-context eviction never engages.
+ * ~16 per page; terminals are the page's only WebGL consumers (the changes
+ * panel is Monaco). A pop-out is a separate page with its own cap and its own
+ * instance of this module: the Agent Monitor pop-out can host a task detail
+ * terminal, and it counts against that page's budget, not this one's. 8 covers
+ * every realistic fully-visible layout (task-detail windows + max 4 command
+ * terminals + the bottom panel's single collapsed xterm) while leaving half of
+ * Chromium's budget as headroom for suspend/resume transitions, so Chromium's
+ * silent oldest-context eviction never engages.
  */
 export const WEBGL_ATTACH_BUDGET = 8;
 
@@ -89,6 +140,8 @@ export interface WebglAttachmentPlan {
   /** Keys to temporarily suspend. Keys in NEITHER set are left untouched. */
   suspendKeys: ReadonlySet<string>;
 }
+
+type AcquisitionFailure = 'context-loss' | 're-init-failed' | 'unavailable';
 
 // Preserved across HMR (Pattern A, mirroring terminal-capture-registry.ts).
 // These three must round-trip as a UNIT: countLiveWebgl() reads
@@ -133,11 +186,12 @@ function notifyWebglAttachmentsChanged(): void {
 }
 
 /**
- * Subscribe to attachment registry changes (a terminal attaching or disposing).
- * The coordinator uses this to re-apply its last plan when a terminal mounts
- * after the plan ran (terminal init is ResizeObserver-deferred), so an over-cap
- * newcomer that started suspended converges to WebGL once the plan's suspends
- * have freed a context.
+ * Subscribe to attachment registry changes (a terminal attaching, disposing,
+ * or parking itself as budget-suspended from a retry). The coordinator uses
+ * this to re-apply its last plan when a terminal mounts after the plan ran
+ * (terminal init is ResizeObserver-deferred), so an over-cap newcomer that
+ * started suspended converges to WebGL once the plan's suspends have freed a
+ * context.
  */
 export function onWebglAttachmentsChanged(listener: () => void): () => void {
   webglAttachmentListeners.add(listener);
@@ -186,13 +240,14 @@ export function attachWebglRenderer(
   options?: AttachWebglOptions,
 ): () => void {
   const createAddon = options?.createAddon ?? (() => new WebglAddon());
-  const retryDelaysMs = options?.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const retryDelaysMs = options?.retryDelaysMs?.length ? options.retryDelaysMs : DEFAULT_RETRY_DELAYS_MS;
   const attachBudget = options?.attachBudget ?? WEBGL_ATTACH_BUDGET;
 
   const status: TerminalRendererStatus = {
     renderer: 'dom',
     contextLossCount: 0,
-    permanentDomFallback: false,
+    failedAttempts: 0,
+    retryArmed: false,
     suspendedByBudget: false,
   };
   rendererStatusByKey.set(rendererKey, status);
@@ -207,75 +262,136 @@ export function attachWebglRenderer(
       clearTimeout(retryTimer);
       retryTimer = null;
     }
+    status.retryArmed = false;
   };
 
+  const delayForFailures = (failures: number): number =>
+    retryDelaysMs[Math.min(failures, retryDelaysMs.length) - 1];
+
   const tryAttach = (): boolean => {
+    let addon: WebglAddonLike;
     try {
-      const addon = createAddon();
-      addon.onContextLoss(handleContextLoss);
-      terminal.loadAddon(addon as unknown as ITerminalAddon);
-      currentAddon = addon;
-      status.renderer = 'webgl';
-      return true;
+      addon = createAddon();
     } catch {
+      // Nothing was handed to xterm, so there is nothing to dispose. The real
+      // addon's constructor throws only on old Safari; the WebGL2 acquisition
+      // happens inside loadAddon below.
       status.renderer = 'dom';
       return false;
     }
+    try {
+      // Bound to THIS addon: a superseded addon's late loss callback must not
+      // touch whichever addon is live by then (see handleContextLoss).
+      addon.onContextLoss(() => handleContextLoss(addon));
+      terminal.loadAddon(addon as unknown as ITerminalAddon);
+    } catch {
+      // `loadAddon` pushes the addon onto xterm's addon list BEFORE calling
+      // `activate`, and `activate` is where `getContext('webgl2')` throws when
+      // WebGL is blocked or unavailable. Disposing the failed addon splices that
+      // entry back out; the addon registers its renderer-swap teardown only
+      // after its renderer constructs, so this swaps nothing.
+      try { addon.dispose(); } catch { /* best-effort */ }
+      status.renderer = 'dom';
+      return false;
+    }
+    currentAddon = addon;
+    status.renderer = 'webgl';
+    status.failedAttempts = 0;
+    return true;
   };
 
-  function scheduleReattach(attempt: number): void {
-    // `attempt` is 1-based; retryDelaysMs[attempt - 1] is this attempt's delay.
+  /**
+   * The only place a retry timer is created. Every arming path (a recorded
+   * failure, and the no-coordinator wait in onRetryTimer) routes through
+   * here, which is what keeps "a DOM terminal that is not budget-suspended
+   * has exactly one pending timer" true across the re-entrant paths.
+   */
+  function armRetryTimer(delayMs: number): void {
     clearRetryTimer();
-    retryTimer = setTimeout(() => {
-      retryTimer = null;
-      if (disposed || suspended) return;
-      if (tryAttach()) {
-        console.warn(`[terminal-webgl] WebGL renderer recovered for ${rendererKey}`);
-        return;
-      }
-      // The re-init itself failed. Advance to the next backoff slot, or give up
-      // for good once the slots are exhausted - never leave the terminal stuck
-      // on DOM with permanentDomFallback still false and no retry armed.
-      if (attempt >= retryDelaysMs.length) {
-        status.permanentDomFallback = true;
-        console.warn(`[terminal-webgl] WebGL re-init failed for ${rendererKey}; staying on the DOM renderer`);
-        return;
-      }
-      const nextAttempt = attempt + 1;
-      console.warn(`[terminal-webgl] WebGL re-init failed for ${rendererKey}; retrying in ${retryDelaysMs[nextAttempt - 1]}ms`);
-      scheduleReattach(nextAttempt);
-    }, retryDelaysMs[attempt - 1]);
+    retryTimer = setTimeout(onRetryTimer, delayMs);
+    status.retryArmed = true;
   }
 
-  function handleContextLoss(): void {
-    // A loss event during/after a budget suspend is not counted: the suspend
-    // already disposed the addon and moved the terminal to DOM deliberately,
-    // and it must never escalate toward permanentDomFallback.
-    if (disposed || suspended) return;
-    if (currentAddon) {
-      try { currentAddon.dispose(); } catch { /* addon may already be gone */ }
-      currentAddon = null;
+  /**
+   * The loss path, the initial-attach failure, and a failed resume all route
+   * through here: it advances the schedule, logs, and arms the next slot.
+   */
+  function recordFailureAndArm(failure: AcquisitionFailure): void {
+    status.failedAttempts += 1;
+    const failures = status.failedAttempts;
+    const delayMs = delayForFailures(failures);
+    // Every warn here becomes a Sentry breadcrumb (a 100-entry ring), so the
+    // steady-state tail must not fill it: log each failure through the first
+    // pass of the schedule, then one line, then nothing until recovery.
+    if (failures <= retryDelaysMs.length) {
+      const what =
+        failure === 'context-loss' ? `WebGL context lost (${status.contextLossCount})`
+          : failure === 're-init-failed' ? 'WebGL re-init failed'
+            : 'WebGL unavailable';
+      console.warn(`[terminal-webgl] ${what} for ${rendererKey}; retrying in ${delayMs}ms`);
+    } else if (failures === retryDelaysMs.length + 1) {
+      console.warn(`[terminal-webgl] WebGL still unavailable for ${rendererKey}; retrying every ${delayMs}ms`);
     }
-    status.renderer = 'dom';
-    status.contextLossCount += 1;
-    const lossNumber = status.contextLossCount;
+    armRetryTimer(delayMs);
+  }
 
-    if (lossNumber > retryDelaysMs.length) {
-      status.permanentDomFallback = true;
-      console.warn(`[terminal-webgl] WebGL context lost ${lossNumber}x for ${rendererKey}; staying on the DOM renderer`);
+  function onRetryTimer(): void {
+    retryTimer = null;
+    status.retryArmed = false;
+    if (disposed || suspended) return;
+    if (countLiveWebgl() >= attachBudget) {
+      if (webglAttachmentListeners.size === 0) {
+        // No coordinator on this page (the Agent Monitor pop-out hosts task
+        // detail terminals without one), so nobody would ever resume a parked
+        // terminal. Wait out a tail slot instead. Not a failure.
+        armRetryTimer(retryDelaysMs[retryDelaysMs.length - 1]);
+        return;
+      }
+      // Over budget: park as budget-suspended and let the coordinator's plan
+      // decide who holds a slot - a retry never asks Chromium for a context
+      // past the cap, mirroring the initial-attach guard below. State is
+      // committed BEFORE the notify: the coordinator re-applies its plan
+      // synchronously inside it and may resume() this very controller.
+      suspended = true;
+      status.suspendedByBudget = true;
+      traceTerminalRenderer(rendererKey, 'webgl-suspend', { reason: 'budget', from: 'retry' });
+      notifyWebglAttachmentsChanged();
       return;
     }
+    const attempt = status.failedAttempts + 1;
+    const attached = tryAttach();
+    traceTerminalRenderer(rendererKey, 'webgl-retry', { attempt, attached });
+    if (attached) {
+      console.warn(`[terminal-webgl] WebGL renderer recovered for ${rendererKey}`);
+      return;
+    }
+    recordFailureAndArm('re-init-failed');
+  }
 
-    console.warn(`[terminal-webgl] WebGL context lost (${lossNumber}) for ${rendererKey}; retrying in ${retryDelaysMs[lossNumber - 1]}ms`);
-    scheduleReattach(lossNumber);
+  function handleContextLoss(addon: WebglAddonLike): void {
+    // Not counted: a loss during/after a budget suspend (the suspend already
+    // disposed the addon and moved the terminal to DOM deliberately), and a
+    // loss reported by a superseded addon (the real addon never clears its 3s
+    // restore timer on dispose; it fires into a disposed emitter today, but a
+    // future addon version or a test fake may not be so forgiving). Either
+    // would advance the schedule for a terminal that is not on WebGL.
+    if (disposed || suspended || addon !== currentAddon) return;
+    try { addon.dispose(); } catch { /* addon may already be gone */ }
+    currentAddon = null;
+    status.renderer = 'dom';
+    status.contextLossCount += 1;
+    recordFailureAndArm('context-loss');
   }
 
   const suspend = (): void => {
-    // A permanently-DOM terminal has no context to free; marking it
-    // budget-suspended would only make the renderer report lie about why it
-    // is on DOM.
-    if (disposed || suspended || status.permanentDomFallback) return;
+    if (disposed || suspended) return;
     suspended = true;
+    // Applies to a terminal mid-schedule too. This is the primary bound on how
+    // many terminals re-acquire at once: the coordinator suspends every
+    // non-top-K terminal on each plan run, so timer holders are a subset of
+    // the plan's attach set (plus pop-out terminals, which have no
+    // coordinator). failedAttempts is deliberately kept: a suspend/resume
+    // cycle during a block must not restart the schedule at 2s.
     clearRetryTimer();
     if (currentAddon) {
       try { currentAddon.dispose(); } catch { /* best-effort */ }
@@ -290,27 +406,31 @@ export function attachWebglRenderer(
   };
 
   const resume = (): boolean => {
-    if (disposed || status.permanentDomFallback) return false;
+    if (disposed) return false;
+    // Not suspended: either live on WebGL, or on DOM with a retry armed. Both
+    // are left alone. Turning the second into an immediate probe would tie
+    // probe timing to window focus, since the coordinator re-applies its plan
+    // on every window/store change.
     if (!suspended) return true;
     suspended = false;
+    status.suspendedByBudget = false;
     if (tryAttach()) {
-      status.suspendedByBudget = false;
       traceTerminalRenderer(rendererKey, 'webgl-resume', { attached: true });
       return true;
     }
-    // Stay budget-suspended rather than escalating: the coordinator re-applies
-    // its plan on the next window/store change, which is the retry. Arming the
-    // context-loss backoff ladder here would conflate a transient acquisition
-    // failure with a real loss.
-    suspended = true;
+    // The coordinator wants this terminal live and the acquisition failed,
+    // which is the same situation as a failed retry after a loss (Chromium's
+    // 3D-API block is the common cause of both): arm the schedule rather than
+    // wait for a plan re-application that a quiet window, or a pop-out with no
+    // coordinator, may never produce.
     traceTerminalRenderer(rendererKey, 'webgl-resume', { attached: false });
-    console.warn(`[terminal-webgl] WebGL re-attach after budget suspend failed for ${rendererKey}; staying suspended`);
+    recordFailureAndArm('unavailable');
     return false;
   };
 
   const clearTextureAtlas = (): void => {
-    // Best-effort: a no-op while on DOM (budget-suspended or permanently
-    // fallen back) since there is no live addon to clear.
+    // Best-effort: a no-op while on DOM (budget-suspended or between retries)
+    // since there is no live addon to clear.
     try { currentAddon?.clearTextureAtlas(); } catch { /* best-effort */ }
   };
 
@@ -322,11 +442,11 @@ export function attachWebglRenderer(
     suspended = true;
     status.suspendedByBudget = true;
   } else if (!tryAttach()) {
-    // Initial attach failed. A construction throw means WebGL is unavailable in
-    // this environment (headless, blocklisted GPU): stay on DOM, but now logged
-    // rather than silently swallowed.
-    status.permanentDomFallback = true;
-    console.warn(`[terminal-webgl] WebGL unavailable for ${rendererKey}; using the DOM renderer`);
+    // WebGL refused or unavailable at mount (blocked after a GPU crash,
+    // headless, blocklisted GPU): same schedule as a loss. In a WebGL-less
+    // environment the tail keeps probing at its slowest slot for the life of
+    // the terminal, which is one null getContext every two minutes.
+    recordFailureAndArm('unavailable');
   }
 
   attachmentControllersByKey.set(rendererKey, { suspend, resume, clearTextureAtlas });
