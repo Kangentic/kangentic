@@ -731,6 +731,61 @@ describe('link-time PR resolve', () => {
 });
 
 // ---------------------------------------------------------------------------
+// context.getPrResolveOptions() forwarding - task-commands.ts has two call
+// sites that build linkPRForTask's deps (scheduleLinkTimeResolve, shared by
+// create_task / update_task, and handleLinkPr's own explicit resolve), and
+// each spreads `resolveOptions: context.getPrResolveOptions?.()` independently.
+// Deleting either line leaves every other test in this file green, since none
+// of them asserts on the `resolveOptions` key at all.
+// ---------------------------------------------------------------------------
+
+describe('context.getPrResolveOptions() forwarding to linkPRForTask', () => {
+  it('scheduleLinkTimeResolve (create/update link-time resolve) forwards it', async () => {
+    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ evaluateBranchPolicies: true })) });
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: { evaluateBranchPolicies: true } }),
+    );
+  });
+
+  it('scheduleLinkTimeResolve leaves resolveOptions undefined when the context has no getPrResolveOptions', async () => {
+    // Proves the `?.()` stays optional: a plain `context.getPrResolveOptions()`
+    // would throw here, since makeContext()'s default context has no such member.
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), makeContext());
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: undefined }),
+    );
+  });
+
+  it('handleLinkPr (explicit link_pr) forwards it', async () => {
+    const context = makeContext({ getPrResolveOptions: vi.fn(() => ({ evaluateBranchPolicies: true })) });
+
+    await handleLinkPr({ taskId: 'task-uuid-1' }, context);
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: { evaluateBranchPolicies: true } }),
+    );
+  });
+
+  it('handleLinkPr leaves resolveOptions undefined when the context has no getPrResolveOptions', async () => {
+    await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ resolveOptions: undefined }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // handleLinkPr: refusing a base-branch `branch` argument
 //
 // recordPushedBranchForSession (pr-linking.ts) already refuses a captured
