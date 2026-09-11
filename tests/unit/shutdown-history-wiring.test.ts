@@ -118,7 +118,8 @@ function buildRunningSession(overrides: Partial<Session> = {}): Session {
 
 function buildMockDependencies(
   sessions: Session[],
-  ptyKillReport: PtyKillReport = { pids: [], killedCount: 0 },
+  ptyKillReport: PtyKillReport = { pids: [], killedCount: 0, deferredCount: 0 },
+  allowGrace = false,
 ) {
   // Stable diffWatcher stub so a test can assert closeAll() ran during cleanup.
   const diffWatcher = { closeAll: vi.fn() };
@@ -144,6 +145,7 @@ function buildMockDependencies(
     stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
+    allowGrace,
   };
 }
 
@@ -214,7 +216,33 @@ describe('syncShutdownCleanup history wire-up', () => {
 
   it('returns a zero report when there was nothing to kill', () => {
     const dependencies = buildMockDependencies([]);
-    expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [], killedCount: 0 });
+    expect(syncShutdownCleanup(dependencies)).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+  });
+
+  /**
+   * killAll must hear the caller's own allowGrace decision, not a hardcoded
+   * value. The before-quit and powerMonitor routes pass true so a young
+   * session's kill can ride the drain's timer; every other route passes
+   * false so nothing is left deferred with no drain to wait for it.
+   */
+  it('forwards allowGrace: true into killAll on a route that allows a grace-period kill', () => {
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 0, deferredCount: 0 }, true);
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(sessionManager.killAll).toHaveBeenCalledWith({ allowGrace: true });
+  });
+
+  it('forwards allowGrace: false into killAll on a route that must leave nothing deferred', () => {
+    const dependencies = buildMockDependencies([], { pids: [], killedCount: 0, deferredCount: 0 }, false);
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(sessionManager.killAll).toHaveBeenCalledWith({ allowGrace: false });
   });
 
   /**
@@ -314,7 +342,7 @@ describe('syncShutdownCleanup history wire-up', () => {
         // Checked before classification, and only for a leaf statement (a
         // container's own text would already include everything nested
         // inside it, including a kill call several statements deeper).
-        if (statement.getText(sourceFile).includes('sessionManager.killAll()')) {
+        if (statement.getText(sourceFile).includes('sessionManager.killAll(')) {
           return true;
         }
 

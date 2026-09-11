@@ -1631,7 +1631,9 @@ app.whenReady().then(async () => {
   if (process.platform !== 'win32') {
     powerMonitor.on('shutdown', (event?: ElectronEvent) => {
       event?.preventDefault?.();
-      performShutdown();
+      // The before-quit that follows drains from the module-level report, so a
+      // young session's kill may ride that drain's timer here too.
+      performShutdown({ allowGrace: true });
       app.quit();
     });
   }
@@ -1877,7 +1879,7 @@ function getShutdownDependencies() {
  * whether the drain runs: a killed PTY whose child pid was unreadable has an
  * exit callback in flight with nothing to probe.
  */
-let ptyKillReport: PtyKillReport = { pids: [], killedCount: 0 };
+let ptyKillReport: PtyKillReport = { pids: [], killedCount: 0, deferredCount: 0 };
 /**
  * Set by an OS shutdown the app cannot ask to be delayed: Windows
  * 'session-end', which Electron documents as "once this event fires, there is
@@ -1899,8 +1901,20 @@ let osShutdownCannotBeDelayed = false;
  * Linux/macOS, BrowserWindow 'session-end' on Windows) all route through
  * this. Idempotent via isShuttingDown: returns false (and does nothing) if
  * a shutdown is already in progress.
+ *
+ * `allowGrace` (default false) lets a young session's PTY kill ride the
+ * before-quit drain's timer (SessionManager.killAll). Only a route the drain
+ * follows may pass it: before-quit itself (unless a Windows session-end
+ * disarmed the drain) and the powerMonitor shutdown. The signal handlers and
+ * session-end call this bare, so nothing stays deferred on a route that
+ * exits without the loop. First caller wins: the route that starts the
+ * shutdown decides.
  */
-function performShutdown(): boolean {
+interface PerformShutdownOptions {
+  allowGrace?: boolean;
+}
+
+function performShutdown(options?: PerformShutdownOptions): boolean {
   if (isShuttingDown()) return false;
   setShuttingDown();
 
@@ -1918,7 +1932,10 @@ function performShutdown(): boolean {
 
   // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)
-  ptyKillReport = syncShutdownCleanup(getShutdownDependencies());
+  ptyKillReport = syncShutdownCleanup({
+    ...getShutdownDependencies(),
+    allowGrace: options?.allowGrace === true,
+  });
   return true;
 }
 
@@ -1928,12 +1945,15 @@ function performShutdown(): boolean {
 // See pty/shutdown/exit-callback-drain.ts and
 // .claude/rules/synchronous-shutdown.md.
 app.on('before-quit', createBeforeQuitHandler({
-  performShutdown: () => performShutdown(),
+  // The drain runs after this pass unless a Windows session-end disarmed it,
+  // so a young session's kill may wait out its grace on the drain's clock.
+  performShutdown: () => performShutdown({ allowGrace: !osShutdownCannotBeDelayed }),
   isOsInitiatedShutdown: () => osShutdownCannotBeDelayed,
   getPtyKillReport: () => ptyKillReport,
   drainPtyExitCallbacks: (report) => drainPtyExitCallbacks({
     pids: report.pids,
     killedCount: report.killedCount,
+    deferredCount: report.deferredCount,
     isProcessAlive,
   }),
   hideAllWindows: () => {

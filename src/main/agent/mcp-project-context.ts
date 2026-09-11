@@ -130,10 +130,16 @@ export function buildCommandContextForProject(
       // tree left to walk afterwards.
       const leftovers = captureSessionLeftovers(ipcContext, task.session_id);
 
-      // Kill any live PTY for the task
+      // Kill any live PTY for the task. The exit promise is captured BETWEEN the
+      // kill and the remove: awaitExit resolves at once for a row that is gone,
+      // and a young session's kill waits out its exit-sequence grace
+      // (SessionManager.kill), so the reap and the worktree removal below must
+      // wait for the process, not for the call.
+      let sessionExited: Promise<void> = Promise.resolve();
       if (task.session_id) {
         try {
           ipcContext.sessionManager.kill(task.session_id);
+          sessionExited = ipcContext.sessionManager.awaitExit(task.session_id);
           ipcContext.sessionManager.remove(task.session_id);
         } catch { /* may already be dead */ }
       }
@@ -142,19 +148,25 @@ export function buildCommandContextForProject(
       // Best-effort worktree + branch cleanup
       if (task.worktree_path) {
         const worktreeManager = new WorktreeManager(projectPath);
-        worktreeManager.withLock(async () => {
+        // The exit wait and the reap run BEFORE the per-project git queue is
+        // taken: holding it for the grace would head-of-line block every other
+        // task's worktree work in the project (see task-cleanup.ts).
+        void (async () => {
+          await sessionExited;
           // Before the removal: a live process holding the worktree as its cwd
           // is what makes the delete fail on Windows.
           await reapSessionLeftovers(task.id, leftovers);
-          const removed = await worktreeManager.removeWorktree(task.worktree_path!);
-          if (removed && task.branch_name) {
-            const config = ipcContext.configManager.getEffectiveConfig(projectPath);
-            if (config.git.autoCleanup) {
-              try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
-              await worktreeManager.removeBranch(task.branch_name);
+          await worktreeManager.withLock(async () => {
+            const removed = await worktreeManager.removeWorktree(task.worktree_path!);
+            if (removed && task.branch_name) {
+              const config = ipcContext.configManager.getEffectiveConfig(projectPath);
+              if (config.git.autoCleanup) {
+                try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
+                await worktreeManager.removeBranch(task.branch_name);
+              }
             }
-          }
-        }, { label: `mcp-worktree:${task.id.slice(0, 8)}` }).catch((error) => {
+          }, { label: `mcp-worktree:${task.id.slice(0, 8)}` });
+        })().catch((error) => {
           console.error(`[mcp-http delete] Worktree cleanup failed for task ${task.id.slice(0, 8)}:`, error);
         });
       }

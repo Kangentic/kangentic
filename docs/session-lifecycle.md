@@ -158,10 +158,40 @@ The capture reads a snapshot the watcher already computed for its own counting, 
 
 ### What is destroyed on To Do cleanup
 
-- PTY process (force-killed)
+- PTY process (force-killed, after the exit-sequence grace when the session is young; see below)
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
 - In-memory caches (usage, activity, events) for the session
+
+### SessionManager.kill() and the young-session grace
+
+`kill()` is synchronous and never resumable. It marks the session `intentionalExit`, nulls
+`session.pty` at once (so `write()` / `resize()` no-op and a respawn cannot find the old PTY), and
+then either force-kills immediately or, for a YOUNG session, writes the adapter's exit sequence and
+parks the PTY on `DeferredKillRegistry` (`src/main/pty/lifecycle/deferred-kill.ts`), whose timer
+force-kills it `KILL_GRACE_MS` (1500 ms) later.
+
+Young means the agent may still be inside Claude Code's fullscreen boot-canary window: Claude writes
+`fullscreenBootPending[pid]` to `~/.claude.json` at REPL mount and withdraws it 10 s after the first
+frame or on a graceful exit, and a dead pid found at the next launch is a strike (one: classic
+renderer for that launch; two: sticky until `/tui fullscreen`). A bare `pty.kill()` gives Claude
+about 100 ms and the locked withdrawal needs 82 to 97 ms idle, so the grace is what lets it land.
+The predicate (`isYoungSession`): alt-screen entered under `YOUNG_AFTER_ALT_SCREEN_MS` (12 s) ago,
+or no alt screen yet and spawned under `YOUNG_SINCE_SPAWN_MS` (60 s) ago. The first alt-screen entry
+is stamped on the row as `altScreenEnteredAt` by the buffer manager's `onAltScreenEnter`.
+
+The deferred PTY lives OUTSIDE the registry row on purpose: `remove()` may delete the row in the
+same tick, and the respawn sibling drain hard-kills any row it finds for the task. The registry
+attaches no PTY listener; the spawn flow's `onExit` stays attached (it still emits `'exit'` after
+the row is gone) and the manager's own `'exit'` event cancels the timer on a natural exit.
+`kill(id, { immediate: true })` skips the grace for the agent-absence sweep, whose agent is already
+gone.
+
+A caller that touches the cwd or process tree after a kill therefore waits for the PROCESS: `kill`,
+capture `awaitExit` (the row must still exist), then `remove`, then await before any `rmSync`,
+`removeWorktree`, or `reapSessionLeftovers`. `cleanupTaskSession`, `executeCleanupWorktree`, project
+delete, project relocate, the MCP task delete, and `SESSION_KILL_TRANSIENT` all do. The rule and its
+scan: `.claude/rules/pty-teardown-grace.md`.
 
 ### SessionManager.suspend() flow
 
@@ -480,15 +510,15 @@ The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`)
 2. List all in-memory sessions with `running` or `queued` status
 3. For each running record, call `captureSessionMetrics()` (synchronous: in-memory cache read + better-sqlite3 writes) so cost / tokens / duration / `tool_breakdown` / `compaction_count` are flushed to the DB before the PTY is killed. The function writes to BOTH the `sessions` row (`SessionRepository.updateMetrics`) and, when `usage` is defined, to a `usage_history` row (`UsageHistoryRepository.recordSessionUsage`) so lifetime period totals survive any subsequent task deletion. Without this step every clean app close loses in-flight metrics for any session that had not yet checkpointed. (The shutdown path uses the synchronous snapshot only; the async transcript-token refinement, `refineTranscriptTokens`, runs only on the exit/suspend/move paths, never here.) A periodic snapshot timer (`startMetricsSnapshotTimer`, ~45s) also runs this same capture for live sessions during normal operation so an app/OS kill bounds the loss to one interval; it is stopped synchronously at the top of `syncShutdownCleanup`.
 4. Mark each running record `suspended` (with `suspended_at` timestamp and `suspended_by = 'system'`) so sessions can resume on next launch. Queued records are marked `exited` since there is nothing to resume.
-5. Call `SessionManager.killAll()` which force-kills all PTYs immediately (no graceful `/exit`, no waiting), then `sessionManager.dispose()`
+5. Call `SessionManager.killAll({ allowGrace })` which writes each PTY's exit sequence and force-kills it immediately (no waiting), except that a YOUNG session (see the `kill()` grace above) is parked on the deferred registry's 1500 ms timer when `allowGrace` is set, which it is only on a route the drain follows (a user quit, the powerMonitor shutdown; never a Windows `session-end` or a signal, which flush every parked PTY at once). Then `sessionManager.dispose()`, which leaves the parked PTYs alone
 6. Clean up session files and clear in-memory session maps
 7. Delete ephemeral project from index (if applicable)
 8. Close all database connections via `closeAll()`
-9. Return the `PtyKillReport` for the PTYs `killAll()` killed: the probe-able child pids, plus the total kill count
+9. Return the `PtyKillReport` for the PTYs `killAll()` killed: the probe-able child pids, the total kill count, and `deferredCount` (how many ride the grace timer)
 
 Every cleanup step before the kill runs through `runCleanupStep`, which logs `[SHUTDOWN] cleanup:step-failed <name>` and continues. A throwing handle-closer used to abort the whole `try` and leave every PTY alive, which hangs Electron's teardown until the 6 second failsafe, because node-pty's ThreadSafeFunction finalizer joins the thread waiting on the child. The one bare call in that region is the `getSessionManager()` read, which is not a cleanup step: a throw there leaves no manager to kill PTYs with either way. Steps 7 and 8 are wrapped too, so a read-only global index DB cannot skip `closeAll()` and leak SQLite handles into the quit.
 
-Then, only when at least one PTY was killed, the handler calls `event.preventDefault()` and runs the bounded PTY exit-callback drain (`drainPtyExitCallbacks` in `src/main/pty/shutdown/exit-callback-drain.ts`): it polls the killed pids every 25 ms until every one is gone, allows 100 ms of further loop turns, gives up at 1500 ms, and then calls `app.quit()` again. A kill whose child pid was unreadable has no probe, so the drain spends a fixed 400 ms blind budget for it instead. The second `before-quit` pass is a no-op and Electron's normal quit proceeds (tearing down Chromium child processes). The drain logs `[SHUTDOWN] pty-drain:start n=<probed> blind=<unprobed>` and `pty-drain:done <ms>` (or `pty-drain:timeout <ms> lingering=<pids> blind=<n>`). It exists because node-pty delivers a PTY's exit through a native ThreadSafeFunction, and an exit callback first dispatched after Electron has stopped Node kills the process with an unhandled C++ exception (Sentry DESKTOP-C); the drain makes sure those callbacks land while JS is still callable.
+Then, only when at least one PTY was killed, the handler calls `event.preventDefault()` and runs the bounded PTY exit-callback drain (`drainPtyExitCallbacks` in `src/main/pty/shutdown/exit-callback-drain.ts`): it polls the killed pids every 25 ms until every one is gone, allows 100 ms of further loop turns, gives up at 1500 ms (plus the 1500 ms kill grace when `deferredCount` is above zero, since a deferred kill lands exactly at the grace), and then calls `app.quit()` again. A kill whose child pid was unreadable has no probe, so the drain spends a fixed 400 ms blind budget for it instead. The second `before-quit` pass is a no-op and Electron's normal quit proceeds (tearing down Chromium child processes). The drain logs `[SHUTDOWN] pty-drain:start n=<probed> blind=<unprobed>` (with ` deferred=<n>` appended when a kill rides the grace timer) and `pty-drain:done <ms>` (or `pty-drain:timeout <ms> lingering=<pids> blind=<n>`). It exists because node-pty delivers a PTY's exit through a native ThreadSafeFunction, and an exit callback first dispatched after Electron has stopped Node kills the process with an unhandled C++ exception (Sentry DESKTOP-C); the drain makes sure those callbacks land while JS is still callable.
 
 The count, not just the pid list, is what arms the drain: an empty pid list must never read as "no PTY was killed" when one was killed and could not be named.
 
@@ -496,7 +526,7 @@ Every path that skips the drain says so: `pty-drain:skip reason=no-pty-killed`, 
 
 A hard failsafe timer (`taskkill /T /F` on Windows, 6 seconds) runs as a backstop in case Electron's shutdown hangs.
 
-Sessions are resumable on next launch via `--resume <agent_session_id>` from the saved DB record. The 2-second graceful `/exit` window is intentionally sacrificed to keep shutdown synchronous and prevent zombie processes.
+Sessions are resumable on next launch via `--resume <agent_session_id>` from the saved DB record. The 2-second graceful `/exit` window is intentionally sacrificed for mature sessions to keep shutdown synchronous and prevent zombie processes; a young session keeps its 1500 ms grace because the timer runs inside the drain, which the quit already waits on.
 
 ## Terminal Ownership Handoff
 
@@ -1055,7 +1085,10 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Hard shutdown deadline | 6000 ms | Failsafe timer before force-killing process tree |
-| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see Shutdown above) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see Shutdown above) |
+| KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
+| YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s canary window plus margin) |
+| YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` (every 60s) |
 | Stale thinking threshold | 180000 ms | If no activity signal for 180s while in "thinking" state, emit synthetic idle event (v2 engine is event-driven, no polling timer) |
@@ -1117,8 +1150,8 @@ mounts before recovery runs adopts an unpaired live PTY for its slot rather than
 
 ### Kill Flow (`SESSION_KILL_TRANSIENT`)
 
-1. Remove the session from `SessionManager` (kills PTY)
-2. Delete the session directory from disk (best-effort cleanup)
+1. `kill()` the session (a young one gets its exit sequence and the 1500 ms grace), capture `awaitExit`, then `remove()` it from `SessionManager`; the handler returns at once, so the window closes immediately
+2. Once the process has exited, delete the session directory from disk (best-effort cleanup). Deleting it under a still-exiting Claude made its SessionEnd hook write into a missing directory
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
 (volume) and by `feature_used: command_terminal` (adoption); see [analytics.md](analytics.md).

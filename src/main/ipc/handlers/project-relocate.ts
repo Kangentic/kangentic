@@ -123,16 +123,23 @@ export async function relocateProject(
   // git I/O), then do the DB writes + PTY shutdown under the lock.
   const liveSessions = context.sessionManager.listSessions()
     .filter((session) => session.projectId === projectId && isLiveSession(session));
+  // Transient command terminals have no task or DB record; kill outright. Kill
+  // them all first and wait for the exits together: a young session's kill
+  // waits out its exit-sequence grace (SessionManager.kill), and the folder
+  // move below cannot start while a shell still holds the old path as its cwd.
+  const transientExits: Promise<void>[] = [];
   for (const session of liveSessions) {
-    if (session.transient || !session.taskId) {
-      // Transient command terminals have no task or DB record; kill outright.
-      try {
-        await context.sessionManager.kill(session.id);
-      } catch (err) {
-        console.warn(`[PROJECT_RELOCATE] Failed to kill transient session ${session.id.slice(0, 8)}:`, err);
-      }
-      continue;
+    if (!session.transient && session.taskId) continue;
+    try {
+      context.sessionManager.kill(session.id);
+      transientExits.push(context.sessionManager.awaitExit(session.id));
+    } catch (error) {
+      console.warn(`[PROJECT_RELOCATE] Failed to kill transient session ${session.id.slice(0, 8)}:`, error);
     }
+  }
+  await Promise.all(transientExits);
+  for (const session of liveSessions) {
+    if (session.transient || !session.taskId) continue;
     abortInFlightResume(session.taskId);
     await withTaskLock(session.taskId, async () => {
       applySuspendDbWrites(context, projectId, session.taskId, 'system');

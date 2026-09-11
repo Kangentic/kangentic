@@ -665,8 +665,11 @@ Shell-specific adaptations:
 | Repaint-settle max wait | 400 ms | Ceiling for the post-resize repaint wait before sampling scrollback |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
-| Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
-| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills mature PTYs immediately) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
+| YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s boot-canary window plus margin) |
+| YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |
 
 Stale-thinking detection is no longer a `SessionManager` constant. It now lives in the activity engine watchdog (`src/main/activity-engine/engine/`), which emits a synthetic idle transition after `DEFAULT_STALE_THINKING_TIMEOUT_MS` (180000 ms) of no activity signal while in the "thinking" state. The engine is event-driven, so there is no separate polling timer. See [Activity Detection](activity-detection.md).

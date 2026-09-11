@@ -35,6 +35,16 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// Every session spawned here is young by the real predicate (startedAt is now,
+// the mock never enters the alt screen), which would turn each kill() into the
+// 1500 ms exit-sequence grace and break the instant-kill fixtures throughout
+// this file. Pin it to the mature path; the grace itself is exercised in
+// session-manager-deferred-kill.test.ts.
+vi.mock('../../src/main/pty/lifecycle/deferred-kill', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/lifecycle/deferred-kill')>()),
+  isYoungSession: () => false,
+}));
+
 // `traceTerminal` is gated on `__KANGENTIC_DEV__`, which vitest.config.ts
 // pins to `false` - the real implementation is a no-op in every test here.
 // Wrap it (not replace it) so the trace payload contract is observable via
@@ -712,7 +722,7 @@ describe('KillAll', () => {
 
     const killReport = manager.killAll();
 
-    expect(killReport).toEqual({ pids: [pty1.pid, pty2.pid], killedCount: 2 });
+    expect(killReport).toEqual({ pids: [pty1.pid, pty2.pid], killedCount: 2, deferredCount: 0 });
   });
 
   it('kills all PTY processes', async () => {

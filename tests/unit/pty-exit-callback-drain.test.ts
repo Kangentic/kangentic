@@ -21,6 +21,7 @@ import {
   PTY_EXIT_DRAIN_SETTLE_TICKS,
 } from '../../src/main/pty/shutdown/exit-callback-drain';
 import type { PtyExitDrainResult } from '../../src/main/pty/shutdown/exit-callback-drain';
+import { KILL_GRACE_MS } from '../../src/main/pty/lifecycle/deferred-kill';
 
 /** Start a drain and expose whether / how it settled without awaiting it. */
 function startDrain(options: Parameters<typeof drainPtyExitCallbacks>[0]) {
@@ -271,6 +272,96 @@ describe('drainPtyExitCallbacks', () => {
     await vi.advanceTimersByTimeAsync(20);
     expect(state.result).toEqual({
       timedOut: false, elapsedMs: 20, lingeringPids: [], unprobedKillCount: 0,
+    });
+  });
+
+  /**
+   * A young session's kill at quit is parked on the deferred registry's timer
+   * (pty-teardown-grace.md), which fires INSIDE this drain. The report's
+   * deferredCount is what extends the deadline past it: at 1500 ms each, an
+   * unextended deadline would fire at the very instant the kill lands and hand
+   * app.quit() an exit callback still in flight (the DESKTOP-C race).
+   */
+  describe('a deferred kill', () => {
+    it('extends the deadline by the grace, so the drain outlasts the kill it is waiting for', async () => {
+      const log = vi.fn();
+      // The child stays alive until the deferred kill lands at the grace.
+      let alive = true;
+      const isProcessAlive = vi.fn(() => alive);
+      const state = startDrain({
+        pids: [11],
+        killedCount: 1,
+        deferredCount: 1,
+        isProcessAlive,
+        pollIntervalMs: 10,
+        settleTicks: 1,
+        deadlineMs: 100,
+        deferredGraceMs: 150,
+        log,
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      // An unextended deadline would have given up here.
+      expect(state.result).toBeNull();
+
+      // The kill lands at the grace; the drain sees the child go and settles.
+      await vi.advanceTimersByTimeAsync(50);
+      alive = false;
+      await vi.advanceTimersByTimeAsync(20);
+      expect(state.result).toEqual({
+        timedOut: false, elapsedMs: 170, lingeringPids: [], unprobedKillCount: 0,
+      });
+      expect(log.mock.calls[0][0]).toBe('[SHUTDOWN] pty-drain:start n=1 blind=0 deferred=1');
+    });
+
+    it('gives up at the base deadline plus the grace when the child ignores even the deferred kill', async () => {
+      const state = startDrain({
+        pids: [11],
+        killedCount: 1,
+        deferredCount: 1,
+        isProcessAlive: () => true,
+        pollIntervalMs: 10,
+        settleTicks: 1,
+        deadlineMs: 100,
+        deferredGraceMs: 150,
+      });
+
+      await vi.advanceTimersByTimeAsync(249);
+      expect(state.result).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(state.result).toEqual({
+        timedOut: true, elapsedMs: 250, lingeringPids: [11], unprobedKillCount: 0,
+      });
+    });
+
+    it('leaves the breadcrumb and the deadline unchanged when nothing is deferred', async () => {
+      const log = vi.fn();
+      const state = startDrain({
+        pids: [11],
+        killedCount: 1,
+        deferredCount: 0,
+        isProcessAlive: () => true,
+        pollIntervalMs: 10,
+        settleTicks: 1,
+        deadlineMs: 100,
+        deferredGraceMs: 150,
+        log,
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(state.result?.timedOut).toBe(true);
+      expect(log.mock.calls[0][0]).toBe('[SHUTDOWN] pty-drain:start n=1 blind=0');
+    });
+
+    it('ships a default extension that outlasts the real grace and still fits under the failsafe', () => {
+      // The kill lands at KILL_GRACE_MS and the drain extends its deadline by
+      // exactly that, so what is left after the kill is the base deadline
+      // itself: it must cover the settle plus observed kill latency. The total
+      // must still leave Electron's own teardown room under the 6000 ms hard
+      // failsafe and dev.js's 8000 ms graceful-quit deadline.
+      expect(KILL_GRACE_MS).toBeGreaterThan(0);
+      expect(PTY_EXIT_DRAIN_DEADLINE_MS).toBeGreaterThanOrEqual(500);
+      expect(PTY_EXIT_DRAIN_DEADLINE_MS + KILL_GRACE_MS).toBeLessThanOrEqual(3000);
     });
   });
 

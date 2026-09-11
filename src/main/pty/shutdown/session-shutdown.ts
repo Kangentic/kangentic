@@ -3,6 +3,7 @@ import type { SessionStatus } from '../../../shared/types';
 import type { SessionQueue } from '../session-queue';
 import type { SessionFileManager } from '../lifecycle/session-file-manager';
 import type { FirstOutputTracker } from '../lifecycle/first-output-tracker';
+import { isYoungSession, type DeferredKillRegistry } from '../lifecycle/deferred-kill';
 
 /**
  * Error-tolerant write of an agent exit sequence to a PTY.
@@ -30,6 +31,8 @@ export interface ShutdownSession {
   status: SessionStatus;
   startedAt: string;
   exitSequence: string[];
+  /** First alt-screen entry, epoch ms; see ManagedSession.altScreenEnteredAt. */
+  altScreenEnteredAt?: number;
   /** onData / onExit listener disposables, detached at kill so node-pty
    *  stops invoking our callbacks after the session dir is deleted. See
    *  ManagedSession.ptyDisposables for the full contract: only set on the
@@ -142,6 +145,27 @@ export interface PtyKillReport {
   /** Total PTYs killed, including any whose child pid was unreadable.
    *  Always >= pids.length. */
   killedCount: number;
+  /**
+   * How many of `killedCount` are DEFERRED: their exit sequence is written and
+   * their force-kill fires on a timer (`KILL_GRACE_MS`) that the drain must
+   * outlast. Counted in `killedCount` and `pids` like any other kill, so the
+   * drain arms and probes them; this number only tells it to extend its
+   * deadline by the grace. Zero on every route where no drain follows.
+   */
+  deferredCount: number;
+}
+
+export interface KillAllSessionsOptions {
+  /**
+   * Let a young session's force-kill wait out the exit-sequence grace on the
+   * deferred registry's timer instead of landing now. Only for a route where
+   * the before-quit drain WILL run (it is what keeps the loop alive for the
+   * timer and holds the quit until the kill has landed). Defaults to false:
+   * the instant kill, with every previously deferred PTY flushed as well.
+   */
+  allowGrace?: boolean;
+  /** The manager's deferred-kill registry. Without it nothing can be deferred. */
+  deferredKills?: DeferredKillRegistry;
 }
 
 /**
@@ -155,10 +179,15 @@ export interface PtyKillReport {
  * .claude/rules/synchronous-shutdown.md.
  *
  * Best-effort graceful exit: each PTY gets the exit sequence written
- * to it before kill() lands. The write buffer may or may not flush
- * in time (we do NOT wait); the agent might get a few ms to start
- * flushing conversation state. For a true graceful suspend, call
- * suspendAllSessions first.
+ * to it before kill() lands. For a MATURE session the write buffer may or
+ * may not flush in time (we do NOT wait). For a YOUNG session (inside Claude
+ * Code's fullscreen boot-canary window, see lifecycle/deferred-kill.ts) and
+ * only when `allowGrace` is set, the kill is instead parked on the deferred
+ * registry's 1500 ms timer, which fires inside the before-quit drain: the
+ * loop stays alive for it, the exit sequence lands, and the drain (whose
+ * deadline extends by the grace when `deferredCount` is set) still holds the
+ * quit until the child is gone. Every parked PTY's listeners are detached
+ * here either way, exactly as for the rows below.
  *
  * Returns a PtyKillReport. The before-quit handler feeds it to the
  * exit-callback drain (exit-callback-drain.ts), which holds the quit until
@@ -172,9 +201,17 @@ export interface PtyKillReport {
  */
 export function killAllSessions<S extends ShutdownSession>(
   context: ShutdownContext<S>,
+  options: KillAllSessionsOptions = {},
 ): PtyKillReport {
   const pids: number[] = [];
   let killedCount = 0;
+  let deferredCount = 0;
+  const deferredKills = options.deferredKills;
+  const deferYoung = options.allowGrace === true && deferredKills !== undefined;
+  // What an earlier kill() parked, read BEFORE the loop parks anything of its
+  // own, so a row deferred below is counted once, not again as "pending".
+  const previouslyParkedPids = deferredKills?.pendingPids() ?? [];
+  const previouslyParkedCount = deferredKills?.size ?? 0;
   for (const session of context.sessions.values()) {
     if (session.pty) {
       writeExitSequence(session.pty, session.exitSequence);
@@ -182,7 +219,14 @@ export function killAllSessions<S extends ShutdownSession>(
       // Read before nulling: the drain needs the child pid, not the wrapper.
       const childPid = ptyRef.pid;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      context.killPty(ptyRef);
+      if (deferYoung && isYoungSession(session)) {
+        // The registry's timer does the kill; the listeners are detached just
+        // below like every other row's, so the entry carries none.
+        deferredKills.schedule({ sessionId: session.id, ptyRef, pid: childPid });
+        deferredCount += 1;
+      } else {
+        context.killPty(ptyRef);
+      }
       // Count the kill first, unconditionally. An unreadable pid means the drain
       // has nothing to probe for this child, NOT that nothing was killed.
       killedCount += 1;
@@ -206,8 +250,25 @@ export function killAllSessions<S extends ShutdownSession>(
     }
     context.sessionFiles.detachAndDelete(session.id);
   }
+  // PTYs an earlier kill() parked, whose rows may already be gone. Their
+  // listeners come off now for the same reason as the rows' above; the kill
+  // itself either rides the timer (a drain follows) or lands here (none does).
+  if (deferredKills) {
+    deferredKills.detachAllListeners();
+    if (deferYoung) {
+      pids.push(...previouslyParkedPids);
+      killedCount += previouslyParkedCount;
+      deferredCount += previouslyParkedCount;
+    } else {
+      // Nothing was parked by the loop above on this branch, so the flush
+      // covers exactly the previously parked PTYs.
+      const flushed = deferredKills.flushAll();
+      pids.push(...flushed.pids);
+      killedCount += flushed.count;
+    }
+  }
   context.sessions.clear();
   context.sessionQueue.clear();
   context.firstOutputTracker.clear();
-  return { pids, killedCount };
+  return { pids, killedCount, deferredCount };
 }

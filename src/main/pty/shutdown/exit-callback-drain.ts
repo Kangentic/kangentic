@@ -41,6 +41,8 @@
  * today.
  */
 
+import { KILL_GRACE_MS } from '../lifecycle/deferred-kill';
+
 export const PTY_EXIT_DRAIN_POLL_MS = 25;
 /** Loop turns to allow after the last child is gone: the exit thread's
  *  BlockingCall lands on the libuv async handle, which the next loop
@@ -65,10 +67,20 @@ export interface PtyExitDrainOptions {
    *  the pure-probe behavior. Anything above that count has no liveness signal
    *  and is drained blind on `blindSettleTicks`. */
   killedCount?: number;
+  /** How many of those kills are DEFERRED to a timer of `deferredGraceMs`
+   *  (lifecycle/deferred-kill.ts): their exit sequence is written and the
+   *  force-kill fires inside this drain. The deadline extends by the grace
+   *  when this is above zero; at the default 1500 ms each, an unextended
+   *  deadline would fire at the same instant as the deferred kill and hand
+   *  `app.quit()` an exit callback still in flight. Defaults to zero. */
+  deferredCount?: number;
+  /** The deferred registry's grace; defaults to `KILL_GRACE_MS`. */
+  deferredGraceMs?: number;
   isProcessAlive: (pid: number) => boolean;
   pollIntervalMs?: number;
   settleTicks?: number;
   blindSettleTicks?: number;
+  /** The base deadline, before any deferred-kill extension. */
   deadlineMs?: number;
   /** Defaults to console.log; the lines become Sentry console breadcrumbs. */
   log?: (line: string) => void;
@@ -114,10 +126,18 @@ export function drainPtyExitCallbacks(options: PtyExitDrainOptions): Promise<Pty
   // whole wait and it has to be the longer, blind one. Probed pids alongside it
   // only push the countdown's start later, never shorten it.
   const effectiveSettleTicks = unprobedKillCount > 0 ? blindSettleTicks : settleTicks;
-  const deadlineMs = options.deadlineMs ?? PTY_EXIT_DRAIN_DEADLINE_MS;
+  // A deferred kill lands at the grace, so the deadline must outlast it by the
+  // full base budget or the drain gives up exactly as the kill fires.
+  const deferredCount = Math.max(0, options.deferredCount ?? 0);
+  const deferredGraceMs = options.deferredGraceMs ?? KILL_GRACE_MS;
+  const deadlineMs = (options.deadlineMs ?? PTY_EXIT_DRAIN_DEADLINE_MS)
+    + (deferredCount > 0 ? deferredGraceMs : 0);
   const log = options.log ?? ((line: string) => console.log(line));
   const startedAt = Date.now();
-  log(`[SHUTDOWN] pty-drain:start n=${pending.size} blind=${unprobedKillCount}`);
+  // The breadcrumb names the extension only when it is in play, so the common
+  // line stays byte-identical to what every earlier Sentry trail shows.
+  const deferredNote = deferredCount > 0 ? ` deferred=${deferredCount}` : '';
+  log(`[SHUTDOWN] pty-drain:start n=${pending.size} blind=${unprobedKillCount}${deferredNote}`);
 
   return new Promise((resolve) => {
     let settled = false;

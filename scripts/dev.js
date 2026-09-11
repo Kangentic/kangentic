@@ -65,8 +65,9 @@ stopWatcher.unref();
 // exposes POST /quit, which runs app.quit() and so the whole real quit path.
 // Bounded: the app's own hard failsafe fires at 6s and the launcher's --stop
 // force-kills at 45s (STOP_GRACE_MS in worktree-preview.js), so 8s covers a
-// normal quit (under 2s, with a live PTY drain at most 1.5s more) and still
-// yields before the launcher escalates.
+// normal quit (under 2s, with a live PTY drain at most 3s more: 1.5s, plus
+// the 1.5s exit-sequence grace a just-spawned agent's kill waits out inside
+// the drain) and still yields before the launcher escalates.
 const GRACEFUL_QUIT_DEADLINE_MS = 8000;
 
 function requestGracefulElectronQuit() {

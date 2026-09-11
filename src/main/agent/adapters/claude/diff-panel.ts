@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { withClaudeJsonLock } from './trust-manager';
+import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
 
 const LOG_TAG = '[CLAUDE_DIFF_PANEL]';
@@ -33,7 +33,14 @@ const LOG_TAG = '[CLAUDE_DIFF_PANEL]';
  * already-`false` key costs one read and no write.
  */
 export async function ensureDiffPanelClosed(): Promise<void> {
-  return withClaudeJsonLock(() => ensureDiffPanelClosedSync());
+  try {
+    await withClaudeJsonLock(() => ensureDiffPanelClosedSync());
+  } catch (error) {
+    // The file lock stayed held past its budget: skip, as Claude itself does
+    // on a final ELOCKED. The panel opening once is cosmetic.
+    if (!isClaudeJsonLockError(error)) throw error;
+    console.warn(`${LOG_TAG} Skipping the diff panel write; ${error.message}`);
+  }
 }
 
 function ensureDiffPanelClosedSync(): void {

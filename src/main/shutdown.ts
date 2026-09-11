@@ -25,6 +25,14 @@ interface ShutdownDependencies {
   stopAnnouncementTimers: () => void;
   clearPendingTimers: () => void;
   isEphemeral: boolean;
+  /**
+   * Whether a young session's force-kill may ride the before-quit drain's
+   * timer (see SessionManager.killAll). True only on a route where that drain
+   * runs: a user quit and the macOS/Linux powerMonitor shutdown. False for a
+   * Windows session-end and for SIGINT/SIGTERM, which exit with no drain and
+   * so must leave nothing deferred.
+   */
+  allowGrace: boolean;
 }
 
 const HARD_SHUTDOWN_DEADLINE_MS = 6000;
@@ -74,7 +82,7 @@ function runCleanupStep(name: string, step: () => void): void {
  */
 export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKillReport {
   console.log('[SHUTDOWN] cleanup:start');
-  let ptyKillReport: PtyKillReport = { pids: [], killedCount: 0 };
+  let ptyKillReport: PtyKillReport = { pids: [], killedCount: 0, deferredCount: 0 };
   // Clear pending timers that could fire during shutdown
   runCleanupStep('clearPendingTimers', () => dependencies.clearPendingTimers());
   runCleanupStep('stopUpdaterTimers', () => dependencies.stopUpdaterTimers());
@@ -181,15 +189,17 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
       }
     });
 
-    // Kill all PTY sessions immediately (with best-effort exit signals).
-    // Stays synchronous - no await. Sessions are resumable via --resume
-    // <agent_session_id> from the DB record marked 'suspended' above.
+    // Kill all PTY sessions (with best-effort exit signals). Stays synchronous -
+    // no await. Sessions are resumable via --resume <agent_session_id> from the
+    // DB record marked 'suspended' above. A young session's kill is parked on a
+    // timer the before-quit drain outlasts when `allowGrace` says a drain
+    // follows; the call itself never waits either way.
     //
     // NOT wrapped in runCleanupStep: this is the step everything above exists to
     // protect, and its report is the drain's only input. If it throws, the outer
     // catch takes over and the zero-value report leaves the quit undrained,
     // which is the honest outcome.
-    ptyKillReport = sessionManager.killAll();
+    ptyKillReport = sessionManager.killAll({ allowGrace: dependencies.allowGrace });
     runCleanupStep('sessionManager.dispose', () => sessionManager.dispose());
 
     // Ephemeral cleanup: delete project from index so it doesn't show on next launch.

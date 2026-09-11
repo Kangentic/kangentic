@@ -109,6 +109,8 @@ describe('ensureDiffPanelClosed', () => {
     // No backup copy: the write is one key on freshly parsed content, and a
     // megabyte copy per flip would litter the home directory.
     expect(fs.existsSync(backupPath())).toBe(false);
+    // The write ran under Claude's own ~/.claude.json.lock and released it.
+    expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
   });
 
   it('flips diffSidebarOpen: true (a session left the panel open) back to false', async () => {
