@@ -2,6 +2,24 @@
 
 <!-- releases -->
 
+## [protocol-v0.13.0] - 2026-09-11
+
+Adds `BoardTaskWire.pr_merge_readiness` and `BoardColumnWire.spawns_session`.
+Both are additive and neither moves `PROTOCOL_VERSION`: `parseBoardTaskWire`
+reads an absent readiness key as null, so a desktop that predates the field
+looks exactly like one that has never judged a PR. A client that does not
+recognise a readiness value should render the PR as plain open, which keeps
+`queued` and `running` from breaking a phone built against the first four
+values.
+
+### Features
+- Show merge readiness on the PR pill, resolved per adapter (5ab77a75)
+- Fold Azure branch policies into merge readiness and report in-flight checks (44dd7abd)
+- Narrow `BoardColumnWire.role` and add `spawns_session` (f163b588)
+
+### Fixes
+- Correct the `spawns_session` false contract and pin the wire round trip (e03fa313)
+
 ## [protocol-v0.12.0] - 2026-08-06
 
 Wire `PROTOCOL_VERSION` goes '2' -> '3'. All peers must upgrade together, and
