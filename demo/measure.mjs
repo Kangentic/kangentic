@@ -31,13 +31,21 @@ function kb(bytes) {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
+/** Every file the build names carries a content hash, and the README table must not churn one
+ *  on each rebuild: report the stable stem instead. */
+function stableName(name) {
+  // Exactly eight characters before the extension: both Vite's hashes and the demo plugin's are
+  // that long, and an open-ended run would eat the name itself ("demo-scenes-f6273e74.js").
+  return name.replace(/-[A-Za-z0-9_-]{8}(\.[a-z0-9]+)$/, '$1');
+}
+
 /** What the browser downloads before the board paints, by reading the built index.html. */
 function eagerAssets() {
   const html = fs.readFileSync(path.join(distDir, 'index.html'), 'utf8');
   const names = [...html.matchAll(/(?:src|href)="[^"]*\/([^/"]+\.(?:js|css))"/g)].map((match) => match[1]);
   return names.map((name) => {
     const filePath = fs.existsSync(path.join(distDir, name)) ? path.join(distDir, name) : path.join(distDir, 'assets', name);
-    return { name, raw: fs.statSync(filePath).size, gzip: gzipSize(filePath) };
+    return { name: stableName(name), raw: fs.statSync(filePath).size, gzip: gzipSize(filePath) };
   });
 }
 

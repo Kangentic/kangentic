@@ -16,6 +16,7 @@
     "configured for the vets cache and recordStats() enabled, so the actuator caches endpoint stil...",
     "the vets cache with stats."
   ],
+  "openFrame": null,
   "changes": {
     "files": [
       {

@@ -23,6 +23,8 @@
  * Options: --cols 120 --rows 40 --timeout 240 --idle 25 --min 40 --mode <permission mode> --no-trust
  *          --stop-after <seconds>   end the recording mid-turn (a session the app shows as working)
  *          --stop-when <regex>      end it on the first output matching (the test command starting)
+ *          --live-tail <ms>         also keep the frame this long before the end: the moment the live
+ *                                   frame opens a working session at, which a still paints for it
  *          --prompt ""              a Command Terminal: the agent started with no prompt
  *
  * Trust is pre-seeded for claude, codex, gemini, qwen, and copilot using the files each CLI reads,
@@ -34,7 +36,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, trust: true, stopAfter: null, stopWhen: null, prompt: '' };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '' };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -52,6 +54,7 @@ function parseArgs(argv) {
       case '--mode': options.mode = next(); break;
       case '--stop-after': options.stopAfter = Number(next()); break;
       case '--stop-when': options.stopWhen = new RegExp(next(), 'i'); break;
+      case '--live-tail': options.liveTail = Number(next()); break;
       case '--no-trust': options.trust = false; break;
       default: throw new Error(`Unknown argument ${argument}`);
     }
@@ -545,6 +548,24 @@ async function main() {
   console.error(`[capture] sanitized the frame and ${cleanStream.length} stream windows`);
   const cleanPeek = peek.map((line) => sanitizer.apply(line));
   for (const line of cleanPeek) sanitizer.assertClean(line, 'peek');
+  // The moment the live frame opens a session shown as working: this long before the recording's
+  // end, the rest streaming in after the page opens (--live-tail, from the manifest's liveTailMs
+  // or the session's own). A still and the marketing captures paint this frame for such a
+  // session, so every view starts from the same moment, and the Monitor peek at that moment
+  // rides along. A recording shorter than the tail has none: the frame starts it from the top.
+  let openFrame = null;
+  const lastWindow = stream[stream.length - 1];
+  if (options.liveTail > 0 && lastWindow && lastWindow.t > options.liveTail) {
+    const openAt = lastWindow.t - options.liveTail;
+    const rawUpToOpen = stream.filter((window) => window.t <= openAt).map((window) => window.data).join('');
+    const open = await serializeThroughXterm(rawUpToOpen, options.cols, options.rows);
+    const cleanOpen = sanitizer.apply(open.serialized);
+    sanitizer.assertClean(cleanOpen, 'open frame');
+    const cleanOpenPeek = open.peek.map((line) => sanitizer.apply(line));
+    for (const line of cleanOpenPeek) sanitizer.assertClean(line, 'open frame peek');
+    openFrame = { beforeEndMs: options.liveTail, serialized: cleanOpen, peek: cleanOpenPeek };
+    console.error(`[capture] open frame at ${(openAt / 1000).toFixed(1)}s: ${cleanOpen.length} bytes`);
+  }
   const changes = collectChanges(options.cwd, sanitizer);
   for (const file of changes.files) {
     sanitizer.assertClean(file.original, `changes ${file.path} (original)`);
@@ -575,6 +596,7 @@ async function main() {
     rawBytes: raw.length,
     serialized: cleanSerialized,
     peek: cleanPeek,
+    openFrame,
     changes,
     stream: cleanStream,
   };

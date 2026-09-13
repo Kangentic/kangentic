@@ -226,6 +226,12 @@ function runCapture(entry, cwd) {
   if (entry.mode) args.push('--mode', entry.mode);
   if (entry.stopAfter) args.push('--stop-after', String(entry.stopAfter));
   if (entry.stopWhen) args.push('--stop-when', entry.stopWhen);
+  if (entry.kind === 'session') {
+    // The frame at the moment the live frame opens this session at, when it is shown as working.
+    const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+    const liveTail = (session && session.liveTailMs) || manifest.liveTailMs;
+    if (liveTail) args.push('--live-tail', String(liveTail));
+  }
   return new Promise((resolve) => {
     const startedAt = Date.now();
     const child = spawn(process.execPath, args, { stdio: 'inherit' });

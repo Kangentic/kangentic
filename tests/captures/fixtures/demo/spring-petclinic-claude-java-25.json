@@ -16,6 +16,7 @@
     "5 RUN if [ \"${NODE_VERSION}\" != \"none\" ]; then su vscode -c \"umask 0002 && . /usr/local/share...",
     "Do you want to make this edit to Dockerfile?"
   ],
+  "openFrame": null,
   "changes": {
     "files": [
       {

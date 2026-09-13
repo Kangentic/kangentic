@@ -215,7 +215,9 @@ frame from the recordings under `tests/captures/fixtures/demo/`). The plugin als
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, and the agent boots a drag or a new Command
 Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
-the dataset). `--base=<path>` on the CLI moves the base path; the GitHub Pages
+the dataset). The four scripts and the recordings carry a content hash in their names, as Vite's
+own chunks do, so a copy GitHub Pages cached from an earlier release is never paired with a new
+seed. `--base=<path>` on the CLI moves the base path; the GitHub Pages
 deploy (`.github/workflows/deploy-demo.yml`, called from the release graph after
 `publish-release`) builds with `--base=/kangentic/`. `demo/README.md` documents the URL contract,
 the scenes, the numbers, and the Electron-only surfaces that stay inert in a browser.

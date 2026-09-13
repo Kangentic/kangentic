@@ -9,16 +9,18 @@
  * and sourcemaps are off.
  *
  * One plugin injects four classic scripts ahead of the module bundle (demo/index.html documents
- * the order) and relocates the emitted HTML from `demo/index.html` to the outDir root.
+ * the order), emits them and the recordings under content-hashed names, and relocates the
+ * emitted HTML from `demo/index.html` to the outDir root.
  *
  * `base` defaults to `/demo/`; the GitHub Pages deploy passes `--base=/kangentic/` on the CLI.
  */
 import { defineConfig, normalizePath, type ConfigEnv, type Plugin, type PluginOption, type UserConfig } from 'vite';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildDemoPreConfig } from '../tests/captures/helpers/demo-dataset';
-import { loadDemoChanges, loadDemoPeeks, loadDemoRecordings, loadDemoScrollback } from '../tests/captures/helpers/demo-scrollback';
+import { loadDemoChanges, loadDemoEnds, loadDemoOpenFrames, loadDemoPeeks, loadDemoRecordings, loadDemoScrollback, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 import { SCENES } from '../tests/captures/scenes';
 
 // Vite keeps an ambient NODE_ENV, and "development" from a shell or IDE ships React's development
@@ -44,8 +46,6 @@ const DEMO_HTML_INPUT = path.join(demoDir, 'index.html');
 const MOCK_SCRIPT_PATH = path.join(repoRoot, 'tests', 'ui', 'mock-electron-api.js');
 const BOOT_SCRIPT_PATH = path.join(demoDir, 'boot.js');
 
-/** The four classic scripts, in the order they must execute. */
-const CLASSIC_SCRIPTS = ['demo-scenes.js', 'demo-boot.js', 'mock-electron-api.js', 'demo-seed.js'] as const;
 
 function readAppVersion(): string {
   const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as { version?: unknown };
@@ -65,19 +65,36 @@ async function flattenPlugins(option: PluginOption): Promise<Plugin[]> {
   return [resolved];
 }
 
+interface PlannedAsset { fileName: string; source: string }
+
 /**
- * The recordings index the live frame fetches from: one JSON file per recording under
- * `recordings/`, holding the timed stream and the serialized final frame. The seed embeds only
- * each session's final frame (a still and a first paint need nothing more); the stream that
- * replays a session as it happened, the agent boots a drag starts, and the Command Terminal
- * boots are fetched when a terminal mounts.
+ * A content hash in the file name, as Vite gives its own chunks. GitHub Pages caches every file
+ * for ten minutes, and a visitor mid-session across a release must never pair a new seed with an
+ * old recording: a recording replays only into the grid its seed describes, and a stale one
+ * lands two frames' text on one row. index.html and stage.html stay unhashed, as entry points.
  */
-function buildRecordingsIndex(base: string): { script: string; files: Array<{ fileName: string; source: string }> } {
+function hashedName(name: string, source: string): string {
+  const hash = createHash('sha256').update(source).digest('hex').slice(0, 8);
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? `${name}-${hash}` : `${name.slice(0, dot)}-${hash}${name.slice(dot)}`;
+}
+
+/**
+ * Everything the page fetches besides Vite's bundle, planned once so the HTML tags and the
+ * emitted files agree on the hashed names: one JSON file per recording under `recordings/` (the
+ * timed stream, the serialized final frame, its last lines, its grid, how the capture ended),
+ * then the four classic scripts in the order they must execute. The seed embeds only each
+ * session's final frame (a still and a first paint need nothing more); the streams are fetched
+ * when a terminal mounts.
+ */
+function planDemoAssets(version: string, base: string): { scripts: string[]; files: PlannedAsset[] } {
   const recordings = loadDemoRecordings();
-  const files: Array<{ fileName: string; source: string }> = [];
-  const nameOf = (entry: { file: string; serialized: string; stream: Array<{ t: number; data: string }>; peek: string[]; cols: number; rows: number }): string => {
-    files.push({ fileName: `recordings/${entry.file}`, source: JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows }) });
-    return entry.file;
+  const files: PlannedAsset[] = [];
+  const nameOf = (entry: DemoRecordingEntry): string => {
+    const source = JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows, stopReason: entry.stopReason });
+    const fileName = hashedName(`recordings/${entry.file}`, source);
+    files.push({ fileName, source });
+    return fileName.slice('recordings/'.length);
   };
   const index = {
     base: `${base}recordings/`,
@@ -87,7 +104,14 @@ function buildRecordingsIndex(base: string): { script: string; files: Array<{ fi
     geometry: recordings.geometry,
   };
   console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions, ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots`);
-  return { script: `window.__demoRecordings = ${JSON.stringify(index)};\n`, files };
+  const scripts = [
+    { name: 'demo-scenes.js', source: buildScenesScript(version, `window.__demoRecordings = ${JSON.stringify(index)};\n`) },
+    { name: 'demo-boot.js', source: readFileSync(BOOT_SCRIPT_PATH, 'utf8') },
+    { name: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') },
+    { name: 'demo-seed.js', source: buildSeedScript(version) },
+  ].map((script) => ({ fileName: hashedName(script.name, script.source), source: script.source }));
+  files.push(...scripts);
+  return { scripts: scripts.map((script) => script.fileName), files };
 }
 
 function buildScenesScript(version: string, recordingsScript: string): string {
@@ -98,12 +122,14 @@ function buildSeedScript(version: string): string {
   const scrollback = loadDemoScrollback();
   const changes = loadDemoChanges();
   const peeks = loadDemoPeeks();
-  console.log(`[demo] recorded terminal sessions embedded: ${Object.keys(scrollback).length}, with a working-tree diff: ${Object.keys(changes).length}`);
+  const ends = loadDemoEnds();
+  const openFrames = loadDemoOpenFrames();
+  console.log(`[demo] recorded terminal sessions embedded: ${Object.keys(scrollback).length}, with a working-tree diff: ${Object.keys(changes).length}, with an open frame: ${Object.keys(openFrames).length}`);
   return [
     '// Generated by demo/vite.config.mts from tests/captures/helpers/demo-dataset.ts and the',
     '// recordings in tests/captures/fixtures/demo/.',
     'window.__demoApplyFixture = function () {',
-    buildDemoPreConfig({ scrollback, changes, peeks, appVersion: version }),
+    buildDemoPreConfig({ scrollback, changes, peeks, ends, openFrames, liveTailMs: readLiveTailMs(), appVersion: version }),
     '};',
     'window.__demoBoot.afterSeed();',
     '',
@@ -113,6 +139,8 @@ function buildSeedScript(version: string): string {
 function demoStaticSitePlugin(version: string): Plugin {
   let resolvedBase = DEMO_BASE;
   let emittedHtmlName = 'demo/index.html';
+  let planned: ReturnType<typeof planDemoAssets> | null = null;
+  const plan = (): ReturnType<typeof planDemoAssets> => planned ?? (planned = planDemoAssets(version, resolvedBase));
   return {
     name: 'kangentic:demo-static-site',
     enforce: 'post',
@@ -122,7 +150,7 @@ function demoStaticSitePlugin(version: string): Plugin {
     },
     transformIndexHtml: {
       order: 'pre',
-      handler: () => CLASSIC_SCRIPTS.map((name) => ({
+      handler: () => plan().scripts.map((name) => ({
         tag: 'script',
         // Explicit: the default is head-prepend, ahead of <meta charset>.
         injectTo: 'head' as const,
@@ -132,15 +160,10 @@ function demoStaticSitePlugin(version: string): Plugin {
     generateBundle: {
       order: 'post',
       handler(_outputOptions, bundle) {
-        const recordings = buildRecordingsIndex(resolvedBase);
-        for (const file of recordings.files) this.emitFile({ type: 'asset', fileName: file.fileName, source: file.source });
-        this.emitFile({ type: 'asset', fileName: 'demo-scenes.js', source: buildScenesScript(version, recordings.script) });
-        this.emitFile({ type: 'asset', fileName: 'demo-boot.js', source: readFileSync(BOOT_SCRIPT_PATH, 'utf8') });
+        for (const file of plan().files) this.emitFile({ type: 'asset', fileName: file.fileName, source: file.source });
         // The host the page hands over to when opened directly (demo/stage.html): the frame at
         // the site's 1600 by 1000, scaled to the window, so the recordings always fit.
         this.emitFile({ type: 'asset', fileName: 'stage.html', source: readFileSync(path.join(demoDir, 'stage.html'), 'utf8') });
-        this.emitFile({ type: 'asset', fileName: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') });
-        this.emitFile({ type: 'asset', fileName: 'demo-seed.js', source: buildSeedScript(version) });
 
         const html = bundle[emittedHtmlName];
         if (html === undefined || html.type !== 'asset') {

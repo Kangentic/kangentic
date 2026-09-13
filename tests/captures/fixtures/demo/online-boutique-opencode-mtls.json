@@ -15,6 +15,7 @@
     "services (productcatalog, currency, cart, recommendation, shipping, checkout, ad), so STRICT ...",
     "other end keeps working."
   ],
+  "openFrame": null,
   "changes": {
     "files": [
       {
