@@ -28,7 +28,7 @@ const REHANDSHAKE_INTERVAL_MS = 2 * 60 * 1000;
  * is scheduled this soon rather than stalling until the next rehandshake tick.
  * This retry is driven ONLY by an actual failed read, never by a quiet wait, so
  * a bad-frame flood cannot make us answer with a msg1 per bad frame. The quiet
- * wait has its own, far slower cadence - see PEER_PROBE_INTERVAL_MS.
+ * wait has its own, far slower cadence - see PEER_PRESENCE_TIMEOUT_MS.
  */
 const HANDSHAKE_RETRY_MS = 3 * 1000;
 
@@ -43,17 +43,18 @@ const PEER_PRESENCE_TIMEOUT_MS = 5 * 1000;
  * Consecutive failed probes before the peer is reported absent. Two rather
  * than one so a single slow round trip never flashes 'offline' on a phone that
  * is really there; the cost is that 'offline' takes ~10s to appear.
+ *
+ * There is deliberately no separate re-probe loop once absent: while the
+ * relay's slot is parked (waiting for the phone), any further msg1 we send
+ * only accumulates in the relay's parked-slot buffer alongside the one
+ * already sitting there (kangentic-relay's SlotTable.pair() flushes the whole
+ * buffer, in order, the instant the phone attaches) - so a second initiation
+ * does not speed up recovery, it forces the phone through an extra rekey the
+ * moment it arrives (#635). The relay's own park timeout (60s, PARK_TIMEOUT_MS
+ * in kangentic-relay) closes a parked socket and RelayClient redials, which is
+ * what re-initiates a stale attempt; see beginHandshake()'s guard.
  */
 const PEER_PRESENCE_FAILURES_BEFORE_ABSENT = 2;
-
-/**
- * Re-probe cadence once the peer is known absent. Without it, beginHandshake()
- * only re-runs on the REHANDSHAKE_INTERVAL_MS tick, so a phone that came back
- * would keep reporting 'offline' for up to two minutes. Combined with the
- * timeout above this is one ~48-byte msg1 per ~20s per absent device, which is
- * why the quiet wait cannot flood a parked slot.
- */
-const PEER_PROBE_INTERVAL_MS = 15 * 1000;
 
 /**
  * How long a known-good session keeps reporting 'connected' while its
@@ -114,8 +115,17 @@ export class BridgeSession extends EventEmitter {
 
   private peerPresence: PeerPresence = 'unknown';
   private failedPresenceProbes = 0;
+  /**
+   * Whether the peer has sent anything at all on the CURRENT transport
+   * connection. While false the relay's slot is `waiting` for this device, so
+   * every frame we send is appended to its park buffer rather than forwarded,
+   * and a second msg1 is not a retry - it is a second handshake the phone
+   * will answer on arrival, retiring the keys its first reply just agreed
+   * (see beginHandshake()). Reset on every fresh `'connected'` transition,
+   * same as failedPresenceProbes: a fresh socket knows nothing yet.
+   */
+  private peerSeenOnThisConnection = false;
   private presenceTimer: ReturnType<typeof setTimeout> | null = null;
-  private absentProbeTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: BridgeSessionOptions) {
@@ -181,10 +191,12 @@ export class BridgeSession extends EventEmitter {
   private onTransportState(state: TransportState): void {
     if (this.disposed) return;
     if (state === 'connected') {
-      // A fresh socket gets a fresh probe budget. The reconnect grace (if one
-      // is armed) deliberately stays armed until the handshake actually
-      // completes: the flicker it suppresses spans the re-handshake too.
+      // A fresh socket gets a fresh probe budget and knows nothing about the
+      // new slot yet. The reconnect grace (if one is armed) deliberately
+      // stays armed until the handshake actually completes: the flicker it
+      // suppresses spans the re-handshake too.
       this.failedPresenceProbes = 0;
+      this.peerSeenOnThisConnection = false;
     } else if (this.peerPresence === 'present') {
       this.armReconnectGrace();
     }
@@ -211,7 +223,6 @@ export class BridgeSession extends EventEmitter {
     // No socket means no probe can be answered; the transport branch of
     // connectionState governs the badge until the next 'connected' edge.
     this.clearPresenceTimer();
-    this.clearAbsentProbeTimer();
   }
 
   /**
@@ -236,11 +247,26 @@ export class BridgeSession extends EventEmitter {
     this.reconnectGraceTimer = null;
   }
 
-  private beginHandshake(): void {
+  /**
+   * @param replaceOutstanding Send a fresh msg1 even while one is already
+   * outstanding and unanswered on this connection, overwriting `this.handshake`.
+   * Only the REHANDSHAKE_INTERVAL_MS tick passes this - see the guard below.
+   */
+  private beginHandshake(replaceOutstanding = false): void {
     if (this.disposed) return;
     // The rekey interval can fire while the transport is mid-reconnect; sending
     // then would throw. Skip - onTransportState re-initiates on the next connect.
     if (this.transport.state !== 'connected') return;
+    // While the relay's slot is `waiting` for this device (no proof-of-life
+    // frame has arrived on this connection yet), a second initiation is not a
+    // retry: it is a second msg1 that accumulates in the relay's parked-slot
+    // buffer alongside the one already sitting there, and both get flushed to
+    // the phone the instant it attaches - forcing it through an extra rekey
+    // for one arrival (#635). Skip unless this call is explicitly replacing
+    // the outstanding attempt, or the peer has already proven the slot is
+    // paired and forwarding live (a msg1 lost there is genuinely lost, and
+    // re-sending costs nothing).
+    if (this.handshake && !replaceOutstanding && !this.peerSeenOnThisConnection) return;
     // A fresh initiation supersedes any pending failure retry.
     this.clearHandshakeRetryTimer();
     this.handshake = createKKHandshake({
@@ -270,6 +296,10 @@ export class BridgeSession extends EventEmitter {
    * garbage handshake frames could hold 'offline' permanently out of reach and
    * pin the badge on "Connecting..." forever, the exact stuck-transient-state
    * bug this file's connectionState exists to remove.
+   *
+   * Called from beginHandshake() on every successful initiation, and also
+   * explicitly from onPresenceProbeTimeout() for the still-under-budget case -
+   * see that method's comment for why the second call site exists.
    */
   private armPresenceTimer(): void {
     if (this.presenceTimer) return;
@@ -287,19 +317,41 @@ export class BridgeSession extends EventEmitter {
   }
 
   /**
-   * The initiation went unanswered. Spend one unit of the probe budget and try
-   * again; only a fully spent budget concludes the peer is absent, so a single
-   * slow round trip never flashes 'offline' on a phone that is really there.
+   * The initiation went unanswered. Spend one unit of the probe budget; only a
+   * fully spent budget concludes the peer is absent, so a single slow round
+   * trip never flashes 'offline' on a phone that is really there.
+   *
+   * Still under budget: re-arm the presence window UNCONDITIONALLY, then
+   * re-initiate (a no-op while parked - see beginHandshake()'s guard - since
+   * the outstanding msg1 is still sitting in the relay's buffer and a second
+   * one would only pile up alongside it). The re-arm cannot be left to
+   * beginHandshake()'s own internal call: when the guard blocks the send,
+   * beginHandshake() returns before ever reaching it, and without this
+   * explicit call here the budget would stop advancing the moment the guard
+   * starts blocking - stranding the badge on 'connecting' forever instead of
+   * reaching 'offline'.
+   *
+   * The re-arm goes FIRST so the initiation still has a window to CLEAR. A
+   * transport that completes the handshake synchronously inside send() (any
+   * in-process transport, and every test double) reaches
+   * handleHandshakeFrame()'s clearPresenceTimer() before beginHandshake()
+   * returns; arming after that would leave a probe running on an
+   * already-established session, and that probe's own timeout would
+   * re-initiate and re-arm again, rekeying a healthy session every
+   * PEER_PRESENCE_TIMEOUT_MS forever. Ordering it first makes
+   * beginHandshake()'s internal arm the no-op instead of this one, which is
+   * what the async case already does.
    */
   private onPresenceProbeTimeout(): void {
     if (this.disposed) return;
     if (this.transport.state !== 'connected') return;
     this.failedPresenceProbes += 1;
-    if (this.failedPresenceProbes < PEER_PRESENCE_FAILURES_BEFORE_ABSENT) {
-      this.beginHandshake();
+    if (this.failedPresenceProbes >= PEER_PRESENCE_FAILURES_BEFORE_ABSENT) {
+      this.markPeerAbsent();
       return;
     }
-    this.markPeerAbsent();
+    this.armPresenceTimer();
+    this.beginHandshake();
   }
 
   /**
@@ -320,7 +372,6 @@ export class BridgeSession extends EventEmitter {
     this.failedPresenceProbes = 0;
     if (this.peerPresence === 'present') return;
     this.peerPresence = 'present';
-    this.clearAbsentProbeTimer();
     this.emit('connectionState');
   }
 
@@ -328,9 +379,12 @@ export class BridgeSession extends EventEmitter {
     const changed = this.peerPresence !== 'absent';
     this.peerPresence = 'absent';
     this.failedPresenceProbes = PEER_PRESENCE_FAILURES_BEFORE_ABSENT;
-    // The peer is gone, so a held 'connected' is no longer defensible.
+    // The peer is gone, so a held 'connected' is no longer defensible. There
+    // is no re-probe loop to (re-)arm here: while parked, the outstanding
+    // msg1 already sits in the relay's buffer, and the relay's own park
+    // timeout (60s) is what forces a fresh connection and a fresh initiation -
+    // see beginHandshake()'s guard and onTransportState()'s 'connected' branch.
     this.clearReconnectGrace();
-    this.scheduleAbsentProbe();
     if (changed) {
       // The absence EDGE, for per-device state that must not outlive the
       // phone. The routine departure is SILENT - backgrounding, a lost
@@ -345,28 +399,15 @@ export class BridgeSession extends EventEmitter {
     }
   }
 
-  /** Keeps probing a slot whose peer is absent, so a phone that comes back is picked up in ~20s rather than on the next rekey tick. */
-  private scheduleAbsentProbe(): void {
-    if (this.absentProbeTimer) return;
-    this.absentProbeTimer = setTimeout(() => {
-      this.absentProbeTimer = null;
-      if (this.disposed || this.transport.state !== 'connected') return;
-      // beginHandshake() re-arms the presence timer, so a phone that came back
-      // re-establishes here instead of waiting out REHANDSHAKE_INTERVAL_MS.
-      this.beginHandshake();
-    }, PEER_PROBE_INTERVAL_MS);
-    this.absentProbeTimer.unref?.();
-  }
-
-  private clearAbsentProbeTimer(): void {
-    if (!this.absentProbeTimer) return;
-    clearTimeout(this.absentProbeTimer);
-    this.absentProbeTimer = null;
-  }
-
   private armRehandshakeTimer(): void {
     if (this.rehandshakeTimer) clearInterval(this.rehandshakeTimer);
-    this.rehandshakeTimer = setInterval(() => this.beginHandshake(), REHANDSHAKE_INTERVAL_MS);
+    // Passes replaceOutstanding: true so a rekey tick that lands while a
+    // prior initiation is still outstanding (unanswered, unparked - e.g. a
+    // self-hosted relay with no park timeout) replaces it rather than being
+    // silently blocked by beginHandshake()'s parked-slot guard. Against the
+    // real relay this branch is normally moot: the 60s park timeout closes a
+    // parked socket well before this 120s tick could ever fire on it.
+    this.rehandshakeTimer = setInterval(() => this.beginHandshake(true), REHANDSHAKE_INTERVAL_MS);
     this.rehandshakeTimer.unref?.();
   }
 
@@ -391,6 +432,11 @@ export class BridgeSession extends EventEmitter {
 
   private onFrame(rawFrame: Uint8Array): void {
     if (this.disposed) return;
+    // Any frame at all - handshake reply or application data, valid or
+    // garbled - proves the relay has this slot PAIRED and forwarding live,
+    // never parked and buffering: while genuinely parked, nobody is on the
+    // other end to send us anything. See beginHandshake()'s guard.
+    this.peerSeenOnThisConnection = true;
     let unwrapped: { kind: SessionFrameKind; payload: Uint8Array };
     try {
       unwrapped = unwrapSessionFrame(rawFrame);
@@ -439,7 +485,6 @@ export class BridgeSession extends EventEmitter {
     // and drop any reconnect hold - if one was armed, the blip healed inside
     // it and the badge never moved.
     this.clearPresenceTimer();
-    this.clearAbsentProbeTimer();
     this.failedPresenceProbes = 0;
     this.peerPresence = 'present';
     this.clearReconnectGrace();
@@ -525,12 +570,11 @@ export class BridgeSession extends EventEmitter {
       this.rehandshakeTimer = null;
     }
     this.clearHandshakeRetryTimer();
-    // Only clearReconnectGrace() is observable on its own: the presence and
-    // absent-probe callbacks already self-guard on `disposed`, so those two are
-    // defense-in-depth against a future edit dropping a guard. Keep all three -
+    // Only clearReconnectGrace() is observable on its own: the presence
+    // callback already self-guards on `disposed`, so this clear is
+    // defense-in-depth against a future edit dropping that guard. Keep both -
     // the dispose tests pin each one independently via the live timer count.
     this.clearPresenceTimer();
-    this.clearAbsentProbeTimer();
     this.clearReconnectGrace();
     this.unsubscribeFrame?.();
     this.unsubscribeFrame = null;
