@@ -2,6 +2,30 @@
 
 <!-- releases -->
 
+## [protocol-v0.14.0] - 2026-09-13
+
+Adds an optional `spawnProgressLabel` to the `session-ended` activity payload,
+carrying the desktop's in-flight spawn-progress label (for example "Switching
+model..."). Additive, and `PROTOCOL_VERSION` stays '3': absent from pre-0.14.0
+desktops, and never sent as `null`.
+
+Presence means the desktop had a respawn in flight for this task when the
+session ended, so a client can tell a same-column respawn (model, agent, effort
+or session-track switch) from a genuine park. `intentional` cannot carry that
+distinction on its own, because `SessionManager.suspend()` sets
+`status = 'suspended'` before the force-kill for a respawn and a real park
+alike, and both reach a client as `intentional: true`.
+
+Read it as INTENT, not a guarantee, on the same terms `BoardColumnWire.spawns_session`
+documents. The desktop can suspend without a successor ever landing, and five
+park paths do not clear the label first, so a client MUST keep whatever timeout
+already bounds its session-swap wait and use the label only to skip a redundant
+one. The string is the desktop's own display text: treat it as untrusted, cap
+its length, and fall back to generic copy rather than parsing it.
+
+### Features
+- Add `spawnProgressLabel` to the session-ended activity payload (b528e3e6)
+
 ## [protocol-v0.13.1] - 2026-09-12
 
 `BoardTaskWire.pr_merge_readiness` becomes optional (`?: string | null`),
