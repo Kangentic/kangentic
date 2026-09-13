@@ -192,8 +192,13 @@ async function resetRepo(target) {
   console.error(`[matrix] ${target} could not be reset; the next capture starts from a dirty tree`);
 }
 
+/** The capture script's own default timeout; a manifest entry can raise its own with "timeout". */
+const DEFAULT_CAPTURE_TIMEOUT_SECONDS = 240;
+
 /** The capture script's own timeout plus the exit grace, then a hard stop, so a stuck PTY handle can never stall the matrix. */
-const CAPTURE_WATCHDOG_MS = (240 + 90) * 1000;
+function captureWatchdogMs(entry) {
+  return ((entry.timeout || DEFAULT_CAPTURE_TIMEOUT_SECONDS) + 90) * 1000;
+}
 
 /**
  * The PTY size a recording is made at: the size of the surface it plays on, from the manifest's
@@ -224,6 +229,9 @@ function runCapture(entry, cwd) {
     '--cols', String(cols), '--rows', String(rows),
   ];
   if (entry.mode) args.push('--mode', entry.mode);
+  // A slower agent needs longer than the capture script's default before it is cut: a recording
+  // that stops on "timeout" ends mid-work, which is a working session's shape, not an idle one's.
+  if (entry.timeout) args.push('--timeout', String(entry.timeout));
   if (entry.stopAfter) args.push('--stop-after', String(entry.stopAfter));
   if (entry.stopWhen) args.push('--stop-when', entry.stopWhen);
   if (entry.kind === 'session') {
@@ -240,7 +248,7 @@ function runCapture(entry, cwd) {
       watchdogFired = true;
       console.error(`[matrix] ${entry.file}: watchdog fired, stopping the capture process`);
       child.kill();
-    }, CAPTURE_WATCHDOG_MS);
+    }, captureWatchdogMs(entry));
     child.on('exit', (code) => {
       clearTimeout(watchdog);
       // A recording written before a forced stop still counts. A file left over from an earlier

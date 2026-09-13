@@ -25,9 +25,20 @@
 /**
  * Footer, status, and input-placeholder rows are each CLI's chrome, not the agent's output; the
  * Monitor peek skips them (Claude's mode footer, Codex's prompt hint and model line, Copilot's
- * session footer, OpenCode's status bar, Gemini's key hints).
+ * session footer, OpenCode's status bar, Gemini's key hints, and Cursor's follow-up prompt,
+ * model-and-context status, cwd-and-branch line, spinner, and startup retrieval trace).
  */
-const PEEK_CHROME = /(esc to (cancel|interrupt)|enter to select|ctrl\+p commands|\? for shortcuts|shift\+tab to cycle|accept edits on|tab to amend|open sidebar|Type your message|^› |^❯|^gpt-[\w.-]+ (low|medium|high|xhigh) ·|Session: [\d.]+ AIC used|Build · |\d+(\.\d+)?K \(\d+%\)|to navigate)/i;
+const PEEK_CHROME = new RegExp([
+  'esc to (cancel|interrupt)', 'enter to select', 'ctrl\\+p commands', '\\? for shortcuts',
+  'shift\\+tab to cycle', 'accept edits on', 'tab to amend', 'open sidebar', 'Type your message',
+  '^› ', '^❯', '^gpt-[\\w.-]+ (low|medium|high|xhigh) ·', 'Session: [\\d.]+ AIC used', 'Build · ',
+  '\\d+(\\.\\d+)?K \\(\\d+%\\)', 'to navigate',
+  // Cursor
+  'Add a follow-up', 'ctrl\\+c to stop', 'ctrl\\+r to review', 'ctrl\\+b twice to send',
+  '^cursor-retrieval:', 'Use /mcp to connect', '(Reading|Running|Thinking)\\s+[\\d.]+k? tokens',
+  'Plan, search, build anything', '^Working$', '^Auto$', 'truncated \\(\\d+ more lines',
+  '^(Auto|[\\w.-]+) · \\d+(\\.\\d+)?%', '^~[\\\\/].* · [\\w./-]+$',
+].join('|'), 'i');
 
 /**
  * The last two lines of the terminal as it DISPLAYS them, for the Monitor card's output peek.
