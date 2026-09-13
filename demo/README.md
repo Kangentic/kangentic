@@ -239,15 +239,24 @@ content-hashed and a build has to be reproducible. What each working session get
 |---|---|---|
 | `sess-cw-api-client` | 207 s | 45 |
 | `sess-cw-middleware` | 128 s | 26 |
+| `sess-ob-otel` | 152 s | 25 |
 | `sess-ob-currency-a11y` | 35 s | 12 |
 | `sess-pc-flaky-tests` | 20 s | 5 |
-| `sess-ob-redis-ttl` | 21 s | 5 |
 
-The two short ones are short because their recordings are: twenty seconds does not hold ten
-readable updates, and stretching them would mean inventing output. Both were cut deliberately at
-capture time (`stopAfter` in the manifest), so raising that and re-recording is the fix, and it
-needs Codex credits, which were exhausted on 2026-09-13. `loop=1` is what keeps such a frame alive
-meanwhile, and their terminals are live either way now that a frame timeline rides along. When a session's replay reaches the end it finishes as it always does, waits six
+Which sessions the board shows as WORKING is chosen for this, not at random, and a recording's
+`stopReason` decides what it can honestly be. One cut mid-work (`stop-after`) ends on a spinner
+with tool calls in flight, so it reads as working and cannot read as anything else. One that ran
+to the agent's own end (`idle`) ends on an answer, so it can be either: shown as working it plays
+its last stretch and then finishes, which is the transition `loop=1` cycles.
+
+That is why the OpenTelemetry session carries the Codex slot. It is 152 seconds of real work with
+25 changes, where the Redis TTL session it replaced was 21 seconds with 5, and looped those same
+five lines over and over. Redis TTL now sits as needs-you, which its own last frame already showed:
+a finished summary above an empty prompt.
+
+`sess-pc-flaky-tests` stays short at 5. It was cut at 20 seconds, so raising the manifest's
+`stopAfter` and re-recording is the fix, and that needs Codex credits (exhausted 2026-09-13). Its
+terminal is live either way now that a frame timeline rides along, and `loop=1` cycles it. When a session's replay reaches the end it finishes as it always does, waits six
 seconds so the state it finished in is readable, and starts the same stretch over. Each session
 loops on its own clock, so the Monitor keeps changing rather than going quiet until the longest
 recording comes round. A mounted terminal is repainted from the opening frame first (1.8 KB for
