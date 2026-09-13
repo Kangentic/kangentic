@@ -16,6 +16,14 @@
     "✻ Cooked for 1m 29s · done 4:00 PM",
     "❯ commit this"
   ],
+  "openFrame": {
+    "beforeEndMs": 90000,
+    "serialized": "\u001b[38;2;215;119;87m ▐\u001b[48;2;0;0;0m▛███▛█\u001b[0m\u001b[3C\u001b[1mClaude\u001b[1CCode\u001b[1C\u001b[38;2;153;153;153;22mv2.1.270\r\n\u001b[38;2;215;119;87m▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀\u001b[2C\u001b[38;2;153;153;153mOpus\u001b[1C5\u001b[1C(1M\u001b[1Ccontext)\u001b[1Cwith\u001b[1Cmedium\u001b[1Ceffort\u001b[1C·\u001b[1CClaude\u001b[1CMax\r\n\u001b[38;2;215;119;87m \u001b[1C▝▝\u001b[1C▝▝\u001b[4C\u001b[38;2;153;153;153m~\\work\\contoso-web\r\n\r\n\r\n\u001b[38;2;80;80;80;48;2;55;55;55m❯ \u001b[38;2;255;255;255mAdd an integration test for the login route in tests/auth.integration.test.ts that covers a successful login and a wrong password, then run npm test.   \r\n\u001b[0m\r\n\u001b[38;2;215;119;87m✻ Gesticulating…\r\n\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\u001b[38;2;153;153;153m❯ \r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\u001b[2C\u001b[38;2;175;135;255m⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[62C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\r\n\u001b[137C\u001b[38;2;255;193;7m/rc\u001b[1Cconnecting…\u001b[3A\u001b[150D\u001b[0m\u001b[?2004h\u001b[?1004h",
+    "peek": [
+      "✻ Gesticulating…",
+      "/rc connecting…"
+    ]
+  },
   "changes": {
     "files": [
       {

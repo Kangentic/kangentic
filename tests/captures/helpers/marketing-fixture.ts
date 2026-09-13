@@ -7,8 +7,11 @@
  * show the same install. See demo/README.md for the projects and where the recordings come from.
  */
 import { buildDemoPreConfig } from './demo-dataset';
-import { loadDemoChanges, loadDemoPeeks, loadDemoScrollback, readAppVersion } from './demo-scrollback';
+import { loadDemoChanges, loadDemoEnds, loadDemoOpenFrames, loadDemoPeeks, loadDemoScrollback, readAppVersion, readLiveTailMs } from './demo-scrollback';
 
 export function buildMarketingPreConfig(): string {
-  return buildDemoPreConfig({ scrollback: loadDemoScrollback(), changes: loadDemoChanges(), peeks: loadDemoPeeks(), appVersion: readAppVersion() });
+  return buildDemoPreConfig({
+    scrollback: loadDemoScrollback(), changes: loadDemoChanges(), peeks: loadDemoPeeks(), ends: loadDemoEnds(),
+    openFrames: loadDemoOpenFrames(), liveTailMs: readLiveTailMs(), appVersion: readAppVersion(),
+  });
 }

@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { DemoChangesMap, DemoDiff, DemoScrollbackMap } from './demo-dataset';
+import { DEMO_SESSIONS, type DemoChangesMap, type DemoDiff, type DemoScrollbackMap } from './demo-dataset';
 
 interface DemoCaptureRecord {
   agent: string;
@@ -26,12 +26,18 @@ interface DemoCaptureRecord {
   /** The PTY size the recording was made at; its bytes only replay into that grid. */
   cols?: number;
   rows?: number;
+  /** Why the capture stopped: idle or exited when the agent finished on its own, stop-after or stop-when when cut. */
+  stopReason?: string;
+  /** The frame beforeEndMs before the end, with its displayed last lines: the moment the live frame opens a working session at. */
+  openFrame?: { beforeEndMs: number; serialized: string; peek: string[] } | null;
 }
 
 interface DemoManifest {
   captures: Array<{ file: string; sessionId: string; agent: string; project: string }>;
   /** The PTY size of each surface a recording plays on (see the manifest's comment). */
   geometry?: Record<string, { cols: number; rows: number }>;
+  /** How long before its recording's end the live frame opens a session shown as working. */
+  liveTailMs?: number;
 }
 
 /** One recording as the web build indexes it: which file, and what it stands in for. */
@@ -44,6 +50,8 @@ export interface DemoRecordingEntry {
   /** The grid the recording was made at; a terminal of any other size gets the frame, not the bytes. */
   cols: number;
   rows: number;
+  /** How the capture ended; a session whose recording ran to the agent's own end flips to needs-you when the replay gets there. */
+  stopReason: string;
 }
 
 /**
@@ -92,13 +100,13 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
   const read = (file: string): DemoRecordingEntry | null => {
     const record = JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord;
     if (typeof record.serialized !== 'string' || record.serialized.length === 0) return null;
-    return { file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0 };
+    return { file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '' };
   };
   for (const { sessionId, record } of loadRecordings(fixturesDir)) {
     const manifestEntry = (JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest).captures
       .find((entry) => entry.sessionId === sessionId);
     if (!manifestEntry || typeof record.serialized !== 'string') continue;
-    index.sessions[sessionId] = { file: manifestEntry.file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0 };
+    index.sessions[sessionId] = { file: manifestEntry.file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '' };
   }
   for (const file of fs.readdirSync(fixturesDir)) {
     const spawn = /^spawn-(.+)-(plan|acceptEdits|default|dontAsk|bypassPermissions|auto)\.json$/.exec(file);
@@ -158,6 +166,52 @@ export function loadDemoPeeks(fixturesDir: string = DEMO_FIXTURES_DIR): Record<s
     if (Array.isArray(record.peek) && record.peek.length > 0) peeks[sessionId] = record.peek;
   }
   return peeks;
+}
+
+/**
+ * When each session's recording ends and why, keyed by session id. The live frame runs a working
+ * session's clock from page open (its recording's end is that far ahead, mounted or not), and a
+ * still reads a recording that ran to the agent's own end as finished.
+ */
+export function loadDemoEnds(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, { durationMs: number; stopReason: string }> {
+  const ends: Record<string, { durationMs: number; stopReason: string }> = {};
+  for (const { sessionId, record } of loadRecordings(fixturesDir)) {
+    const stream = Array.isArray(record.stream) ? record.stream : [];
+    const last = stream[stream.length - 1];
+    ends[sessionId] = { durationMs: last ? last.t : 0, stopReason: record.stopReason ?? '' };
+  }
+  return ends;
+}
+
+/** How long before its recording's end the live frame opens a session shown as working, from the manifest. */
+export function readLiveTailMs(fixturesDir: string = DEMO_FIXTURES_DIR): number {
+  const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
+  if (typeof manifest.liveTailMs !== 'number' || manifest.liveTailMs <= 0) {
+    throw new Error(`${path.join(fixturesDir, 'manifest.json')} has no usable "liveTailMs"`);
+  }
+  return manifest.liveTailMs;
+}
+
+/**
+ * The frame at the moment the live frame opens each working session at, with the Monitor peek
+ * of that moment, keyed by session id: what a still and the marketing captures paint for such a
+ * session, so every view starts from the moment the live replay does. The capture script keeps
+ * it at the tail the session was recorded for; one kept at another tail (the manifest's or the
+ * session's changed since) would paint a different moment, so it fails the build and the rig.
+ */
+export function loadDemoOpenFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, { serialized: string; peek: string[] }> {
+  const liveTailMs = readLiveTailMs(fixturesDir);
+  const frames: Record<string, { serialized: string; peek: string[] }> = {};
+  for (const { sessionId, record } of loadRecordings(fixturesDir)) {
+    if (!record.openFrame) continue;
+    const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+    const expectedTail = session?.liveTailMs ?? liveTailMs;
+    if (record.openFrame.beforeEndMs !== expectedTail) {
+      throw new Error(`${sessionId}: its recording's open frame was kept ${record.openFrame.beforeEndMs} ms before the end, but the live frame opens it ${expectedTail} ms before. Re-run scripts/capture-demo-sessions.mjs --only ${sessionId.replace(/^sess-[a-z]+-/, '')}`);
+    }
+    frames[sessionId] = { serialized: trimRowPadding(record.openFrame.serialized), peek: Array.isArray(record.openFrame.peek) ? record.openFrame.peek : [] };
+  }
+  return frames;
 }
 
 /** The working-tree diff each recorded session left behind, keyed by session id. */

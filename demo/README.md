@@ -132,9 +132,10 @@ two views cannot disagree; the usage dashboard is a seeded, deterministic fourte
 Every terminal in the sample install is a recording of a real session; there is no hand-authored
 terminal content, and the build refuses to seed a session that has none.
 `tests/captures/fixtures/demo/manifest.json` lists one recording per session: which agent, which
-repo, the prompt, and for a session the app shows as working, the second at which the recording
-stops (`stopAfter`), so its last frame is the spinner and the tool calls in flight rather than a
-finished answer. `scripts/capture-demo-sessions.mjs` runs the matrix through
+repo, the prompt, and for a session the app shows as working, either the second at which the
+recording is cut (`stopAfter`, `stopWhen`), so its last frame is the spinner and the tool calls
+in flight, or no cut, so the recording runs to the agent's own end and the live frame shows it
+finish (Live replay below). `scripts/capture-demo-sessions.mjs` runs the matrix through
 `scripts/capture-agent-scrollback.js`: a real PTY, the prompt in argv the way Kangentic launches
 every adapter, trust pre-seeded the way Kangentic does, the recording stopped at the cut or when
 the output goes quiet, the session ended with the adapter's exit sequence and the same grace a
@@ -201,9 +202,19 @@ and the marketing captures paint through the production mount-replay path, and a
 (the bytes in 100 ms windows with their arrival times). The live frame replays the stream: a
 session the app shows as working has everything but its last 90 seconds as scrollback when the
 page opens and streams that stretch from there, a session shown idle or waiting on a prompt is
-already at its end, and when a recording ends the terminal stays on its last frame. The stream
-files sit under `recordings/` and are fetched from the same origin when a terminal mounts, so a
-still frame and a first paint fetch nothing.
+already at its end, and when a recording ends the terminal stays on its last frame. A recording
+that ran to the agent's own end (the manifest entry has no cut, so the capture stopped on idle or
+exit) carries that in its `stopReason`, and when the replay gets there the session flips from
+working to needs-you, as main's activity engine does when a turn completes: the card's ring, the
+sidebar count, and the Monitor row all change. A recording cut short stays working on its last
+frame. The clock runs from page open whether or not a terminal is mounted, so the card on the
+board flips at the moment a window would show the answer land. How long before the end a
+working session opens is the manifest's `liveTailMs` (90 seconds), or the session row's own
+`liveTailMs` so that two agents do not finish on the same second. The capture script keeps the
+frame at that moment beside the recording's end (`openFrame`, with the Monitor peek of that
+moment), and a still frame and the marketing captures paint it for such a session, so every
+view of the sample install starts from the same moment. The stream files sit under `recordings/` and are fetched from the same origin when a
+terminal mounts, so a still frame and a first paint fetch nothing.
 
 The main process is not in a browser, so what its transition engine would start is recorded
 too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a hand list:
@@ -274,30 +285,32 @@ static server on localhost, warm disk.
 |---|---|---|
 | index (the renderer) | 1752 KB | 484 KB |
 | xterm | 452 KB | 116 KB |
-| demo-seed.js (the sample install: final frames and diffs) | 518 KB | 84 KB |
-| mock-electron-api.js (the bridge) | 199 KB | 45 KB |
+| demo-seed.js (the sample install: opening and final frames, diffs) | 611 KB | 98 KB |
+| mock-electron-api.js (the bridge) | 200 KB | 45 KB |
 | react-vendor | 185 KB | 57 KB |
 | index.css + xterm.css | 110 KB | 18 KB |
 | Pill + datetime chunks | 84 KB | 28 KB |
-| demo-boot.js + demo-scenes.js | 18 KB | 6 KB |
-| **Eager total** | | **839 KB** |
+| demo-boot.js + demo-scenes.js | 21 KB | 7 KB |
+| **Eager total** | | **854 KB** |
 
-The whole `dist/demo/assets` is 16.6 MB raw, almost all of it monaco's lazy language and worker
+The whole `dist/demo/assets` is 16.2 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
-`demo-seed.js` carries every session's final terminal frame and the working-tree diff each one
-left behind; it is the one eager file that grows with the dataset (84 KB gzipped for 16
-sessions and 10 diffs). The 36 timed streams under `recordings/` are 15.1 MB raw and 513 KB
-gzipped in total, fetched one at a time as terminals mount; the largest is the Gemini session,
-whose TUI redraws every frame (7.3 MB raw, 79 KB gzipped).
+`demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
+it is the one eager file that grows with the dataset (98 KB gzipped for 16 sessions and 10
+diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
+last one, which is what lets a still and the captures show the moment the live replay starts
+from. The 36 timed streams under `recordings/` are 15.3 MB raw and 538 KB gzipped in total,
+fetched one at a time as terminals mount; the largest is the Gemini session, whose TUI redraws
+every frame (7.0 MB raw, 79 KB gzipped).
 
 ### Cold boot per scene
 
 | Scene | Requests | Off-origin | First contentful paint | Ready |
 |---|---|---|---|---|
-| board | 13 | 0 | 124 ms | 303 ms |
-| task | 13 | 0 | 236 ms | 387 ms |
-| changes | 17 | 0 | 120 ms | 335 ms |
-| monitor | 14 | 0 | (paint inside the veil) | 311 ms |
+| board | 13 | 0 | 132 ms | 306 ms |
+| task | 13 | 0 | 248 ms | 379 ms |
+| changes | 17 | 0 | 276 ms | 415 ms |
+| monitor | 14 | 0 | (paint inside the veil) | 294 ms |
 
 Zero off-origin requests on every scene: the renderer's Sentry SDK has no network path of its
 own and never initializes under the mock, analytics go through the bridge the mock stubs, and the
@@ -308,12 +321,12 @@ so the site's privacy page needs no line for the frame.
 
 | Frames | All ready | Script time | JS heap |
 |---|---|---|---|
-| 1 | 280 ms | 146 ms | 14 MB |
-| 4 | 638 ms | 331 ms | 42 MB |
-| 8 | 1165 ms | 595 ms | 56 MB |
+| 1 | 277 ms | 153 ms | 14 MB |
+| 4 | 664 ms | 340 ms | 42 MB |
+| 8 | 1210 ms | 632 ms | 76 MB |
 
 The bundle downloads once and caches; each frame parses and executes it again for roughly 70 ms of
-script and 5 to 10 MB of heap. Eight live frames on one docs page cost about one second on a
+script and 5 to 10 MB of heap. Eight live frames on one docs page cost about 1.2 seconds on a
 desktop machine, which is the number the docs-visuals decision (#632, site #78 and #79) was
 waiting for. This does not decide live frames against stills; it says the ceiling is well above
 what a docs page would use.
@@ -360,10 +373,20 @@ The two things a docs page cannot show live are the Browser pane's guest and dic
 ## Layout of `dist/demo/`
 
 ```
-index.html            the entry, four classic scripts then the module bundle
-demo-scenes.js        the registry and the app version
-demo-boot.js          demo/boot.js verbatim
-mock-electron-api.js  tests/ui/mock-electron-api.js verbatim
-demo-seed.js          the sample install, recordings embedded
-assets/               the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
+index.html                       the entry, four classic scripts then the module bundle
+stage.html                       the fixed-size host a direct visit lands on
+demo-scenes-<hash>.js            the registry, the app version, the recordings index
+demo-boot-<hash>.js              demo/boot.js verbatim
+mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim
+demo-seed-<hash>.js              the sample install, final frames and diffs embedded
+recordings/<name>-<hash>.json    one timed stream per recording, fetched when a terminal mounts
+assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```
+
+Every file but the two entry pages carries the first eight hex digits of its content's SHA-256,
+the way Vite names its own chunks. GitHub Pages serves everything with a ten-minute cache, and a
+visitor who opens the page across a release must never pair a new seed with an old recording:
+a recording replays only into the grid its seed describes, and a stale one lands two frames'
+text on one row. With the hash in the name a changed file is a new URL, an unchanged one is
+still cached, and `index.html` is the only file whose cached copy can lag, for ten minutes, as a
+whole and self-consistent page.

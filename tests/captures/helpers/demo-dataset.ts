@@ -107,6 +107,8 @@ interface DemoSession {
   agent: string;
   status: 'running' | 'suspended' | 'queued';
   activity: 'thinking' | 'idle' | 'permission' | null;
+  /** How long before its recording's end the live frame opens this working session, when not the manifest's liveTailMs. */
+  liveTailMs?: number;
   startedMinutesAgo: number;
   model: { id: string; displayName: string } | null;
   effort: string | null;
@@ -278,7 +280,7 @@ const DEFAULT_PERMISSION_MODE = 'acceptEdits';
 export const DEMO_SESSIONS: DemoSession[] = [
   { id: SESSION_WEBSOCKET, taskId: 'task-cw-websocket', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 14, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 12, contextWindowSize: 1000000, costUsd: 0.42, durationMinutes: 14, peek: ['Read src/lib/websocket.ts, src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 2, tool: 'Read', detail: 'src/lib/websocket.ts' }, { minutesAgo: 1, tool: 'Grep', detail: 'websocket' }, { minutesAgo: 0.3, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
   { id: SESSION_MIDDLEWARE, taskId: TASK_MIDDLEWARE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', startedMinutesAgo: 47, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 53, contextWindowSize: 1000000, costUsd: 2.47, durationMinutes: 47, peek: ['Write server/middleware/auth.ts', 'Edit server/routes.ts', 'Bash npm test'], events: [{ minutesAgo: 6, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 4, tool: 'Write', detail: 'server/middleware/auth.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'server/routes.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm test' }], rateLimits: true },
-  { id: SESSION_API_CLIENT, taskId: 'task-cw-api-client', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', startedMinutesAgo: 88, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 65, contextWindowSize: 1000000, costUsd: 2.87, durationMinutes: 88, peek: ['Write src/types/api.ts', 'Edit src/lib/http-client.ts', 'Bash npm run typecheck'], events: [{ minutesAgo: 4, tool: 'Write', detail: 'src/types/api.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'src/lib/http-client.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm run typecheck' }] },
+  { id: SESSION_API_CLIENT, taskId: 'task-cw-api-client', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 150000, startedMinutesAgo: 88, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 65, contextWindowSize: 1000000, costUsd: 2.87, durationMinutes: 88, peek: ['Write src/types/api.ts', 'Edit src/lib/http-client.ts', 'Bash npm run typecheck'], events: [{ minutesAgo: 4, tool: 'Write', detail: 'src/types/api.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'src/lib/http-client.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm run typecheck' }] },
   { id: SESSION_RATE_LIMIT, taskId: 'task-cw-rate-limit', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'idle', startedMinutesAgo: 130, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 51, contextWindowSize: 1000000, costUsd: 4.15, durationMinutes: 130, peek: ['Read server/rate-limit.ts', 'Edit server/rate-limit.ts', 'Bash npm test'], events: [{ minutesAgo: 24, tool: 'Read', detail: 'server/rate-limit.ts' }, { minutesAgo: 22, tool: 'Edit', detail: 'server/rate-limit.ts' }, { minutesAgo: 20, tool: 'Bash', detail: 'npm test' }], isolated: true },
   { id: SESSION_INTEGRATION, taskId: 'task-cw-integration', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'idle', startedMinutesAgo: 26, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 22, contextWindowSize: 1000000, costUsd: 0.78, durationMinutes: 26, peek: ['Read server/routes.ts', 'Write tests/auth.integration.test.ts'], events: [{ minutesAgo: 3, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 1, tool: 'Write', detail: 'tests/auth.integration.test.ts' }] },
   { id: SESSION_CONTOSO_TERMINAL, taskId: null, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'idle', startedMinutesAgo: 9, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 4, contextWindowSize: 1000000, costUsd: 0.06, durationMinutes: 9, peek: ['Summarize what this repository does', 'Baked for 13s'], events: [], transient: true, commandTerminalBranch: 'main' },
@@ -319,7 +321,16 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
  * The script the page runs after the mock has loaded. Everything above is inlined as JSON; the
  * only code is the small applier that turns offsets into timestamps and pushes rows.
  */
-export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; changes?: DemoChangesMap; peeks?: Record<string, string[]>; currentProjectId?: string; appVersion?: string } = {}): string {
+export function buildDemoPreConfig(options: {
+  scrollback?: DemoScrollbackMap;
+  changes?: DemoChangesMap;
+  peeks?: Record<string, string[]>;
+  ends?: Record<string, { durationMs: number; stopReason: string }>;
+  openFrames?: Record<string, { serialized: string; peek: string[] }>;
+  liveTailMs?: number;
+  currentProjectId?: string;
+  appVersion?: string;
+} = {}): string {
   const dataset = {
     groups: DEMO_GROUPS,
     projects: DEMO_PROJECTS,
@@ -335,10 +346,19 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
     // The real app version, so the status bar and the What's New gate agree with the build
     // rather than with the mock's placeholder.
     appVersion: options.appVersion ?? null,
+    // When each session's recording ends and why (loadDemoEnds): a working session's clock and
+    // whether it finishes, without fetching a stream.
+    ends: options.ends ?? {},
+    // How long before its recording's end the live frame opens a working session (the manifest's
+    // liveTailMs; a session row can carry its own).
+    liveTailMs: options.liveTailMs ?? 90000,
   };
   const scrollback = options.scrollback ?? {};
   const changes = options.changes ?? {};
   const peeks = options.peeks ?? {};
+  // The frame and Monitor peek at the moment the live frame opens each working session
+  // (loadDemoOpenFrames): what a still and the captures show for it.
+  const openFrames = options.openFrames ?? {};
   // Every session with a terminal replays a recording; there is no hand-authored fallback. A
   // missing one would be a blank terminal in the frame and in every capture, so it fails the
   // build and the rig instead.
@@ -358,6 +378,7 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
       var scrollback = ${JSON.stringify(scrollback)};
       var changes = ${JSON.stringify(changes)};
       var peeks = ${JSON.stringify(peeks)};
+      var openFrames = ${JSON.stringify(openFrames)};
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
@@ -452,14 +473,20 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
 
       // Monitor rows are DERIVED from the sessions so the two views cannot disagree. The output
       // peek is the recording's own last lines as the terminal displays them (rendered at build
-      // time by loadDemoPeeks); the authored peek covers only a session with no recording.
+      // time by loadDemoPeeks), or for a working session the lines at the moment the frame opens
+      // it; the authored peek covers only a session with no recording.
+      function seededPeek(session) {
+        var open = session.activity === 'thinking' ? openFrames[session.id] : null;
+        if (open) return open.peek;
+        return peeks[session.id] || session.peek;
+      }
       window.__mockMonitorRows = data.sessions.map(function (session) {
         var project = projectsById[session.projectId];
         var task = session.taskId ? tasksById[session.taskId] : null;
         return {
           sessionId: session.id, projectId: session.projectId, projectName: project.name,
           taskId: session.taskId || session.id, taskTitle: task ? task.title : 'Command Terminal 1',
-          outputPeek: peeks[session.id] || session.peek, displayId: task ? task.display_id : null,
+          outputPeek: seededPeek(session), displayId: task ? task.display_id : null,
           columnName: task ? laneName(task.projectId, task.lane) : '',
           commandTerminalBranch: session.commandTerminalBranch || null,
           labels: task ? task.labels : [], prUrl: task ? task.pr_url : null, prNumber: task ? task.pr_number : null,
@@ -506,13 +533,13 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
       var recordings = window.__demoRecordings || null;
       var stillFrame = !!(window.__demoBoot && window.__demoBoot.params && window.__demoBoot.params.still);
       var live = !!recordings && !stillFrame;
-      var LIVE_TAIL_MS = 90000;
+      var LIVE_TAIL_MS = data.liveTailMs;
       var replays = {};
       var recordingCache = {};
       var replayTimers = {};
       data.sessions.forEach(function (session) {
         if (!recordings || !recordings.sessions[session.id]) return;
-        replays[session.id] = { file: recordings.sessions[session.id], startedAt: null, tail: session.activity === 'thinking' ? LIVE_TAIL_MS : 0, projectId: session.projectId };
+        replays[session.id] = { file: recordings.sessions[session.id], startedAt: null, tail: session.activity === 'thinking' ? (session.liveTailMs || LIVE_TAIL_MS) : 0, projectId: session.projectId };
       });
       function fetchRecording(file) {
         if (!recordingCache[file]) {
@@ -530,6 +557,24 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
       function clearReplayTimers(sessionId) {
         (replayTimers[sessionId] || []).forEach(function (timer) { clearTimeout(timer); });
         replayTimers[sessionId] = [];
+      }
+      // A recording that ran to the agent's own end (the capture stopped on idle or exit) flips
+      // its session to needs-you when the replay gets there, as main's activity engine does when
+      // a turn completes. One cut short (stop-after, stop-when) stays working: its last frame is
+      // a spinner and tool calls in flight.
+      function endedOnItsOwn(recording) {
+        return recording.stopReason === 'idle' || recording.stopReason === 'exited';
+      }
+      function finishSession(sessionId) {
+        var row = sessionById(sessionId);
+        if (!row || mockState.activityCache[sessionId] !== 'thinking') return;
+        mockState.activityCache[sessionId] = 'idle';
+        if (window.__mockFireActivity) window.__mockFireActivity(sessionId, 'idle', null, row.projectId, row.taskId);
+        var rows = (window.__mockMonitorRows || []).map(function (monitorRow) {
+          return monitorRow.sessionId === sessionId ? Object.assign({}, monitorRow, { activity: 'idle' }) : monitorRow;
+        });
+        window.__mockMonitorRows = rows;
+        if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
       }
       function setMonitorPeek(sessionId, peek) {
         var changed = false;
@@ -559,15 +604,43 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
           pending.forEach(function (chunk) {
             replayTimers[sessionId].push(setTimeout(function () { emitBytes(sessionId, chunk.data, entry.projectId); }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
           });
-          // The Monitor's output peek for a session started here is the recording's own last
-          // displayed lines, set when the replay reaches the frame they were read from. Until
-          // then the row shows none: lines read from half a repaint would be wrong.
-          if (recording.peek && recording.peek.length) {
-            replayTimers[sessionId].push(setTimeout(function () { setMonitorPeek(sessionId, recording.peek); }, Math.max(0, entry.startedAt + duration - Date.now())));
-          }
+          // When the replay reaches the recording's end: the Monitor's output peek becomes the
+          // recording's own last displayed lines (until then the row shows none, since lines read
+          // from half a repaint would be wrong), and a session whose agent finished flips to
+          // needs-you.
+          replayTimers[sessionId].push(setTimeout(function () {
+            if (recording.peek && recording.peek.length) setMonitorPeek(sessionId, recording.peek);
+            if (endedOnItsOwn(recording)) finishSession(sessionId);
+          }, Math.max(0, entry.startedAt + duration - Date.now())));
           return head;
         });
       }
+      // A working session's clock runs from page open whether or not its terminal is mounted,
+      // as an agent's does on the desktop: the recording's end lands at the same moment on the
+      // card, in the sidebar count, in the Monitor, and in a window opened later. Where no
+      // stream plays (a still frame, the captures' seed) the terminal paints the moment the live
+      // frame would open at, when the recording kept that frame; otherwise it paints the end,
+      // where a recording that ran to the agent's own end reads as finished.
+      var ends = data.ends || {};
+      data.sessions.forEach(function (session) {
+        var end = ends[session.id];
+        if (!end || session.activity !== 'thinking') return;
+        var entry = replays[session.id];
+        if (!live || !entry) {
+          if (openFrames[session.id]) scrollback[session.id] = openFrames[session.id].serialized;
+          else if (endedOnItsOwn(end)) finishSession(session.id);
+          return;
+        }
+        entry.startedAt = Date.now() - Math.max(0, end.durationMs - entry.tail);
+        // A recording shorter than the tail plays from its first byte, so the Monitor row shows
+        // no lines yet; the end timer below sets the recording's own.
+        if (!openFrames[session.id]) setMonitorPeek(session.id, []);
+        clearReplayTimers(session.id);
+        replayTimers[session.id].push(setTimeout(function () {
+          if (peeks[session.id]) setMonitorPeek(session.id, peeks[session.id]);
+          if (endedOnItsOwn(end)) finishSession(session.id);
+        }, Math.max(0, entry.startedAt + end.durationMs - Date.now())));
+      });
       window.__demoScrollback = scrollback;
       // The grid a terminal mounts with is the visitor's, not the recording's: the bottom panel
       // is 15 rows tall, and a display scaled to 125 percent fits 144 by 36 in the task window
@@ -653,6 +726,10 @@ export function buildDemoPreConfig(options: { scrollback?: DemoScrollbackMap; ch
           return fetchRecording(entry.file).then(function (recording) {
             if (geometryFits(sessionId, recording)) return liveScrollback(sessionId, entry);
             clearReplayTimers(sessionId);
+            // The frame is the recording's end, so the row's peek and a finished session's state
+            // read as they would at the end here too.
+            if (recording.peek && recording.peek.length) setMonitorPeek(sessionId, recording.peek);
+            if (endedOnItsOwn(recording)) finishSession(sessionId);
             return fitFrameToCols(recording.serialized, mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0);
           });
         }

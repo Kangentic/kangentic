@@ -16,6 +16,7 @@
     "- Refreshes the cart key expiration on successful GetCartAsync reads.",
     "I did not run dotnet, per your instruction."
   ],
+  "openFrame": null,
   "changes": {
     "files": [
       {

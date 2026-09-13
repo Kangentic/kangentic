@@ -65,6 +65,7 @@ describe('demo fixtures carry no personal or machine-specific markers', () => {
       const record = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
         raw?: unknown; rawBytes?: unknown; serialized?: unknown; agent?: unknown;
         stream?: Array<{ t: number; data: string }>; peek?: string[];
+        openFrame?: { beforeEndMs?: unknown; serialized?: unknown; peek?: unknown } | null;
       };
       expect(typeof record.agent, `${path.basename(file)} has no agent`).toBe('string');
       expect(typeof record.serialized === 'string' && record.serialized.length > 0, `${path.basename(file)} has an empty serialized stream`).toBe(true);
@@ -76,6 +77,16 @@ describe('demo fixtures carry no personal or machine-specific markers', () => {
       expect(findLeak(String(record.serialized ?? '')), `${path.basename(file)} serialized stream`).toBeNull();
       expect(findLeak((record.stream ?? []).map((window) => window.data).join('')), `${path.basename(file)} timed stream`).toBeNull();
       expect(findLeak((record.peek ?? []).join('\n')), `${path.basename(file)} peek`).toBeNull();
+      // A session the app shows as working also ships the frame at the moment the live frame
+      // opens it. Null is legitimate (a recording shorter than the tail never reaches such a
+      // moment); present means it must be a real frame, or a still paints an empty terminal.
+      if (record.openFrame != null) {
+        const openFrame = record.openFrame;
+        expect(typeof openFrame.beforeEndMs === 'number' && (openFrame.beforeEndMs as number) > 0, `${path.basename(file)} open frame has no beforeEndMs`).toBe(true);
+        expect(typeof openFrame.serialized === 'string' && (openFrame.serialized as string).length > 0, `${path.basename(file)} has an empty open frame`).toBe(true);
+        expect(findLeak(String(openFrame.serialized ?? '')), `${path.basename(file)} open frame`).toBeNull();
+        expect(findLeak(((openFrame.peek as string[]) ?? []).join('\n')), `${path.basename(file)} open frame peek`).toBeNull();
+      }
     }
   });
 });

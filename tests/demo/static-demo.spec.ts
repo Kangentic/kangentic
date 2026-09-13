@@ -209,10 +209,15 @@ test('the board scene makes no request off the serving origin', async ({ page })
 
 interface DemoSessionRow { id: string; taskId: string | null; status: string; transient?: boolean }
 interface DemoTaskRow { id: string; title: string; session_id: string | null }
+interface DemoRecordingsWindow {
+  __demoRecordings: { base: string; sessions: Record<string, string> };
+  __demoScrollback: Record<string, string>;
+}
 interface DemoElectronWindow {
   electronAPI: {
     sessions: {
       list: () => Promise<DemoSessionRow[]>;
+      getActivity: () => Promise<Record<string, string>>;
       onData: (callback: (sessionId: string, data: string) => void) => () => void;
       __resizeCalls?: Array<{ sessionId: string; cols: number; rows: number }>;
     };
@@ -305,6 +310,38 @@ test('still=1 paints every terminal from the seed and fetches no recording', asy
   expect(getRecordingRequests()).toEqual([]);
 });
 
+test('a still paints a working session at the moment the live frame opens it', async ({ page }) => {
+  // The auth-middleware recording ran until Claude finished. The live frame opens it 90 seconds
+  // before that end and streams the rest; a still paints that same moment (the open frame the
+  // capture script kept beside the end), so both read working and neither shows the finished
+  // answer at first. The flaky-test recording was cut mid-work, shorter than the tail, so its
+  // still is its end and it reads working too.
+  const readFrames = () => page.evaluate(async () => {
+    const api = (window as unknown as DemoElectronWindow).electronAPI;
+    const demo = window as unknown as DemoRecordingsWindow;
+    const endFrameOf = async (id: string) => ((await (await fetch(demo.__demoRecordings.base + demo.__demoRecordings.sessions[id])).json()) as { serialized: string }).serialized;
+    return {
+      activity: await api.sessions.getActivity(),
+      middlewareSeeded: demo.__demoScrollback['sess-cw-middleware'].length,
+      middlewareIsEnd: demo.__demoScrollback['sess-cw-middleware'] === await endFrameOf('sess-cw-middleware'),
+      flakyIsEnd: demo.__demoScrollback['sess-pc-flaky-tests'] === await endFrameOf('sess-pc-flaky-tests'),
+    };
+  });
+  await gotoScene(page, { view: 'board', still: '1' });
+  await SCENE_MARKERS.board(page);
+  const still = await readFrames();
+  expect(still.activity['sess-cw-middleware']).toBe('thinking');
+  expect(still.activity['sess-pc-flaky-tests']).toBe('thinking');
+  expect(still.middlewareSeeded).toBeGreaterThan(0);
+  expect(still.middlewareIsEnd).toBe(false);
+  expect(still.flakyIsEnd).toBe(true);
+  await gotoScene(page, { view: 'board' });
+  await SCENE_MARKERS.board(page);
+  const live = await readFrames();
+  expect(live.activity['sess-cw-middleware']).toBe('thinking');
+  expect(live.activity['sess-pc-flaky-tests']).toBe('thinking');
+});
+
 test('the live task scene fetches its session recording from the serving origin', async ({ page }) => {
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   const getRecordingRequests = recordingRequests(page);
@@ -340,8 +377,8 @@ test('dragging a To Do card into Executing starts its agent from the recorded bo
   // the mount arrive through the mock's onData path.
   await page.locator('[data-testid="swimlane"]').locator('text=Add user auth flow').first().click();
   await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Add user auth flow');
-  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/spawn-task-cw-auth-acceptEdits.json')), { timeout: 15_000 }).toBe(true);
-  const recordingUrl = getRecordingRequests().find((url) => url.includes('/recordings/spawn-task-cw-auth-acceptEdits.json')) as string;
+  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/spawn-task-cw-auth-acceptEdits-')), { timeout: 15_000 }).toBe(true);
+  const recordingUrl = getRecordingRequests().find((url) => url.includes('/recordings/spawn-task-cw-auth-acceptEdits-')) as string;
   const sessionId = await page.evaluate(async () => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     return (await api.tasks.list()).find((row) => row.title === 'Add user auth flow')?.session_id ?? null;
@@ -375,8 +412,8 @@ test('a new Command Terminal boots the project default agent from the recorded b
   }), { timeout: 10_000 }).toBeGreaterThan(1);
   // The project already has a running Command Terminal, so the new window opens tiled beside
   // it and boots the recording made at that size, not the single-window one.
-  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/terminal-proj-contoso-web-tiled.json')), { timeout: 15_000 }).toBe(true);
-  const recordingUrl = getRecordingRequests().find((url) => url.includes('/recordings/terminal-proj-contoso-web-tiled.json')) as string;
+  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/terminal-proj-contoso-web-tiled-')), { timeout: 15_000 }).toBe(true);
+  const recordingUrl = getRecordingRequests().find((url) => url.includes('/recordings/terminal-proj-contoso-web-tiled-')) as string;
   const sessionId = await page.evaluate(async () => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     const sessions = await api.sessions.list();

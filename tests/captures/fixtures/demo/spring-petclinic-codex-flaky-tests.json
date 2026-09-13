@@ -16,6 +16,7 @@
     "• Running Get-Content -Path src\\test\\java\\org\\springframework\\samples\\petclinic\\owner\\OwnerCo...",
     "• Running Get-Content -Path src\\main\\resources\\db\\mysql\\schema.sql"
   ],
+  "openFrame": null,
   "changes": {
     "files": [],
     "totalInsertions": 0,

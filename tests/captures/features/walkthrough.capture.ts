@@ -109,7 +109,8 @@ test('full product walkthrough', async () => {
 
   await waitForViteReady();
 
-  const browser = await chromium.launch({ headless: true });
+  // The scale is forced on the browser as well as emulated on the context; see launchCapturePage.
+  const browser = await chromium.launch({ headless: true, args: ['--force-device-scale-factor=2'] });
   const context = await browser.newContext({
     viewport: { width: 2560, height: 1440 },
     deviceScaleFactor: 2,
