@@ -661,12 +661,18 @@ export function buildDemoPreConfig(options: {
         startSession(sessionId);
         var open = openFrames[sessionId];
         setMonitorPeek(sessionId, open ? open.peek : []);
-        // Never into a grid the recording does not fit: that terminal is on a parsed frame and
-        // a reset plus an opening frame would land two frames' text on one row.
-        if (entry.mounted && !entry.frameOnly && recordingCache[entry.file]) {
+        if (entry.mounted && recordingCache[entry.file]) {
           recordingCache[entry.file].then(function (recording) {
-            emitBytes(sessionId, '\\x1b[2J\\x1b[3J\\x1b[H' + (open ? open.serialized : ''), entry.projectId);
-            scheduleStreamBytes(sessionId, entry, recording);
+            if (entry.frameOnly) {
+              // This terminal plays frames, not bytes: re-arm the same timeline and repaint it
+              // at the moment the cycle opens on.
+              var cols = mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0;
+              var current = scheduleFrameTimeline(sessionId, entry, recording, cols);
+              emitBytes(sessionId, REPAINT + fitFrameToCols(current || (open ? open.serialized : recording.serialized), cols), entry.projectId);
+            } else {
+              emitBytes(sessionId, REPAINT + (open ? open.serialized : ''), entry.projectId);
+              scheduleStreamBytes(sessionId, entry, recording);
+            }
             scheduleSessionClock(sessionId, entry, clock);
           });
           return;
@@ -683,6 +689,26 @@ export function buildDemoPreConfig(options: {
           replayTimers[sessionId].push(setTimeout(function () { emitBytes(sessionId, chunk.data, entry.projectId); }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
         });
         return head;
+      }
+      // A terminal on any other grid plays the recording's FRAMES instead of its bytes. A frame
+      // reflows where a stream cannot, so the same recording is live at any size: the 15-row
+      // bottom panel shows the last 15 rows of a 37-row frame, which is what a terminal scrolled
+      // to the bottom shows anyway, and a display scaled to 125 percent gets the frame fitted to
+      // its width. Each entry replaces the screen rather than appending, so the terminal never
+      // grows and the repaint is one screen of bytes.
+      var REPAINT = '\\x1b[2J\\x1b[3J\\x1b[H';
+      function scheduleFrameTimeline(sessionId, entry, recording, cols) {
+        if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
+        var timeline = recording.frameTimeline || [];
+        var elapsed = Date.now() - entry.startedAt;
+        var current = '';
+        timeline.forEach(function (step) {
+          if (step.t <= elapsed) { current = step.frame; return; }
+          replayTimers[sessionId].push(setTimeout(function () {
+            emitBytes(sessionId, REPAINT + fitFrameToCols(step.frame, cols), entry.projectId);
+          }, Math.max(0, entry.startedAt + step.t - Date.now())));
+        });
+        return current;
       }
       function liveScrollback(sessionId, entry) {
         return fetchRecording(entry.file).then(function (recording) {
@@ -816,10 +842,15 @@ export function buildDemoPreConfig(options: {
             // at, since a stream cannot be re-laid out without the CLI. frameOnly means exactly
             // "never emit bytes to this session", nothing about whether it is finished.
             entry.frameOnly = true;
+            entry.mounted = true;
             var cols = mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0;
             if (entry.tail > 0) {
-              var open = openFrames[sessionId];
-              return fitFrameToCols(open ? open.serialized : recording.serialized, cols);
+              clearReplayTimers(sessionId);
+              var last = recording.stream[recording.stream.length - 1];
+              var openFrame = openFrames[sessionId];
+              var current = scheduleFrameTimeline(sessionId, entry, recording, cols);
+              scheduleSessionClock(sessionId, entry, { durationMs: last ? last.t : 0, endPeek: recording.peek, endedOnItsOwn: endedOnItsOwn(recording) });
+              return fitFrameToCols(current || (openFrame ? openFrame.serialized : recording.serialized), cols);
             }
             // A session already at its end: the frame is the recording's end, so the row's peek
             // and a finished session's state read as they would at the end here too.

@@ -229,7 +229,7 @@ recording.
 
 Raw, there is far too much of it. Two of the sample install's sessions change their last lines
 six times a second, which reads as a flicker rather than as an agent working. So
-`scripts/lib/demo-peek-timeline.js` samples the changes by READING TIME: a change is kept only
+`scripts/lib/demo-replay-timelines.js` samples the changes by READING TIME: a change is kept only
 once the one before it has been on screen long enough to read, between 2.5 and 6 seconds
 depending on how much text it carries. Real output varies in length, so the kept spacing comes
 out irregular on its own. Nothing in it is random, which matters because the built files are
@@ -257,10 +257,10 @@ moves; the restart emits nothing to that terminal, which is holding a parsed fra
 The marketing captures pass no timeline at all. The rig has no recordings index, so no clock ever
 runs, and a peek that changed on a timer would make the PNGs different every run.
 
-A recording made before this existed gets its timeline from
-`node scripts/backfill-demo-peek-timelines.mjs`, which derives it from the stream that is already
-on disk. Same module as the capture script, so a backfilled recording and a fresh one agree; no
-agent, no API credit, and no re-record.
+A recording made before either timeline existed gets both from
+`node scripts/backfill-demo-timelines.mjs`, which derives them from the stream that is already on
+disk. Same module as the capture script (`scripts/lib/demo-replay-timelines.js`), so a backfilled
+recording and a fresh one agree; no agent, no API credit, and no re-record.
 
 The main process is not in a browser, so what its transition engine would start is recorded
 too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a hand list:
@@ -309,25 +309,34 @@ Consolas measures another font. A recording's bytes address rows for its own gri
 ConPTY re-emits even Claude's classic renderer with absolute cursor positions), so replayed into
 any other grid they land two frames' text on one row. Main applies one rule to that on the
 desktop, and the frame applies the same: bytes replay only into a terminal whose grid equals the
-recording's; any other grid gets a serialized frame, which reflows, and nothing streams there.
+recording's.
 
-What it does NOT do is end the session. A geometry change does not finish an agent's turn on the
-desktop; main routes that session to its parsed frame and the agent goes on working. So a session
-the board shows as working keeps the clock the seed started, and its card, its sidebar count and
-its Monitor peeks go on changing while the terminal holds the frame the live replay opens at.
-Only a session already at its end paints its end. This is what leaves the DEFAULT board layout
-moving with the bottom panel open, where 15 rows can never be a recording's 37: the panel shows a
-real mid-work frame, and everything around it is live. Getting the panel itself to stream would
-need recordings at its own geometry, and its width moves with the display scale (219 columns at
-1, 202 at 2), so such a recording would fit one machine and no other. That frame is fitted before it is served: the build drops the
+Any other grid plays the recording's FRAMES instead, which is what makes every surface live. A
+frame reflows where a stream cannot, so the same recording paints correctly at any size: the
+board's bottom panel shows the last 15 rows of a 37-row frame, which is what a terminal scrolled
+to the bottom shows anyway, and a display scaled to 125 percent gets each frame fitted to its
+width. Every recording therefore carries a `frameTimeline` beside its stream, the screen every
+250 ms with unchanged screens dropped, derived from the bytes already on disk. Measured across
+all four common Windows display scales, both the task window and the board's bottom panel now
+stream; before this, the panel streamed at no scale and the task window at half of them.
+
+The alternative was recording each surface at its own grid, and it does not work. The panel is 15
+rows against a recording's 37, and no font size reconciles them: 154 columns needs about 16 px
+type, at which 37 rows would want a panel taller than the whole frame. A grid also moves with the
+display scale (the panel is 219 columns at 100 percent and 202 at 200), so a per-surface recording
+would fit one machine and no other. Frames have neither problem and cost no capture run.
+
+A geometry change also does not END the session. It does not finish an agent's turn on the
+desktop, where main routes that session to its parsed frame and the agent goes on working, so it
+must not here: a session the board shows as working keeps the clock the seed started, along with
+its card, its sidebar count and its Monitor peeks. Only a session already at its end paints its
+end. A frame is fitted before it is served: the build drops the
 plain spaces ConPTY pads every row with (they wrap into blank rows on a narrower grid), and at
 serve time the applier shrinks a right-aligned tail's cursor-forward gap to the mounted width
 (Claude's "/rc" at the footer's edge) and cuts trailing rule glyphs and styled bands there, so
 rows end where the CLI would have drawn them and the frame's cursor, placed relative to its
-bottom row, lands on its row. So a scaled display sees a standing frame where a 1:1 display sees
-the stream, with the card and the Monitor live either way. Making every display live means recording at
-a grid whose cell is a whole number of device pixels at 1, 1.25, 1.5, and 2 (an 8 by 16 cell,
-say) with a bundled font, and re-running the matrix; deferred until Codex credits allow it.
+bottom row, lands on its row. A 1:1 display gets the byte stream, which is character by character
+and the better picture; every other display gets the frame timeline, four repaints a second.
 
 Dragging a window WIDER is the case the fitting cannot help, and it is left visible rather than
 papered over. The CLI chose its wrap points at the recorded width and wrote them into the bytes
@@ -365,9 +374,12 @@ it is the one eager file that grows with the dataset (101 KB gzipped for 16 sess
 diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
 from, and 3 KB more when they gained their peek timelines, which is what makes the Monitor move
-without a terminal open. The 36 timed streams under `recordings/` are 15.3 MB raw and 538 KB gzipped in total,
-fetched one at a time as terminals mount; the largest is the Gemini session, whose TUI redraws
-every frame (7.0 MB raw, 79 KB gzipped).
+without a terminal open. The 36 recordings under `recordings/` are 35.3 MB raw and 879 KB gzipped
+in total, fetched one at a time as terminals mount, so none of it is on the boot path. Each
+carries its timed stream and its frame timeline, and the frames are roughly half that weight: they
+are what makes a terminal live on a grid the bytes cannot address, which is every display scale
+but two and the bottom panel at all of them. The largest single file is the Codex OpenTelemetry
+session at 114 KB gzipped.
 
 ### Cold boot per scene
 

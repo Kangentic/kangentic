@@ -82,7 +82,8 @@ function hashedName(name: string, source: string): string {
 /**
  * Everything the page fetches besides Vite's bundle, planned once so the HTML tags and the
  * emitted files agree on the hashed names: one JSON file per recording under `recordings/` (the
- * timed stream, the serialized final frame, its last lines, its grid, how the capture ended),
+ * timed stream, the serialized final frame, its last lines, its grid, how the capture ended, and
+ * the frame timeline a terminal on any other grid plays instead of the bytes),
  * then the four classic scripts in the order they must execute. The seed embeds only each
  * session's final frame (a still and a first paint need nothing more); the streams are fetched
  * when a terminal mounts.
@@ -91,7 +92,7 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
   const recordings = loadDemoRecordings();
   const files: PlannedAsset[] = [];
   const nameOf = (entry: DemoRecordingEntry): string => {
-    const source = JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows, stopReason: entry.stopReason });
+    const source = JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows, stopReason: entry.stopReason, frameTimeline: entry.frameTimeline });
     const fileName = hashedName(`recordings/${entry.file}`, source);
     files.push({ fileName, source });
     return fileName.slice('recordings/'.length);

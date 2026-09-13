@@ -53,11 +53,15 @@ three things staying in step, and each is enforced rather than remembered.
   no recording. `loop=1` restarts a finished session on its own clock and repaints a mounted
   terminal from the opening frame rather than re-feeding its history; it is off by default, and
   a still frame arms no timer at all.
-- **A terminal that cannot take the bytes does not end the session it shows.** A grid the
-  recording does not fit gets a parsed frame and no stream, as main routes a geometry-changed
-  session on the desktop. That never finishes the session there, so it must not here: a working
-  session keeps its clock, its card and its Monitor peeks, and only the terminal text stands
-  still. Never conflate "cannot replay here" with "the agent finished".
+- **A terminal that cannot take the bytes plays frames, and is never left dead or finished.** A
+  recording's bytes address rows for their own grid, which no page can promise: the board's bottom
+  panel is 15 rows against a session's 37, and a grid moves with the visitor's display scale. A
+  serialized frame reflows, so every recording carries a `frameTimeline` beside its stream and any
+  other grid plays that, fitted to its width. A grid mismatch is also not an ending: main routes a
+  geometry-changed session to its parsed frame on the desktop and the agent goes on working, so a
+  working session here keeps its clock, its card and its Monitor peeks. Never conflate "cannot
+  replay these bytes" with "the agent finished", and never answer a grid mismatch with a second
+  recording at that grid: the grid is not stable enough to record against.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)
@@ -74,8 +78,9 @@ three things staying in step, and each is enforced rather than remembered.
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
   recording, that the live frame fetches its session's recording, that a live Monitor's output
   peeks change while a still frame's do not, that `loop=1` brings a finished session back and its
-  absence leaves it finished, that a terminal on a grid its recording does not fit leaves its
-  session working and streams nothing to it, and that a drag into an
+  absence leaves it finished, that a terminal on a grid its recording does not fit plays its
+  frames and leaves its session working (including the board's bottom panel, where no grid could
+  fit), and that a drag into an
   auto-spawn column and a new Command Terminal each start a session whose bytes arrive through
   the mock's data path. Runs as the `demo` job in `.github/workflows/ci.yml` and again inside
   `.github/workflows/deploy-demo.yml` before the Pages deploy.

@@ -67,6 +67,7 @@ describe('demo fixtures carry no personal or machine-specific markers', () => {
         stream?: Array<{ t: number; data: string }>; peek?: string[];
         openFrame?: { beforeEndMs?: unknown; serialized?: unknown; peek?: unknown } | null;
         peekTimeline?: Array<{ t?: unknown; lines?: unknown }>;
+        frameTimeline?: Array<{ t?: unknown; frame?: unknown }>;
       };
       expect(typeof record.agent, `${path.basename(file)} has no agent`).toBe('string');
       expect(typeof record.serialized === 'string' && record.serialized.length > 0, `${path.basename(file)} has an empty serialized stream`).toBe(true);
@@ -92,11 +93,20 @@ describe('demo fixtures carry no personal or machine-specific markers', () => {
       // the same clock it replays the bytes on. Read from the RENDERED buffer, where cursor
       // positioning can join text the sanitizer only ever saw in separate stream windows, so the
       // lines are scanned in their own right rather than trusted to the stream's check above.
-      expect(Array.isArray(record.peekTimeline), `${path.basename(file)} has no peek timeline: run "node scripts/backfill-demo-peek-timelines.mjs"`).toBe(true);
+      expect(Array.isArray(record.peekTimeline), `${path.basename(file)} has no peek timeline: run "node scripts/backfill-demo-timelines.mjs"`).toBe(true);
       for (const change of record.peekTimeline ?? []) {
         expect(typeof change.t === 'number' && (change.t as number) >= 0, `${path.basename(file)} peek timeline entry has no time`).toBe(true);
         expect(Array.isArray(change.lines) && (change.lines as string[]).length > 0, `${path.basename(file)} peek timeline entry has no lines`).toBe(true);
         expect(findLeak(((change.lines as string[]) ?? []).join('\n')), `${path.basename(file)} peek timeline at ${String(change.t)} ms`).toBeNull();
+      }
+      // The screen every quarter second, which a terminal on any other grid plays instead of the
+      // bytes. Without it such a terminal has nothing live to show, so it is required, not optional.
+      expect(Array.isArray(record.frameTimeline) && (record.frameTimeline ?? []).length > 0,
+        `${path.basename(file)} has no frame timeline: run "node scripts/backfill-demo-timelines.mjs"`).toBe(true);
+      for (const step of record.frameTimeline ?? []) {
+        expect(typeof step.t === 'number' && (step.t as number) >= 0, `${path.basename(file)} frame timeline entry has no time`).toBe(true);
+        expect(typeof step.frame === 'string' && (step.frame as string).length > 0, `${path.basename(file)} frame timeline entry has no frame`).toBe(true);
+        expect(findLeak(String(step.frame ?? '')), `${path.basename(file)} frame timeline at ${String(step.t)} ms`).toBeNull();
       }
     }
   });
