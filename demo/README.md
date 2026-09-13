@@ -119,9 +119,15 @@ the Microsoft world know it:
 
 | Group | Project | Stack | Default agent | Why |
 |---|---|---|---|---|
-| Work | `contoso-web` | React + TypeScript, Express API | Claude Code | The board the fixture always had; names Claude on every column past Executing |
+| Work | `contoso-web` | React + TypeScript, Express API | Claude Code | The board the fixture always had, and the one a visitor lands on; two of its tasks run on Copilot CLI and Cursor, so the default board shows per-task agent choice rather than one model everywhere |
 | Open source | `spring-petclinic` | Java, Spring | Codex CLI | The most-forked sample on GitHub (30.5k forks, since 2013); one session runs on Gemini CLI |
 | Open source | `online-boutique` | Go, Kubernetes, gRPC | Codex CLI | The cloud-native reference app (20.9k stars, pushed this month) |
+
+Across the three boards the agents are the five people actually use: Claude Code, Codex CLI,
+Gemini CLI, Cursor, and Copilot CLI, plus OpenCode. A card's model name is not a label anyone
+chose; it is what that session's recording prints in its own header, so the two cannot disagree.
+The default board therefore reads Opus 5 on the Claude tasks, GPT-5.6 Luna on the Copilot one, and
+Auto on the Cursor one.
 
 Every timestamp is an offset from boot, so cards read "3 min ago" whenever the frame opens.
 Sessions cover every state the app distinguishes (thinking, needs-you, a permission prompt,

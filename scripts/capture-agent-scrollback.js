@@ -27,8 +27,8 @@
  *                                   frame opens a working session at, which a still paints for it
  *          --prompt ""              a Command Terminal: the agent started with no prompt
  *
- * Trust is pre-seeded for claude, codex, gemini, qwen, and copilot using the files each CLI reads,
- * so the first frame is the task and not a trust dialog. Every CLI must already be logged in.
+ * Trust is pre-seeded for claude, codex, gemini, qwen, copilot, and cursor using the files each CLI
+ * reads, so the first frame is the task and not a trust dialog. Every CLI must already be logged in.
  */
 
 const fs = require('node:fs');
@@ -109,7 +109,10 @@ function buildCommand(agent, cwd, prompt, mode) {
     case 'copilot':
       return { exe: 'copilot', args: withPrompt(['--allow-all-tools'], ['-i', prompt]), exit: ['\x03', '/exit\r'] };
     case 'cursor':
-      return { exe: 'cursor-agent', args: withPrompt([], [prompt]), exit: ['\x03'] };
+      // --force is Cursor's auto-approve, the counterpart to Copilot's --allow-all-tools. Without
+      // it a session stalls on "Run this command? Not in allowlist", and the recording is a
+      // permission dialog rather than the agent working.
+      return { exe: 'cursor-agent', args: withPrompt(['--force'], [prompt]), exit: ['\x03'] };
     default:
       throw new Error(`No launch shape for agent "${agent}"`);
   }
@@ -208,6 +211,20 @@ function seedTrust(agent, cwd) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(data, null, 2), 'utf-8');
     console.error('[capture] trusted the scratch repo in ~/.copilot/config.json');
+  } else if (agent === 'cursor') {
+    // Cursor CLI keeps one directory per workspace under ~/.cursor/projects, named after the path
+    // with its separators, colon and spaces folded to dashes, and marks trust with a file inside
+    // it. Note the app's cursor adapter still says the CLI has no trust mechanism and makes
+    // ensureTrust a no-op; that was true of an older build, and this one opens on a Workspace
+    // Trust dialog that a recording would otherwise capture instead of the agent working.
+    const native = path.resolve(cwd);
+    const slug = native.replace(/:/g, '').replace(/[\\/\s]+/g, '-');
+    const dir = path.join(os.homedir(), '.cursor', 'projects', slug);
+    const trustedPath = path.join(dir, '.workspace-trusted');
+    if (fs.existsSync(trustedPath)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(trustedPath, `${JSON.stringify({ trustedAt: new Date().toISOString(), workspacePath: native }, null, 2)}\n`, 'utf-8');
+    console.error(`[capture] trusted the scratch repo in ${trustedPath}`);
   }
 }
 
