@@ -13,12 +13,20 @@ import { IPC } from '../../shared/ipc-channels';
 //   Custom branch task: fetching → switching-branch  → starting-agent
 //   Base branch task:   fetching → switching-branch  → starting-agent
 //   Has worktree:       starting-agent (a base-drift probe may decorate it, see below)
-//   Cross-agent:        packaging-handoff → detecting-agent → starting-agent
+//   Cross-agent:        switching-agent → starting-agent → packaging-handoff → detecting-agent
 //   Restore from Done:  resuming → (whichever of the above the task needs)
+//   Model change:       switching-model → (whichever of the above the task needs)
+//   Effort respawn:     applying-settings → (whichever of the above the task needs)
+//   Session switch:     new-session → (whichever of the above the task needs)
 //
 // 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE before any git
 // work, so the card is never silent while the lane resolves and the git op
-// queues. Every other phase is emitted by the git helpers themselves.
+// queues. 'switching-model', 'switching-agent', 'applying-settings', and
+// 'new-session' are emitted the same way by task-move.ts's Phase 1
+// suspend-for-respawn branches, before the suspend that would otherwise leave
+// the card reading a stale "Paused" for the whole unlocked Phase 2 window (see
+// suspendLiveSessionForRespawn). Every other phase is emitted by the git
+// helpers themselves.
 //
 // QUERYABLE STATE (not just fire-once IPC): the latest in-flight label per
 // task is also retained in a module-level map so the renderer can re-derive
@@ -268,7 +276,11 @@ export type SpawnPhase =
   | 'switching-branch'
   | 'starting-agent'
   | 'packaging-handoff'
-  | 'detecting-agent';
+  | 'detecting-agent'
+  | 'switching-model'
+  | 'switching-agent'
+  | 'applying-settings'
+  | 'new-session';
 
 /** Phase → user-facing label (single source of truth for display text). */
 const PHASE_LABELS: Record<SpawnPhase, string> = {
@@ -285,6 +297,16 @@ const PHASE_LABELS: Record<SpawnPhase, string> = {
   'starting-agent': 'Starting agent...',
   'packaging-handoff': 'Packaging handoff context...',
   'detecting-agent': 'Detecting agent...',
+  // The four labels below are emitted by task-move.ts's Phase 1
+  // suspend-for-respawn branches, all through the shared
+  // suspendLiveSessionForRespawn helper, always BEFORE the suspend that
+  // follows. Naming the swap here rather than a generic "Starting agent..."
+  // is what keeps a model/agent/effort change from reading as a fresh cold
+  // spawn.
+  'switching-model': 'Switching model...',
+  'switching-agent': 'Switching agent...',
+  'applying-settings': 'Applying new settings...',
+  'new-session': 'Starting new session...',
 };
 
 /** Get the user-facing label for a spawn phase. */

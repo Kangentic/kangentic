@@ -24,6 +24,7 @@ import {
   beginSpawnStaleProbe,
   touchSpawnStaleProbe,
   __resetSpawnProgressForTest,
+  phaseLabel,
 } from '../../src/main/transition-engine/spawn-progress';
 
 function makeWindow(isDestroyed = false): { window: BrowserWindow; send: ReturnType<typeof vi.fn> } {
@@ -51,6 +52,22 @@ describe('spawn-progress queryable map', () => {
     expect(getInFlightSpawnProgress()).toEqual({ 'task-1': 'Starting agent...' });
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith('task:spawnProgress', 'task-1', 'Starting agent...');
+  });
+
+  it('phaseLabel resolves every phase, including "resuming" and the four respawn-window labels', () => {
+    // 'resuming' had no direct test before this file (only exercised indirectly
+    // via task-archive.ts's onProgress('resuming') call). The four
+    // 'switching-model' / 'switching-agent' / 'applying-settings' /
+    // 'new-session' phases are new, added for the agent-handoff flash fix:
+    // suspendLiveSessionForRespawn (task-move.ts) emits one of them as the
+    // FIRST statement of a same-column respawn, before the suspend that would
+    // otherwise leave the renderer reading a stale "Paused" for the whole
+    // unlocked Phase 2 gap.
+    expect(phaseLabel('resuming')).toBe('Resuming session...');
+    expect(phaseLabel('switching-model')).toBe('Switching model...');
+    expect(phaseLabel('switching-agent')).toBe('Switching agent...');
+    expect(phaseLabel('applying-settings')).toBe('Applying new settings...');
+    expect(phaseLabel('new-session')).toBe('Starting new session...');
   });
 
   it('createProgressCallback resolves known phases and passes unknown strings verbatim', () => {
