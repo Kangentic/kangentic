@@ -168,6 +168,17 @@ describe('SessionRegistry.isSessionTeardownInFlight', () => {
     const registry = new SessionRegistry();
     expect(registry.isSessionTeardownInFlight('sess-gone')).toBe(true);
   });
+
+  it('is true for a queued session, which has no PTY yet to produce bytes either way', () => {
+    // Deliberately diverges from hasLiveSessionForTask, which counts queued
+    // as LIVE (see that describe block above): a raw-byte forwarder must
+    // stop forwarding for a queued row too, since there is nothing to
+    // forward yet.
+    const registry = new SessionRegistry();
+    registry.set('sess-queued', makeManagedSession({ id: 'sess-queued', taskId: 'task-a', status: 'queued' }));
+    expect(registry.isSessionTeardownInFlight('sess-queued')).toBe(true);
+    expect(registry.hasLiveSessionForTask('task-a')).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
