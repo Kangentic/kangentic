@@ -125,9 +125,19 @@ the Microsoft world know it:
 
 Across the three boards the agents are the five people actually use: Claude Code, Codex CLI,
 Gemini CLI, Cursor, and Copilot CLI, plus OpenCode. A card's model name is not a label anyone
-chose; it is what that session's recording prints in its own header, so the two cannot disagree.
-The default board therefore reads Opus 5 on the Claude tasks, GPT-5.6 Luna on the Copilot one, and
-Auto on the Cursor one.
+chose: it is what that session's agent reports, so the two cannot disagree. The default board
+therefore reads Opus 5 on the Claude tasks, GPT-5.6 Luna on the Copilot one, and Claude Sonnet 4.5
+on the Cursor one.
+
+Cursor and Gemini are the two that need care. Both run a session through a router and print that
+router ("Auto") in their own status line, but Kangentic never shows a router: it reads the model
+the router RESOLVED to, from Cursor's init event and Gemini's session history. So their cards name
+a model, as every other card does, and a card reading "Auto" would be a missing value rather than
+a model. The two chosen fit the context windows their sessions declare, a million each:
+`gemini-3-flash` is the Flash tier in `resolveGeminiContextWindowSize` where Pro is two million,
+and `claude-4.5-sonnet` with its display string are exactly as `cursor-agent --list-models` prints
+them. Note that spelling is Sonnet-first; the older word order in the app's `CURSOR_COMMON_MODELS`
+fallback is stale.
 
 Every timestamp is an offset from boot, so cards read "3 min ago" whenever the frame opens.
 Sessions cover every state the app distinguishes (thinking, needs-you, a permission prompt,
