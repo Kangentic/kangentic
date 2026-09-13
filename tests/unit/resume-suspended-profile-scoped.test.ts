@@ -31,7 +31,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
-import type { BoardProfile, SessionRecord, Task } from '../../src/shared/types';
+import type { BoardProfile, SessionRecord, SwimlaneRole, Task } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Module-level mock fns shared across all Fake*Repository instances.
@@ -40,6 +40,7 @@ import type { BoardProfile, SessionRecord, Task } from '../../src/shared/types';
 
 const sessionRepoGetResumable = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetOrphaned = vi.fn(() => [] as SessionRecord[]);
+const sessionRepoGetInterruptedExited = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoMarkAllRunningAsOrphaned = vi.fn();
 const sessionRepoMarkRunningAsOrphanedExcluding = vi.fn();
 
@@ -85,7 +86,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
     getResumable = () => sessionRepoGetResumable();
     getOrphaned = () => sessionRepoGetOrphaned();
-    getInterruptedExited = () => [] as SessionRecord[];
+    getInterruptedExited = () => sessionRepoGetInterruptedExited();
     markAllRunningAsOrphaned = () => sessionRepoMarkAllRunningAsOrphaned();
     markRunningAsOrphanedExcluding = (...args: unknown[]) =>
       sessionRepoMarkRunningAsOrphanedExcluding(...args);
@@ -141,13 +142,15 @@ const QUIET_LANE = 'lane-quiet';
 const LOUD_LANE = 'lane-loud';
 
 /** A full LaneStrategyFields-shaped lane, matching auto-spawn-profile-scoped.test.ts's helper. */
-function lane(id: string, autoSpawn: boolean) {
+function lane(id: string, autoSpawn: boolean, role: SwimlaneRole | null = null) {
   return {
     id,
     name: id,
-    // A CUSTOM column. Load-bearing for the placeholder branch, which keys off
-    // the role rather than auto_spawn so it can skip To Do and Done.
-    role: null,
+    // A CUSTOM column by default. Load-bearing for the placeholder branch,
+    // which keys off the role rather than auto_spawn so it can skip To Do
+    // and Done. A caller after the never-auto-spawn-role tests passes a real
+    // role explicitly.
+    role,
     auto_spawn: autoSpawn,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
@@ -247,11 +250,13 @@ function makeConfigManager(autoResumeSessionsOnRestart = true) {
   };
 }
 
+/** Returns the session manager it constructed, so a caller can assert on its calls. */
 async function runResume(boardProfiles?: BoardProfile[]) {
+  const sessionManager = makeSessionManager();
   await resumeSuspendedSessions(
     'proj-1',
     '/project',
-    makeSessionManager() as never,
+    sessionManager as never,
     makeConfigManager(true) as never,
     'claude',
     null,
@@ -259,6 +264,7 @@ async function runResume(boardProfiles?: BoardProfile[]) {
     null,
     boardProfiles,
   );
+  return sessionManager;
 }
 
 describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane', () => {
@@ -270,6 +276,8 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     sessionRepoGetResumable.mockReturnValue([]);
     sessionRepoGetOrphaned.mockClear();
     sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockClear();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
     sessionRepoMarkAllRunningAsOrphaned.mockClear();
     sessionRepoMarkRunningAsOrphanedExcluding.mockClear();
     taskRepoList.mockClear();
@@ -342,6 +350,40 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     // mock's own 'unknown-agent' retire as the test above).
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
   });
+
+  it('routes a suspended, auto_spawn=true todo-role record into the skip branch (never-auto-spawn invariant)', async () => {
+    const TODO_LANE = 'lane-todo';
+    swimlaneListMock.mockReturnValue([lane(TODO_LANE, true, 'todo')]);
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ isolated_swimlane_id: null, status: 'suspended' })]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: TODO_LANE, profile_id: null })]);
+
+    const sessionManager = await runResume();
+
+    // Diverted before the preparation pass: never reaches prepareAgentSpawn.
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    // todo is also in RESUME_HIDDEN_ROLES, so the skip branch's own
+    // placeholder registration is itself skipped: the card must open with no
+    // session at all, not a Resume affordance the role explicitly hides.
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves an exited done-role record as suspended instead of resuming it (never-auto-spawn invariant)', async () => {
+    const DONE_LANE = 'lane-done';
+    swimlaneListMock.mockReturnValue([lane(DONE_LANE, true, 'done')]);
+    sessionRepoGetInterruptedExited.mockReturnValue([
+      makeRecord({ id: 'record-exited', isolated_swimlane_id: null, status: 'exited' }),
+    ]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: DONE_LANE, profile_id: null })]);
+
+    await runResume();
+
+    // Diverted before the preparation pass: never reaches prepareAgentSpawn.
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    // The pre-existing OS-killed-exited carve-out still applies once diverted:
+    // preserved as resumable ('suspended'), not silently retired.
+    expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-exited', 'system');
+  });
 });
 
 /**
@@ -365,6 +407,8 @@ describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing bra
     sessionRepoGetResumable.mockReturnValue([]);
     sessionRepoGetOrphaned.mockClear();
     sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockClear();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
     sessionRepoMarkAllRunningAsOrphaned.mockClear();
     sessionRepoMarkRunningAsOrphanedExcluding.mockClear();
     taskRepoList.mockClear();
