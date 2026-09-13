@@ -203,19 +203,33 @@ export const DEMO_LANES_BY_PROJECT: Record<string, DemoLane[]> = {
   [PROJECT_BOUTIQUE]: DEFAULT_LANES,
 };
 
+/**
+ * A label is coloured only when the colour changes what the reader does about it: something is
+ * broken (red) or something is slow (amber). Everything else classifies the work rather than
+ * flagging it, so it takes one muted slate and stays quiet.
+ *
+ * This is deliberately not a colour per label. Twelve saturated hues put seven of them on the
+ * contoso board at once, which reads as decoration rather than as a team's convention, and a
+ * board that looks decorated is the first thing a viewer distrusts about a demo. A new label
+ * joins the slate group unless it means broken or slow.
+ */
+const LABEL_BROKEN = '#b91c1c';
+const LABEL_SLOW = '#b45309';
+const LABEL_NEUTRAL = '#64748b';
+
 export const DEMO_LABEL_COLORS: Record<string, string> = {
-  feature: '#3b82f6',
-  bug: '#ef4444',
-  refactor: '#8b5cf6',
-  auth: '#f59e0b',
-  api: '#06b6d4',
-  tests: '#10b981',
-  design: '#ec4899',
-  chore: '#6b7280',
-  perf: '#f97316',
-  security: '#dc2626',
-  a11y: '#14b8a6',
-  docs: '#0ea5e9',
+  bug: LABEL_BROKEN,
+  security: LABEL_BROKEN,
+  perf: LABEL_SLOW,
+  feature: LABEL_NEUTRAL,
+  refactor: LABEL_NEUTRAL,
+  auth: LABEL_NEUTRAL,
+  api: LABEL_NEUTRAL,
+  tests: LABEL_NEUTRAL,
+  design: LABEL_NEUTRAL,
+  chore: LABEL_NEUTRAL,
+  a11y: LABEL_NEUTRAL,
+  docs: LABEL_NEUTRAL,
 };
 
 function worktree(projectPath: string, folder: string | null): string | null {

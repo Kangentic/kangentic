@@ -274,6 +274,16 @@ sees stills where a 1:1 display sees the stream. Making every display live means
 a grid whose cell is a whole number of device pixels at 1, 1.25, 1.5, and 2 (an 8 by 16 cell,
 say) with a bundled font, and re-running the matrix; deferred until Codex credits allow it.
 
+Dragging a window WIDER is the case the fitting cannot help, and it is left visible rather than
+papered over. The CLI chose its wrap points at the recorded width and wrote them into the bytes
+as line breaks, so only the CLI could reflow that prose, and there is none here. Trimming a
+frame to a narrower grid is possible because the text already fits; widening has nothing to
+unwrap. The rows keep their recorded width and the new columns stay empty. Every window opens
+at the size its recording was made for, so only a deliberate resize reaches this. Stretching the
+rules and the styled bands alone would look tidier and read worse: it would wrap the recorded
+width's text inside a visibly wider box. The real fix is the one above, a bundled fixed-cell font
+and a re-recorded matrix.
+
 ## What the page ships, and what it costs
 
 Measured with `npm run demo:measure` on the build of 2026-09-12, headless Chromium, a plain
