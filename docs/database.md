@@ -265,8 +265,9 @@ task.
 settings applies) or `'agent_override'` (pin agent/model/effort/permission for the task's whole
 life). It is stored rather than derived from "does the task carry a pin", because Agent Override with
 all four fields left on inherit writes exactly the same nulls as Column Settings while meaning the
-opposite - the first locks all four at first spawn, the second never locks. Deriving it silently
-dropped that choice on every save. The migration backfills `'agent_override'` for any row that
+opposite - the first locks all four on first spawn or on leaving To Do, the second never locks.
+Deriving it silently dropped that choice on every save. The migration backfills `'agent_override'`
+for any row that
 already carries one of the four pins **and** has a NULL `profile_id`, reproducing the old derivation
 exactly, so upgraded boards behave identically. The `profile_id IS NULL` clause is belt-and-braces -
 a profile task cannot carry a pin, so it changes no row today - but it makes the backfill correct by

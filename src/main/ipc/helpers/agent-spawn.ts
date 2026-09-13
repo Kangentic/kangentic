@@ -152,7 +152,7 @@ export interface AgentSpawnOptions {
   suppressAutoCommand?: boolean;
   /**
    * The lane whose inherited settings the New Task / Edit dialog displayed
-   * when the user configured the task. The first-spawn override lock
+   * when the user configured the task. The Advanced override lock
    * (`lockAdvancedOverridesOnFirstSpawn`) resolves still-inherited fields
    * against THIS lane, never the destination column (whose settings the user
    * never saw in the dialog). Drag moves pass the SOURCE lane (null when it
