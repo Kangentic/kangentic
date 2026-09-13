@@ -1387,6 +1387,24 @@ export class SessionManager extends EventEmitter {
     this.kill(sessionId);
     // Full cleanup including file deletion - the session is not coming back.
     this.sessionFiles.detachAndDelete(sessionId);
+    // Announce the removal as a STATUS change before the row disappears.
+    //
+    // kill() nulls session.pty synchronously but never touches status for a
+    // PTY-backed session (a young session's real exit can still be up to
+    // KILL_GRACE_MS away), and the renderer's SESSION_EXIT handler
+    // deliberately ignores an intentional exit (App.tsx) so it never
+    // self-corrects. Without this push a caller that reaches remove() before
+    // the natural 'exit' - or a syncSessions() that lands mid-grace - leaves
+    // the renderer holding a 'running' row for a session that no longer
+    // exists anywhere in main: the board keeps painting a spinner and the
+    // bottom panel keeps a tab for an agent that is gone. Forcing 'exited'
+    // here (rather than trusting whatever the row already carries) covers
+    // both the awaited-exit case, where onExit already set it, and the
+    // direct-remove case (project deletion), where it has not.
+    if (session) {
+      session.status = 'exited';
+      this.emit('session-changed', sessionId, toSession(session));
+    }
     this.registry.delete(sessionId);
     this.clearSessionCaches(sessionId);
   }

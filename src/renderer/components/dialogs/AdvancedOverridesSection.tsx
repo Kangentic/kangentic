@@ -109,19 +109,22 @@ function EditPencilButton({ onClick, title, testId, disabled = false }: EditPenc
  *     framing, no clear-X) - the muted weight alone signals "inherited, not
  *     pinned". A concrete pick renders at full weight with a clear-X.
  *     Leaving a field on inherit stores no override, so a later
- *     column/project-default change still applies - until first spawn (see
+ *     column/project-default change still applies - until the lock fires (see
  *     below). Applies to all four fields (Agent/Model/Effort/Permission).
  *   - A concrete pick wins over the column for the task's lifetime; column
  *     moves cannot change it (see `resolveTargetAgent` and the cross-agent
  *     guards in `task-move.ts`). If the task has ANY of the four fields set
- *     when it spawns for the very first time ever, the other
+ *     when it LEAVES TO DO, or spawns for the very first time ever, the other
  *     (still-inherited) fields are locked too, to exactly the values this
  *     dialog displayed - resolved against the lane the task was configured
  *     in, never the destination column
- *     (`lockAdvancedOverridesOnFirstSpawn` in `spawn-preamble.ts`). So a
- *     value that already matched its inherited default gets locked, not
- *     silently left dynamic, and the whole Advanced tab is the task's
- *     contract from then on. One exception: a column that forces
+ *     (`lockAdvancedOverridesOnFirstSpawn` in `spawn-preamble.ts`). To Do is
+ *     where the lock is RE-ARMED, not where pins are erased: whatever this
+ *     dialog shows while the task sits there is what locks in the moment it
+ *     leaves, so clearing a field in To Do makes the next move out re-resolve
+ *     and re-pin it. So a value that already matched its inherited default
+ *     gets locked, not silently left dynamic, and the whole Advanced tab is
+ *     the task's contract from then on. One exception: a column that forces
  *     `permission_mode: 'plan'` always wins over the task's (picked or
  *     locked) permission while the task is in that column - plan mode is a
  *     genuine safety guarantee, not just an ordinary column default (see

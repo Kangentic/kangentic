@@ -6,7 +6,7 @@ paths:
 
 # Rule: every agent-spawn entry point runs the shared spawn preamble
 
-Spawn-affecting behavior (the first-spawn Advanced-override lock, agent resolution,
+Spawn-affecting behavior (the Advanced-override lock, agent resolution,
 permission-mode resolution, auto_command handling) must apply identically no matter HOW a task's
 agent gets spawned: drag move, create-into-spawn-column, backlog promote, MCP create, unarchive,
 or startup recovery. Historically each handler hand-copied its own engine-call block, so a

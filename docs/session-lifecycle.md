@@ -48,7 +48,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `queued` | `exited` | Session killed while still queued |
 | `running` | `suspended` | Task moved to Done or `auto_spawn=false` column |
 | `running` | `suspended` | A column or Board Profile edit flips `auto_spawn` to false while the task is already sitting there, with no move at all (`reconcileAutoSpawnChange`, `suspended_by='system'`) |
-| `running` | `exited` | Task moved to To Do (full cleanup via `cleanupTaskSession`) |
+| `running` | `exited` | Task moved to To Do (full cleanup via `cleanupTaskResources`) |
 | `running` | `exited` | Process exits naturally or is killed. Every `-> exited` transition also destroys any offscreen browser lanes that session opened (`destroyLanesForSession`), which is the guarantee that lanes cannot outlive their agent - see [Embedded Browser](embedded-browser.md) decision 29 |
 | `running` | `exited` | The agent CLI exited on its own while its shell PTY survived, so no PTY exit ever fired. The bg-shell watcher's [agent-absence sweep](#a-session-whose-agent-exited-under-a-surviving-shell) confirms it over two probes and retires the session |
 | `running` | `orphaned` | App crashes, leftover `running` DB record found on next launch |
@@ -68,8 +68,9 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 
 Every way a task agent can be spawned routes through one of TWO chokepoints, and both run the
 shared spawn preamble `runSpawnPreamble` (`src/main/transition-engine/spawn-preamble.ts`): lock
-the Advanced overrides on a first-ever spawn (`lockAdvancedOverridesOnFirstSpawn`), then resolve
-the target agent (`resolveTargetAgent`), in that order. Permission mode is resolved by the same
+the Advanced overrides (`lockAdvancedOverridesOnFirstSpawn`) - on a first-ever spawn, or whenever
+the task is leaving a todo-role settings lane - then resolve the target agent
+(`resolveTargetAgent`), in that order. Permission mode is resolved by the same
 module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, else task -> lane
 -> global). Enforced by `.claude/rules/spawn-entry-point-parity.md` +
 `tests/unit/spawn-entry-point-parity.test.ts`.
@@ -162,6 +163,14 @@ The capture reads a snapshot the watcher already computed for its own counting, 
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
 - In-memory caches (usage, activity, events) for the session
+
+Before the registry row is deleted, `SessionManager.remove()` forces its status to `exited` and
+emits `session-changed`. This is load-bearing, not cosmetic: a status push landing mid-teardown
+(a `syncSessions()` call in the grace window, say) can otherwise resurrect the row via
+`withSessionUpserted` after the renderer's SESSION_EXIT handler has already ignored the
+intentional exit, leaving a ghost `running` card and panel tab for an agent that no longer exists
+anywhere in main. Pinned by `tests/unit/session-manager-remove-emit.test.ts` and
+`tests/ui/todo-reset-no-ghost-session.spec.ts`.
 
 ### SessionManager.kill() and the young-session grace
 

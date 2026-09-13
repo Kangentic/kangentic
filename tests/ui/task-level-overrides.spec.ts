@@ -1660,6 +1660,136 @@ test.describe('placeholderVariant: muted vs resolved', () => {
 });
 
 /**
+ * Regression for kangentic.com #80: the Advanced overrides dialog showed
+ * "Opus 5" (the project default) for a task whose next spawn actually ran
+ * Fable 5 (a DIFFERENT column's override). The placeholderVariant suite above
+ * never covers this shape - every one of its fixtures has NO column-level
+ * override at all, only project defaults, so a regression that let a
+ * column's model_override leak from an unrelated column (or fail to resolve
+ * from the task's own column) would pass there unnoticed.
+ *
+ * The task here is already past its first spawn (`agent: 'claude'`, no
+ * session - the exact state a To-Do reset leaves) and sits in To Do, which
+ * carries no override of its own. Planning carries a DIFFERENT model, so a
+ * correct placeholder must show the project default, never Planning's value -
+ * proving the dialog resolves against the task's OWN column
+ * (`AdvancedOverridesSection`'s `swimlaneId` prop), not any other one on the
+ * board. This is also now the exact lane `lockAdvancedOverridesOnFirstSpawn`
+ * pins against on departure (spawn-preamble.ts): a task leaving To Do locks
+ * to what THIS dialog shows, which is what closes the gap between the two -
+ * see spawn-agent-lock-overrides.test.ts for the main-process half (what the
+ * next spawn actually runs), which the UI tier cannot exercise directly.
+ */
+test.describe('Advanced overrides placeholder resolves against the task\'s own column', () => {
+  let ghostLockBrowser: Browser;
+  let ghostLockPage: Page;
+  const TASK_TITLE = 'Past First Spawn In To Do';
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    ghostLockBrowser = await chromium.launch({ headless: true });
+    const context = await ghostLockBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    ghostLockPage = await context.newPage();
+
+    const preConfigScript = `
+      window.__mockPreConfigure(function (state) {
+        var timestamp = new Date().toISOString();
+        var projectId = 'proj-advanced-own-column';
+        state.projects.push({
+          id: projectId,
+          name: 'Advanced Own Column Test',
+          path: '/mock/advanced-own-column-test',
+          github_url: null,
+          default_agent: 'claude',
+          default_model: 'opus',
+          default_effort: null,
+          last_opened: timestamp,
+          created_at: timestamp,
+        });
+        var laneIds = {};
+        state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+          var laneId = 'lane-aoc-' + swimlane.name.toLowerCase().replace(/\\s+/g, '-');
+          laneIds[swimlane.name] = laneId;
+          var lane = Object.assign({}, swimlane, { id: laneId, position: index, created_at: timestamp });
+          // A DIFFERENT column's override, so a leak is distinguishable from
+          // the correct (project-default) resolution.
+          if (swimlane.name === 'Planning') lane.model_override = 'fable-5';
+          state.swimlanes.push(lane);
+        });
+        // Already spawned once and reset to To Do (agent survives the reset,
+        // no session record) - exactly kangentic.com #80's task #80 shape.
+        state.tasks.push({
+          id: 'task-advanced-own-column',
+          title: '${TASK_TITLE}',
+          description: 'Past its first spawn, sitting in To Do',
+          swimlane_id: laneIds['To Do'],
+          position: 0,
+          agent: 'claude',
+          agent_override: 'claude',
+          model_override: null,
+          effort_override: null,
+          permission_mode: null,
+          run_mode: 'agent_override',
+          session_id: null,
+          worktree_path: null,
+          branch_name: null,
+          pr_number: null,
+          pr_url: null,
+          base_branch: null,
+          use_worktree: 0,
+          labels: [],
+          priority: 0,
+          attachment_count: 0,
+          archived_at: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        });
+        return { currentProjectId: projectId };
+      });
+    `;
+
+    await ghostLockPage.addInitScript({ path: MOCK_SCRIPT });
+    await ghostLockPage.addInitScript(preConfigScript);
+    await ghostLockPage.goto(VITE_URL);
+    await ghostLockPage.waitForLoadState('load');
+    await ghostLockPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+  });
+
+  test.afterAll(async () => {
+    await ghostLockBrowser?.close();
+  });
+
+  test('shows the project default, not a different column\'s override, and saves no pin', async () => {
+    await ghostLockPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+    // No active session, so the card click opens straight into edit mode
+    // (TaskCard.tsx: `initialEdit: displayState.kind === 'none'`).
+    await ghostLockPage.locator(`text=${TASK_TITLE}`).first().click();
+    const dialog = ghostLockPage.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Reopens on the branch the task already carries.
+    await expect(dialog.locator('[data-testid="task-advanced-toggle"]')).toBeChecked();
+
+    const modelInput = dialog.locator('input[data-testid="task-model-override"]');
+    // The bug: this used to be indistinguishable from Planning's 'fable-5'
+    // because nothing in the fixture ever gave a DIFFERENT column an
+    // override to leak from.
+    await expect(modelInput).toHaveAttribute('placeholder', 'opus');
+    await expect(modelInput).toHaveValue('');
+
+    // Saving with Model left on inherit must not silently pin anything - the
+    // task stays dynamic until it actually leaves To Do (the lock's job, not
+    // this dialog's).
+    await ghostLockPage.locator('button:has-text("Save")').click();
+    await dialog.waitFor({ state: 'hidden', timeout: 5000 });
+    const tasks = await ghostLockPage.evaluate(() => window.electronAPI.tasks.list());
+    const saved = tasks.find((task: { title: string }) => task.title === TASK_TITLE);
+    expect(saved?.model_override).toBeNull();
+  });
+});
+
+/**
  * "How this task runs" is ONE either/or: ride a Board Profile's per-column
  * ladder, or pin an agent for the task's whole life. The two are mutually
  * exclusive in storage (`applyProfileExclusivity` in task-repository.ts), so
