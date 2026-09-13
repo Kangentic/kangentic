@@ -412,6 +412,27 @@ now prevent that:
 The task therefore shows the `preparing` launch overlay from about 100ms after the drop, through
 "Creating worktree..." and "Starting agent...", until the terminal takes over.
 
+The same mechanism generalizes to a **same-column respawn**: a live session forced to suspend and
+restart in place, not because the task moved to Done and back but because the destination column
+needs new CLI flags on a resumed process. `suspendLiveSessionForRespawn`
+(`src/main/ipc/handlers/task-move.ts`) is the shared helper behind all four triggers - a model
+change, a cross-agent handoff, an effort delta with no live `/effort` swap, and a session-track
+switch (isolated-column entry/exit, or `always_spawn_new`) - and it emits its phase label
+(`switching-model` / `switching-agent` / `applying-settings` / `new-session`) as its first
+statement, before the record is even marked suspended. Without this, the suspend that begins the
+respawn left the card reading "Paused" and the detail offering a manual "Resume session" for the
+whole unlocked worktree/branch-checkout window between the suspend and the eventual
+`starting-agent` label.
+
+That main-side emit alone is not sufficient: `SessionManager.suspend()` pushes the session's
+`suspended` row to the renderer almost immediately, well before its own graceful-shutdown wait
+completes, and the renderer's `upsertSession` (`src/renderer/stores/session-store.ts`) used to
+clear any in-flight spawn-progress label on every arriving row - including that one - wiping the
+label within milliseconds of it being set. `upsertSession` now skips the clear specifically when
+the arriving row's status is `suspended`, since that row is the respawn's own suspend landing, not
+a genuine park. `clearSpawnProgress` (called explicitly by the two genuine parks, move to Done and
+move into an `auto_spawn=false` column) remains the only way a label actually retires.
+
 When a suspended task moves to an active column:
 
 - Command: `claude --settings <path> --resume <agentSessionId>` (no prompt)

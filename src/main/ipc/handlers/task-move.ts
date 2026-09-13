@@ -35,7 +35,7 @@ import { abortBacklogPromotion } from './backlog';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
-import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
+import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../transition-engine/injection-plan';
@@ -44,7 +44,7 @@ import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transitio
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { restartSessionForSettingsChange } from './session-reconcile';
-import type { Task, Swimlane, SessionRecord } from '../../../shared/types';
+import type { Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 
 /**
  * Per-task AbortController to cancel in-flight moves when a newer move
@@ -57,11 +57,25 @@ const taskMoveControllers = new Map<string, AbortController>();
 
 /**
  * Suspend a live PTY session so Phase 3 can respawn it with new CLI flags:
- * capture metrics while caches are populated, mark the DB record suspended
- * (or exited for queued records that never started), suspend the PTY, and
- * clear task.session_id. Shared by the two same-agent respawn triggers on a
- * column move: a model change (the primary restart marker), and an effort delta
- * to a concrete target on an adapter with no live `/effort` swap.
+ * emit a spawn-progress label naming the handoff, capture metrics while
+ * caches are populated, mark the DB record suspended (or exited for queued
+ * records that never started), suspend the PTY, and clear task.session_id.
+ * Shared by all four same-column respawn triggers: a model change, an
+ * effort delta to a concrete target on an adapter with no live `/effort`
+ * swap, a session-track switch (isolated column entry/exit or
+ * `always_spawn_new`), and a cross-agent handoff.
+ *
+ * `phase` is required, not optional: every caller must name what the user
+ * is about to see instead of the suspended session's stale "Paused" state,
+ * so a future respawn branch cannot silently opt out of labeling its own
+ * window (see the flash bug this fixes - the suspend used to leave the
+ * card and task detail reading "Paused"/"Resume session" for the entire
+ * unlocked Phase 2 gap). Emitted as the FIRST statement, before the record
+ * is even marked suspended: while the session is still 'running',
+ * getTaskProgress lets it own the display (task-progress.ts:166 applies a
+ * label only when there is no session or the session is 'suspended'), so the
+ * early emit is inert until the suspend actually lands and is never a source
+ * of its own gap.
  */
 async function suspendLiveSessionForRespawn(args: {
   context: IpcContext;
@@ -74,28 +88,51 @@ async function suspendLiveSessionForRespawn(args: {
   task: Task;
   projectPath: string | null;
   defaultBaseBranch: string;
+  phase: SpawnPhase;
+  // `session_id` is excluded, not merely omitted by convention: it is spread
+  // after `session_id: null` below, so a caller that passed one would silently
+  // defeat the null-out this helper exists to guarantee.
+  additionalTaskUpdates?: Partial<Omit<TaskUpdateInput, 'id' | 'session_id'>>;
 }): Promise<void> {
-  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch } = args;
-  if (record && record.agent_session_id
-      && (record.status === 'running' || record.status === 'exited')) {
-    captureSessionMetrics(
-      context.sessionManager,
-      sessionRepo,
-      usageHistoryRepo,
-      liveSessionId,
-      record.id,
-      record.started_at,
-      record.session_type,
-    );
-    refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
-    refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
-    captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, defaultBaseBranch);
-    markRecordSuspended(sessionRepo, record.id, 'system');
-  } else if (record && record.status === 'queued') {
-    markRecordExited(sessionRepo, record.id);
+  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch, phase, additionalTaskUpdates } = args;
+  emitSpawnProgress(context.mainWindow, taskId, phase);
+  // Everything after the emit runs in Phase 1, INSIDE the withTaskLock call.
+  // That call sits under a try whose only clause is a `finally` (the
+  // AbortController cleanup); the catch that retires labels belongs to a
+  // separate, later try covering Phase 2/3 only. So a throw here - a rejecting
+  // sessionManager.suspend, or a locked-DB markRecordSuspended / tasks.update -
+  // would escape handleTaskMove entirely and strand the label just emitted
+  // until the 120s TTL. Clear it and rethrow so the caller's behavior is
+  // otherwise unchanged.
+  //
+  // This retires the LABEL only. A throw partway through still leaves the DB
+  // half-written (record marked suspended without session_id cleared, or the
+  // reverse); Phase 1 has no rollback and that is unchanged here.
+  try {
+    if (record && record.agent_session_id
+        && (record.status === 'running' || record.status === 'exited')) {
+      captureSessionMetrics(
+        context.sessionManager,
+        sessionRepo,
+        usageHistoryRepo,
+        liveSessionId,
+        record.id,
+        record.started_at,
+        record.session_type,
+      );
+      refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
+      refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
+      captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, defaultBaseBranch);
+      markRecordSuspended(sessionRepo, record.id, 'system');
+    } else if (record && record.status === 'queued') {
+      markRecordExited(sessionRepo, record.id);
+    }
+    await context.sessionManager.suspend(liveSessionId);
+    tasks.update({ id: taskId, session_id: null, ...additionalTaskUpdates });
+  } catch (error) {
+    clearSpawnProgress(context.mainWindow, taskId);
+    throw error;
   }
-  await context.sessionManager.suspend(liveSessionId);
-  tasks.update({ id: taskId, session_id: null });
 }
 
 /**
@@ -479,6 +516,12 @@ export async function handleTaskMove(
       // --- Priority 2: TARGET IS DONE → suspend + archive (resumable on unarchive) ---
       if (toLane?.role === 'done') {
         context.terminalSubmitScheduler.cancel(task.id);
+        // A genuine park, not a respawn: retire any label a prior in-flight
+        // spawn left behind (the same reasoning as Priority 1's clear above).
+        // Without this, the renderer's suspended-row carve-out (added for the
+        // handoff flash fix) would keep showing that stale label instead of
+        // "Paused" through the whole archive below.
+        clearSpawnProgress(context.mainWindow, task.id);
         // Taken before the suspend below: suspending kills the PTY, which
         // orphans whatever the agent backgrounded inside the worktree. On POSIX
         // those children reparent to init immediately, so the tree cannot be
@@ -570,6 +613,10 @@ export async function handleTaskMove(
       // → Suspend session if one exists, do NOT spawn new agent
       if (toLane && !toLane.auto_spawn) {
         context.terminalSubmitScheduler.cancel(task.id);
+        // A genuine park, not a respawn: same reasoning as Priority 2's clear
+        // above. Retires any label an in-flight spawn left behind so the
+        // renderer's suspended-row carve-out doesn't keep it alive.
+        clearSpawnProgress(context.mainWindow, task.id);
         if (task.session_id) {
           const record = sessionRepo.getLatestForTask(task.id);
           if (record && record.agent_session_id
@@ -644,26 +691,19 @@ export async function handleTaskMove(
         const needsSessionSwitch = toLane !== undefined
           && (activeIsolatedSwimlaneId !== targetIsolatedSwimlaneId || targetForceFresh);
         if (needsSessionSwitch && toLane) {
-          if (activeRecord && activeRecord.agent_session_id
-              && (activeRecord.status === 'running' || activeRecord.status === 'exited')) {
-            captureSessionMetrics(
-              context.sessionManager,
-              sessionRepo,
-              usageHistoryRepo,
-              task.session_id,
-              activeRecord.id,
-              activeRecord.started_at,
-              activeRecord.session_type,
-            );
-            refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
-            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
-            captureGitChurn(task, sessionRepo, usageHistoryRepo, activeRecord.id, resolvedProjectPath, effectiveDefaultBranch);
-            markRecordSuspended(sessionRepo, activeRecord.id, 'system');
-          } else if (activeRecord && activeRecord.status === 'queued') {
-            markRecordExited(sessionRepo, activeRecord.id);
-          }
-          await context.sessionManager.suspend(task.session_id);
-          tasks.update({ id: task.id, session_id: null });
+          await suspendLiveSessionForRespawn({
+            context,
+            tasks,
+            sessionRepo,
+            usageHistoryRepo,
+            taskId: task.id,
+            liveSessionId: task.session_id,
+            record: activeRecord,
+            task,
+            projectPath: resolvedProjectPath,
+            defaultBaseBranch: effectiveDefaultBranch,
+            phase: 'new-session',
+          });
           console.log(
             `[TASK_MOVE] Session switch for task ${task.id.slice(0, 8)}:`
             + ` ${activeIsolatedSwimlaneId ?? 'main'} -> ${targetIsolatedSwimlaneId ?? 'main'}`
@@ -695,26 +735,7 @@ export async function handleTaskMove(
         if (isAgentChange) {
           // (a) Cross-agent handoff: suspend and fall through to spawnAgent.
           // Cross-agent resume is impossible (agent_session_id is agent-specific).
-          const sessionRecord = activeRecord;
-          if (sessionRecord && sessionRecord.agent_session_id
-              && (sessionRecord.status === 'running' || sessionRecord.status === 'exited')) {
-            captureSessionMetrics(
-              context.sessionManager,
-              sessionRepo,
-              usageHistoryRepo,
-              task.session_id,
-              sessionRecord.id,
-              sessionRecord.started_at,
-              sessionRecord.session_type,
-            );
-            refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
-            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
-            captureGitChurn(task, sessionRepo, usageHistoryRepo, sessionRecord.id, resolvedProjectPath, effectiveDefaultBranch);
-            markRecordSuspended(sessionRepo, sessionRecord.id, 'system');
-          } else if (sessionRecord && sessionRecord.status === 'queued') {
-            markRecordExited(sessionRepo, sessionRecord.id);
-          }
-          await context.sessionManager.suspend(task.session_id);
+          //
           // Clear per-task model/effort overrides on cross-agent handoff.
           // Override values are model-name-specific (e.g. "claude-sonnet-4-6")
           // and effort tiers are agent-specific (e.g. Claude's "xhigh" is
@@ -729,15 +750,22 @@ export async function handleTaskMove(
           // exact agent. Normally `resolveTargetAgent` returns the override
           // and `isHandoff` is false in that case, so this branch shouldn't
           // even execute - this guard is defensive against state drift.
-          const handoffUpdates: Parameters<typeof tasks.update>[0] = {
-            id: task.id,
-            session_id: null,
-          };
-          if (!task.agent_override) {
-            handoffUpdates.model_override = null;
-            handoffUpdates.effort_override = null;
-          }
-          tasks.update(handoffUpdates);
+          await suspendLiveSessionForRespawn({
+            context,
+            tasks,
+            sessionRepo,
+            usageHistoryRepo,
+            taskId: task.id,
+            liveSessionId: task.session_id,
+            record: activeRecord,
+            task,
+            projectPath: resolvedProjectPath,
+            defaultBaseBranch: effectiveDefaultBranch,
+            phase: 'switching-agent',
+            additionalTaskUpdates: task.agent_override
+              ? undefined
+              : { model_override: null, effort_override: null },
+          });
           console.log(
             `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
             + ` (agent change: ${task.agent} -> ${effectiveTargetAgent}).`
@@ -811,6 +839,7 @@ export async function handleTaskMove(
               task,
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
+              phase: 'switching-model',
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
@@ -904,6 +933,7 @@ export async function handleTaskMove(
               task,
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
+              phase: 'applying-settings',
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
@@ -994,12 +1024,19 @@ export async function handleTaskMove(
 
     if (!plan) return; // Phase 1 fully handled the move
 
+    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
+
     // Shutdown started while Phase 1 ran. Skip Phase 2 git work and Phase 3
     // spawn so we don't write to a closed DB. autoSpawnTasks on next launch
-    // will spawn for the destination column.
-    if (isShuttingDown()) return;
-
-    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
+    // will spawn for the destination column. A respawn branch (model change,
+    // agent handoff, effort respawn, session switch) may have already emitted
+    // a spawn-progress label before this point (see suspendLiveSessionForRespawn);
+    // this return sits outside every try/finally below, so it must retire that
+    // label itself or it strands until the 120s TTL.
+    if (isShuttingDown()) {
+      clearSpawnProgress(context.mainWindow, task.id);
+      return;
+    }
 
     // === Phase 2 (unlocked, slow) ===
     // All async operations below receive the abort signal so a newer move
@@ -1163,6 +1200,13 @@ export async function handleTaskMove(
         }
       });
     } catch (error) {
+      // clearSpawnProgress touches only in-memory maps and a guarded IPC
+      // send, never the DB, so it is safe to call unconditionally here -
+      // ahead of the shutdown bail below - rather than risk stranding a
+      // respawn branch's label (see suspendLiveSessionForRespawn) until the
+      // 120s TTL.
+      clearSpawnProgress(context.mainWindow, task.id);
+
       // Shutdown closed the DB while a Phase 1 / 2 / 3 await was in flight.
       // Both the post-await DB write inside Phase 1 (e.g. line 226's
       // tasks.update after sessionManager.suspend) and the rollback below
@@ -1174,7 +1218,6 @@ export async function handleTaskMove(
       // from firing during shutdown.
       if (isShuttingDown()) return;
 
-      clearSpawnProgress(context.mainWindow, task.id);
       const abort = isAbortError(error);
 
       // Unified rollback path for Phase 2/3 failures: clean up any partially

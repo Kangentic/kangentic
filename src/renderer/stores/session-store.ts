@@ -620,7 +620,36 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       // The pushed row becomes its task's only row: replaced in place when its
       // id is already listed, appended on a respawn under a new id. See
       // `withSessionUpserted` for why the in-place case must evict too.
-      // Clear spawn progress when a real session arrives (progress is done).
+      //
+      // Clear spawn progress when a real session arrives (progress is done) -
+      // EXCEPT when the arriving row is itself 'suspended'. A suspended row is
+      // not "a real session arrived", it is the opposite: main suspends a
+      // session as the FIRST step of a respawn (model change, agent handoff,
+      // effort respawn, session switch) and keeps the label in flight for the
+      // whole unlocked Phase 2 gap that follows (see
+      // suspendLiveSessionForRespawn in task-move.ts). Clearing here made the
+      // renderer disagree with main's own queryable map
+      // (TASK_GET_SPAWN_PROGRESS still held the label) and flashed the
+      // "Resume session" Play button / "Paused" chip for that whole window.
+      // Mirrors the carve-out getTaskProgress documents at
+      // task-progress.ts:152-167. clearSpawnProgress is the sole authority for
+      // retiring a label.
+      //
+      // KNOWN GAP, not a claim of completeness: only task-move.ts's two park
+      // lanes (Done, auto_spawn=false) clear explicitly. The other genuine
+      // parks suspend through applySuspendDbWrites (session-reconcile.ts) or
+      // executeKillSession and never clear - SESSION_SUSPEND (a manual pause),
+      // the idle-timeout suspend, the kill_session action, project-relocate,
+      // and auto-spawn-reconcile. Before this carve-out the unconditional
+      // clear below masked that; now a label still in flight when one of those
+      // fires survives here and getTaskProgress renders it instead of the
+      // Resume button, until the 120s TTL sweeps it. Fixing those call sites
+      // is follow-up work in their own subsystems, not here. Note
+      // restartSessionForSettingsChange shares applySuspendDbWrites and is a
+      // RESPAWN, so a blanket clear inside that helper would be wrong.
+      if (session.status === 'suspended') {
+        return withSessionUpserted(state.sessions, session);
+      }
       const { [session.taskId]: _removed, ...remainingProgress } = state.spawnProgress;
       return { ...withSessionUpserted(state.sessions, session), spawnProgress: remainingProgress };
     });
