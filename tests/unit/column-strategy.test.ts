@@ -257,6 +257,26 @@ describe('applyProfileToLane', () => {
     expect(lane.model_override).toBe('claude-opus-5');
   });
 
+  it('preserves a todo/done role through a profile fold - the invariant auto-spawn.ts and resume-suspended.ts trust', () => {
+    // Both NEVER_AUTO_SPAWN_ROLES call sites (auto-spawn.ts's lane filter,
+    // resume-suspended.ts's neverSpawnRole guard) read `resolvedLane.role`
+    // AFTER folding a profile in, on the strength of role being an identity
+    // field a profile can never touch (see the comment above
+    // `applyProfileToLane`). A profile CAN turn `auto_spawn` on for a
+    // todo/done lane; it must never be able to make the fold report a
+    // different role for it. autoSpawn is set here specifically because
+    // that is the exact profile key both guards' regression scenario turns
+    // on.
+    const lane = { ...makeLane(), name: 'To Do', role: 'todo' as const, position: 0, color: '#888', icon: null };
+    const folded = applyProfileToLane(
+      lane,
+      makeProfile({ 'lane-executing': { autoSpawn: true } }),
+    );
+    expect(folded).not.toBeNull();
+    expect(folded!.role).toBe('todo');
+    expect(folded!.auto_spawn).toBe(true);
+  });
+
   it('produces the ladder the feature exists for', () => {
     const profile = makeProfile({
       'lane-planning': { modelOverride: 'claude-opus-5', effortOverride: 'xhigh' },
