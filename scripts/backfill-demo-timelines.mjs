@@ -30,7 +30,9 @@ function withTimelines(record, timelines) {
   const rebuilt = {};
   for (const key of Object.keys(record)) {
     if (key === 'peekTimeline' || key === 'frameTimeline') continue;
-    rebuilt[key] = record[key];
+    // The stored peek is re-derived too: it comes from the same filter as the timeline, so a
+    // change to what counts as chrome has to reach both or the row jumps at the replay's end.
+    rebuilt[key] = key === 'peek' && timelines.finalPeek.length > 0 ? timelines.finalPeek : record[key];
     if (key === 'openFrame') {
       rebuilt.peekTimeline = timelines.peekTimeline;
       rebuilt.frameTimeline = timelines.frameTimeline;
