@@ -279,7 +279,7 @@ construction rather than by trusting an invariant enforced in another file.
 `run_mode = 'column_settings'`; setting any of the four (or asking for `'agent_override'` directly)
 nulls the profile and sets `run_mode = 'agent_override'`. That exclusivity is what keeps
 `lockAdvancedOverridesOnFirstSpawn` correct - a profile task is never in override mode, so the
-first-spawn lock never fires for it. `auto_command` is deliberately **not** in the exclusivity set:
+lock never fires for it. `auto_command` is deliberately **not** in the exclusivity set:
 it is an MCP-only escape hatch, so a task may carry both a profile and its own auto-command, and it
 never implies override mode.
 

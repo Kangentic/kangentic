@@ -53,8 +53,8 @@ export function projectModelDefaultsApply(
 }
 
 /**
- * Lock the Advanced (Agent / Model / Effort / Permission) overrides on a
- * task's very first ever spawn.
+ * Lock the Advanced (Agent / Model / Effort / Permission) overrides for a
+ * task that is leaving To Do, or spawning for the very first time ever.
  *
  * A task authored in Agent Override mode (`run_mode === 'agent_override'`) gets
  * ALL FOUR fields locked to the values the Advanced tab displayed when the user
@@ -72,11 +72,25 @@ export function projectModelDefaultsApply(
  * means "lock these four to what I was shown". A task in Column Settings mode is
  * untouched - it keeps following column/project defaults for its whole life.
  *
- * "First ever spawn" = no session record exists AND task.agent is still null.
+ * To Do is where the lock is RE-ARMED: whatever the dialog showed while the
+ * task sat there is what applies the moment it leaves for a spawn column.
+ * Moving a task BACK to To Do re-opens the gate. It does not erase the pins the
+ * task already carries, since nothing clears those four fields, so it is
+ * clearing a field there that makes the next departure re-resolve and re-pin
+ * it. Concretely, the lock fires whenever `settingsLane` is a todo-role lane,
+ * on top of its older trigger,
+ * "first ever spawn" (no session record exists AND task.agent is still null).
  * task.agent is set once, at first successful spawn (see transition-engine.ts),
  * and is NOT cleared by a To-Do reset (cleanupTaskResources wipes session rows
- * but never touches task.agent), so a task that spawned once, was reset to To
- * Do, and is redragged forward is correctly not treated as fresh.
+ * but never touches task.agent) - so without the todo-role trigger, a task that
+ * spawned once, was reset to To Do, switched to Agent Override there, and was
+ * redragged forward would never lock: its inherited fields would keep
+ * re-resolving against whatever column it lands in next, silently breaking the
+ * radio's "Pinned for the whole task" promise. The todo-role trigger does not
+ * require `!hasSessionRecord` - a task actually in To Do always has none (the
+ * reset kills and removes rather than suspends), and conjoining it would only
+ * let one surviving row (a partial cleanup, a concurrent spawn) close the gate
+ * again with no signal in the UI that it happened.
  *
  * Mutates the passed `task` object in place (in addition to persisting) so the
  * spawn already in flight resolves against the locked values without a re-read.
@@ -92,7 +106,7 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
    * task created directly in a spawn column. Null when that lane no longer
    * resolves - inherited fields then lock to project/global defaults.
    */
-  settingsLane: Pick<Swimlane, 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
+  settingsLane: Pick<Swimlane, 'role' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
   project: SpawnPreambleProjectDefaults | null | undefined;
   /**
    * Lazy accessor for the global permission-mode default. Invoked only when
@@ -118,7 +132,8 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   if (task.profile_id) return;
 
   const isFirstEverSpawn = !hasSessionRecord && task.agent === null;
-  if (!isFirstEverSpawn || task.run_mode !== 'agent_override') return;
+  const isLeavingTodo = settingsLane?.role === 'todo';
+  if ((!isFirstEverSpawn && !isLeavingTodo) || task.run_mode !== 'agent_override') return;
 
   const lockedAgent = task.agent_override ?? settingsLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
   // The project-level model/effort fallback only applies when the locked agent
@@ -142,15 +157,16 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   task.effort_override = lockedEffort;
   task.permission_mode = lockedPermission;
   console.log(
-    `[spawn-preamble] Locked Advanced overrides for task ${task.id.slice(0, 8)} on first spawn:`
+    `[spawn-preamble] Locked Advanced overrides for task ${task.id.slice(0, 8)}`
+    + ` ${isFirstEverSpawn ? 'on first spawn' : 'on leaving To Do'}:`
     + ` agent=${lockedAgent} model=${lockedModel ?? 'null'} effort=${lockedEffort ?? 'null'} permission=${lockedPermission}`,
   );
 }
 
 /**
- * Run the shared spawn preamble: lock the Advanced overrides on a first-ever
- * spawn, THEN resolve the target agent. The order is load-bearing - a
- * just-locked `agent_override` must be what `resolveTargetAgent` picks up, so
+ * Run the shared spawn preamble: lock the Advanced overrides (first-ever spawn,
+ * or leaving To Do), THEN resolve the target agent. The order is load-bearing -
+ * a just-locked `agent_override` must be what `resolveTargetAgent` picks up, so
  * the agent the lock persists is the agent the spawn actually runs.
  *
  * Returns the agent resolution for the caller to pass to the engine
@@ -164,7 +180,7 @@ export function runSpawnPreamble(options: {
   /** Whether any session row exists for the task (first-ever-spawn detection). */
   hasSessionRecord: boolean;
   /** See `lockAdvancedOverridesOnFirstSpawn`. */
-  settingsLane: Pick<Swimlane, 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
+  settingsLane: Pick<Swimlane, 'role' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
   /** The lane the task is spawning into; its `agent_override` participates in agent resolution (never in the lock). */
   destinationLane: Pick<Swimlane, 'agent_override'> | null;
   project: SpawnPreambleProjectDefaults | null | undefined;

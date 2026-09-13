@@ -6,6 +6,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
+import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -198,7 +199,14 @@ export async function resumeSuspendedSessions(
     // is missing was never excluded. Dropping the guard would silently start
     // retiring those records.
     const resolvedLane = laneForTask(task);
-    if (resolvedLane && !resolvedLane.auto_spawn) {
+    // To Do and Done never get an agent, however a profile wrote auto_spawn -
+    // same invariant auto-spawn.ts and auto-spawn-reconcile.ts enforce. Without
+    // this a resolved (profile-folded) lane whose base role is todo/done but
+    // whose profile flips auto_spawn on would fall through to `toProcess` below
+    // and reach the spawn preamble as if it were a real column.
+    const neverSpawnRole = resolvedLane != null && resolvedLane.role !== null
+      && NEVER_AUTO_SPAWN_ROLES.has(resolvedLane.role);
+    if (resolvedLane && (!resolvedLane.auto_spawn || neverSpawnRole)) {
       if (record.status === 'exited') {
         // OS-killed session whose task sits in a non-auto-spawn column (To Do /
         // Done): preserve it as 'suspended' for future resume, mirroring the
@@ -357,8 +365,12 @@ export async function resumeSuspendedSessions(
         mcpServerHandle,
         resume,
         sessionRepo,
-        // A session record is literally in hand on this path, so the
-        // first-spawn override lock no-ops by construction.
+        // A session record is literally in hand on this path, so the lock's
+        // hasSessionRecord clause alone already no-ops it. Its OTHER clause -
+        // the task departing a todo-role lane - cannot fire here either: the
+        // neverSpawnRole guard above diverts any todo/done-resolved task into
+        // the skip/placeholder branch before it ever reaches `toProcess`, so
+        // `resolvedLane` below is never a todo/done role.
         hasSessionRecord: true,
         tasks: taskRepo,
         boardProfiles,

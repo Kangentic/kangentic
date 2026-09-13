@@ -345,14 +345,43 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
     expect(deps.tasks.update).not.toHaveBeenCalled();
   });
 
-  it('does not re-lock a task reset to To Do and redragged (task.agent survives the reset)', async () => {
-    // No session record (wiped by the To-Do reset), but task.agent is still
-    // set from its original first spawn - this must NOT be mistaken for a
-    // fresh first-ever spawn.
+  it('DOES re-lock a task reset to To Do and redragged, because it is leaving a todo-role settings lane', async () => {
+    // No session record (wiped by the To-Do reset), and task.agent is still
+    // set from its original first spawn - so this is NOT a fresh first-ever
+    // spawn. It locks anyway: a task sitting in To Do is unpinned by design
+    // (kangentic.com #80), so departing a todo-role settings lane triggers the
+    // lock exactly like a genuine first-ever spawn does. Before this gate
+    // widened, a task in this exact shape (past its first spawn, switched to
+    // Agent Override while sitting in To Do) could never lock again - its
+    // inherited fields stayed dynamic for the rest of the task's life, so the
+    // Advanced dialog's placeholder and the next spawn's actual model could
+    // permanently disagree.
     const task = makeTask({ agent: 'claude', model_override: 'fable-5' });
     const deps = makeDeps({ latestSession: undefined, task });
 
     await runSpawn(task, makeDestinationLane(), deps, makeSwimlane({ id: FROM_LANE_ID, role: 'todo' }));
+
+    expect(deps.tasks.update).toHaveBeenCalledWith({
+      id: TASK_ID,
+      agent_override: 'claude',
+      model_override: 'fable-5',
+      effort_override: 'xhigh',
+      permission_mode: 'auto',
+    });
+  });
+
+  it('does NOT lock a task past its first spawn when the settings lane is a non-todo working column', async () => {
+    // The other half of the gate: leaving To Do locks, but a move between two
+    // ordinary working columns (neither first-ever-spawn nor departing To Do)
+    // must not. Otherwise every drag of an already-pinned task would silently
+    // re-lock it, which defeats "leaves the task alone once it has spawned"
+    // for the common case (Planning -> Executing -> Code Review, none of
+    // which is To Do).
+    const task = makeTask({ agent: 'claude', model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+    const workingSettingsLane = makeSwimlane({ id: FROM_LANE_ID, name: 'Executing', role: null });
+
+    await runSpawn(task, makeDestinationLane(), deps, workingSettingsLane);
 
     expect(deps.tasks.update).not.toHaveBeenCalled();
   });

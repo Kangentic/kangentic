@@ -82,11 +82,13 @@ carries its own override. Changing the Agent resets Model + Effort because the p
 valid for the previous agent's capability matrix.
 
 You can also choose Agent Override and pick nothing at all. Each field then shows, in the muted
-placeholder weight, the value it resolves to today, and keeps resolving live until the task spawns
-for the first time - at which point all four lock to the values the dialog was showing. That is the
-point of the branch: "whatever this task would run right now, pin exactly that." Because it stores
-no pins, the choice itself is what is saved, so the branch is still selected when you reopen the
-task.
+placeholder weight, the value it resolves to today, and keeps resolving live while the task sits in
+To Do. The moment it leaves To Do for a spawn column - or spawns for the first time ever, whichever
+comes first - all four lock to the values the dialog was showing. That is the point of the branch:
+"whatever this task would run right now, pin exactly that." Because it stores no pins, the choice
+itself is what is saved, so the branch is still selected when you reopen the task. Moving a pinned
+task back to To Do does not erase the pins it already carries, but it does re-arm the lock: clear a
+field there and the next move out pins it again to whatever the dialog was showing at that point.
 
 Agents can read and edit Board Profiles too, including across projects, which is the practical way
 to keep them in sync as models change ("update every profile's Opus 4.8 to Opus 5", "copy this
