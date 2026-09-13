@@ -283,10 +283,16 @@ export const DEMO_TASKS: DemoTask[] = [
 // The models the recordings were made on, named the way each CLI prints them.
 const OPUS = { id: 'claude-opus-5', displayName: 'Opus 5 (1M)' };
 const CODEX = { id: 'gpt-5.5', displayName: 'GPT-5.5' };
-const GEMINI = { id: 'auto', displayName: 'Auto' };
+const GEMINI = { id: 'gemini-3-flash', displayName: 'Gemini 3 Flash' };
 const OPENCODE = { id: 'opencode/big-pickle', displayName: 'Big Pickle' };
 const COPILOT = { id: 'gpt-5.6-luna', displayName: 'GPT-5.6 Luna' };
-const CURSOR = { id: 'auto', displayName: 'Auto' };
+// Cursor and Gemini both run their session on a router rather than a named model, and print that
+// router ("Auto") in their own status line. Kangentic does not show a router: it reads the model
+// the router RESOLVED to, from Cursor's init event and Gemini's session history, so a card names a
+// real model. These are the two the recordings' context windows fit, 1M each: gemini-3-flash is
+// the Flash tier in resolveGeminiContextWindowSize (Pro is 2M), and the Cursor id and its display
+// string are as "cursor-agent --list-models" prints them, which is Sonnet-first, not 4.5-first.
+const CURSOR = { id: 'claude-4.5-sonnet', displayName: 'Claude Sonnet 4.5' };
 /** The model a fresh spawn of each agent runs on, for the context bar of a session a visitor starts. */
 const MODEL_BY_AGENT: Record<string, { id: string; displayName: string }> = { claude: OPUS, codex: CODEX, gemini: GEMINI, opencode: OPENCODE, copilot: COPILOT, cursor: CURSOR };
 /** The mock's global default, which a lane with no permission mode of its own spawns in. */
