@@ -32,6 +32,8 @@ interface DemoCaptureRecord {
   openFrame?: { beforeEndMs: number; serialized: string; peek: string[] } | null;
   /** How the displayed last lines change over the recording, on the stream's own clock. */
   peekTimeline?: Array<{ t: number; lines: string[] }>;
+  /** The whole screen every quarter second, for a terminal the bytes cannot address. */
+  frameTimeline?: Array<{ t: number; frame: string }>;
 }
 
 interface DemoManifest {
@@ -54,6 +56,12 @@ export interface DemoRecordingEntry {
   rows: number;
   /** How the capture ended; a session whose recording ran to the agent's own end flips to needs-you when the replay gets there. */
   stopReason: string;
+  /**
+   * The screen every quarter second. A terminal whose grid the recording's bytes cannot address
+   * plays these instead: a frame reflows, so the same recording is live at any size and on any
+   * machine. Rides in the recording file, never the seed, since it is the size of the stream.
+   */
+  frameTimeline: Array<{ t: number; frame: string }>;
 }
 
 /**
@@ -96,19 +104,29 @@ export function trimRowPadding(serialized: string): string {
 }
 
 
+/**
+ * The frame timeline, with each frame trimmed the way the final frame is. A ConPTY frame pads
+ * every row to the recorded width, and those pads wrap into blank rows on a narrower grid, which
+ * is precisely the grid a frame timeline exists to serve.
+ */
+function framesOf(record: DemoCaptureRecord): Array<{ t: number; frame: string }> {
+  if (!Array.isArray(record.frameTimeline)) return [];
+  return record.frameTimeline.map((step) => ({ t: step.t, frame: trimRowPadding(step.frame) }));
+}
+
 export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): DemoRecordingsIndex {
   const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
   const index: DemoRecordingsIndex = { sessions: {}, spawns: {}, terminals: {}, geometry: manifest.geometry ?? {} };
   const read = (file: string): DemoRecordingEntry | null => {
     const record = JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord;
     if (typeof record.serialized !== 'string' || record.serialized.length === 0) return null;
-    return { file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '' };
+    return { file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '', frameTimeline: framesOf(record) };
   };
   for (const { sessionId, record } of loadRecordings(fixturesDir)) {
     const manifestEntry = (JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest).captures
       .find((entry) => entry.sessionId === sessionId);
     if (!manifestEntry || typeof record.serialized !== 'string') continue;
-    index.sessions[sessionId] = { file: manifestEntry.file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '' };
+    index.sessions[sessionId] = { file: manifestEntry.file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '', frameTimeline: framesOf(record) };
   }
   for (const file of fs.readdirSync(fixturesDir)) {
     const spawn = /^spawn-(.+)-(plan|acceptEdits|default|dontAsk|bypassPermissions|auto)\.json$/.exec(file);

@@ -413,9 +413,9 @@ async function serializeThroughXterm(raw, cols, rows) {
   return { serialized, altScreen, peek };
 }
 
-// The Monitor peek, and the timeline of how it changes over the recording, are computed by the
-// one module the backfill script shares, so a new recording and an old one cannot disagree.
-const { peekFromTerminal, computePeekTimeline } = require('./lib/demo-peek-timeline');
+// The Monitor peek, and the two timelines derived from a recording's own stream, are computed by
+// the one module the backfill script shares, so a new recording and an old one cannot disagree.
+const { peekFromTerminal, computeReplayTimelines } = require('./lib/demo-replay-timelines');
 
 // ---------------------------------------------------------------- main
 async function main() {
@@ -546,15 +546,20 @@ async function main() {
     openFrame = { beforeEndMs: options.liveTail, serialized: cleanOpen, peek: cleanOpenPeek };
     console.error(`[capture] open frame at ${(openAt / 1000).toFixed(1)}s: ${cleanOpen.length} bytes`);
   }
-  // How the Monitor card's output peek changes as the agent works, sampled to a cadence a reader
-  // can follow. The stream is already sanitized, so the lines read off it are too; they are
-  // checked again here because a peek is read from the RENDERED buffer, where cursor positioning
-  // can join text the sanitizer only ever saw in separate windows.
-  const peekTimeline = await computePeekTimeline({ stream: cleanStream, cols: options.cols, rows: options.rows });
+  // How the Monitor card's peek changes as the agent works, and the screen itself every quarter
+  // second. Frames are what a terminal on any other grid plays instead of the bytes, so they are
+  // the live path wherever the recording's own grid cannot be reproduced. The stream is already
+  // sanitized, so both are too; they are checked again because each is read from the RENDERED
+  // buffer, where cursor positioning can join text the sanitizer only ever saw in separate
+  // windows.
+  const { peekTimeline, frameTimeline } = await computeReplayTimelines({ stream: cleanStream, cols: options.cols, rows: options.rows });
   for (const change of peekTimeline) {
     for (const line of change.lines) sanitizer.assertClean(line, `peek timeline at ${change.t} ms`);
   }
-  console.error(`[capture] peek timeline: ${peekTimeline.length} change(s) across ${(lastWindow ? lastWindow.t / 1000 : 0).toFixed(0)}s`);
+  for (const entry of frameTimeline) sanitizer.assertClean(entry.frame, `frame timeline at ${entry.t} ms`);
+  const recordedSeconds = (lastWindow ? lastWindow.t / 1000 : 0).toFixed(0);
+  console.error(`[capture] peek timeline: ${peekTimeline.length} change(s) across ${recordedSeconds}s`);
+  console.error(`[capture] frame timeline: ${frameTimeline.length} frame(s) across ${recordedSeconds}s`);
 
   const changes = collectChanges(options.cwd, sanitizer);
   for (const file of changes.files) {
@@ -588,6 +593,7 @@ async function main() {
     peek: cleanPeek,
     openFrame,
     peekTimeline,
+    frameTimeline,
     changes,
     stream: cleanStream,
   };

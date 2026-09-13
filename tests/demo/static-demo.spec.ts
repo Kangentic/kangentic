@@ -302,18 +302,29 @@ function recordingRequests(page: Page): () => string[] {
   return () => urls.slice();
 }
 
-/** Resolves with the first session id the mock's onData listeners deliver bytes for. */
-function firstStreamedSession(page: Page, timeoutMs: number): Promise<string | null> {
-  return page.evaluate((timeout) => new Promise<string | null>((resolve) => {
+/**
+ * Resolves with the first session id the mock's onData listeners deliver bytes for. `only` scopes
+ * it to one session, which every caller wants: the sample install's pre-seeded working sessions
+ * now play frames into whatever terminal is mounted, so an unscoped listener resolves on whoever
+ * happens to repaint first rather than on the session the test started.
+ */
+function firstStreamedSession(page: Page, timeoutMs: number, only?: string): Promise<string | null> {
+  return page.evaluate(({ timeout, wanted }) => new Promise<string | null>((resolve) => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
+    // Whatever the sample install already has running: those play their recordings' frames into
+    // whichever terminal is mounted, so without this the listener resolves on whoever repaints
+    // first rather than on the session the test started. A spawn's id is minted at spawn time,
+    // so it cannot be named up front; not being one of these is what identifies it.
+    const seeded = new Set(((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).map((row) => row.sessionId));
     const timer = setTimeout(() => resolve(null), timeout);
     const unsubscribe = api.sessions.onData((sessionId, data) => {
       if (!data) return;
+      if (wanted === null ? seeded.has(sessionId) : sessionId !== wanted) return;
       clearTimeout(timer);
       unsubscribe();
       resolve(sessionId);
     });
-  }), timeoutMs);
+  }), { timeout: timeoutMs, wanted: only ?? null });
 }
 
 interface Grid { cols: number; rows: number }
@@ -353,7 +364,9 @@ async function expectStreamedOrStill(page: Page, sessionId: string, recordingUrl
   } else {
     // The long listener outlives the test on this branch; settle it so its rejection is not the verdict.
     streamed.catch(() => null);
-    expect(await firstStreamedSession(page, 3_000)).toBeNull();
+    // A boot that never found a fitting mount still has to arrive: its terminal plays the
+    // recording's frames instead of its bytes, which is the whole point of carrying both.
+    expect(await firstStreamedSession(page, 10_000, sessionId)).toBe(sessionId);
   }
 }
 
@@ -487,10 +500,10 @@ test('a terminal that cannot take the bytes does not end the session it shows', 
   const grid = await mountedGrid(page, 'sess-cw-middleware');
   test.skip(grid?.cols === 154 && grid?.rows === 37, 'this machine fits the recorded grid at 1.25 too');
 
-  // Nothing may reach that terminal, and its card must still be working once the moment its
-  // recording ends has passed. The peek is the part that carries the motion.
+  // The terminal plays the recording's frames instead of its bytes, so it is live here too, and
+  // the card must still be working once the moment its recording ends has passed.
   const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000);
-  expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBe(0);
+  expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBeGreaterThan(0);
   expect(await peekChanges).toBeGreaterThan(0);
   expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
@@ -642,10 +655,11 @@ test('opened directly, the page hosts the frame at the site size and scales it t
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('a display that fits another grid gets each recording\'s frame and no stream', async ({ browser }) => {
-  // Windows at 125 percent scaling fits 144 by 36 in the task window, not the recorded 154 by 37;
-  // a recording's bytes address rows for its own grid, so the frame serves the parsed frame
-  // instead and streams nothing, the way main routes a geometry-changed session on the desktop.
+test('a display that fits another grid plays the recording\'s frames instead of its bytes', async ({ browser }) => {
+  // Windows at 125 percent scaling fits 144 by 36 in the task window, not the recorded 154 by 37,
+  // and a recording's bytes address rows for their own grid. A FRAME reflows, so the same
+  // recording stays live here: the frame timeline plays instead, fitted to the mounted width.
+  // This is the case that used to be a standing still, and it is why every display is live now.
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
@@ -654,7 +668,21 @@ test('a display that fits another grid gets each recording\'s frame and no strea
   await expect.poll(() => mountedGrid(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toBeNull();
   const grid = await mountedGrid(page, 'sess-cw-middleware');
   test.skip(grid?.cols === 154 && grid?.rows === 37, 'this machine fits the recorded grid at 1.25 too');
-  expect(await firstStreamedSession(page, 4_000)).toBeNull();
+  expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   expect(getUnexpectedErrors()).toEqual([]);
   await context.close();
+});
+
+test('the board\'s bottom panel is live, where no grid could ever fit a recording', async ({ page }) => {
+  // The panel is 15 rows and a session recording is 37, which no font size reconciles: at every
+  // display scale this is the frame path. It is also the default layout, so it is the one a
+  // visitor meets the product through.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'board', embed: '1' });
+  await SCENE_MARKERS.board(page);
+  const grid = await mountedGrid(page, 'sess-cw-middleware');
+  expect(grid?.rows).toBe(15);
+  expect(await streamedBytes(page, 'sess-cw-middleware', 8_000)).toBeGreaterThan(0);
+  expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
+  expect(getUnexpectedErrors()).toEqual([]);
 });
