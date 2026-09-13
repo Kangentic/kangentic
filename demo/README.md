@@ -239,13 +239,15 @@ content-hashed and a build has to be reproducible. What each working session get
 |---|---|---|
 | `sess-cw-api-client` | 207 s | 45 |
 | `sess-cw-middleware` | 128 s | 26 |
-| `sess-ob-currency-a11y` | 20 s | 6 |
+| `sess-ob-currency-a11y` | 35 s | 12 |
 | `sess-pc-flaky-tests` | 20 s | 5 |
 | `sess-ob-redis-ttl` | 21 s | 5 |
 
-The three short ones are short because their recordings are: twenty seconds does not hold ten
-readable updates, and stretching them would mean inventing output. `loop=1` is what keeps such a
-frame alive. When a session's replay reaches the end it finishes as it always does, waits six
+The two short ones are short because their recordings are: twenty seconds does not hold ten
+readable updates, and stretching them would mean inventing output. Both were cut deliberately at
+capture time (`stopAfter` in the manifest), so raising that and re-recording is the fix, and it
+needs Codex credits, which were exhausted on 2026-09-13. `loop=1` is what keeps such a frame alive
+meanwhile, and their terminals are live either way now that a frame timeline rides along. When a session's replay reaches the end it finishes as it always does, waits six
 seconds so the state it finished in is readable, and starts the same stretch over. Each session
 loops on its own clock, so the Monitor keeps changing rather than going quiet until the longest
 recording comes round. A mounted terminal is repainted from the opening frame first (1.8 KB for
@@ -374,7 +376,7 @@ it is the one eager file that grows with the dataset (101 KB gzipped for 16 sess
 diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
 from, and 3 KB more when they gained their peek timelines, which is what makes the Monitor move
-without a terminal open. The 36 recordings under `recordings/` are 35.3 MB raw and 879 KB gzipped
+without a terminal open. The 36 recordings under `recordings/` are 35.6 MB raw and 886 KB gzipped
 in total, fetched one at a time as terminals mount, so none of it is on the boot path. Each
 carries its timed stream and its frame timeline, and the frames are roughly half that weight: they
 are what makes a terminal live on a grid the bytes cannot address, which is every display scale
