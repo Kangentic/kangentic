@@ -376,13 +376,18 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     ]);
     taskRepoList.mockReturnValue([makeTask({ swimlane_id: DONE_LANE, profile_id: null })]);
 
-    await runResume();
+    const sessionManager = await runResume();
 
     // Diverted before the preparation pass: never reaches prepareAgentSpawn.
     expect(prepareAgentSpawn).not.toHaveBeenCalled();
     // The pre-existing OS-killed-exited carve-out still applies once diverted:
     // preserved as resumable ('suspended'), not silently retired.
     expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-exited', 'system');
+    // done is also in RESUME_HIDDEN_ROLES (same as todo above), so the skip
+    // branch's own placeholder registration must be skipped too: a Done card
+    // must not grow a Resume affordance the role explicitly hides just
+    // because a profile flipped auto_spawn on for it.
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
   });
 });
 
