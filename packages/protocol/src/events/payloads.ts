@@ -274,8 +274,7 @@ export interface BoardColumnWire {
    * Declared OPTIONAL (`?`) so a hand-built `BoardColumnWire` literal does
    * not have to list it. `parseBoardColumnWire` populates the key from every
    * real wire response regardless, so the optionality costs nothing at
-   * runtime. `docs/mobile-bridge.md` records why this differs from
-   * `pr_merge_readiness`, which shipped required.
+   * runtime.
    *
    * Ordering precondition this field depends on: the phone must learn a
    * MOVE's destination column before the old session's `session-ended`
@@ -309,8 +308,12 @@ export interface BoardTaskWire {
    * judged. `queued` and `running` mean a blocking check is still in flight.
    * Absent from desktops that predate it, which the parser reads as null; a
    * value a client does not know should render as plain open.
+   *
+   * Declared OPTIONAL (`?`) so a hand-built `BoardTaskWire` literal does not
+   * have to list it. `parseBoardTaskWire` populates the key from every real
+   * wire response regardless, so the optionality costs nothing at runtime.
    */
-  pr_merge_readiness: string | null;
+  pr_merge_readiness?: string | null;
   base_branch: string | null;
   labels: string[];
   priority: number;
