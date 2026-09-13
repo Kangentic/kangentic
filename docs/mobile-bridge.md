@@ -246,13 +246,25 @@ Two guards keep the value honest without making it twitchy:
   "Offline" on a live phone. An explicit goodbye (a `FrameTag.Final` frame) skips the budget -
   and, because a Final is only ever a deliberate unpair (neither side sends it on quit, sleep,
   backgrounding, or reconnect), the service now goes further and drops the device from the
-  roster entirely (see [Revocation](#revocation-is-drop-plus-rekey)). Once
-  absent, `PEER_PROBE_INTERVAL_MS` (15s) keeps probing so a returning phone is picked up in ~20s
-  rather than on the next rekey tick. The probe window is anchored to the start of an
-  unestablished episode and is **never restarted** by a later initiation: `HANDSHAKE_RETRY_MS`
-  (3s) re-initiates faster than the window expires, so a restartable window would let a relay
-  injecting garbage handshake frames hold `offline` permanently out of reach and pin the badge on
-  "Connecting..." forever.
+  roster entirely (see [Revocation](#revocation-is-drop-plus-rekey)). The probe window is
+  anchored to the start of an unestablished episode and is **never restarted** by a later
+  initiation: `HANDSHAKE_RETRY_MS` (3s) re-initiates faster than the window expires, so a
+  restartable window would let a relay injecting garbage handshake frames hold `offline`
+  permanently out of reach and pin the badge on "Connecting..." forever.
+- **One initiation per parked connection.** There is deliberately no re-probe loop once absent.
+  While the relay has this device's connection *parked* (no phone attached yet), it BUFFERS
+  every msg1 the desktop sends rather than dropping it or forwarding it, and flushes the whole
+  buffer to the phone, in order, the instant it attaches - so a second msg1 sent while still
+  parked does not speed up recovery, it forces the phone through an extra rekey the moment it
+  arrives (#635). `beginHandshake()` sends at most one msg1 per parked connection: further
+  presence-probe timeouts still advance the failure budget (so `offline` is still reached on
+  schedule) but do not re-send. The relay's own park timeout (60s, `PARK_TIMEOUT_MS` in
+  `kangentic-relay`) is what actually re-initiates a stale attempt - it closes the parked socket,
+  `RelayClient` redials, and the fresh `'connected'` edge sends a fresh msg1 into what is now an
+  empty buffer. The `REHANDSHAKE_INTERVAL_MS` tick is the one caller allowed to override this and
+  replace an outstanding initiation outright, as a backstop for a relay that does not time a park
+  out; against the hosted relay it is normally moot, since the 60s park timeout closes a parked
+  socket well before this 120s tick could land on it.
 - **Application traffic proves presence.** Promotion is evidence-based the same way demotion is:
   any frame the desktop can open came from the phone, since only it holds the matching send key,
   so opening one restarts the probe budget. Without that, presence rested on the handshake alone,
