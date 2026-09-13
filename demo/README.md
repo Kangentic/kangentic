@@ -355,11 +355,18 @@ rows end where the CLI would have drawn them and the frame's cursor, placed rela
 bottom row, lands on its row. A 1:1 display gets the byte stream, which is character by character
 and the better picture; every other display gets the frame timeline, four repaints a second.
 
-Dragging a window WIDER is the case the fitting cannot help, and it is left visible rather than
-papered over. The CLI chose its wrap points at the recorded width and wrote them into the bytes
-as line breaks, so only the CLI could reflow that prose, and there is none here. Trimming a
-frame to a narrower grid is possible because the text already fits; widening has nothing to
-unwrap. The rows keep their recorded width and the new columns stay empty. Every window opens
+A grid WIDER than the recording is fitted too, but only so far. A CLI draws its rules and bands to
+the width it was given, so on a wider grid they stop short and the frame reads as though it fills
+only part of the terminal; the bottom panel is 219 columns against a recording's 154, so a quarter
+of it looked empty. A rule is the one run that can honestly be stretched, and it is: extended with
+its own glyph out to the mounted width, which is where the desktop's CLI would have drawn it.
+
+Nothing else is. Prose keeps its recorded wrap points, because the CLI chose them at that width
+and wrote them into the bytes as line breaks; only the CLI could re-wrap that. A cursor-forward gap
+in particular is NEVER widened, even though it would push a right-aligned footer tag out to the
+edge: the serializer emits one at every point it joined a wrapped row, so growing gaps shoves the
+continuation of a sentence out to the right margin. That was tried and reverted on sight. The cost
+is that a tag like Claude's "/rc" sits where the narrower grid put it. Every window opens
 at the size its recording was made for, so only a deliberate resize reaches this. Stretching the
 rules and the styled bands alone would look tidier and read worse: it would wrap the recorded
 width's text inside a visibly wider box. The real fix is the one above, a bundled fixed-cell font

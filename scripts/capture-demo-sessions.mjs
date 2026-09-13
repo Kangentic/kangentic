@@ -229,6 +229,9 @@ function runCapture(entry, cwd) {
     '--cols', String(cols), '--rows', String(rows),
   ];
   if (entry.mode) args.push('--mode', entry.mode);
+  // The model the session runs on, where the CLI takes one. A card names the model its recording
+  // prints, so an agent left on a vague default ("auto") names nothing a Kangentic session can be.
+  if (entry.model) args.push('--model', entry.model);
   // A slower agent needs longer than the capture script's default before it is cut: a recording
   // that stops on "timeout" ends mid-work, which is a working session's shape, not an idle one's.
   if (entry.timeout) args.push('--timeout', String(entry.timeout));

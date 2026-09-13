@@ -774,6 +774,9 @@ export function buildDemoPreConfig(options: {
       var FRAME_SEQUENCE = /^\x1b\\[[0-9;?]*[A-Za-z]/;
       var CURSOR_FORWARD = /^\x1b\\[(\\d*)C$/;
       var RULE_OR_SPACE = /[ ─-╿]/;
+      // Box drawing AND block elements: Claude rules with ─, Copilot borders with ┃, and Codex
+      // draws its input band with ▄ and ▀, which sit past the box-drawing range.
+      var RULE_GLYPH = /[\\u2500-\\u259F]/;
       function fitFrameToCols(frame, cols) {
         if (!cols) return frame;
         return frame.split('\\r\\n').map(function (row) {
@@ -793,8 +796,38 @@ export function buildDemoPreConfig(options: {
               index = end;
             }
           }
+          function render() {
+            return tokens.map(function (token) {
+              if (token.text !== undefined) return token.text;
+              if (token.forward !== undefined) return token.forward > 0 ? '\x1b[' + token.forward + 'C' : '';
+              return token.sequence;
+            }).join('');
+          }
           var excess = tokens.reduce(function (sum, token) { return sum + (token.text !== undefined ? token.text.length : token.forward || 0); }, 0) - cols;
-          if (excess <= 0) return row;
+          if (excess === 0) return row;
+          // WIDER than the recording. A CLI draws its rules and bands to the width it was given,
+          // so on a wider grid they stop short and the frame reads as though it fills only part of
+          // the terminal. A rule is the one run that can honestly be stretched: extend it with its
+          // own glyph, and the frame's horizontal lines reach the edge the way the desktop drew
+          // them. Nothing else is touched. A cursor-forward gap in particular must NOT be grown:
+          // the serializer emits one at every point it joined a wrapped row, so widening gaps
+          // shoves the continuation of a sentence out to the right margin. The CLI chose its wrap
+          // points at the recorded width, and only the CLI could re-wrap that prose.
+          if (excess < 0) {
+            var deficit = -excess;
+            for (var grow = tokens.length - 1; grow >= 0; grow--) {
+              var end = tokens[grow];
+              if (end.sequence !== undefined) continue;
+              if (end.text === undefined || end.text.length === 0) break;
+              var glyph = end.text.charAt(end.text.length - 1);
+              if (!RULE_GLYPH.test(glyph)) break;
+              var run = '';
+              while (run.length < deficit) run += glyph;
+              end.text += run;
+              return render();
+            }
+            return row;
+          }
           for (var gap = tokens.length - 1; gap >= 0 && excess > 0; gap--) {
             if (tokens[gap].forward === undefined) continue;
             var shrink = Math.min(excess, tokens[gap].forward - 1);
@@ -810,11 +843,7 @@ export function buildDemoPreConfig(options: {
             token.text = token.text.slice(0, keep);
             if (excess > 0) return row;
           }
-          return tokens.map(function (token) {
-            if (token.text !== undefined) return token.text;
-            if (token.forward !== undefined) return token.forward > 0 ? '\x1b[' + token.forward + 'C' : '';
-            return token.sequence;
-          }).join('');
+          return render();
         }).join('\\r\\n');
       }
       function geometryFits(sessionId, recording) {
