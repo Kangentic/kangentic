@@ -155,6 +155,47 @@ jobs:
           check "Build @kangentic/protocol" "${{ steps.build_protocol.outcome }}"
           exit $status
 
+  # Web demo: builds the static web build of the renderer (`npm run build:demo`,
+  # dist/demo/) and boots it through the `demo` Playwright project
+  # (tests/demo/static-demo.spec.ts serves dist/demo itself on an ephemeral
+  # port). One always-on job, no shards: the tier is a handful of page loads.
+  # Setup mirrors the UI shards (shared node_modules cache, cached Chromium, no
+  # --with-deps). The steps run in order with the default success() gating on
+  # purpose: the smoke has nothing to test without the build, so a failed build
+  # must not be followed by a second red for the same cause.
+  demo:
+    name: Web demo (build + smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+      - name: Build the web demo
+        run: npm run build:demo
+      - name: Smoke the web demo (Playwright, demo project)
+        run: npm run test:demo
+
   # Unit tier, sharded across ubuntu runners like the UI/E2E tiers (Vitest
   # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
   # within one runner Vitest only reaches ~2x parallelism (import / main-thread

@@ -645,6 +645,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --notes-file RELEASE_NOTES.md --repo ${{ github.repository }}
 
+  # Redeploy the web demo from the tag that just shipped, so the demo at
+  # https://kangentic.github.io/kangentic/ always shows the released app.
+  # deploy-demo.yml is a reusable workflow: a job that `uses:` one carries no
+  # runs-on and no steps of its own, and the ref reaches it only through
+  # `with:`, spelled exactly as publish-release spells its own checkout ref.
+  #
+  # `!cancelled()` replaces the implied success() gate exactly as on
+  # publish-npm below, so publish-release has to be named in the if: by hand,
+  # or this job would deploy a demo for a release that failed to publish.
+  #
+  # A failure here (Pages not enabled, the github-pages environment refusing a
+  # tag ref) marks the run red AFTER the release is already published. That is
+  # deliberate: the release stands, and the run says the demo is stale.
+  deploy-demo:
+    needs: [publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
+    uses: ./.github/workflows/deploy-demo.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
+    secrets: inherit
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
   publish-npm:
     needs: [publish-release]
     if: ${{ !cancelled() && needs.publish-release.result == 'success' }}

@@ -28,6 +28,9 @@
     "typecheck": "tsc --noEmit",
     "dev": "node scripts/dev.js",
     "build": "node scripts/build.js",
+    "build:demo": "node scripts/build-demo.js",
+    "test:demo": "playwright test --project=demo",
+    "demo:measure": "node demo/measure.mjs",
     "validate:kimi-mcp": "node scripts/kimi-validate-mcp.mjs",
     "prepare": "husky"
   },

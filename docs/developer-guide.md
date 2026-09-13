@@ -200,6 +200,26 @@ Flags:
    missing token is a no-op; with a token present, a failed upload FAILS the build rather than
    warning past it.
 
+### Web demo (`npm run build:demo` / `demo/vite.config.mts`)
+
+The renderer built for a plain browser, so the site and the docs can embed the actual app. A
+second Vite invocation, never a second entry in the shared config: it reuses `vite.config.mts` as
+a factory, forces production semantics (`__KANGENTIC_DEV__` false, the Sentry plugins dropped by
+name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside every packaging
+glob. One plugin injects four classic scripts ahead of the module bundle: the scene registry, the
+boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
+hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
+pre-reveal click runner), `tests/ui/mock-electron-api.js` verbatim, and the generated seed (the
+sample install from `tests/captures/helpers/demo-dataset.ts` plus each session's final terminal
+frame from the recordings under `tests/captures/fixtures/demo/`). The plugin also emits every
+recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
+mounts to replay the session as it happened, and the agent boots a drag or a new Command
+Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
+the dataset). `--base=<path>` on the CLI moves the base path; the GitHub Pages
+deploy (`.github/workflows/deploy-demo.yml`, called from the release graph after
+`publish-release`) builds with `--base=/kangentic/`. `demo/README.md` documents the URL contract,
+the scenes, the numbers, and the Electron-only surfaces that stay inert in a browser.
+
 ### Worktree Dev
 
 In worktrees, `dev.js` bypasses `vite.config.mts` and creates an inline Vite config. This avoids pattern-matching issues where `.kangentic/**` in the watch ignore would match the worktree's own path. It also gives worktree servers an isolated Vite dep cache (`<worktree>/.kangentic/vite-cache`; `vite.config.mts` uses `.kangentic/vite-cache-tests` when loaded from a worktree, e.g. Playwright's webServer), because the worktree's `node_modules` is a junction to the main repo's, and sharing the default `node_modules/.vite` would let a worktree server boot invalidate the running main server's cache and break its dynamic imports.
@@ -271,6 +291,22 @@ npx playwright test --project=electron
   excerpt. The pure matching predicate is unit-tested in `tests/unit/e2e-janitor.test.ts`; the
   janitor reuses the scan and kill primitives from `src/main/git/zombie-reaper.ts`.
 
+### Demo smoke (`tests/demo/`)
+
+```bash
+npm run build:demo
+npm run test:demo
+```
+
+- **Runner:** Playwright with headless Chromium, one worker, against `dist/demo/` served by
+  `demo/static-server.mjs` from `beforeAll` (deliberately not a `webServer` entry, which would
+  start for every project filter and break the UI tier whenever the build is absent)
+- **What it asserts:** every bootable scene reaches its marker, `embed=1` hides the window
+  controls, `theme=` applies, an unknown scene shows the error card, the console stays clean, and
+  boot makes no request off the serving origin
+- **Build required** before running; the `demo` CI job and the Pages deploy both run it on the
+  exact bytes they ship
+
 ### Decision Guide
 
 | What you're testing | Tier |
@@ -278,6 +314,7 @@ npx playwright test --project=electron
 | Pure function, parser, utility | Unit |
 | Component rendering, user interaction, form validation | UI |
 | Real IPC, PTY spawning, terminal output, file I/O | E2E |
+| The web build boots and stays embeddable | Demo smoke |
 
 Release-time manual validation against real authenticated agent CLIs lives in [release-checklist.md](release-checklist.md). Automated tests use mock fixtures and intentionally do not exercise real model latency, real tool calls, or conversation continuity across resume.
 

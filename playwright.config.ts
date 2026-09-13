@@ -113,6 +113,30 @@ export default defineConfig({
         headless: true,
       },
     },
+    {
+      // Web demo smoke tier: boots the STATIC build in dist/demo (written by
+      // `npm run build:demo`) through demo/static-server.mjs, which the spec
+      // starts itself in beforeAll on an ephemeral port. It has NO entry in the
+      // shared `webServer` below on purpose: that block starts for every project
+      // filter, so a dist/demo server there would break the ui tier (and every
+      // local `--project=ui` run) whenever the demo build is absent. The spec
+      // surfaces a missing build as one named error instead. workers=1 because
+      // the file is a handful of serial page loads against one server; the CI
+      // retry mirrors the ui and electron projects.
+      name: 'demo',
+      testDir: './tests/demo',
+      testMatch: '**/*.spec.ts',
+      timeout: 30_000,
+      workers: 1,
+      retries: process.env.CI ? 1 : 0,
+      use: {
+        browserName: 'chromium',
+        headless: true,
+        // The site frame's size, which every terminal recording was made for (demo/README.md,
+        // geometry): a boot replayed into a wider or narrower terminal is not the same frame.
+        viewport: { width: 1600, height: 1000 },
+      },
+    },
   ],
   webServer: {
     command: `npx vite --port ${vitePort}`,

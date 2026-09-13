@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kangentic demo</title>
+    <!--
+      The web build of the desktop renderer. demo/vite.config.mts injects four classic
+      scripts here, in this order, ahead of the module bundle below:
+        demo-scenes.js       the scene registry and the app version (generated at build time)
+        demo-boot.js         demo/boot.js: the URL contract, config overrides, still/embed CSS
+        mock-electron-api.js tests/ui/mock-electron-api.js, verbatim
+        demo-seed.js         the sample install and the scene applier (generated at build time)
+      A classic script runs while the parser reaches it; the module script is deferred, so the
+      bridge is always in place before the first renderer module evaluates.
+    -->
+  </head>
+  <body class="bg-surface text-fg overflow-hidden">
+    <div id="root"></div>
+    <script type="module" src="/src/renderer/index.tsx"></script>
+  </body>
+</html>

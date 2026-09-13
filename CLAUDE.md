@@ -59,6 +59,9 @@ scripts/          # Build and dev scripts
 
 - `npm run package` - Package for distribution (unpacked directory)
 - `npm run make` - Build installer (NSIS on Windows, DMG on macOS, deb/rpm on Linux)
+- `npm run build:demo` - Build the renderer for a plain browser into `dist/demo/` (the web demo
+  the site and docs embed; see `demo/README.md`). `npm run test:demo` smoke-tests that build;
+  `npm run demo:measure` reports its weight and boot timings.
 
 **Worktrees need `npm install`:** Git worktrees do not share `node_modules/` with the main
 repo. Always run `npm install` in a worktree before running any npm scripts (`npm run
@@ -433,6 +436,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `xterm-unicode11-parity.md` - every xterm `Terminal` activates the Unicode 11 width table via `activateUnicode11` at construction, and hand-rolled grid parsers take widths from `wcwidthV11`, so no parser drifts a column per emoji against the others (`src/shared/xterm-unicode11.ts`, `src/renderer/hooks/useTerminal.ts`, `src/renderer/utils/ansi-filter.ts`, `src/main/pty/**`, `src/devtools/main/inspection-server.ts`, `src/devtools/main/composed-width.ts`).
 - `cookie-jar-sharing.md` - browser jar cookies are copied only through `cookie-seed.ts`, `isLocalCookieDomain` is the single localhost exclusion, and partitions stay task-keyed (`persist:kng-<projectId>-<taskId>`), so a project's IdP login shares across tasks while each task's localhost session stays isolated (`src/main/browser/**`, `src/shared/browser-partition.ts`, `src/devtools/main/cookie-jar-routes.ts`).
 - `pty-teardown-grace.md` - a young agent's PTY is never force-killed without its exit sequence and the 1500 ms grace (`SessionManager.kill()` parks it on `DeferredKillRegistry`, outside the registry row); a caller that touches the cwd after a kill captures `awaitExit` before `remove()`; the quit path defers only where the drain follows; a probe PTY runs Claude on the classic renderer; every `~/.claude.json` write takes Claude's own lock (`src/main/pty/**`, `src/main/ipc/**`, `src/main/transition-engine/**`, `src/main/agent/**`).
+- `web-demo-parity.md` - the web build (`demo/`) is the real renderer over the mock bridge: every `ElectronAPI` method has a mock implementation, demo behaviour lives in `demo/boot.js` and the scene registry rather than `src/renderer`, scenes are data, and the `demo` tier stays green (`src/shared/types.ts`, `src/preload/**`, `tests/ui/mock-electron-api.js`, `demo/**`, `tests/captures/**`, `tests/demo/**`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.
