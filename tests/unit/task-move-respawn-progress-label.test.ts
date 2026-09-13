@@ -432,6 +432,41 @@ describe('handleTaskMove respawn branches emit a spawn-progress label before sus
       expect.objectContaining({ model_override: null }),
     );
   });
+
+  it('sessionManager.suspend rejects during a respawn: retires the label and rethrows before Phase 2 ever starts', async () => {
+    // suspendLiveSessionForRespawn's own try/catch is what this pins: a
+    // rejecting suspend() happens INSIDE the Phase 1 withTaskLock callback,
+    // which sits under a try whose only handler in handleTaskMove is a
+    // `finally` (the AbortController cleanup) - so an unguarded throw here
+    // would escape handleTaskMove entirely and strand the label just emitted
+    // until the 120s TTL. The helper's catch clears it and rethrows instead.
+    const planningLane = makeSwimlane('lane-planning', { permission_mode: 'plan' });
+    const execLane = makeSwimlane(EXEC_LANE_ID, { permission_mode: 'auto' });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === 'lane-planning' ? planningLane : id === EXEC_LANE_ID ? execLane : null)),
+      list: vi.fn(() => [planningLane, execLane]),
+    };
+    setActiveRecord();
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, needsRestartForModel: true });
+    const taskRepo = makeTaskRepo('lane-planning', EXEC_LANE_ID);
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.sessionManager.suspend.mockRejectedValue(new Error('pty suspend failed'));
+
+    await expect(
+      handleTaskMove(context as never, { taskId: TASK_ID, targetSwimlaneId: EXEC_LANE_ID, targetPosition: 0 }, 'renderer'),
+    ).rejects.toThrow('pty suspend failed');
+
+    // Label was emitted before the rejecting suspend call, same as every
+    // other respawn branch...
+    expect(mockEmitSpawnProgress).toHaveBeenCalledWith(context.mainWindow, TASK_ID, 'switching-model');
+    // ...and the helper's own catch retires it rather than leaving it
+    // stranded - nothing downstream ever runs to clear it otherwise, since
+    // Phase 1 never produced a plan.
+    expect(mockClearSpawnProgress).toHaveBeenCalledWith(context.mainWindow, TASK_ID);
+    // Never reached Phase 2/3.
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
 });
 
 describe('handleTaskMove respawn branches during shutdown', () => {
