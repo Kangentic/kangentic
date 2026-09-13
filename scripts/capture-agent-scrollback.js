@@ -36,7 +36,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '' };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '' };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -52,6 +52,7 @@ function parseArgs(argv) {
       case '--idle': options.idle = Number(next()); break;
       case '--min': options.min = Number(next()); break;
       case '--mode': options.mode = next(); break;
+      case '--model': options.model = next(); break;
       case '--stop-after': options.stopAfter = Number(next()); break;
       case '--stop-when': options.stopWhen = new RegExp(next(), 'i'); break;
       case '--live-tail': options.liveTail = Number(next()); break;
@@ -74,7 +75,7 @@ function forwardSlash(value) {
  * The interactive launch shape of each adapter, minus the session and MCP extras. An empty prompt
  * is the Command Terminal shape: the agent started interactively with nothing to do yet.
  */
-function buildCommand(agent, cwd, prompt, mode) {
+function buildCommand(agent, cwd, prompt, mode, model) {
   const withPrompt = (args, positional) => (prompt ? [...args, ...positional] : args);
   switch (agent) {
     case 'claude':
@@ -111,8 +112,13 @@ function buildCommand(agent, cwd, prompt, mode) {
     case 'cursor':
       // --force is Cursor's auto-approve, the counterpart to Copilot's --allow-all-tools. Without
       // it a session stalls on "Run this command? Not in allowlist", and the recording is a
-      // permission dialog rather than the agent working.
-      return { exe: 'cursor-agent', args: withPrompt(['--force'], [prompt]), exit: ['\x03'] };
+      // permission dialog rather than the agent working. --model pins a real one: Cursor defaults
+      // to "auto", which names no model and is not something a Kangentic session can be set to.
+      return {
+        exe: 'cursor-agent',
+        args: withPrompt(model ? ['--force', '--model', model] : ['--force'], [prompt]),
+        exit: ['\x03'],
+      };
     default:
       throw new Error(`No launch shape for agent "${agent}"`);
   }
@@ -444,7 +450,7 @@ async function main() {
     console.error('Failed to load node-pty. Try: npm rebuild node-pty');
     throw error;
   }
-  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode);
+  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model);
   if (options.trust) seedTrust(options.agent, options.cwd);
   const sanitizer = buildSanitizer(options);
 
