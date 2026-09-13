@@ -3710,3 +3710,52 @@ describe('Post-boot geometry re-assert', () => {
     expect(altScreenReassert?.[2]).toMatchObject({ trigger: 'alt-screen-enter' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 18. isSessionTeardownInFlight delegate
+// ---------------------------------------------------------------------------
+
+describe('isSessionTeardownInFlight delegate', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnSession(taskId: string) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId, command: '', cwd: tmpDir });
+    return { session, ...mock };
+  }
+
+  it('reads false for a freshly spawned, running session', async () => {
+    const { session } = await spawnSession('task-teardown-running');
+
+    expect(manager.isSessionTeardownInFlight(session.id)).toBe(false);
+  });
+
+  it('reads true for a session id the registry has never heard of', () => {
+    expect(manager.isSessionTeardownInFlight('session-teardown-missing')).toBe(true);
+  });
+
+  it('reads true for a killed session while a still-running sibling session reads false', async () => {
+    // Proves the sessionId argument is forwarded, not ignored: both sessions
+    // live in the same registry, and only the killed one flips true. `kill()`
+    // stamps `intentionalExit = true` synchronously, before any PTY write, so
+    // no wait is needed after the call (isYoungSession is pinned to false for
+    // this whole file, so kill() also takes the immediate, non-deferred path).
+    const { session: killedSession } = await spawnSession('task-teardown-killed');
+    const { session: runningSession } = await spawnSession('task-teardown-sibling');
+
+    manager.kill(killedSession.id);
+
+    expect(manager.isSessionTeardownInFlight(killedSession.id)).toBe(true);
+    expect(manager.isSessionTeardownInFlight(runningSession.id)).toBe(false);
+  });
+});
