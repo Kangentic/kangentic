@@ -349,7 +349,9 @@ export function TitleBar({
           <Settings size={20} />
         </button>
         {!isMac && (
-          <>
+          // `contents` keeps the three buttons and their divider direct flex items of the row;
+          // the wrapper exists only to give the cluster one selector.
+          <div className="contents" data-testid="window-controls">
             <div className="w-px h-4 bg-edge mx-1" />
             <button
               onClick={() => window.electronAPI.window.minimize()}
@@ -372,7 +374,7 @@ export function TitleBar({
             >
               <X size={16} />
             </button>
-          </>
+          </div>
         )}
       </div>
     </div>

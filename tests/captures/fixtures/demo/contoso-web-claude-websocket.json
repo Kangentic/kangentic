@@ -1,0 +1,1626 @@
+{
+  "agent": "claude",
+  "agentVersion": "2.1.270 (Claude Code)",
+  "project": "contoso-web",
+  "prompt": "Plan how to add reconnection with exponential backoff to src/lib/websocket.ts. Read the file and the places that use it, then write the plan. Do not edit any file.",
+  "cols": 154,
+  "rows": 37,
+  "capturedAt": "2026-09-12T19:58:39.931Z",
+  "durationMs": 88909,
+  "stopReason": "idle",
+  "exitCode": 1,
+  "altScreen": false,
+  "rawBytes": 66270,
+  "serialized": "\u001b[38;2;215;119;87m ▐\u001b[48;2;0;0;0m▛███▛█\u001b[0m\u001b[3C\u001b[1mClaude\u001b[1CCode\u001b[1C\u001b[38;2;153;153;153;22mv2.1.270\r\n\u001b[38;2;215;119;87m▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀\u001b[2C\u001b[38;2;153;153;153mOpus\u001b[1C5\u001b[1C(1M\u001b[1Ccontext)\u001b[1Cwith\u001b[1Cmedium\u001b[1Ceffort\u001b[1C·\u001b[1CClaude\u001b[1CMax\r\n\u001b[38;2;215;119;87m \u001b[1C▝▝\u001b[1C▝▝\u001b[4C\u001b[38;2;153;153;153m~\\work\\contoso-web\r\n\r\n\r\n\u001b[38;2;80;80;80;48;2;55;55;55m❯ \u001b[38;2;255;255;255mPlan how to add reconnection with exponential backoff to src/lib/websocket.ts. Read the file and the places that use it, then write the plan. Do not    \u001b[39m  \u001b[38;2;255;255;255medit any file.                                                                                                                                          \r\n\u001b[0m\r\n\u001b[38;2;255;255;255m●\u001b[1C\u001b[0mI'll start by reading the file and\u001b[1Cfinding\u001b[1Cits\u001b[1Cusages.\r\n\r\n \u001b[38;2;215;119;87m \u001b[38;2;153;153;153mRead \u001b[1m1\u001b[22m file (ctrl+o to expand)\r\n\r\n\u001b[38;2;255;255;255m●\u001b[0m I'll explore how this class is used across the codebase.                                                                                                \r\n\r\n\u001b[38;2;78;186;101m●\u001b[1C\u001b[39;1mExplore\u001b[0m(Find LiveUpdates usages)\r\n\u001b[38;2;153;153;153m  ⎿  \u001b[0mBackgrounded\u001b[1Cagent \u001b[38;2;153;153;153m(↓ to manage · ctrl+o to expand)\r\n\r\n\u001b[38;2;78;186;101m●\u001b[1C\u001b[39;1mAdvising\u001b[38;2;153;153;153;22m using Opus 5\r\n  ⎿  ✔ Advisor has reviewed the conversation and will apply the feedback\r\n\r\n\u001b[38;2;78;186;101m●\u001b[38;2;171;43;63m \u001b[39;1mBash\u001b[0m(echo waiting)\r\n\u001b[38;2;153;153;153m  ⎿  \u001b[0mwaiting\r\n                                                                                                                                                          \u001b[38;2;78;186;101m●\u001b[38;2;215;119;87m \u001b[0mAgent \"Find LiveUpdates usages\" finished \u001b[38;2;153;153;153m· 34s\r\n\r\n\u001b[0m \u001b[1C\u001b[38;2;153;153;153mRead \u001b[1m4\u001b[22m files (ctrl+o to expand)\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Planning: \u001b[4mC:\\Users\\dev\\.claude\\plans\\plan-how-to-add-wild-valiant.md\u001b[0m                                                                                    \u001b[38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────← \u001b[38;2;0;0;0;48;2;177;185;249m ☐ Status UI \u001b[0m ☐ send() behavior  ✔ Submit  →                                                                                                            \r\n\r\n\u001b[2m│\u001b[1C\u001b[38;2;255;255;255;1;22mShould reconnection surface connection state to the UI? App.tsx currently has no socket status channel — its `status` state is driven only by apiFetch.\r\n\r\n\u001b[38;2;177;185;249;22m❯\u001b[1C\u001b[38;2;153;153;153m1.\u001b[1C\u001b[38;2;177;185;249mObservable, no UI change (Recommended)\r\n\u001b[0m \u001b[1C  \u001b[38;2;153;153;153m Add an `onStatusChange`/`subscribeStatus` hook on LiveUpdates ('connecting' | 'open' | 'reconnecting' | 'closed') but leave App.tsx rendering \r\n\u001b[5Cunchanged. Callers can opt in later; keeps the\u001b[1Cdiff to src/lib/websocket.ts.\r\n\u001b[2C2.\u001b[1C\u001b[0mAlso show it in App.tsx\r\n    \u001b[38;2;153;153;153m Wire the status into App.tsx and render a 'Reconnecting…' / 'Live updates offline' indicator. Wider diff, visible behavior change.\r\n\u001b[0m  \u001b[38;2;153;153;153m3.\u001b[0m No status API at all\r\n    \u001b[38;2;153;153;153m Reconnect silently. Smallest change, but a permanently-failing socket is invisible to users and to debugging.\r\n\u001b[0m  \u001b[38;2;153;153;153m4. Type something.\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[0m  5. Chat about this\r\n  \r\n\u001b[38;2;153;153;153mEnter to select · Tab/Arrow keys to navigate · Esc to cancel\r\n\r\n\u001b[153C\u001b[0m\u001b[?2004h\u001b[?1004h",
+  "peek": [
+    "4. Type something.",
+    "5. Chat about this"
+  ],
+  "changes": {
+    "files": [],
+    "totalInsertions": 0,
+    "totalDeletions": 0
+  },
+  "stream": [
+    {
+      "t": 88,
+      "data": "\u001b[?9001h\u001b[?1004h"
+    },
+    {
+      "t": 242,
+      "data": "\u001b[?25l\u001b[2J\u001b[m\u001b[H\u001b]0;claude\u0007\u001b[?25h"
+    },
+    {
+      "t": 584,
+      "data": "\u001b[?25l\u001b[?2004h\u001b[?2031h\u001b[?1004h\u001b[<u\u001b[>5u\u001b[>4;2m\u001b[>0q\u001b[?u"
+    },
+    {
+      "t": 852,
+      "data": "\u001b[>4m\u001b[<u\u001b[?2031l\u001b[?2004l\u001b[?2004h\u001b[?2031h\u001b[?1004h\u001b[<u\u001b[>5u\u001b[>4;2m\u001b]0;✳ Claude Code\u0007\u001b[?2026h\u001b[?2026l\u001b[38;2;215;119;87m ▐\u001b[48;2;0;0;0m▛███▛█\u001b[m\u001b[1m\u001b[3CClaude\u001b[1CCode\u001b[38;2;153;153;153m\u001b[22m\u001b[1Cv2.1.270\u001b[38;2;215;119;87m\r\n▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀\u001b[38;2;153;153;153m\u001b[2COpus\u001b[1C5\u001b[1C(1M\u001b[1Ccontext)\u001b[1Cwith\u001b[1Cmedium\u001b[1Ceffort\u001b[1C·\u001b[1CClaude\u001b[1CMax\u001b[38;2;215;119;87m\r\n \u001b[1C▝▝\u001b[1C▝▝\u001b[38;2;153;153;153m\u001b[4C~\\work\\contoso-web\u001b[38;2;136;136;136m\u001b[6;1H──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n❯ \u001b[2mTry\u001b[1C\"how\u001b[1Cdoes\u001b[1C<filepath>\u001b[1Cwork?\"\u001b[38;2;136;136;136m\u001b[22m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[9;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C←\u001b[1Cfor\u001b[1Cagents\u001b[82C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;255;193;7m\u001b[10;138H/rc\u001b[1Cconnecting…\u001b[7;3H\u001b[?25h"
+    },
+    {
+      "t": 1112,
+      "data": "\u001b[m\u001b]0;◐ Claude Code\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;80;80;80m\u001b[48;2;55;55;55m\u001b[6;1H❯ \u001b[38;2;255;255;255mPlan how to add reconnection with exponential backoff to src/lib/websocket.ts. Read the file and the places that use it, then write the plan. Do not    \u001b[39m  \u001b[38;2;255;255;255medit any file.                                                                                                                                          \u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n*\u001b[1CReticulating…\u001b[K\u001b[m\u001b[10;138H\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m\r\n❯ \u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[14;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[66C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;255;193;7m\u001b[15;138H/rc\u001b[1Cconnecting…\u001b[12;3H\u001b[?25h\u001b[>0q\u001b[m"
+    },
+    {
+      "t": 1250,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✶\u001b[12;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✻\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 1491,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✽\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 1657,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[15;138H\u001b[12X\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[12C/rc\u001b[12;3H\u001b[?25h\u001b[m\u001b]8;;\u001b\\"
+    },
+    {
+      "t": 1801,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✻\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2045,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✶\u001b[12;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 2162,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H*\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2263,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✢\u001b[12;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;3HHypersp\u001b[1Cc\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2485,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[9;1H \u001b[m\u001b[1CReading \u001b[1m1\u001b[22m file…\u001b[38;2;153;153;153m\u001b[1C(ctrl+o to expand)\u001b[38;2;215;119;87m\u001b[11;1H✢ Hyperspacing…\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[14;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[16;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[66C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[17;150H/rc\u001b[14;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;255;255;255m\u001b[9;1H●\u001b[m\u001b[1CI'll start by reading the file and\u001b[1Cfinding\u001b[1Cits\u001b[1Cusages.\u001b[38;2;153;153;153m\u001b[11;1H \u001b[m\u001b[1CReading \u001b[1m1\u001b[22m file…\u001b[38;2;153;153;153m\u001b[1C(ctrl+o to expand)\u001b[38;2;215;119;87m\u001b[13;1H✢ Hyperspacing…\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[16;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[18;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[66C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[19;150H/rc\u001b[16;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[13;1H·\u001b[38;2;153;153;153m\u001b[15C(1s · ↓\u001b[1C2 tokens)\u001b[16;3H\u001b[?25h"
+    },
+    {
+      "t": 2603,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;235;159;127m\u001b[13;15H…\u001b[38;2;153;153;153m\u001b[9C4\u001b[16;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2719,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;25H5\u001b[16;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[11;1H·\u001b[1CHyperspacing\u001b[38;2;235;159;127m… \u001b[38;2;153;153;153m(1s · ↓ 5\u001b[3Ck\u001b[1Cns)\u001b[K\u001b[38;2;136;136;136m\u001b[13;1H──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[m\u001b[16;1H  \u001b[38;2;72;150;140m⏸ plan mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[66C◐ medium · /effort\u001b[m\r\n\u001b[149X\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[149C/rc\u001b[m\u001b]8;;\u001b\\  \r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[14;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[m\u001b[1CReading \u001b[1m1\u001b[22m file… \u001b[38;2;153;153;153m(ctrl+o\u001b[3C \u001b[1Cxpand)\r\n  ⎿  src\\lib\\websocket.ts\u001b[m\r\n                                                                                                                                                          \u001b[38;2;215;119;87m· \u001b[38;2;230;149;117mHyperspacing… \u001b[38;2;153;153;153m(1s · ↓\u001b[1C5 tokens)\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[m\u001b[147C     \u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[19;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[66C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[20;150H/rc\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 2842,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;233;154;122m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[9C30 tokens)\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2943,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[14;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[9C61\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 3063,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;153;153;153m\u001b[23C70\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3167,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;153;153;153m\u001b[16C2\u001b[7C7\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3285,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;233;154;122m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C8\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3387,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[38;2;230;149;117m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[9C81\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3502,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[10C2\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3620,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[14;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[10C4\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[14;3HHypersp\u001b[38;2;235;159;127maci\u001b[38;2;215;119;87mng…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3721,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;26H5\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3840,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;235;159;127m\u001b[7Cp\u001b[38;2;215;119;87m\u001b[2Ci\u001b[38;2;153;153;153m\u001b[13C7\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[11;1H \u001b[38;2;153;153;153m\u001b[1CRead \u001b[1m1\u001b[22m file (ctrl+o to expand)\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;255;255;255m\r\n●\u001b[m\u001b[1CI'll\u001b[1Cexplore\u001b[1Chow\u001b[1Cthis\u001b[1Cclass\u001b[1Cis\u001b[1Cused\u001b[1Cacross\u001b[1Cthe\u001b[1Ccodebase.\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✻\u001b[1CHypers\u001b[38;2;235;159;127mpac\u001b[38;2;215;119;87ming… \u001b[38;2;153;153;153m(2s · ↓\u001b[1C87 tokens)\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[20;3H⏸ plan mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[66C◐ medium · /effort\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[21;150H/rc\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 3948,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;153;153;153m\u001b[15;25H91\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 4065,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[38;2;235;159;127m\u001b[6Cs\u001b[38;2;215;119;87m\u001b[2Cc\u001b[38;2;153;153;153m\u001b[14C3\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4182,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;153;153;153m\u001b[16C3\u001b[7C4\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;235;159;127m\u001b[5Cr\u001b[38;2;215;119;87m\u001b[2Ca\u001b[38;2;153;153;153m\u001b[14C105 tokens)\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 4295,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 4397,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[38;2;235;159;127m\u001b[4Ce\u001b[38;2;215;119;87m\u001b[2Cp\u001b[38;2;153;153;153m\u001b[16C17\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4514,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;27H8\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4631,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[15;5Hp\u001b[38;2;215;119;87m\u001b[2Cs\u001b[38;2;153;153;153m\u001b[17C20\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;26H45\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 4745,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 4847,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;235;159;127m\u001b[2Cy\u001b[38;2;215;119;87m\u001b[2Cr\u001b[38;2;153;153;153m\u001b[18C82\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4956,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;26H94\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 5064,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;235;159;127m\u001b[1CH\u001b[38;2;215;119;87m\u001b[2Ce\u001b[38;2;153;153;153m\u001b[18C203\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5180,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[38;2;153;153;153m\u001b[16C4\u001b[8C9\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;1H●\u001b[m\u001b[1m\u001b[1CExplore\u001b[22m(Find LiveUpdates usages)\u001b[K\u001b[38;2;215;119;87m\u001b[17;1H✶ \u001b[38;2;235;159;127mHyperspacing… \u001b[38;2;153;153;153m(4s · ↓ 209 tokens)\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[20;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[22;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[66C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[23;150H/rc\u001b[20;3H\u001b[?25h\u001b[m\u001b]8;;\u001b\\"
+    },
+    {
+      "t": 5298,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[17;1H✻\u001b[38;2;233;154;122m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C46\u001b[20;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5415,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[17;1H✽\u001b[38;2;230;149;117m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C60\u001b[20;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5517,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[17;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[10C7\u001b[20;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5633,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[17;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[11C7\u001b[20;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5751,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[17;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[10C81\u001b[20;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5851,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[17;1H✻\u001b[38;2;218;124;92m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[11C3\u001b[20;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 5969,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[17;1H✶\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[11C4\u001b[20;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6092,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[22;69H · ↓ to manage\u001b[m\u001b[1m\u001b[25;1H \u001b[1C●\u001b[1Cmain\u001b[38;2;153;153;153m\u001b[22m\r\n \u001b[1C◯\u001b[1CExplore\u001b[2CFind\u001b[1CLiveUpdates\u001b[1Cusages\u001b[114C0s\u001b[20;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;78;186;101m\u001b[15;1H●\u001b[38;2;153;153;153m\r\n  ⎿  \u001b[mBackgrounded\u001b[1Cagent \u001b[38;2;153;153;153m(↓ to manage · ctrl+o to expand)\u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✶\u001b[1CHyperspacing… \u001b[38;2;153;153;153m(5s · ↓\u001b[1C309 tokens)\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[23;3H⏸ plan mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent · ↓ to manage\u001b[52C◐ medium · /effort\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[24;150H/rc\u001b[m\u001b]8;;\u001b\\\r\n\u001b[K\u001b[1m\r\n  ● main\u001b[22m\u001b[K\u001b[38;2;153;153;153m\r\n \u001b[1C◯\u001b[1CExplore\u001b[2CFind\u001b[1CLiveUpdates\u001b[1Cusages\u001b[114C0s\u001b[21;3H\u001b[?25h"
+    },
+    {
+      "t": 6195,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[18;1H*\u001b[38;2;153;153;153m\u001b[24C47\u001b[21;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6301,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H✢\u001b[38;2;218;124;92m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C72\u001b[21;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6420,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H·\u001b[38;2;220;129;97m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C97\u001b[21;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6520,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[18;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[9C416\u001b[21;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6638,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[18;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[10C31\u001b[21;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;3HHyperspacing…\u001b[21;3H\u001b[?25h"
+    },
+    {
+      "t": 6744,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;27H8\u001b[21;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;35H · \u001b[38;2;161;161;161mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[21;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[27;134H0s · ↑ 16.2k token\u001b[21;3H\u001b[?25h"
+    },
+    {
+      "t": 6853,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[m\u001b[1m\u001b[1CAdvising\u001b[38;2;153;153;153m\u001b[22m using Opus\u001b[1C5\u001b[m\u001b[1C\u001b[K\u001b[38;2;215;119;87m\u001b[20;1H· Hyperspacing… \u001b[38;2;153;153;153m(5s · ↓ 438 tokens · \u001b[38;2;161;161;161mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[23;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[25;3H⏸ plan mode on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent · ↓ to manage\u001b[52C◐ medium · /effort\u001b[m\r\n        \u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[141C/rc\u001b[m\u001b]8;;\u001b\\\r\n\u001b[K\u001b[1m\r\n \u001b[1C●\u001b[1Cmain\u001b[38;2;153;153;153m\u001b[22m\r\n \u001b[1C◯\u001b[1CExplore\u001b[2CFind\u001b[1CLiveUpdates\u001b[1Cusages\u001b[97C0s\u001b[1C·\u001b[1C↑\u001b[1C16.2k\u001b[1Ctokens\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[38;2;153;153;153m\u001b[24C63\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?25h"
+    },
+    {
+      "t": 6972,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[24C88\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7089,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;18H6\u001b[6C500\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H1\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 7207,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[24C12\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;139H↓\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 7307,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[38;2;153;153;153m\u001b[25C6\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[29;144H3\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 7425,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✽\u001b[38;2;153;153;153m\u001b[25C8\u001b[38;2;161;161;161m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7526,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;27H9\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7649,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;26H21\u001b[38;2;173;173;173m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7766,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;27H3\u001b[38;2;177;177;177m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7920,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[38;2;153;153;153m\u001b[25C4\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[25C6\u001b[38;2;185;185;185m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8095,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H2\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[16C7\u001b[8C8\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 8203,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[20;26H30\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8320,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[38;2;153;153;153m\u001b[25C1\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8437,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H·\u001b[38;2;177;177;177m\u001b[36Cthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8538,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;173;173;173m\u001b[20;38Hthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8656,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;165;165;165m\u001b[20;38Hthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8773,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;161;161;161m\u001b[20;38Hthinking with medium effort\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;38Hthought for 1s)\u001b[K\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 8873,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 8988,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9095,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H3\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[16C8\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 9224,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;235;159;127m\u001b[20;15H…\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 9332,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 9436,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✽\u001b[38;2;235;159;127m\u001b[12Cg\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9669,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[20;13Hn\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 9840,
+      "data": "\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[38;2;235;159;127m\u001b[10Ci\u001b[38;2;215;119;87m\u001b[2C…\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10002,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;235;159;127m\u001b[9Cc\u001b[38;2;215;119;87m\u001b[2Cg\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H4\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 10112,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[16C9\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10225,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[38;2;235;159;127m\u001b[8Ca\u001b[38;2;215;119;87m\u001b[2Cn\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 10332,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 10454,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H·\u001b[38;2;235;159;127m\u001b[7Cp\u001b[38;2;215;119;87m\u001b[2Ci\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10671,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[20;8Hs\u001b[38;2;215;119;87m\u001b[2Cc\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10801,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;35H)\u001b[K\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[38;2;235;159;127m\u001b[5Cr\u001b[38;2;215;119;87m\u001b[2Ca\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 10909,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[25;85HAdvisor Tool (experimental) is on and may use more tokens · /advisor\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;235;159;127m\u001b[4Ce\u001b[38;2;215;119;87m\u001b[2Cp\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 11019,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H5\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11122,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[16C10s · ↓ 531 tokens)\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 11237,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[38;2;235;159;127m\u001b[3Cp\u001b[38;2;215;119;87m\u001b[2Cs\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11456,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✽\u001b[38;2;235;159;127m\u001b[2Cy\u001b[38;2;215;119;87m\u001b[2Cr\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11673,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[20;3HH\u001b[38;2;215;119;87m\u001b[2Ce\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 11790,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;5Hp\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11940,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[2Cy\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12099,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H6\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C1\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 12244,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[1CH\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12463,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12724,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13018,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H7\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13135,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C2\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13254,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 13373,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✽\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 13482,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 13685,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H4\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13810,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;142H8\u001b[1C1\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13960,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14101,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H8\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C3\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14226,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H2\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 14475,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 14585,
+      "data": "\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 14810,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15044,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H9\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15147,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C4\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15263,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15401,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H3\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✽\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 15502,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 15606,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 15791,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[38;2;235;159;127m\u001b[13C…\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 16041,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;235;159;127m\u001b[12Cg\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;133H10\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16159,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C5\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16276,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[38;2;235;159;127m\u001b[11Cn\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16393,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16494,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H·\u001b[38;2;235;159;127m\u001b[10Ci\u001b[38;2;215;119;87m\u001b[2C…\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 16613,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[20;11Hc\u001b[38;2;215;119;87m\u001b[2Cg\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16832,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✢\u001b[9Ccin\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17001,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17103,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H4\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H1\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[29;141H21\u001b[1C0\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C6\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 17304,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17528,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H1\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l"
+    },
+    {
+      "t": 17634,
+      "data": "\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 17833,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;210;110;84m\u001b[20;1H✻\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18069,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;134H2\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H2\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 18171,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;210;110;84m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C7\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18287,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18405,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 18638,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;144H3\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18822,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[20;1H✢\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 18971,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[25;85H\u001b[65X\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[65C/rc\u001b[m\u001b]8;;\u001b\\\u001b[26;150H     \u001b[1m\r\n  ● main\u001b[38;2;153;153;153m\u001b[22m\r\n  ◯ Explore\u001b[2CFind LiveUpdates usages\u001b[96C12s · ↓ 21.3k tokens\u001b[m\r\n\u001b[K\r\n\u001b[K\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 19073,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C8\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H3\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 19176,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H✶\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 19294,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 19411,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 19858,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 19959,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 20066,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;19H9\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;134H4\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20193,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20297,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20412,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[20;1H·\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 20651,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20869,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20969,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21087,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;18H20\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H5\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;142H3\u001b[1C9\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21203,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21304,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;142H4\u001b[1C1\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 21421,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21641,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[20;1H✽\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21875,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[38;2;193;81;75m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21990,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22090,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C1\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H6\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 22206,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;144H2\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22326,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[20;1H·\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 22447,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22879,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[20;1H✢\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22997,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 23098,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;188;72;72m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C2\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;134H7\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 23296,
+      "data": "\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23432,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23702,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23884,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24000,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24135,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[20;1H*\u001b[1CHyperspacing… \u001b[38;2;153;153;153m\u001b[2C3\u001b[28;134H8\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24257,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24439,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24891,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 25007,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;182;62;69m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 25122,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H9\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C4\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 25225,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 25456,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;177;53;66m\u001b[20;1H✽\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 25910,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H3\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26013,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[20;1H✶\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 26122,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;133H20\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[38;2;177;53;66m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C5\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 26234,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26467,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H4\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26687,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[1CHyperspacing… \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26804,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27017,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H5\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 27122,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;134H1\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C6\u001b[23;3H\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?25h"
+    },
+    {
+      "t": 27238,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27338,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27471,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H6\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27806,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27955,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 28101,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H2\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C7\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 28255,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 28471,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H7\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l"
+    },
+    {
+      "t": 28573,
+      "data": "\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 28810,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29045,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H8\u001b[23;3H\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;134H3\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l"
+    },
+    {
+      "t": 29150,
+      "data": "\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C8\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 29260,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29491,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H9\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29776,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30022,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;142H5\u001b[1C0\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30125,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H4\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C9\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 30278,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30379,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30496,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30829,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30983,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31099,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H1\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H5\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[16C30\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31284,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31386,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31603,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H2\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 31840,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31943,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 32058,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H6\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H3\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 32177,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C1\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 32293,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32394,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32669,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H4\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32813,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 33067,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H7\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33188,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C2\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 33302,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 33406,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 33683,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;144H5\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33861,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 33962,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34080,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;19H3\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H8\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34182,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;144H6\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 34303,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34421,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34641,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H7\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 34743,
+      "data": "\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 34859,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34974,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35091,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;19H4\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H9\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 35192,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H8\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 35308,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35426,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35785,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 35979,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36096,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C5\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;133H30\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36251,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H9\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36430,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36746,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;142H6\u001b[1C0\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;14HInspecting server/routes.ts and test deps\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36880,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36997,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37098,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C6\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H1\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37270,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H1\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37432,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37684,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 37789,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H2\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 37902,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 38012,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 38116,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C7\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;134H2\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 38218,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38451,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38669,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 38808,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H3\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 38915,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 39023,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C8\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 39132,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;134H3\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 39241,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H4\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39459,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39631,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 39820,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H5\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 39926,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 40108,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C9\u001b[23;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[28;134H4\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 40246,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;144H6\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 40458,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;142H8\u001b[1C0\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[25;41H/tasks\u001b[1Cto see subagents · esc to\u001b[1Cinterrupt · ← 1 agent\u001b[m\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 40591,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 40713,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41015,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41133,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[16C40\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41251,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 41354,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 41469,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 41802,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41935,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42036,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42137,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C1\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42254,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42471,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42806,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43042,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43144,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C2\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43261,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43474,
+      "data": "\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 43762,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44049,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44151,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C3\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44269,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44369,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 44486,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44836,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44970,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45169,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C4\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45270,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45388,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 45587,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45839,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46058,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46174,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C5\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46291,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 46395,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46795,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47063,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47181,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C6\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47297,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 47398,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47852,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47969,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48086,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;19H7\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48186,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 48303,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48421,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48621,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48856,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48974,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49092,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;19H8\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49194,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 49311,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49429,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49836,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49987,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50087,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C9\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50197,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 50323,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 50430,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 50875,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50992,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51095,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[16C50\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 51328,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51446,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51664,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51882,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51999,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52116,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C1\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 52216,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52449,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52870,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 53004,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 53121,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[38;2;153;153;153m\u001b[17C2\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53238,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53455,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✽\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53907,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✻\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54009,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✶\u001b[23;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H \u001b[23;3H\u001b[?25h"
+    },
+    {
+      "t": 54110,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H*\u001b[38;2;153;153;153m\u001b[17C3\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54244,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H✢\u001b[23;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54460,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[20;1H·\u001b[23;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[20;36H · \u001b[38;2;177;177;177mthinking with medium effort\u001b[38;2;153;153;153m)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[26;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C/tasks\u001b[1Cto\u001b[1Csee\u001b[1Csubagents\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[55C/rc\u001b[24;3H\u001b[?25h\u001b[m\u001b]8;;\u001b\\\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;78;186;101m\u001b[18;1H●\u001b[38;2;153;153;153m\r\n  ⎿  ✔ Advisor has reviewed the conversation and will apply the feedback\u001b[m\r\n\u001b[K\u001b[38;2;171;43;63m\r\n· Hyperspacing… \u001b[38;2;153;153;153m(53s · ↓ 531 token\u001b[1C · \u001b[38;2;177;177;177mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n                                                                                                                                                          \u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[27;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C/tasks\u001b[1Cto\u001b[1Csee\u001b[1Csubagents\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[55C/rc\u001b[25;3H\u001b[?25h"
+    },
+    {
+      "t": 54579,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;182;62;69m\u001b[21;1H·\u001b[1CHyperspacing… \u001b[38;2;169;169;169m\u001b[22Cthinking with medium effort\u001b[25;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[21;1H·\u001b[1CHyperspacing… \u001b[25;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54683,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[21;27H56\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[25;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[21;36H)\u001b[K\u001b[25;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54792,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[21;1H●\u001b[m\u001b[1m\u001b[1CBash\u001b[22m(echo waiting)\u001b[K\u001b[38;2;153;153;153m\u001b[22;6HRunning…\u001b[K\u001b[38;2;215;119;87m\u001b[24;1H· \u001b[38;2;228;144;112mHyperspacing… \u001b[38;2;153;153;153m(53s · ↓ 556 tokens)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m\r\n❯ \u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[30;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C/tasks\u001b[1Cto\u001b[1Csee\u001b[1Csubagents\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[55C/rc\u001b[28;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[24;1H✢\u001b[38;2;230;149;117m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[11C87\u001b[28;3H\u001b[?25h"
+    },
+    {
+      "t": 54908,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[22;6HWait\u001b[24;36H · \u001b[38;2;161;161;161mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[28;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;78;186;101m\u001b[21;1H●\u001b[m\u001b[22;6Hwaiting\u001b[K\u001b[38;2;78;186;101m\u001b[24;1H●\u001b[m\u001b[1CAgent \"Find LiveUpdates usages\" finished \u001b[38;2;153;153;153m· 34s\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✢\u001b[38;2;230;149;117m\u001b[1CHyperspacing… \u001b[38;2;153;153;153m(53s · ↓\u001b[1C587 tokens · \u001b[38;2;161;161;161mthinking with medium effort\u001b[38;2;153;153;153m)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[30;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[32;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C/tasks\u001b[1Cto\u001b[1Csee\u001b[1Csubagents\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[55C/rc\u001b[30;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;233;154;122m\u001b[26;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[11C9\u001b[38;2;157;157;157m\u001b[11Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 55025,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H*\u001b[38;2;235;159;127m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C604\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55126,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H✶\u001b[38;2;153;153;153m\u001b[17C4\u001b[8C5\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55242,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H✻\u001b[38;2;153;153;153m\u001b[26C8\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55359,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;233;154;122m\u001b[26;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[12C9\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55477,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H✽\u001b[38;2;228;144;112m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[11C11\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55578,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[26;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[12C2\u001b[38;2;169;169;169m\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;3HHyperspacing\u001b[38;2;235;159;127m…\u001b[30;3H\u001b[?25h"
+    },
+    {
+      "t": 55697,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;235;159;127m\u001b[26;14Hg\u001b[38;2;153;153;153m\u001b[13C4\u001b[38;2;173;173;173m\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55814,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H✻\u001b[38;2;235;159;127m\u001b[11Cn\u001b[38;2;153;153;153m\u001b[14C6\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55914,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;28H7\u001b[30;3H\u001b[?25h\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 56030,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H✶\u001b[38;2;235;159;127m\u001b[10Ci\u001b[38;2;215;119;87m\u001b[2C…\u001b[38;2;153;153;153m\u001b[12C9\u001b[38;2;185;185;185m\u001b[10Cthinking with medium effort\u001b[30;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H●\u001b[m\u001b[1CReading \u001b[1m1\u001b[22m file… \u001b[38;2;153;153;153m(ctrl+o to\u001b[1Cexpa\u001b[1Cd)\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✶\u001b[1CHyperspac\u001b[38;2;235;159;127ming\u001b[38;2;215;119;87m… \u001b[38;2;153;153;153m(55s · ↓\u001b[1C619 tokens · \u001b[38;2;185;185;185mthinking with medium effort\u001b[38;2;153;153;153m)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[32;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[34;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C/tasks\u001b[1Cto\u001b[1Csee\u001b[1Csubagents\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[55C/rc\u001b[32;3H\u001b[?25h"
+    },
+    {
+      "t": 56150,
+      "data": "\u001b[m\u001b]8;;\u001b\\\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[28;1H*\u001b[38;2;153;153;153m\u001b[25C56\u001b[32;3H\u001b[?25h"
+    },
+    {
+      "t": 56261,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[28;1H✢\u001b[38;2;235;159;127m\u001b[9Cc\u001b[38;2;215;119;87m\u001b[2Cg\u001b[38;2;153;153;153m\u001b[12C81\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[32;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56361,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;26H706\u001b[32;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;36H)\u001b[K\u001b[32;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H  ⎿  src\\App.tsx\u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✢ Hyperspa\u001b[38;2;235;159;127mcin\u001b[38;2;215;119;87mg… \u001b[38;2;153;153;153m(55s · ↓ 706 token\u001b[1C · \u001b[38;2;181;181;181mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;72;150;140m\u001b[35;3H⏸\u001b[1Cplan\u001b[1Cmode\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C/tasks\u001b[1Cto\u001b[1Csee\u001b[1Csubagents\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-19fu2kx%5583500442104733931;https://claude.ai/code/session_01YXjz51vaALjXynAgR5tZjL?from=cli\u001b\\\u001b[55C/rc\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 56475,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[29;1H·\u001b[38;2;235;159;127m\u001b[8Ca\u001b[38;2;215;119;87m\u001b[2Cn\u001b[38;2;153;153;153m\u001b[13C31\u001b[38;2;173;173;173m\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H \u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56583,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;36H)\u001b[K\u001b[33;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[1m\u001b[26;11H2\u001b[22m\u001b[5Cs… \u001b[38;2;153;153;153m(ctrl+o to expand)\u001b[38;2;235;159;127m\u001b[29;9Hp\u001b[38;2;215;119;87m\u001b[2Ci\u001b[38;2;153;153;153m\u001b[14C63\u001b[7C · \u001b[38;2;169;169;169mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 56704,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[29;27H77\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;36H)\u001b[K\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[1m\u001b[26;11H3\u001b[38;2;153;153;153m\u001b[22m\u001b[29;36H · \u001b[38;2;165;165;165mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 56812,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H✢\u001b[38;2;235;159;127m\u001b[6Cs\u001b[38;2;215;119;87m\u001b[2Cc\u001b[38;2;153;153;153m\u001b[15C88\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;36H)\u001b[K\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56914,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[1m\u001b[26;11H4\u001b[38;2;233;154;122m\u001b[22m\u001b[29;3HHyperspacing…\u001b[38;2;153;153;153m\u001b[20C · \u001b[38;2;157;157;157mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[33;3H\u001b]0;◐ Websocket reconnection with exponential backoff\u0007\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[29;26H813\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 57033,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H*\u001b[38;2;235;159;127m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[11C51\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;6Hts\u001b[1Config.json\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57133,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H●\u001b[33;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H✶\u001b[38;2;153;153;153m\u001b[17C6\u001b[7C76\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 57274,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H✻\u001b[38;2;233;154;122m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[10C901\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57383,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;27H26\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57483,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✽\u001b[38;2;228;144;112m\u001b[1CHyperspacing…\u001b[38;2;153;153;153m\u001b[11C51\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;3HHy\u001b[38;2;235;159;127mper\u001b[38;2;215;119;87mspacing…\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57601,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[29;4Hy\u001b[38;2;215;119;87m\u001b[2Cr\u001b[38;2;153;153;153m\u001b[19C83\u001b[38;2;169;169;169m\u001b[10Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57728,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;27H9\u001b[38;2;173;173;173m\u001b[11Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H \u001b[33;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H✻\u001b[38;2;235;159;127m\u001b[1CH\u001b[38;2;215;119;87m\u001b[2Ce\u001b[38;2;153;153;153m\u001b[19C1.0k tokens · \u001b[38;2;181;181;181mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 57830,
+      "data": "\u001b[m\u001b]0;◑ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 57938,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;185;185;185m\u001b[29;40Hthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58039,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✶\u001b[3Cp\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58156,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H*\u001b[38;2;153;153;153m\u001b[17C7\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58273,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✢\u001b[2Cy\u001b[38;2;181;181;181m\u001b[35Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H●\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 58373,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;177;177m\u001b[29;40Hthinking with medium effort\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 58501,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H·\u001b[1CH\u001b[38;2;173;173;173m\u001b[36Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58609,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;28H1\u001b[38;2;169;169;169m\u001b[11Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58710,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;161;161;161m\u001b[29;40Hthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58828,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✢\u001b[38;2;157;157;157m\u001b[38Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b]0;◐ Websocket reconnection with exponential backoff\u0007"
+    },
+    {
+      "t": 58946,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;28H2\u001b[11Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H \u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 59047,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[29;1H*\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59165,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✶\u001b[38;2;153;153;153m\u001b[17C8\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59270,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✻\u001b[38;2;157;157;157m\u001b[38Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59388,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✽\u001b[38;2;161;161;161m\u001b[38Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59511,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;28H3\u001b[38;2;165;165;165m\u001b[11Cthinking with medium effort\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H●\u001b[33;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;169;169;169m\u001b[29;40Hthinking with medium effort\u001b[33;3H\u001b[?25h"
+    },
+    {
+      "t": 59628,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[29;40Hthought for 1s)\u001b[K\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59803,
+      "data": "\u001b]0;◑ Websocket reconnection with exponential backoff\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✻\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60065,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✶\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60182,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[26;1H \u001b[38;2;215;119;87m\u001b[29;1H*\u001b[38;2;153;153;153m\u001b[17C9\u001b[8C4\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60282,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H✢\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60399,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[29;1H·\u001b[33;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60768,
+      "data": "\u001b]0;✳ Websocket reconnection with exponential backoff\u0007\u001b[?25l\u001b[?2026h\u001b[38;2;153;153;153m\u001b[28;1H──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Planning: \u001b]8;id=u-fnl8mz%6887852256715447259;file:///C:/Users/dev/.claude/plans/plan-how-to-add-wild-valiant.md\u001b\\C:\\Users\\dev\\.claude\\plans\\plan-how-to-add-wild-valiant.md\u001b]8;;\u001b\\\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────← \u001b[38;2;0;0;0m\u001b[48;2;177;185;249m ☐ Status UI \u001b[m\u001b[1C☐\u001b[1Csend()\u001b[1Cbehavior\u001b[2C✔\u001b[1CSubmit\u001b[2C→\r\n\u001b[K\u001b[2m\r\n│\u001b[22m \u001b[38;2;255;255;255m\u001b[1mShould reconnection surface connection state to the UI? App.tsx currently has no socket status channel — its `status` state is driven only by apiFetch.\u001b[m\r\n\u001b[K\u001b[38;2;177;185;249m\r\n❯\u001b[38;2;153;153;153m\u001b[1C1. \u001b[38;2;177;185;249mObservable, no UI change (Recommended)\u001b[K\u001b[38;2;153;153;153m\u001b[36;6HAdd\u001b[1Can\u001b[1C`onStatusChange`/`subscribeStatus`\u001b[1Chook\u001b[1Con\u001b[1CLiveUpdates\u001b[1C('connecting'\u001b[1C|\u001b[1C'open'\u001b[1C|\u001b[1C'reconnecting'\u001b[1C|\u001b[1C'closed')\u001b[1Cbut\u001b[1Cleave\u001b[1CApp.tsx\u001b[1Crendering\u001b[37;6Hunchanged.\u001b[1CCallers\u001b[1Ccan\u001b[1Copt\u001b[1Cin\u001b[1Clater;\u001b[1Ckeeps\u001b[1Cthe\u001b[1Cdiff\u001b[1Cto\u001b[1Csrc/lib/websocket.ts.\u001b[m\r\n  \u001b[38;2;153;153;153m2. \u001b[mAlso show it in App.tsx\u001b[K\u001b[126C\r\n     \u001b[38;2;153;153;153mWire the status into App.tsx and render a 'Reconnecting…' / 'Live updates offline' indicator. Wider diff, visible behavior change.\u001b[K\u001b[19C\u001b[m\r\n  \u001b[38;2;153;153;153m3. \u001b[mNo status API at all\u001b[K\u001b[129C\r\n     \u001b[38;2;153;153;153mReconnect silently. Smallest change, but a permanently-failing socket is invisible to users and to debugging.\u001b[K\u001b[40C\u001b[m\r\n  \u001b[38;2;153;153;153m4. Type something.\u001b[K\u001b[134C\u001b[m\r\n\u001b[38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  5. Chat about this\u001b[134C\r\n\u001b[154C\r\n\u001b[38;2;153;153;153mEnter to select · Tab/Arrow keys to navigate · Esc to cancel\u001b[94C\u001b[?2026l\u001b[m\r\n\u001b[154C\u001b[?2026h\u001b[?2026l\u001b[16;1H \u001b[38;2;153;153;153m\u001b[1CRead \u001b[1m4\u001b[22m files (ctrl+o to expand)\u001b[K\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Planning: \u001b]8;id=u-fnl8mz%6887852256715447259;file:///C:/Users/dev/.claude/plans/plan-how-to-add-wild-valiant.md\u001b\\C:\\Users\\dev\\.claude\\plans\\plan-how-to-add-wild-valiant.md\u001b[m\u001b]8;;\u001b\\                                                                                    \u001b[38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────← \u001b[38;2;0;0;0m\u001b[48;2;177;185;249m ☐ Status UI \u001b[m ☐ send() behavior  ✔ Submit  →                                                                                                            \r\n\u001b[K\u001b[2m\r\n│\u001b[38;2;255;255;255m\u001b[22m\u001b[1m\u001b[1CShould reconnection surface connection state to the UI? App.tsx currently has no socket status channel — its `status` state is driven only by apiFetch.\u001b[m\r\n\u001b[K\u001b[38;2;177;185;249m\r\n❯\u001b[38;2;153;153;153m\u001b[1C1.\u001b[38;2;177;185;249m\u001b[1CObservable, no UI change (Recommended)\u001b[m\r\n \u001b[1C  \u001b[38;2;153;153;153m\u001b[1CAdd an `onStatusChange`/`subscribeStatus` hook on LiveUpdates ('connecting' | 'open' | 'reconnecting' | 'closed') but leave App.tsx rendering \u001b[26;6Hunch\u001b[2Cged. C\u001b[1Cllers can opt in lat\u001b[1Cr; keeps the\u001b[1Cdiff to src/lib/websocket.ts.\u001b[K\u001b[27;3H2.\u001b[m\u001b[1CAlso show it in App.tsx\u001b[K\u001b[28;3H  \u001b[38;2;153;153;153m\u001b[1CWire the status into App.tsx and render a 'Reconnecting…' / 'Live updates offline' indicator. Wider diff, visible behavior change.\u001b[29;3H3.\u001b[m\u001b[1CNo status API at all\u001b[K\u001b[30;3H  \u001b[38;2;153;153;153m\u001b[1CReconnect silently. Smallest change, but a permanently-failing socket is invisible to users and to debugging.\u001b[31;3H4. Type someth\u001b[1Cng.\u001b[K\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m  5. Chat about this\u001b[K\u001b[34;3H\u001b[K\u001b[38;2;153;153;153m\r\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\u001b[m\r\n\u001b[K\r\n\u001b[K\u001b[154C"
+    }
+  ]
+}

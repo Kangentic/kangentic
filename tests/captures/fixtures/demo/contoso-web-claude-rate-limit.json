@@ -1,0 +1,2123 @@
+{
+  "agent": "claude",
+  "agentVersion": "2.1.270 (Claude Code)",
+  "project": "contoso-web",
+  "prompt": "Review server/rate-limit.ts and tests/rate-limit.test.ts for correctness bugs. Report each finding with the line it is on, fix the ones you are sure about, and run npm test.",
+  "cols": 154,
+  "rows": 37,
+  "capturedAt": "2026-09-12T20:04:17.166Z",
+  "durationMs": 102070,
+  "stopReason": "idle",
+  "exitCode": 0,
+  "altScreen": false,
+  "rawBytes": 78088,
+  "serialized": "\u001b[38;2;215;119;87m ▐\u001b[48;2;0;0;0m▛███▛█\u001b[0m\u001b[3C\u001b[1mClaude\u001b[1CCode\u001b[1C\u001b[38;2;153;153;153;22mv2.1.270\r\n\u001b[38;2;215;119;87m▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀\u001b[2C\u001b[38;2;153;153;153mOpus\u001b[1C5\u001b[1C(1M\u001b[1Ccontext)\u001b[1Cwith\u001b[1Cmedium\u001b[1Ceffort\u001b[1C·\u001b[1CClaude\u001b[1CMax\r\n\u001b[38;2;215;119;87m \u001b[1C▝▝\u001b[1C▝▝\u001b[4C\u001b[38;2;153;153;153m~\\work\\contoso-web\r\n\r\n\r\n\u001b[38;2;80;80;80;48;2;55;55;55m❯ \u001b[38;2;255;255;255mReview server/rate-limit.ts and tests/rate-limit.test.ts for correctness bugs. Report each finding with the line it is on, fix the ones you are sure    \u001b[39m  \u001b[38;2;255;255;255mabout, and run npm test.                                                                                                                                \r\n\u001b[0m\r\n\u001b[38;2;255;255;255m●\u001b[1C\u001b[0mI'll start by reading both files.\r\n\r\n \u001b[38;2;215;119;87m \u001b[38;2;153;153;153mRead \u001b[1m2\u001b[22m files, listed \u001b[1m1\u001b[22m directory (ctrl+o to expand)\r\n\r\n\u001b[38;2;78;186;101m●\u001b[0m \u001b[1mAdvising\u001b[38;2;153;153;153;22m using Opus 5\u001b[0m                                                                                                                                   \r\n\u001b[38;2;153;153;153m  ⎿  ✔ Advisor has reviewed the conversation and will apply the feedback\r\n\r\n\u001b[38;2;255;255;255m●\u001b[38;2;171;43;63m \u001b[0mAdvisor confirms my read. Adding the regression test first, before\u001b[1Cthe\u001b[1Cfix,\u001b[1Cso\u001b[1CI\u001b[1Ccan\u001b[1Csee\u001b[1Cit\u001b[1Cfail.\r\n\r\n\u001b[38;2;78;186;101m●\u001b[0m \u001b[1mUpdate\u001b[0m(\u001b[4mtests\\rate-limit.test.ts\u001b[0m)\r\n\u001b[38;2;153;153;153m  ⎿  \u001b[0mAdded\u001b[1C\u001b[1m15\u001b[1C\u001b[0mlines\r\n \u001b[1C   \u001b[38;2;248;248;242;2m 14 \u001b[22m     \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'write'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\r\n\u001b[0m     \u001b[38;2;248;248;242;2m 15 \u001b[22m     \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\r\n\u001b[5C\u001b[2m 16 \u001b[22m   });\r\n\u001b[0m     \u001b[38;2;80;200;80;48;2;2;40;0m 17 +\u001b[137X\u001b[137C\u001b[0m       \r\n  \u001b[3C\u001b[38;2;80;200;80;48;2;2;40;0m 18 +  \u001b[38;2;166;226;46mit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'opens a fresh window after the old one expires'\u001b[38;2;248;248;242m, () => {\u001b[75X\u001b[75C\u001b[0m\r\n     \u001b[38;2;80;200;80;48;2;2;40;0m 19 +    \u001b[38;2;249;38;114mfor \u001b[38;2;248;248;242m(\u001b[38;2;102;217;239mlet \u001b[38;2;248;248;242mindex = \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m; index < \u001b[38;2;190;132;255m100\u001b[38;2;248;248;242m; index++) \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[36X\u001b[36C\u001b[0m       \r\n\u001b[2C   \u001b[38;2;80;200;80;48;2;2;40;0m 20 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[77X\u001b[77C\u001b[0m\u001b[2C     \r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 21 +\u001b[137X\u001b[137C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 22 +    \u001b[38;2;249;38;114mfor \u001b[38;2;248;248;242m(\u001b[38;2;102;217;239mlet \u001b[38;2;248;248;242mindex = \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m; index < \u001b[38;2;190;132;255m100\u001b[38;2;248;248;242m; index++)\u001b[92X\u001b[92C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 23 +      \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m61_001\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[74X\u001b[74C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 24 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m61_001\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[75X\u001b[75C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 25 +  \u001b[38;2;248;248;242m});\u001b[132X\u001b[132C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 26 +\u001b[137X\u001b[137C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 27 +  \u001b[38;2;166;226;46mit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'expires a window exactly one window length after it opened'\u001b[38;2;248;248;242m, () => {\u001b[63X\u001b[63C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 28 +    \u001b[38;2;249;38;114mfor \u001b[38;2;248;248;242m(\u001b[38;2;102;217;239mlet \u001b[38;2;248;248;242mindex = \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m; index < \u001b[38;2;190;132;255m100\u001b[38;2;248;248;242m; index++) \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[36X\u001b[36C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 29 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m60_999\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[75X\u001b[75C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 30 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m61_000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[76X\u001b[76C\u001b[0m\r\n\u001b[5C\u001b[38;2;80;200;80;48;2;2;40;0m 31 +  \u001b[38;2;248;248;242m});\u001b[132X\u001b[132C\u001b[0m\r\n     \u001b[38;2;248;248;242;2m 32\u001b[0m  \u001b[38;2;248;248;242m});\r\n\r\n\u001b[38;2;78;186;101m●\u001b[38;2;215;119;87m \u001b[39;1mBash\u001b[0m(npm test 2>&1 | tail -40)\r\n\u001b[38;2;153;153;153m  ⎿  \u001b[31m+ Received\r\n\r\n\u001b[0m \u001b[38;2;215;119;87m \u001b[0m   \u001b[32m- false\r\n\u001b[0m     \u001b[2m… +36 lines (ctrl+o to expand)\r\n\r\n\u001b[38;2;255;255;255;22m●\u001b[38;2;215;119;87m \u001b[0mBoth new tests fail against the current\u001b[1Ccode,\u001b[1Creproducing\u001b[1Cboth\u001b[1Cbugs.\u001b[1CNow\u001b[1Cthe\u001b[1Cfix:\r\n\r\n\u001b[38;2;78;186;101m●\u001b[1C\u001b[39;1mUpdate\u001b[0m(\u001b[4mserver\\rate-limit.ts\u001b[0m)\r\n\u001b[38;2;153;153;153m  ⎿  \u001b[0mAdded\u001b[1C\u001b[1m2\u001b[1C\u001b[0mlines,\u001b[1Cremoved\u001b[1C\u001b[1m1\u001b[1C\u001b[0mline\r\n \u001b[1C   \u001b[38;2;248;248;242;2m 21 \u001b[22m     windows.\u001b[38;2;166;226;46mset\u001b[38;2;248;248;242m(key, { \u001b[38;2;166;226;46mopenedAt\u001b[38;2;248;248;242m: now, \u001b[38;2;166;226;46mcount\u001b[38;2;248;248;242m: \u001b[38;2;190;132;255m1 \u001b[38;2;248;248;242m});\r\n\u001b[0m     \u001b[38;2;248;248;242;2m 22 \u001b[22m     \u001b[38;2;249;38;114mreturn \u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m;\r\n\u001b[5C\u001b[2m 23 \u001b[22m   }\r\n\u001b[0m     \u001b[38;2;220;90;90;48;2;61;1;0m 24 -  \u001b[38;2;248;248;242mif (now - current.openedAt > WINDOW_MS) {\u001b[94X\u001b[94C\u001b[0m       \r\n  \u001b[3C\u001b[38;2;80;200;80;48;2;2;40;0m 24 +  \u001b[38;2;249;38;114mif \u001b[38;2;248;248;242m(now - current.\u001b[38;2;255;255;255mopenedAt \u001b[38;2;248;248;242m>\u001b[48;2;4;71;0m=\u001b[48;2;2;40;0m \u001b[38;2;255;255;255mWINDOW_MS\u001b[38;2;248;248;242m) {\u001b[93X\u001b[93C\u001b[0m\r\n     \u001b[38;2;80;200;80;48;2;2;40;0m 25 +    \u001b[38;2;248;248;242mcurrent.\u001b[38;2;255;255;255mopenedAt \u001b[38;2;248;248;242m= now;\u001b[110X\u001b[110C\u001b[0m       \r\n     \u001b[38;2;248;248;242;2m 26 \u001b[22m     current.\u001b[38;2;255;255;255mcount \u001b[38;2;248;248;242m= \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m;\r\n\u001b[5C\u001b[2m 27\u001b[1C\u001b[22m \u001b[2C}\r\n\u001b[0m     \u001b[38;2;248;248;242;2m 28\u001b[0m    \u001b[38;2;248;248;242mcurrent.\u001b[38;2;255;255;255mcount \u001b[38;2;248;248;242m+= \u001b[38;2;190;132;255m1\u001b[38;2;248;248;242m;\r\n\r\n\u001b[38;2;78;186;101m●\u001b[38;2;215;119;87m \u001b[39;1mBash\u001b[0m(npm test 2>&1 | tail -15)\r\n\u001b[38;2;153;153;153m  ⎿  \u001b[0mnpm notice\u001b[1Crun\u001b[1Ccontoso-web@1.8.0\u001b[1Ctest\r\n\u001b[5Cnpm\u001b[1Cnotice\u001b[1Crun\u001b[1Cvitest\u001b[1Crun\r\n \u001b[38;2;215;119;87m \u001b[0m   \u001b[2m… +9 lines (ctrl+o to expand)\r\n\r\n\u001b[38;2;255;255;255;22m●\u001b[1C\u001b[0mAll 6 tests pass. Findings:\r\n\r\n\u001b[2C\u001b[1m1. \u001b[38;2;177;185;249mserver/rate-limit.ts:25 \u001b[39m— expiry never resets \u001b[38;2;177;185;249mopenedAt\u001b[39m; the limiter permanently disables itself. Fixed.\r\n\u001b[0m  On expiry the code set \u001b[38;2;177;185;249mcurrent.count = 0 \u001b[0mbut left \u001b[38;2;177;185;249mopenedAt \u001b[0mat its original value. Once the first window lapses, \u001b[38;2;177;185;249mnow - current.openedAt > WINDOW_MS \u001b[0mstays  true\u001b[1Cfor\u001b[1Cevery\u001b[1Csubsequent\u001b[1Ccall\u001b[1Cforever,\u001b[1Cso\u001b[1Ceach\u001b[1Ccall\u001b[1Cresets\u001b[1Cthe\u001b[1Ccount\u001b[1Cto\u001b[1C0,\u001b[1Cincrements\u001b[1Cto\u001b[1C1,\u001b[1Cand\u001b[1Creturns\u001b[1C\u001b[38;2;177;185;249mtrue\u001b[0m.\u001b[1CAfter\u001b[1C60\u001b[1Cseconds\u001b[1Ca\u001b[1Ckey\u001b[1Cis\u001b[1Ceffectively\r\n  unlimited — the security-relevant bug.\r\n  \r\n\u001b[2C\u001b[1m2.\u001b[1C\u001b[38;2;177;185;249mserver/rate-limit.ts:24 \u001b[39m—\u001b[1C\u001b[38;2;177;185;249m> \u001b[39mshould\u001b[1Cbe\u001b[1C\u001b[38;2;177;185;249m>=\u001b[39m;\u001b[1Coff-by-one\u001b[1Con\u001b[1Cthe\u001b[1Cwindow\u001b[1Cboundary.\u001b[1CFixed.\r\n\u001b[0m  A window opened at \u001b[38;2;177;185;249mt \u001b[0mshould expire at \u001b[38;2;177;185;249mt + WINDOW_MS\u001b[0m. With \u001b[38;2;177;185;249m>\u001b[0m, a request at exactly \u001b[38;2;177;185;249mopenedAt + 60_000 \u001b[0mstill counted against the old window, making the    \r\n  effective window 60001ms.\r\n\r\n  \u001b[1m3.\u001b[0m \u001b[38;2;177;185;249;1mtests/rate-limit.test.ts \u001b[39m—\u001b[0m \u001b[1mno\u001b[0m \u001b[1mexpiry\u001b[0m \u001b[1mcoverage\u001b[0m \u001b[1mat\u001b[0m \u001b[1mall\u001b[0m \u001b[1m(omission,\u001b[0m \u001b[1mnot\u001b[0m \u001b[1ma\u001b[0m \u001b[1mwrong\u001b[0m \u001b[1massertion).\r\n\u001b[0m  Both existing tests pinned \u001b[38;2;177;185;249mnow = 1000\u001b[0m, so neither ever entered the expiry branch — which is why bug 1 survived. I verified the two existing tests pass  \r\n  correctly against the current code and left them alone. Added two tests at \u001b[38;2;177;185;249mtests/rate-limit.test.ts:19 \u001b[0mand \u001b[38;2;177;185;249m:27\u001b[0m:\r\n  - a fresh window after expiry that asserts the limit \u001b[1mre-applies\u001b[0m in the second window (the trailing \u001b[38;2;177;185;249mfalse \u001b[0mis what discriminates — a test that only checks\r\n    \"allowed again\" passes against the buggy code);\r\n  - a boundary case pinning expiry to exactly \u001b[38;2;177;185;249mopenedAt + 60_000\u001b[0m, so finding 2's choice is documented rather than implicit.\r\n\r\n  I ran the new tests \u001b[3mbefore\u001b[0m the fix and confirmed both failed (\u001b[38;2;177;185;249mexpected true to be false \u001b[0mand \u001b[38;2;177;185;249mexpected false to be true\u001b[0m), so they genuinely cover the bugs\r\n  rather than just the patched behavior.\r\n\r\n  Two things I noticed and deliberately did not change, since you asked for correctness bugs: the \u001b[38;2;177;185;249mwindows \u001b[0mMap never evicts expired entries, so it grows   \r\n  unboundedly with distinct user IDs (a resource leak in a long-lived server, worth a follow-up), and \u001b[38;2;177;185;249minterface Window \u001b[0mshadows the DOM global (harmless   \r\n  here, naming only).\r\n\r\n\u001b[38;2;153;153;153m✻ Cooked for 1m 12s · done 4:03 PM\r\n\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\u001b[0m❯ \u001b[2mcommit this\r\n\u001b[38;2;136;136;136;22m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\u001b[0m  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · ← 1 agent\u001b[96C\u001b[38;2;78;186;101;4m/rc\u001b[0m  \r\n\u001b[3A\u001b[2C\u001b[?2004h\u001b[?1004h",
+  "peek": [
+    "✻ Cooked for 1m 12s · done 4:03 PM",
+    "❯ commit this"
+  ],
+  "changes": {
+    "files": [
+      {
+        "path": "server/rate-limit.ts",
+        "status": "M",
+        "binary": false,
+        "insertions": 2,
+        "deletions": 1,
+        "original": "/**\n * Per-user rate limiting: 100 reads and 20 writes per minute.\n *\n * Fixed windows keyed by user and kind. A window is opened on the first request and counts\n * requests until it expires.\n */\nconst LIMITS: Record<'read' | 'write', number> = { read: 100, write: 20 };\nconst WINDOW_MS = 60_000;\n\ninterface Window {\n  openedAt: number;\n  count: number;\n}\n\nconst windows = new Map<string, Window>();\n\nexport function checkRateLimit(userId: string, kind: 'read' | 'write', now = Date.now()): boolean {\n  const key = `${userId}:${kind}`;\n  const current = windows.get(key);\n  if (!current) {\n    windows.set(key, { openedAt: now, count: 1 });\n    return true;\n  }\n  if (now - current.openedAt > WINDOW_MS) {\n    current.count = 0;\n  }\n  current.count += 1;\n  return current.count <= LIMITS[kind];\n}\n\nexport function resetRateLimits(): void {\n  windows.clear();\n}\n",
+        "modified": "/**\n * Per-user rate limiting: 100 reads and 20 writes per minute.\n *\n * Fixed windows keyed by user and kind. A window is opened on the first request and counts\n * requests until it expires.\n */\nconst LIMITS: Record<'read' | 'write', number> = { read: 100, write: 20 };\nconst WINDOW_MS = 60_000;\n\ninterface Window {\n  openedAt: number;\n  count: number;\n}\n\nconst windows = new Map<string, Window>();\n\nexport function checkRateLimit(userId: string, kind: 'read' | 'write', now = Date.now()): boolean {\n  const key = `${userId}:${kind}`;\n  const current = windows.get(key);\n  if (!current) {\n    windows.set(key, { openedAt: now, count: 1 });\n    return true;\n  }\n  if (now - current.openedAt >= WINDOW_MS) {\n    current.openedAt = now;\n    current.count = 0;\n  }\n  current.count += 1;\n  return current.count <= LIMITS[kind];\n}\n\nexport function resetRateLimits(): void {\n  windows.clear();\n}\n",
+        "language": "typescript"
+      },
+      {
+        "path": "tests/rate-limit.test.ts",
+        "status": "M",
+        "binary": false,
+        "insertions": 15,
+        "deletions": 0,
+        "original": "import { beforeEach, describe, expect, it } from 'vitest';\nimport { checkRateLimit, resetRateLimits } from '../server/rate-limit.ts';\n\ndescribe('checkRateLimit', () => {\n  beforeEach(() => resetRateLimits());\n\n  it('allows up to the read limit inside one window', () => {\n    for (let index = 0; index < 100; index++) expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(false);\n  });\n\n  it('keeps read and write windows separate', () => {\n    for (let index = 0; index < 20; index++) expect(checkRateLimit('u_1', 'write', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'write', 1000)).toBe(false);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n  });\n});\n",
+        "modified": "import { beforeEach, describe, expect, it } from 'vitest';\nimport { checkRateLimit, resetRateLimits } from '../server/rate-limit.ts';\n\ndescribe('checkRateLimit', () => {\n  beforeEach(() => resetRateLimits());\n\n  it('allows up to the read limit inside one window', () => {\n    for (let index = 0; index < 100; index++) expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(false);\n  });\n\n  it('keeps read and write windows separate', () => {\n    for (let index = 0; index < 20; index++) expect(checkRateLimit('u_1', 'write', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'write', 1000)).toBe(false);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n  });\n\n  it('opens a fresh window after the old one expires', () => {\n    for (let index = 0; index < 100; index++) expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'read', 1000)).toBe(false);\n\n    for (let index = 0; index < 100; index++)\n      expect(checkRateLimit('u_1', 'read', 61_001)).toBe(true);\n    expect(checkRateLimit('u_1', 'read', 61_001)).toBe(false);\n  });\n\n  it('expires a window exactly one window length after it opened', () => {\n    for (let index = 0; index < 100; index++) expect(checkRateLimit('u_1', 'read', 1000)).toBe(true);\n    expect(checkRateLimit('u_1', 'read', 60_999)).toBe(false);\n    expect(checkRateLimit('u_1', 'read', 61_000)).toBe(true);\n  });\n});\n",
+        "language": "typescript"
+      }
+    ],
+    "totalInsertions": 17,
+    "totalDeletions": 1
+  },
+  "stream": [
+    {
+      "t": 90,
+      "data": "\u001b[?9001h\u001b[?1004h"
+    },
+    {
+      "t": 233,
+      "data": "\u001b[?25l\u001b[2J\u001b[m\u001b[H\u001b]0;claude\u0007\u001b[?25h"
+    },
+    {
+      "t": 547,
+      "data": "\u001b[?25l\u001b[?2004h\u001b[?2031h\u001b[?1004h\u001b[<u\u001b[>5u\u001b[>4;2m\u001b[>0q\u001b[?u"
+    },
+    {
+      "t": 1388,
+      "data": "\u001b[>4m\u001b[<u\u001b[?2031l\u001b[?2004l\u001b[?2004h\u001b[?2031h\u001b[?1004h\u001b[<u\u001b[>5u\u001b[>4;2m\u001b]0;✳ Claude Code\u0007\u001b[?2026h\u001b[?2026l\u001b[38;2;215;119;87m ▐\u001b[48;2;0;0;0m▛███▛█\u001b[m\u001b[1m\u001b[3CClaude\u001b[1CCode\u001b[38;2;153;153;153m\u001b[22m\u001b[1Cv2.1.270\u001b[38;2;215;119;87m\r\n▝▜\u001b[48;2;0;0;0m█████\u001b[49m█▀\u001b[38;2;153;153;153m\u001b[2COpus\u001b[1C5\u001b[1C(1M\u001b[1Ccontext)\u001b[1Cwith\u001b[1Cmedium\u001b[1Ceffort\u001b[1C·\u001b[1CClaude\u001b[1CMax\u001b[38;2;215;119;87m\r\n \u001b[1C▝▝\u001b[1C▝▝\u001b[38;2;153;153;153m\u001b[4C~\\work\\contoso-web\u001b[38;2;136;136;136m\u001b[6;1H──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n❯ \u001b[2mTry\u001b[1C\"create\u001b[1Ca\u001b[1Cutil\u001b[1Clogging.py\u001b[1Cthat...\"\u001b[38;2;136;136;136m\u001b[22m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[9;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1C←\u001b[1Cfor\u001b[1Cagents\u001b[78C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;255;193;7m\u001b[10;138H/rc\u001b[1Cconnecting…\u001b[7;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 1643,
+      "data": "\u001b]0;◐ Claude Code\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;80;80;80m\u001b[48;2;55;55;55m\u001b[6;1H❯ \u001b[38;2;255;255;255mReview server/rate-limit.ts and tests/rate-limit.test.ts for correctness bugs. Report each finding with the line it is on, fix the ones you are sure    \u001b[39m  \u001b[38;2;255;255;255mabout, and run npm test.                                                                                                                                \u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✽\u001b[1CCrunching…\u001b[K\u001b[m\u001b[10;138H\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m\r\n❯ \u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[14;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[62C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;255;193;7m\u001b[15;138H/rc\u001b[1Cconnecting…\u001b[12;3H\u001b[?25h\u001b[>0q\u001b[m"
+    },
+    {
+      "t": 1816,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✻\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2020,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H✶\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2134,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H*\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2249,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[15;138H\u001b[12X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[12C/rc\u001b[12;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[9;1H✢\u001b[12;3H\u001b[?25h"
+    },
+    {
+      "t": 2377,
+      "data": "\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;1H·\u001b[12;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2531,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[9;3HManifesting… \u001b[12;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[9;14H…\u001b[12;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 2699,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[9;1H \u001b[m\u001b[1CReading \u001b[1m1\u001b[22m file…\u001b[38;2;153;153;153m\u001b[1C(ctrl+o to expand)\u001b[38;2;215;119;87m\u001b[11;1H· Manifesting\u001b[38;2;235;159;127m…\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[14;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[16;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[62C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[17;150H/rc\u001b[14;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;255;255;255m\u001b[9;1H●\u001b[m\u001b[1CI'll start by reading both files.\u001b[K\u001b[38;2;153;153;153m\u001b[11;1H \u001b[m\u001b[1CReading \u001b[1m1\u001b[22m file…\u001b[38;2;153;153;153m\u001b[1C(ctrl+o to expand)\u001b[38;2;215;119;87m\u001b[13;1H· Manifesting\u001b[38;2;235;159;127m…\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[16;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[18;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[62C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[19;150H/rc\u001b[16;3H\u001b[?25h"
+    },
+    {
+      "t": 2802,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[13;1H✢\u001b[38;2;235;159;127m\u001b[11Cg\u001b[38;2;153;153;153m\u001b[2C(1s · ↓\u001b[1C2 tokens)\u001b[16;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 2902,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;24H3\u001b[16;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[16;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3020,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[13;1H*\u001b[38;2;235;159;127m\u001b[10Cn\u001b[38;2;153;153;153m\u001b[11C5\u001b[16;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[11;1H*\u001b[1CManifesti\u001b[38;2;235;159;127mng… \u001b[38;2;153;153;153m(1s · ↓ 5 tokens)\u001b[K\u001b[38;2;136;136;136m\u001b[13;1H──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[m\u001b[16;1H  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[62C◐ medium · /effort\u001b[m\r\n\u001b[149X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[149C/rc\u001b[m\u001b]8;;\u001b\\  \r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[14;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[m\u001b[1CReading \u001b[1m2\u001b[22m files… \u001b[38;2;153;153;153m(ctrl+o to expand)\r\n  ⎿  tests\\rate-limit.test.ts\u001b[m\r\n                                                                                                                                                          \u001b[38;2;215;119;87m* \u001b[38;2;235;159;127mManifesting… \u001b[38;2;153;153;153m(1s · ↓\u001b[1C5 tokens)\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[m\u001b[147C     \u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[19;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[62C◐\u001b[1Cmedium\u001b[1C·\u001b[1C/effort\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[20;150H/rc\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 3147,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;153;153;153m\u001b[22C30 tokens)\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[9C55\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 3247,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 3355,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[9C80\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3473,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[9C118 tokens)\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 3573,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[10C30\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 3691,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;220;129;97m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C2\u001b[8C9\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;3HManife\u001b[38;2;235;159;127msti\u001b[38;2;215;119;87mng…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3810,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;235;159;127m\u001b[6Ce\u001b[38;2;215;119;87m\u001b[2Ci\u001b[38;2;153;153;153m\u001b[13C45\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 3922,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;26H8\u001b[7C · \u001b[38;2;185;185;185mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4029,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;235;159;127m\u001b[5Cf\u001b[38;2;215;119;87m\u001b[2Ct\u001b[38;2;153;153;153m\u001b[15C9\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4148,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;153;153;153m\u001b[23C51\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4252,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;235;159;127m\u001b[4Ci\u001b[38;2;215;119;87m\u001b[2Cs\u001b[38;2;153;153;153m\u001b[16C2\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4371,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H·\u001b[38;2;235;159;127m\u001b[3Cn\u001b[38;2;215;119;87m\u001b[2Ce\u001b[38;2;153;153;153m\u001b[17C4\u001b[38;2;177;177;177m\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;26H6\u001b[38;2;173;173;173m\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 4485,
+      "data": "\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 4588,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[14;4Ha\u001b[38;2;215;119;87m\u001b[2Cf\u001b[38;2;153;153;153m\u001b[18C7\u001b[38;2;169;169;169m\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4706,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;17H3\u001b[8C9\u001b[38;2;161;161;161m\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4808,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;235;159;127m\u001b[1CM\u001b[38;2;215;119;87m\u001b[2Ci\u001b[38;2;153;153;153m\u001b[18C60\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 4926,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;26H1\u001b[10Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5027,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[3Cn\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5144,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5260,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[2Ca\u001b[38;2;157;157;157m\u001b[32Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 5377,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[1CM\u001b[38;2;161;161;161m\u001b[33Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;165;165;165m\u001b[14;37Hthinking with medium effort\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 5497,
+      "data": "\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;173;173;173m\u001b[14;37Hthinking with medium effort\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 5605,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 5711,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;17H4\u001b[38;2;177;177;177m\u001b[19Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;181;181;181m\u001b[35Cthinking with medium effort\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 5822,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 5927,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;185;185;185m\u001b[35Cthinking with medium effort\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6028,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;37Hthought for 2s)\u001b[K\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6161,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;153;153;153m\u001b[23C86\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6261,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;153;153;153m\u001b[22C224\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6414,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;218;124;92m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[11;18H,\u001b[1Clisting \u001b[1m1\u001b[22m directory…\u001b[38;2;153;153;153m\u001b[1C(ctrl+o to expand)\u001b[12;6H$ cat p\u001b[1Cckage.json && l\u001b[38;2;215;119;87m\u001b[14;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C49\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[10C74\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6601,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C5\u001b[7C99\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6719,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;230;149;117m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[9C336\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 6819,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C61\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7064,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;235;159;127m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[9C41\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7165,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;153;153;153m\u001b[23C49\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 7269,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C74\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 7382,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C99\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 7501,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[9C524\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7618,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C6\u001b[7C49\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7718,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[10C7\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 7836,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C8\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 7953,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C95\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8053,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;153;153;153m\u001b[24C7\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;34H)\u001b[K\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8171,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;26H9\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8286,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[9C600\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 8386,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[11C2\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8503,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[11C3\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8621,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C7\u001b[8C6\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8738,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;230;149;117m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[11C7\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8839,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[11C9\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 8956,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;235;159;127m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[10C10\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9072,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;153;153;153m\u001b[24C1\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9290,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 9408,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 9516,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 9625,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C8\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9743,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9843,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 9960,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10078,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10180,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10292,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;218;124;92m\u001b[14;3HManifesting…\u001b[17;3H\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?25h"
+    },
+    {
+      "t": 10414,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[14;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10515,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10631,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C9\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10749,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;230;149;117m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 10865,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 10967,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;235;159;127m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11085,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11203,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 11303,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;233;154;122m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11420,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[19;85HAdvisor Tool (experimental) is on and may use more tokens · /advisor\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 11527,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 11637,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;223;134;102m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[2C10s · ↓ 6\u001b[1C1 tokens)\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11754,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11871,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 11973,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12090,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 12208,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 12308,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;218;124;92m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12424,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12543,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12652,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[3C1\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H●\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12769,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✢\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12873,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;233;154;122m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[11C36\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 12992,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H*\u001b[38;2;235;159;127m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[11C61\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13092,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✶\u001b[38;2;153;153;153m\u001b[24C86\u001b[17;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 13209,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✻\u001b[38;2;153;153;153m\u001b[23C711\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13328,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[11;1H \u001b[38;2;233;154;122m\u001b[14;3HManifesting…\u001b[38;2;153;153;153m\u001b[11C49\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13428,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;1H✽\u001b[38;2;228;144;112m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[11C60\u001b[17;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13532,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[14;3HManifesting…\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[14;27H8\u001b[17;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[14;18H2\u001b[17;3H\u001b[?25h"
+    },
+    {
+      "t": 13645,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[14;35H · \u001b[38;2;169;169;169mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[17;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[11;1H \u001b[38;2;153;153;153m\u001b[1CRead \u001b[1m2\u001b[22m files, listed \u001b[1m1\u001b[22m directory (ctrl+o to expand)\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\r\n \u001b[m\u001b[1m\u001b[1CAdvising\u001b[38;2;153;153;153m\u001b[22m using Opus 5\u001b[m\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✽\u001b[1CManifesting… \u001b[38;2;153;153;153m(12s · ↓\u001b[1C793 tokens · \u001b[38;2;173;173;173mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[20;3H⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[12CAdvisor Tool (experimental) is on and may use more tokens · /advisor\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[21;150H/rc\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 13776,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[38;2;153;153;153m\u001b[23C830\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13877,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;26H41\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 13994,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[38;2;153;153;153m\u001b[25C9\u001b[38;2;185;185;185m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14111,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;153;153;153m\u001b[24C53\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 14215,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;153;153;153m\u001b[25C5\u001b[38;2;181;181;181m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14334,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;27H6\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14435,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[38;2;153;153;153m\u001b[25C8\u001b[38;2;173;173;173m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14535,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[15;27H9\u001b[38;2;169;169;169m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 14671,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[15;18H3\u001b[7C62\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14772,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;153;153;153m\u001b[25C3\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 14889,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;27H5\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15006,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;153;153;153m\u001b[25C6\u001b[10Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 15107,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[38;2;153;153;153m\u001b[25C8\u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15226,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[38;2;157;157;157m\u001b[36Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15444,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✽\u001b[38;2;235;159;127m\u001b[12C…\u001b[38;2;165;165;165m\u001b[23Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15561,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[15;13Hg\u001b[38;2;169;169;169m\u001b[24Cthinking with medium effort\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H4\u001b[19Cthought for 1s)\u001b[K\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 15761,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[38;2;235;159;127m\u001b[10Cn\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 16012,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[38;2;235;159;127m\u001b[9Ci\u001b[38;2;215;119;87m\u001b[2C…\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 16132,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;235;159;127m\u001b[8Ct\u001b[38;2;215;119;87m\u001b[2Cg\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 16250,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 16363,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16464,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[38;2;235;159;127m\u001b[7Cs\u001b[38;2;215;119;87m\u001b[2Cn\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16565,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[15;8He\u001b[38;2;215;119;87m\u001b[2Ci\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16682,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H5\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16800,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;235;159;127m\u001b[5Cf\u001b[38;2;215;119;87m\u001b[2Ct\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 16968,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;235;159;127m\u001b[4Ci\u001b[38;2;215;119;87m\u001b[2Cs\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 17136,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17237,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[38;2;235;159;127m\u001b[3Cn\u001b[38;2;215;119;87m\u001b[2Ce\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17354,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✽\u001b[38;2;235;159;127m\u001b[2Ca\u001b[38;2;215;119;87m\u001b[2Cf\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17574,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[38;2;235;159;127m\u001b[15;3HM\u001b[38;2;215;119;87m\u001b[2Ci\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H6\u001b[16C)\u001b[K\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17807,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[3Cn\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 17978,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[2Ca\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18141,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18242,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[1CM\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18358,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18691,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H7\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 18791,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 18940,
+      "data": "\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 19041,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 19162,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 19272,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 19374,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[20;85H\u001b[65X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[65C/rc\u001b[m\u001b]8;;\u001b\\\r\n\u001b[K\r\n\u001b[K\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 19708,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H8\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 19825,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 19925,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20159,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20260,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20377,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20610,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[15;18H9\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 20828,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 20947,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21165,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21281,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21381,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21616,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;17H20\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 21822,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[38;2;235;159;127m\u001b[12C…\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 21950,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22052,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;235;159;127m\u001b[11Cg\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22169,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[15;12Hn\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22287,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22387,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[38;2;235;159;127m\u001b[9Ci\u001b[38;2;215;119;87m\u001b[2C…\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22619,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[15;10Ht\u001b[38;2;215;119;87m\u001b[2Cg\u001b[38;2;153;153;153m\u001b[4C1\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22783,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[38;2;235;159;127m\u001b[7Cs\u001b[38;2;215;119;87m\u001b[2Cn\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 22951,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[38;2;235;159;127m\u001b[6Ce\u001b[38;2;215;119;87m\u001b[2Ci\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23052,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 23185,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;235;159;127m\u001b[15;7Hf\u001b[38;2;215;119;87m\u001b[2Ct\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23286,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23404,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✽\u001b[38;2;235;159;127m\u001b[4Ci\u001b[38;2;215;119;87m\u001b[2Cs\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23624,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;6Hife\u001b[38;2;153;153;153m\u001b[9C2\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 23744,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✻\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 23851,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 23959,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24078,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24195,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24412,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 24630,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[15;1H·\u001b[1CManifesting… \u001b[38;2;153;153;153m\u001b[2C3\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 24865,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;210;110;84m\u001b[15;1H*\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 24988,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 25095,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 25199,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 25417,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 25635,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H4\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 25868,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 25985,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[15;1H✶\u001b[1CManifesting… \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26086,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[38;2;204;100;81m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26202,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26421,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26627,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H5\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26754,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 26987,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27104,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;204;100;81m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27205,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[15;1H✻\u001b[1CManifesting… \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27306,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27439,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27588,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H6\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27775,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 27910,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 28014,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[15;1H*\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 28123,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;199;91;78m\u001b[15;1H✢\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 28231,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 28446,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[15;1H·\u001b[1CManifesting… \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 28559,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 28665,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H7\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 28782,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29000,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29119,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 29220,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;193;81;75m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29455,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;193;81;75m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 29672,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H✽\u001b[1CManifesting… \u001b[38;2;153;153;153m\u001b[2C8\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 29790,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30007,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30126,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30227,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30345,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30462,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 30679,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H9\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30797,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 30898,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H✢\u001b[1CManifesting… \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 31016,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;182;62;69m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31136,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H✻\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 31248,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 31352,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 31567,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31685,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;17H30\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 31803,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32021,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32141,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 32254,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;177;53;66m\u001b[15;1H✢\u001b[1CManifesting… \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32354,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 32703,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H1\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 32805,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33038,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33142,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33256,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 33375,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;177;53;66m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33476,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[1CManifesting… \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33711,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H2\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33811,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 33928,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34162,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34264,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 34381,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34600,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[15;18H3\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34820,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 34938,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35157,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35272,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 35388,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35605,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H4\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 35822,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 35939,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36056,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36236,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36391,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 36626,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[15;18H5\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36845,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 36946,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 37046,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37197,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37402,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37621,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H6\u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37855,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 37956,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38073,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 38190,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38409,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38629,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H7\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38864,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 38965,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39082,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 39200,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39419,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39635,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H8\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39872,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 39974,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 40090,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?25h"
+    },
+    {
+      "t": 40208,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 40423,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 40658,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H9\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 40758,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 40979,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 41095,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41212,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41431,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41650,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;17H40\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41768,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 41902,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 42002,
+      "data": "\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 42103,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42221,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42440,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42672,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H1\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42772,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 42962,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43108,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43224,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43442,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43676,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H2\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43793,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 43922,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44128,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44229,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44329,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44462,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44682,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H3\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 44798,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 44931,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 45035,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 45144,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 45249,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45349,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45549,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45682,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H4\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 45801,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 46020,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46136,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46255,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46355,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46696,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H5\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 46805,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 47032,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47152,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 47261,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 47368,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47703,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H6\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 47820,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 47937,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 48157,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 48272,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 48392,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 48588,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[15;18H7\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 48727,
+      "data": "\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 48842,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 48951,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 49156,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49272,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49389,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49607,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H8\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 49807,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 49941,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50060,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50277,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50395,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 50612,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[15;18H9\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 50846,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 50946,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51063,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51282,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51401,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51609,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[15;17H50\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 51852,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 51970,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52071,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52191,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52409,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52569,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H1\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 52844,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 52962,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53079,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53197,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53418,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53530,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 53636,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H2\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53872,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 53972,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54089,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54206,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54424,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 54643,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H3\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 54761,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 54978,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55097,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55214,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55432,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 55665,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H4\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55765,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55882,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 55999,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56100,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56217,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56413,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56669,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H5\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 56770,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57004,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57104,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 57221,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 57373,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✽\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 57478,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 57675,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H6\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 57791,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;171;43;63m\u001b[15;1H✻\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58010,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✶\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58127,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H*\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58227,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H●\u001b[18;3H\u001b[?25h"
+    },
+    {
+      "t": 58330,
+      "data": "\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 58463,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H·\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58682,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;18H7\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58799,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;171;43;63m\u001b[15;1H✢\u001b[18;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 58918,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[13;1H \u001b[18;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[15;35H · thinking with medium effort)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[21;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[19;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;78;186;101m\u001b[13;1H●\u001b[38;2;153;153;153m\r\n  ⎿  ✔ Advisor has reviewed the conversation and will apply the feedback\u001b[m\r\n\u001b[K\u001b[38;2;171;43;63m\r\n✢ Manifesting… \u001b[38;2;153;153;153m(57s ·\u001b[1C↓ 868\u001b[1Ctokens · thinking with medium effort)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n                                                                                                                                                          \u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[22;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[20;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;182;62;69m\u001b[16;1H*\u001b[1CManifesting… \u001b[20;3H\u001b[?25h"
+    },
+    {
+      "t": 59030,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 59134,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;188;72;72m\u001b[16;1H✶\u001b[1CManifesting… \u001b[20;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[16;1H✶\u001b[1CManifesting… \u001b[20;3H\u001b[?25h"
+    },
+    {
+      "t": 59236,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[16;1H✻\u001b[38;2;153;153;153m\u001b[24C93\u001b[38;2;157;157;157m\u001b[10Cthinking with medium effort\u001b[20;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 59353,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[16;1H✽\u001b[38;2;153;153;153m\u001b[23C918\u001b[38;2;161;161;161m\u001b[10Cthinking with medium effort\u001b[20;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;255;255;255m\u001b[16;1H●\u001b[m\u001b[1CAdvisor confirms my read. Adding the regression test first, before\u001b[1Cthe\u001b[1Cfix,\u001b[1Cso\u001b[1CI\u001b[1Ccan\u001b[1Csee\u001b[1Cit\u001b[1Cfail.\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✽\u001b[1CManifesting… \u001b[38;2;153;153;153m(57s · ↓\u001b[1C918 tokens · \u001b[38;2;161;161;161mthinking with medium effort\u001b[38;2;153;153;153m)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[22;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[24;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[22;3H\u001b[?25h\u001b[m\u001b]8;;\u001b\\"
+    },
+    {
+      "t": 59472,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;26H56\u001b[38;2;165;165;165m\u001b[10Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59574,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;26H70\u001b[38;2;169;169;169m\u001b[10Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59690,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;18H8\u001b[7C89\u001b[38;2;177;177;177m\u001b[10Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59808,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H✻\u001b[38;2;153;153;153m\u001b[24C9\u001b[38;2;181;181;181m\u001b[11Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 59909,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;25H1.0k tokens · \u001b[38;2;185;185;185mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60025,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H✶\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60142,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H*\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60257,
+      "data": "\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H✢\u001b[38;2;235;159;127m\u001b[12C…\u001b[38;2;181;181;181m\u001b[24Cthinking with medium effort\u001b[22;3H\u001b[?25h"
+    },
+    {
+      "t": 60358,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[18;1H·\u001b[38;2;235;159;127m\u001b[11Cg\u001b[38;2;153;153;153m\u001b[13C1\u001b[38;2;177;177;177m\u001b[11Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60474,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;173;173;173m\u001b[18;39Hthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60591,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[18;12Hn\u001b[38;2;169;169;169m\u001b[26Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60692,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;18H9\u001b[38;2;161;161;161m\u001b[20Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 60808,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[18;1H✢\u001b[38;2;235;159;127m\u001b[9Ci\u001b[38;2;215;119;87m\u001b[2C…\u001b[38;2;157;157;157m\u001b[24Cthinking with medium effort\u001b[22;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[18;1H●\u001b[m\u001b[1m\u001b[1CUpdate\u001b[22m(\u001b]8;id=u-1g6mutp%10554793394658041345;file:///C:/Users/dev/work/contoso-web/tests/rate-limit.test.ts\u001b\\tests\\rate-limit.test.ts\u001b]8;;\u001b\\)\u001b[K\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✢\u001b[1CManifest\u001b[38;2;235;159;127ming\u001b[38;2;215;119;87m… \u001b[38;2;153;153;153m(59s · ↓\u001b[1C1.1k tokens · \u001b[38;2;157;157;157mthinking with medium effort\u001b[38;2;153;153;153m)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[24;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;175;135;255m\u001b[26;3H⏵⏵\u001b[1Caccept\u001b[1Cedits\u001b[1Con \u001b[38;2;153;153;153m(shift+tab\u001b[1Cto\u001b[1Ccycle)\u001b[1C·\u001b[1Cesc\u001b[1Cto\u001b[1Cinterrupt\u001b[1C·\u001b[1C←\u001b[1C1\u001b[1Cagent\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[24;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b]8;;\u001b\\\u001b[38;2;233;154;122m\u001b[20;3HManifesting…\u001b[38;2;153;153;153m\u001b[21C)\u001b[K\u001b[24;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[20;36H · \u001b[38;2;157;157;157mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[24;3H\u001b[?25h\u001b[?25l\u001b[?2026h\u001b[m\u001b[38;2;78;186;101m\u001b[18;1H●\u001b[38;2;153;153;153m\r\n  ⎿  \u001b[mAdded\u001b[1m\u001b[1C15\u001b[22m\u001b[1Clines\r\n \u001b[1C   \u001b[38;2;248;248;242m\u001b[2m 14 \u001b[22m     \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'write'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[m\r\n     \u001b[38;2;248;248;242m\u001b[2m 15 \u001b[22m     \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[K\u001b[2m\u001b[22;6H 16 \u001b[22m   });\u001b[m\r\n     \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m 17 +\u001b[137X\u001b[m\u001b[137C       \r\n  \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m\u001b[3C 18 +  \u001b[38;2;166;226;46mit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'opens a fresh window after the old one expires'\u001b[38;2;248;248;242m, () => {\u001b[75X\u001b[m\r\n     \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m 19 +    \u001b[38;2;249;38;114mfor \u001b[38;2;248;248;242m(\u001b[38;2;102;217;239mlet \u001b[38;2;248;248;242mindex = \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m; index < \u001b[38;2;190;132;255m100\u001b[38;2;248;248;242m; index++) \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[36X\u001b[m\u001b[36C       \u001b[26;3H   \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m 20 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[77X\u001b[m\u001b[79C     \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m\u001b[27;6H 21 +\u001b[137X\u001b[28;6H 22 +    \u001b[38;2;249;38;114mfor \u001b[38;2;248;248;242m(\u001b[38;2;102;217;239mlet \u001b[38;2;248;248;242mindex = \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m; index < \u001b[38;2;190;132;255m100\u001b[38;2;248;248;242m; index++)\u001b[92X\u001b[38;2;80;200;80m\u001b[29;6H 23 +      \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m61_001\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[74X\u001b[38;2;80;200;80m\u001b[30;6H 24 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m61_001\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[75X\u001b[38;2;80;200;80m\u001b[31;6H 25 +  \u001b[38;2;248;248;242m});\u001b[132X\u001b[38;2;80;200;80m\u001b[32;6H 26 +\u001b[137X\u001b[33;6H 27 +  \u001b[38;2;166;226;46mit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'expires a window exactly one window length after it opened'\u001b[38;2;248;248;242m, () => {\u001b[63X\u001b[38;2;80;200;80m\u001b[34;6H 28 +    \u001b[38;2;249;38;114mfor \u001b[38;2;248;248;242m(\u001b[38;2;102;217;239mlet \u001b[38;2;248;248;242mindex = \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m; index < \u001b[38;2;190;132;255m100\u001b[38;2;248;248;242m; index++) \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m1000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[36X\u001b[38;2;80;200;80m\u001b[35;6H 29 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m60_999\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mfalse\u001b[38;2;248;248;242m);\u001b[75X\u001b[38;2;80;200;80m\u001b[36;6H 30 +    \u001b[38;2;166;226;46mexpect\u001b[38;2;248;248;242m(\u001b[38;2;166;226;46mcheckRateLimit\u001b[38;2;248;248;242m(\u001b[38;2;230;219;116m'u_1'\u001b[38;2;248;248;242m, \u001b[38;2;230;219;116m'read'\u001b[38;2;248;248;242m, \u001b[38;2;190;132;255m61_000\u001b[38;2;248;248;242m)).\u001b[38;2;166;226;46mtoBe\u001b[38;2;248;248;242m(\u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m);\u001b[76X\u001b[38;2;80;200;80m\u001b[37;6H 31 +  \u001b[38;2;248;248;242m});\u001b[132X\u001b[132C\u001b[m\r\n     \u001b[38;2;248;248;242m\u001b[2m 32\u001b[m  \u001b[38;2;248;248;242m});\u001b[K\u001b[141C\u001b[m\r\n\u001b[154C\r\n\u001b[38;2;215;119;87m✢ \u001b[38;2;233;154;122mManifesting… \u001b[38;2;153;153;153m(59s · ↓ 1.1k tokens · \u001b[38;2;157;157;157mthinking with medium effort\u001b[38;2;153;153;153m)\u001b[K\u001b[88C\u001b[m\r\n\u001b[38;2;153;153;153m  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[64C\u001b[m\r\n\u001b[154C\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n\u001b[38;2;153;153;153m❯ \u001b[152C\u001b[m\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 60917,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[30;3HManifesting…\u001b[38;2;153;153;153m\u001b[12C2\u001b[11Cthinking with medium effort\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;41Hought for 1s)\u001b[K\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 61034,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 61158,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 61268,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 61373,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[12C3\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 61489,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 61589,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 61709,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;3HMani\u001b[38;2;235;159;127mfes\u001b[38;2;215;119;87mting…\u001b[38;2;153;153;153m\u001b[2C1m 0s\u001b[1C· ↓ 1.3k tokens\u001b[1C· thought for 1s)\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;29H4\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 61811,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;235;159;127m\u001b[4Ci\u001b[38;2;215;119;87m\u001b[2Cs\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 61928,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[34;3H\u001b[?25h\u001b[m\u001b[?25l\u001b[?2026h\u001b[38;2;153;153;153m\u001b[30;1H●\u001b[m\u001b[1m\u001b[1CBash\u001b[22m(npm test 2>&1 | tail -40)\u001b[K\u001b[38;2;153;153;153m\u001b[31;6HRunning…\u001b[K\u001b[38;2;215;119;87m\u001b[33;1H✶ Manifesting… \u001b[38;2;153;153;153m(1m 0s · ↓ 1.4k tokens · thought for 1s)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m\r\n❯ \u001b[m\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 62147,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;153;153;153m\u001b[18C1\u001b[8C5\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 62265,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 62383,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 62484,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H \u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 62584,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 62722,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;230;149;117m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 62823,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 62943,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;235;159;127m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;38H)\u001b[K\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 63138,
+      "data": "\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[38;2;153;153;153m\u001b[18C2\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H●\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 63280,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 63381,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 63496,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 63614,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 63715,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H \u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 63849,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H●\u001b[28;6HWait\u001b[34;3H\u001b[?25h\u001b[?25l\u001b[?2026h\u001b[m\u001b[38;2;78;186;101m\u001b[27;1H●\u001b[31m\u001b[28;6H+ Received\u001b[m\u001b[30;1H \u001b[1C   \u001b[32m- false\u001b[K\u001b[m\r\n     \u001b[2m… +36 lines (ctrl+o to expand)\u001b[22m\u001b[K\u001b[38;2;215;119;87m\u001b[33;1H✽ \u001b[38;2;220;129;97mManifesting… \u001b[38;2;153;153;153m(1m 2s · ↓ 1.5k tokens)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m\r\n❯ \u001b[m\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 63950,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 64050,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 64171,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;20H3\u001b[8C6\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 64284,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 64401,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 64502,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 64618,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 64837,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[34;3H\u001b[?25h\u001b[m\u001b[?25l\u001b[?2026h\u001b[38;2;255;255;255m\u001b[30;1H●\u001b[m\u001b[1CBoth new tests fail against the current\u001b[1Ccode,\u001b[1Creproducing\u001b[1Cboth\u001b[1Cbugs.\u001b[1CNow\u001b[1Cthe\u001b[1Cfix:\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✢\u001b[1CManifesting… \u001b[38;2;153;153;153m(1m 3s · ↓\u001b[1C1.6k tokens)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[36;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 64953,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 65061,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 65186,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[30;20H4\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 65287,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 65403,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✽\u001b[34;3H\u001b[?25h\u001b[m\u001b[?25l\u001b[?2026h\u001b[38;2;153;153;153m\u001b[30;1H \u001b[m\u001b[1m\u001b[1CUpdate\u001b[22m(\u001b]8;id=u-611czb%14349792572205103365;file:///C:/Users/dev/work/contoso-web/server/rate-limit.ts\u001b\\server\\rate-limit.ts\u001b]8;;\u001b\\)\u001b[K\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✽\u001b[38;2;230;149;117m\u001b[1CManifesting… \u001b[38;2;153;153;153m(1m 4s · ↓\u001b[1C1.6k tokens)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[36;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 65505,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[28;1H●\u001b[34;3H\u001b[?25h\u001b[?25l\u001b[?2026h\u001b[m\u001b[38;2;78;186;101m\u001b[28;1H●\u001b[38;2;153;153;153m\r\n  ⎿  \u001b[mAdded\u001b[1m\u001b[1C2\u001b[22m\u001b[1Clines,\u001b[1Cremoved\u001b[1m\u001b[1C1\u001b[22m\u001b[1Cline\r\n \u001b[1C   \u001b[38;2;248;248;242m\u001b[2m 21 \u001b[22m     windows.\u001b[38;2;166;226;46mset\u001b[38;2;248;248;242m(key, { \u001b[38;2;166;226;46mopenedAt\u001b[38;2;248;248;242m: now, \u001b[38;2;166;226;46mcount\u001b[38;2;248;248;242m: \u001b[38;2;190;132;255m1 \u001b[38;2;248;248;242m});\u001b[m\r\n     \u001b[38;2;248;248;242m\u001b[2m 22 \u001b[22m     \u001b[38;2;249;38;114mreturn \u001b[38;2;190;132;255mtrue\u001b[38;2;248;248;242m;\u001b[K\u001b[2m\u001b[32;6H 23 \u001b[22m   }\u001b[m\r\n     \u001b[38;2;220;90;90m\u001b[48;2;61;1;0m 24 -  \u001b[38;2;248;248;242mif (now - current.openedAt > WINDOW_MS) {\u001b[94X\u001b[m\u001b[94C       \r\n  \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m\u001b[3C 24 +  \u001b[38;2;249;38;114mif \u001b[38;2;248;248;242m(now - current.\u001b[38;2;255;255;255mopenedAt \u001b[38;2;248;248;242m>\u001b[48;2;4;71;0m=\u001b[48;2;2;40;0m \u001b[38;2;255;255;255mWINDOW_MS\u001b[38;2;248;248;242m) {\u001b[93X\u001b[m\r\n     \u001b[38;2;80;200;80m\u001b[48;2;2;40;0m 25 +    \u001b[38;2;248;248;242mcurrent.\u001b[38;2;255;255;255mopenedAt \u001b[38;2;248;248;242m= now;\u001b[110X\u001b[m\u001b[110C       \u001b[36;3H   \u001b[38;2;248;248;242m\u001b[2m 26 \u001b[22m     current.\u001b[38;2;255;255;255mcount \u001b[38;2;248;248;242m= \u001b[38;2;190;132;255m0\u001b[38;2;248;248;242m;\u001b[K\u001b[2m\u001b[37;6H 27\u001b[22m\u001b[1C \u001b[2C}\u001b[m\r\n     \u001b[38;2;248;248;242m\u001b[2m 28\u001b[m    \u001b[38;2;248;248;242mcurrent.\u001b[38;2;255;255;255mcount \u001b[38;2;248;248;242m+= \u001b[38;2;190;132;255m1\u001b[38;2;248;248;242m;\u001b[K\u001b[123C\u001b[m\r\n\u001b[154C\r\n\u001b[38;2;215;119;87m✽ \u001b[38;2;230;149;117mManifesting… \u001b[38;2;153;153;153m(1m 4s · ↓ 1.6k tokens)\u001b[K\u001b[116C\u001b[m\r\n\u001b[38;2;153;153;153m  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[64C\u001b[m\r\n\u001b[154C\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n\u001b[38;2;153;153;153m❯ \u001b[152C\u001b[m\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 65624,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[38;2;153;153;153m\u001b[14C7\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 65741,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 65858,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 65958,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 66074,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;153;153;153m\u001b[27C8\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66189,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;153;153;153m\u001b[18C5\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66290,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;218;124;92m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66409,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66527,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66628,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66747,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;230;149;117m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66863,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;233;154;122m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;3HManifestin\u001b[38;2;235;159;127mg…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 66964,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;235;159;127m\u001b[10Cn\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 67081,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;235;159;127m\u001b[30;3HManifesti\u001b[38;2;153;153;153m\u001b[8C6\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 67192,
+      "data": "\u001b[m\u001b[?25l\u001b[?2026h\u001b[38;2;153;153;153m\u001b[30;1H●\u001b[m\u001b[1m\u001b[1CBash\u001b[22m(npm test 2>&1 | tail -15)\u001b[K\u001b[38;2;153;153;153m\u001b[31;6HRunning…\u001b[K\u001b[38;2;215;119;87m\u001b[33;1H✶ \u001b[38;2;235;159;127mManifesting… \u001b[38;2;153;153;153m(1m 6s · ↓ 1.8k tokens)\u001b[K\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[m\r\n\u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[38;2;153;153;153m\r\n❯ \u001b[m\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 67307,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;233;154;122m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 67425,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✽\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;153;153;153m\u001b[27;1H \u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;225;139;107m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 67536,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 67642,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 67759,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;220;129;97m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 67877,
+      "data": "\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[1CManifesting…\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 67987,
+      "data": "\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H●\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68092,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68209,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;153;153;153m\u001b[18C7\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68310,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;218;124;92m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68427,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H·\u001b[38;2;220;129;97m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68545,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68645,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H \u001b[38;2;228;144;112m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68763,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;230;149;117m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 68881,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;233;154;122m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[27;1H●\u001b[28;6HWait\u001b[34;3H\u001b[?25h\u001b[?25l\u001b[?2026h\u001b[m\u001b[38;2;78;186;101m\u001b[27;1H●\u001b[m\u001b[28;6Hnpm notice\u001b[1Crun\u001b[1Ccontoso-web@1.8.0\u001b[1Ctest\u001b[29;6Hnpm\u001b[1Cnotice\u001b[1Crun\u001b[1Cvitest\u001b[1Crun\r\n \u001b[1C   \u001b[2m… +9 lines (ctrl+o to expand)\u001b[22m\u001b[K\r\n\u001b[K\u001b[38;2;215;119;87m\r\n✢\u001b[38;2;233;154;122m\u001b[1CManifesting… \u001b[38;2;153;153;153m(1m 7s · ↓\u001b[1C1.8k tokens)\r\n  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work\u001b[K\u001b[m\r\n\u001b[K\u001b[38;2;153;153;153m\u001b[36;1H❯ \u001b[K\u001b[38;2;136;136;136m\r\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · esc to interrupt · ← 1 agent\u001b[77X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[77C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 68987,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;235;159;127m\u001b[1CManifesting…\u001b[38;2;153;153;153m\u001b[14C9\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69105,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[38;2;153;153;153m\u001b[18C8\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69207,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69323,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;233;154;122m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69441,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✽\u001b[38;2;228;144;112m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69541,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;225;139;107m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69659,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;223;134;102m\u001b[30;3HManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 69776,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[38;2;218;124;92m\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 69995,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[1CManifesting…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 70104,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;20H9\u001b[34;3H\u001b[?25h\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 70213,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 70448,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H·\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 70782,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◐ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 70896,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;27H2\u001b[1C0\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 71010,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 71112,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[38;2;153;153;153m\u001b[18C10s · ↓ 2.0k tokens)\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 71228,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 71448,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✽\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 71679,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;153;153;153m\u001b[30;30H1\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 71779,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✻\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;◑ Rate-limit bugs review\u0007"
+    },
+    {
+      "t": 72009,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 72127,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;153;153;153m\u001b[19C1\u001b[34;3H\u001b[?25h\u001b[m\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;153;153;153m\u001b[28C2\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 72242,
+      "data": "\u001b[m"
+    },
+    {
+      "t": 72461,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H·\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 72748,
+      "data": "\u001b]0;◐ Rate-limit bugs review\u0007\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✢\u001b[38;2;153;153;153m\u001b[28C3\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 73010,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H*\u001b[38;2;235;159;127m\u001b[12C…\u001b[34;3H\u001b[?25h\u001b[m"
+    },
+    {
+      "t": 73126,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[30;1H✶\u001b[38;2;153;153;153m\u001b[19C2\u001b[34;3H\u001b[?25h\u001b[m\u001b]0;✳ Rate-limit bugs review\u0007\u001b[?25l\u001b[?2026h\u001b[38;2;255;255;255m\u001b[30;1H●\u001b[m\u001b[1CAll 6 tests pass. Findings:\u001b[K\r\n\u001b[K\u001b[1m\u001b[32;3H1. \u001b[38;2;177;185;249mserver/rate-limit.ts:25 \u001b[m\u001b[1m— expiry never resets \u001b[38;2;177;185;249mopenedAt\u001b[m\u001b[1m; the limiter permanently disables itself. Fixed.\u001b[22m\r\n  On expiry the code set \u001b[38;2;177;185;249mcurrent.count = 0 \u001b[mbut left \u001b[38;2;177;185;249mopenedAt \u001b[mat its original value. Once the first window lapses, \u001b[38;2;177;185;249mnow - current.openedAt > WINDOW_MS \u001b[mstays  true\u001b[1Cfor\u001b[1Cevery\u001b[1Csubsequent\u001b[1Ccall\u001b[1Cforever,\u001b[1Cso\u001b[1Ceach\u001b[1Ccall\u001b[1Cresets\u001b[1Cthe\u001b[1Ccount\u001b[1Cto\u001b[1C0,\u001b[1Cincrements\u001b[1Cto\u001b[1C1,\u001b[1Cand\u001b[1Creturns\u001b[38;2;177;185;249m\u001b[1Ctrue\u001b[m.\u001b[1CAfter\u001b[1C60\u001b[1Cseconds\u001b[1Ca\u001b[1Ckey\u001b[1Cis\u001b[1Ceffectively\r\n  unlimited — the security-relevant bug.\u001b[K\u001b[36;3H\u001b[K\u001b[1m\n2.\u001b[38;2;177;185;249m\u001b[1Cserver/rate-limit.ts:24 \u001b[m\u001b[1m—\u001b[38;2;177;185;249m\u001b[1C> \u001b[m\u001b[1mshould\u001b[1Cbe\u001b[38;2;177;185;249m\u001b[1C>=\u001b[m\u001b[1m;\u001b[1Coff-by-one\u001b[1Con\u001b[1Cthe\u001b[1Cwindow\u001b[1Cboundary.\u001b[1CFixed.\u001b[22m\r\n  A window opened at \u001b[38;2;177;185;249mt \u001b[mshould expire at \u001b[38;2;177;185;249mt + WINDOW_MS\u001b[m. With \u001b[38;2;177;185;249m>\u001b[m, a request at exactly \u001b[38;2;177;185;249mopenedAt + 60_000 \u001b[mstill counted against the old window, making the    \r\n  effective window 60001ms.\u001b[127C\r\n\u001b[154C\r\n  \u001b[1m3.\u001b[22m \u001b[38;2;177;185;249m\u001b[1mtests/rate-limit.test.ts \u001b[m\u001b[1m—\u001b[22m \u001b[1mno\u001b[22m \u001b[1mexpiry\u001b[22m \u001b[1mcoverage\u001b[22m \u001b[1mat\u001b[22m \u001b[1mall\u001b[22m \u001b[1m(omission,\u001b[22m \u001b[1mnot\u001b[22m \u001b[1ma\u001b[22m \u001b[1mwrong\u001b[22m \u001b[1massertion).\u001b[22m\u001b[K\u001b[62C\r\n  Both existing tests pinned \u001b[38;2;177;185;249mnow = 1000\u001b[m, so neither ever entered the expiry branch — which is why bug 1 survived. I verified the two existing tests pass  \r\n  correctly against the current code and left them alone. Added two tests at \u001b[38;2;177;185;249mtests/rate-limit.test.ts:19 \u001b[mand \u001b[38;2;177;185;249m:27\u001b[m:\u001b[K\u001b[41C\r\n  - a fresh window after expiry that asserts the limit \u001b[1mre-applies\u001b[22m in the second window (the trailing \u001b[38;2;177;185;249mfalse \u001b[mis what discriminates — a test that only checks\r\n    \"allowed again\" passes against the buggy code);\u001b[103C\r\n  - a boundary case pinning expiry to exactly \u001b[38;2;177;185;249mopenedAt + 60_000\u001b[m, so finding 2's choice is documented rather than implicit.\u001b[K\u001b[32C\r\n\u001b[154C\r\n  I ran the new tests \u001b[3mbefore\u001b[23m the fix and confirmed both failed (\u001b[38;2;177;185;249mexpected true to be false \u001b[mand \u001b[38;2;177;185;249mexpected false to be true\u001b[m), so they genuinely cover the bugs\r\n  rather than just the patched behavior.\u001b[114C\r\n\u001b[154C\r\n  Two things I noticed and deliberately did not change, since you asked for correctness bugs: the \u001b[38;2;177;185;249mwindows \u001b[mMap never evicts expired entries, so it grows   \r\n  unboundedly with distinct user IDs (a resource leak in a long-lived server, worth a follow-up), and \u001b[38;2;177;185;249minterface Window \u001b[mshadows the DOM global (harmless   \r\n  here, naming only).\u001b[133C\r\n\u001b[154C\r\n\u001b[38;2;153;153;153m✻ Cooked for 1m 12s · done 4:03 PM\u001b[120C\u001b[m\r\n\u001b[154C\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n❯ \u001b[152C\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m\r\n  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · ← 1 agent\u001b[96X\u001b[38;2;78;186;101m\u001b]8;id=u-3oymti%6416376252775167962;https://claude.ai/code/session_01NdKJi2W8qHteCrjVYAW1gC?from=cli\u001b\\\u001b[96C/rc\u001b[m\u001b]8;;\u001b\\  \u001b[?2026l\r\n\u001b[34;3H\u001b[?25h"
+    },
+    {
+      "t": 74520,
+      "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[2mcommit this\u001b[34;3H\u001b[?25h\u001b[22m"
+    }
+  ]
+}

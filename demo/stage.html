@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kangentic demo</title>
+  <style>
+    html, body { height: 100%; margin: 0; overflow: hidden; background: #0c0c0e; }
+    html[data-tone="light"], html[data-tone="light"] body { background: #d6d3d1; }
+    #stage { position: absolute; left: 0; top: 0; width: 1600px; height: 1000px; border: 0; transform-origin: 0 0; }
+  </style>
+</head>
+<body>
+  <iframe id="stage" title="Kangentic"></iframe>
+  <script>
+    (function () {
+      'use strict';
+      // Hosts the frame at the site's size, 1600 by 1000, whatever the window is. Every terminal
+      // recording was made at that size, and a replay cannot renegotiate a PTY the way the
+      // desktop does when its window changes: a wider window would unwrap lines a CLI painted
+      // around, and a narrower one would wrap them. A larger window gets margin; a smaller one
+      // gets the frame scaled down, which keeps its DOM (and every terminal's grid) at the size
+      // the recordings fit. demo/boot.js sends the page here unless embed=1 or stage=0.
+      var WIDTH = 1600;
+      var HEIGHT = 1000;
+      var LIGHT_THEMES = ['light', 'sand', 'mint', 'sky', 'peach'];
+      var params = new URLSearchParams(location.search);
+      params.set('stage', '0');
+      if (LIGHT_THEMES.indexOf(params.get('theme') || 'dark') !== -1) document.documentElement.setAttribute('data-tone', 'light');
+      var frame = document.getElementById('stage');
+      frame.src = './?' + params.toString();
+      function fit() {
+        var scale = Math.min(1, window.innerWidth / WIDTH, window.innerHeight / HEIGHT);
+        var left = Math.max(0, (window.innerWidth - WIDTH * scale) / 2);
+        var top = Math.max(0, (window.innerHeight - HEIGHT * scale) / 2);
+        frame.style.transform = 'translate(' + left + 'px, ' + top + 'px) scale(' + scale + ')';
+        document.documentElement.setAttribute('data-stage-scale', String(Math.round(scale * 1000) / 1000));
+      }
+      window.addEventListener('resize', fit);
+      fit();
+    })();
+  </script>
+</body>
+</html>
