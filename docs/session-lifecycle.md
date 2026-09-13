@@ -430,8 +430,13 @@ completes, and the renderer's `upsertSession` (`src/renderer/stores/session-stor
 clear any in-flight spawn-progress label on every arriving row - including that one - wiping the
 label within milliseconds of it being set. `upsertSession` now skips the clear specifically when
 the arriving row's status is `suspended`, since that row is the respawn's own suspend landing, not
-a genuine park. `clearSpawnProgress` (called explicitly by the two genuine parks, move to Done and
-move into an `auto_spawn=false` column) remains the only way a label actually retires.
+a genuine park. `clearSpawnProgress` remains the only way a label actually retires, but only two
+park paths in `task-move.ts` call it explicitly (move to Done, move into an `auto_spawn=false`
+column). Five other genuine parks - `SESSION_SUSPEND` (a manual pause), the idle-timeout suspend,
+the `kill_session` action, project-relocate, and auto-spawn-reconcile - suspend through
+`applySuspendDbWrites` or `executeKillSession` and never clear a label explicitly; this is a
+known gap, not fixed here, and a label still in flight when one of those fires survives until the
+120s TTL sweeps it (see the carve-out's own comment in `session-store.ts` for the full list).
 
 When a suspended task moves to an active column:
 
