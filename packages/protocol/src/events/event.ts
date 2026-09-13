@@ -69,8 +69,42 @@ export type ActivityEventPayload =
    * phone learns "this session is over" from the feed itself instead of
    * inferring it from silence. `intentional` distinguishes a deliberate
    * stop (desktop Stop button, suspend, shutdown) from a crash.
+   *
+   * `spawnProgressLabel`, when present, means the desktop had a respawn in
+   * flight for this task when the session ended - a same-column respawn
+   * (model switch, agent switch, effort change, isolated-session-track
+   * switch) rather than a genuine park. Read it as what the desktop
+   * believed, not as a fact about what happens next; the caveats below
+   * bound it. `intentional` cannot carry this distinction on its own:
+   * the desktop's SessionManager.suspend() sets `status = 'suspended'`
+   * before the force-kill for every caller, a respawn and a real park
+   * alike, so both reach the phone as `intentional: true`. The string is
+   * the desktop's own display text for what it is doing ("Switching
+   * model...", "Starting agent...", a live git-queue wait count) - treat it
+   * as untrusted display text, not a key to switch on, cap its length, and
+   * fall back to generic copy rather than parsing it.
+   *
+   * INTENT, not a guarantee, on the same terms `BoardColumnWire.spawns_session`
+   * documents: the desktop can suspend without a successor ever landing (a
+   * board profile change, a failed worktree checkout, a shutdown, a racing
+   * move), so a client MUST keep whatever timeout already bounds its
+   * session-swap wait and use the label only to skip a redundant one.
+   *
+   * Absent from pre-0.14.0 desktops, and never sent as `null`. A park that
+   * goes through `task-move.ts` (move to To Do, to Done, or into an
+   * `auto_spawn=false` column) clears the label first, so it carries none.
+   * Five other genuine parks do not clear it - a manual pause, the
+   * idle-timeout suspend, the `kill_session` action, project-relocate, and
+   * auto-spawn-reconcile - so one of those firing while a label is still in
+   * flight sends the label on a real park. The label then survives at most
+   * the desktop's 120s spawn-progress TTL. That gap is why the timeout above
+   * is mandatory, not advisory.
+   *
+   * A label can also ride an `intentional: false` exit, since a respawn whose
+   * spawn fails still has its label in flight when the PTY dies. The two
+   * fields are independent; do not read them as mutually exclusive.
    */
-  | { type: 'session-ended'; intentional: boolean }
+  | { type: 'session-ended'; intentional: boolean; spawnProgressLabel?: string }
   /**
    * The agent's most recent assistant message, already collapsed to a short
    * plain-text preview, pushed whenever it changes.
@@ -160,7 +194,11 @@ export function parseActivityEventPayload(payload: JsonValue): ActivityEventPayl
     }
     case 'session-ended': {
       if (typeof payload.intentional !== 'boolean') throw new Error('session-ended payload is missing "intentional"');
-      return { type: 'session-ended', intentional: payload.intentional };
+      if (payload.spawnProgressLabel === undefined) {
+        return { type: 'session-ended', intentional: payload.intentional };
+      }
+      if (typeof payload.spawnProgressLabel !== 'string') throw new Error('session-ended payload has an invalid "spawnProgressLabel"');
+      return { type: 'session-ended', intentional: payload.intentional, spawnProgressLabel: payload.spawnProgressLabel };
     }
     case 'message-preview': {
       if (typeof payload.text !== 'string') throw new Error('message-preview payload is missing "text"');

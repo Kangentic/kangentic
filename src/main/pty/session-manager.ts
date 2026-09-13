@@ -2218,6 +2218,15 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Whether this session's teardown is already under way (suspend()'s or
+   * kill()'s exit-sequence write, possibly followed by a force-kill). See
+   * `SessionRegistry.isSessionTeardownInFlight`.
+   */
+  isSessionTeardownInFlight(sessionId: string): boolean {
+    return this.registry.isSessionTeardownInFlight(sessionId);
+  }
+
+  /**
    * Gracefully suspend all running PTY sessions.
    *
    * Sends Ctrl+C then /exit to each Claude Code process so it saves its

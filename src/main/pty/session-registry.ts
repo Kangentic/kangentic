@@ -386,6 +386,38 @@ export class SessionRegistry {
     return false;
   }
 
+  /**
+   * Whether this session's teardown - suspend()'s or kill()'s exit-sequence
+   * write into the live PTY, possibly followed by a force-kill - is already
+   * under way. `status` flips away from 'running' (suspend(), before
+   * `gracefulPtyShutdown` writes the sequence) or `intentionalExit` is
+   * stamped (kill(), before `writeExitSequence`) SYNCHRONOUSLY, strictly
+   * before either writes a byte, so this is true from the moment teardown
+   * begins - not only once the final 'exit' event fires later.
+   *
+   * A read-only consumer that streams raw PTY bytes to a live viewer (the
+   * mobile bridge's terminal tap) uses this to stop forwarding once teardown
+   * starts, rather than waiting for the exit event: the exit sequence itself
+   * (Ctrl+C, `/exit`) and the fullscreen TUI's repaint as it leaves the
+   * alternate screen are real PTY content, and a viewer that keeps receiving
+   * it sees the agent's own teardown - a mostly-blank screen behind whatever
+   * shell it was launched in - rather than a frozen last frame. The `Session`
+   * DTO deliberately drops `intentionalExit` (see `hasLiveSessionForTask`
+   * above), hence this query.
+   *
+   * The true branch is deliberately wider than "teardown in progress", since
+   * every state in it is one a raw-byte forwarder must stop forwarding for:
+   * `suspended` and `exited`, `intentionalExit` on a row still reading
+   * `running`, a missing session (nothing left to receive bytes for), and
+   * `queued` - which `hasLiveSessionForTask` counts as LIVE, but which has no
+   * PTY yet and so produces no bytes to forward either way.
+   */
+  isSessionTeardownInFlight(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return true;
+    return session.status !== 'running' || session.intentionalExit === true;
+  }
+
   getSessionProjectId(sessionId: string): string | undefined {
     return this.sessions.get(sessionId)?.projectId;
   }
