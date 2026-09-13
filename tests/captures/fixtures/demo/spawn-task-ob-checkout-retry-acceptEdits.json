@@ -894,5 +894,42 @@
       "t": 25034,
       "data": "\u001b[?2026h\u001b[0 q\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;37H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;41H\u001b[K\u001b[?25h\u001b[?2026l\u001b[?25l\u001b[35;3H\u001b[?25h"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 251,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\online-boutique"
+      ]
+    },
+    {
+      "t": 3281,
+      "lines": [
+        "• I’ll inspect the checkoutservice code path and its existing gRPC client patterns before edi...",
+        "service style."
+      ]
+    },
+    {
+      "t": 6580,
+      "lines": [
+        "• Running Get-Content -Path src\\checkoutservice\\go.mod",
+        "• Running Get-ChildItem -Path src\\checkoutservice -Filter '*test.go' -Recurse | Select-Object..."
+      ]
+    },
+    {
+      "t": 14452,
+      "lines": [
+        "up gRPC services. The wrapper will retry transient gRPC failures like Unavailable with a boun...",
+        "errors or context cancellation."
+      ]
+    },
+    {
+      "t": 19779,
+      "lines": [
+        "• I’m editing main.go now. I’m keeping the retry policy inside checkoutservice rather than ad...",
+        "small and explicit."
+      ]
+    }
   ]
 }

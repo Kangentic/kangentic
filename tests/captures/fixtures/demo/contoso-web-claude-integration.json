@@ -24,6 +24,204 @@
       "/rc connecting…"
     ]
   },
+  "peekTimeline": [
+    {
+      "t": 859,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3371,
+      "lines": [
+        "⎿ $ ls -la \"C:/Users/dev/work/contoso-web\"",
+        "✽ Tomfoolering… (2s · ↓ 30 tokens)"
+      ]
+    },
+    {
+      "t": 6161,
+      "lines": [
+        "⎿ $ ls -la \"C:/Users/dev/work/contoso-web\"",
+        "* Tomfoolering… (5s · ↓ 35 tokens)"
+      ]
+    },
+    {
+      "t": 8863,
+      "lines": [
+        "… +48 lines (ctrl+o to expand)",
+        "✢ Tomfoolering… (7s · ↓ 202 tokens)"
+      ]
+    },
+    {
+      "t": 11429,
+      "lines": [
+        "⎿ server\\store.ts",
+        "✽ Tomfoolering… (10s · ↓ 422 tokens)"
+      ]
+    },
+    {
+      "t": 14007,
+      "lines": [
+        "⎿ tests\\jwt.test.ts",
+        "✶ Tomfoolering… (13s · ↓ 688 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 16808,
+      "lines": [
+        "… +23 lines (ctrl+o to expand)",
+        "✢ Tomfoolering… (15s · ↓ 964 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 19836,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Tomfoolering… (18s · ↓ 1.1k tokens · thought for 1s)"
+      ]
+    },
+    {
+      "t": 22852,
+      "lines": [
+        "● Advising using Opus 5",
+        "✢ Tomfoolering… (21s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 25438,
+      "lines": [
+        "Advising using Opus 5",
+        "✽ Tomfoolering… (24s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 28036,
+      "lines": [
+        "Advising using Opus 5",
+        "* Tomfoolering… (27s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 30812,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Tomfoolering… (29s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 33377,
+      "lines": [
+        "✽ Tomfoolering… (32s · ↓ 1.2k tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 37411,
+      "lines": [
+        "✽ Tomfoolering… (36s · ↓ 2.0k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 40993,
+      "lines": [
+        "* Tomfoolering… (39s · ↓ 2.3k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 44476,
+      "lines": [
+        "· Tomfoolering… (43s · ↓ 2.7k tokens · thought for 1s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 48281,
+      "lines": [
+        "✢ Tomfoolering… (47s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 51859,
+      "lines": [
+        "✻ Tomfoolering… (50s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 55444,
+      "lines": [
+        "✽ Tomfoolering… (54s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 58932,
+      "lines": [
+        "* Tomfoolering… (57s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 62390,
+      "lines": [
+        "· Tomfoolering… (1m 1s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 65970,
+      "lines": [
+        "✶ Tomfoolering… (1m 5s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 69670,
+      "lines": [
+        "✽ Tomfoolering… (1m 9s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 73263,
+      "lines": [
+        "✽ Tomfoolering… (1m 12s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 76839,
+      "lines": [
+        "✢ Tomfoolering… (1m 16s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 80428,
+      "lines": [
+        "· Tomfoolering… (1m 19s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 84002,
+      "lines": [
+        "✶ Tomfoolering… (1m 23s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 87519,
+      "lines": [
+        "✽ Tomfoolering… (1m 27s · ↓ 2.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

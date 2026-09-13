@@ -16,6 +16,92 @@
     "other end keeps working."
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 3048,
+      "lines": [
+        "● Tip Set \"share\": \"auto\" to automatically share all sessions",
+        "~\\oss\\online-boutique:main 1.18.30"
+      ]
+    },
+    {
+      "t": 5989,
+      "lines": [
+        "✱ Glob \"**/*.yaml\" (84 matches) LSP",
+        "LSPs are disabled"
+      ]
+    },
+    {
+      "t": 8545,
+      "lines": [
+        "→ Read istio-manifests\\allow-egress-googleapis.yaml",
+        "⠹ Thinking"
+      ]
+    },
+    {
+      "t": 11137,
+      "lines": [
+        "→ Read kubernetes-manifests\\frontend.yaml",
+        "⠋ Thinking"
+      ]
+    },
+    {
+      "t": 13644,
+      "lines": [
+        "→ Read kubernetes-manifests\\frontend.yaml",
+        "⠴ Thinking"
+      ]
+    },
+    {
+      "t": 16218,
+      "lines": [
+        "→ Read kubernetes-manifests\\frontend.yaml",
+        "⠹ Thinking"
+      ]
+    },
+    {
+      "t": 18788,
+      "lines": [
+        "→ Read kubernetes-manifests\\frontend.yaml",
+        "⠋ Thinking"
+      ]
+    },
+    {
+      "t": 21326,
+      "lines": [
+        "→ Read kubernetes-manifests\\frontend.yaml",
+        "⠧ Thinking"
+      ]
+    },
+    {
+      "t": 23914,
+      "lines": [
+        "frontend.yaml",
+        "Click to expand"
+      ]
+    },
+    {
+      "t": 26474,
+      "lines": [
+        "→ Read helm-chart\\templates\\cartservice.yaml [offset=360, limit=40]",
+        "⠸ Thinking"
+      ]
+    },
+    {
+      "t": 29624,
+      "lines": [
+        "35 mode: ISTIO_MUTUAL",
+        "⠋ Thinking"
+      ]
+    },
+    {
+      "t": 32379,
+      "lines": [
+        "STRICT — all inbound traffic to frontend workloads is now required to use mTLS.",
+        "- DestinationRule (networking.istio.io/v1alpha3) also"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

@@ -890,5 +890,35 @@
       "t": 25001,
       "data": "\u001b[?2026h\u001b[0 q\u001b[?2026l\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;37H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;41H\u001b[K\u001b[35;3H\u001b[?25h\u001b[?2026h\u001b[0 q\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;37H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;41H\u001b[K\u001b[?25h\u001b[?2026l\u001b[?25l\u001b[35;3H\u001b[?25h\u001b]0;⠇ online-boutique\u0007\u001b[?2026h\u001b[0 q\u001b[?2026l\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;37H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;41H\u001b[K\u001b[35;3H\u001b[?25h"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 247,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\online-boutique"
+      ]
+    },
+    {
+      "t": 3182,
+      "lines": [
+        "• I’ll inspect the checkout service implementation and its tests to see how gRPC clients are ...",
+        "shape."
+      ]
+    },
+    {
+      "t": 8739,
+      "lines": [
+        "└ (no output)",
+        "• The checkoutservice is a single Go service. I found the payment call in chargeCard; next I’..."
+      ]
+    },
+    {
+      "t": 15765,
+      "lines": [
+        "• I’m going to add a small bounded retry helper in main.go and route the checkoutservice’s ou...",
+        "transient gRPC statuses so business failures still return immediately."
+      ]
+    }
   ]
 }

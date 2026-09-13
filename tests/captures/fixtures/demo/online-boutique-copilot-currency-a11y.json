@@ -17,6 +17,50 @@
     "• Preserved the existing currency_code field name and automatic form submission on change."
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 1020,
+      "lines": [
+        "~\\oss\\online-boutique",
+        "● Loading:"
+      ]
+    },
+    {
+      "t": 3749,
+      "lines": [
+        "existing form submission working.",
+        "◎ Working esc interrupt Auto → gpt-5.6-luna"
+      ]
+    },
+    {
+      "t": 6385,
+      "lines": [
+        "● I’ll inspect the header template and nearby frontend conventions, then update the selector ...",
+        "◉ Working · 865 B esc interrupt Auto → gpt-5.6-luna"
+      ]
+    },
+    {
+      "t": 10471,
+      "lines": [
+        "/ Search \"currency_form|h-control|controls-form\" in **/* 14 lines found",
+        "◉ Working · 1.6 KiB esc interrupt Auto → gpt-5.6-luna"
+      ]
+    },
+    {
+      "t": 14010,
+      "lines": [
+        "visually to retain the current head",
+        "◉ Working · 2.4 KiB esc interrupt Auto → gpt-5.6-luna"
+      ]
+    },
+    {
+      "t": 16892,
+      "lines": [
+        "● Edit Edit src\\frontend\\templates\\header.html",
+        "○ Working · 3.4 KiB esc interrupt Auto → gpt-5.6-luna"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

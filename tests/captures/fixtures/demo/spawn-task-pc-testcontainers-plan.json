@@ -878,5 +878,35 @@
       "t": 24936,
       "data": "\u001b[?25l\u001b[35;3H\u001b[?25h\u001b]0;⠧ spring-petclinic\u0007\u001b[?2026h\u001b[0 q\u001b[?2026l\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;36H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;42H\u001b[K\u001b[35;3H\u001b[?25h\u001b[?2026h\u001b[0 q\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;36H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;42H\u001b[K\u001b[?25h\u001b[?2026l\u001b[?25l\u001b[35;3H\u001b[?25h"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 252,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\spring-petclinic"
+      ]
+    },
+    {
+      "t": 3752,
+      "lines": [
+        "• I’ll inspect the test layout and existing compose/profile wiring first, then update the int...",
+        "already uses."
+      ]
+    },
+    {
+      "t": 9507,
+      "lines": [
+        "• Running Get-Content -Path pom.xml",
+        "• Running Get-Content -Path build.gradle"
+      ]
+    },
+    {
+      "t": 17507,
+      "lines": [
+        "• Running rg -n \"TestApplication|PostgresIntegrationTests|MysqlTestApplication|docker.compose...",
+        "• Running Get-Content -Path docker-compose.yml"
+      ]
+    }
   ]
 }

@@ -24,6 +24,463 @@
       "✢ Shimmying… (55s · ↓ 1.0k tokens)"
     ]
   },
+  "peekTimeline": [
+    {
+      "t": 819,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3332,
+      "lines": [
+        "⎿ src\\App.tsx",
+        "✽ Shimmying… (2s · ↓ 205 tokens)"
+      ]
+    },
+    {
+      "t": 5910,
+      "lines": [
+        "⎿ $ ls -R src server test tests 2>/dev/null | head -60 && echo '---' && cat tsconfig.json 2>/...",
+        "✶ Shimmying… (4s · ↓ 606 tokens)"
+      ]
+    },
+    {
+      "t": 9837,
+      "lines": [
+        "⎿ $ ls -R src server test tests 2>/dev/null | head -60 && echo '---' && cat tsconfig.json 2>/...",
+        "✻ Shimmying… (8s · ↓ 622 tokens)"
+      ]
+    },
+    {
+      "t": 13422,
+      "lines": [
+        "⎿ $ ls -R src server test tests 2>/dev/null | head -60 && echo '---' && cat tsconfig.json 2>/...",
+        "✽ Shimmying… (12s · ↓ 658 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 17559,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Shimmying… (16s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 20138,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Shimmying… (19s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 22825,
+      "lines": [
+        "● Advising using Opus 5",
+        "✢ Shimmying… (21s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 25400,
+      "lines": [
+        "Advising using Opus 5",
+        "✽ Shimmying… (24s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 28083,
+      "lines": [
+        "Advising using Opus 5",
+        "* Shimmying… (27s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 30769,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Shimmying… (29s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 33350,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Shimmying… (32s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 35924,
+      "lines": [
+        "● Advising using Opus 5",
+        "✶ Shimmying… (34s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 38844,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Shimmying… (37s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 41414,
+      "lines": [
+        "Advising using Opus 5",
+        "✽ Shimmying… (40s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 43988,
+      "lines": [
+        "Advising using Opus 5",
+        "✶ Shimmying… (42s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 46750,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Shimmying… (45s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 49262,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Shimmying… (48s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 51824,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Shimmying… (50s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 54413,
+      "lines": [
+        "Advising using Opus 5",
+        "· Shimmying… (53s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 56992,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Shimmying… (55s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 59513,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Shimmying… (58s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 62135,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Shimmying… (1m 1s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 64825,
+      "lines": [
+        "● Advising using Opus 5",
+        "✢ Shimmying… (1m 4s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 67362,
+      "lines": [
+        "Advising using Opus 5",
+        "✽ Shimmying… (1m 6s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 69983,
+      "lines": [
+        "Advising using Opus 5",
+        "* Shimmying… (1m 9s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 72545,
+      "lines": [
+        "Advising using Opus 5",
+        "· Shimmying… (1m 12s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 75133,
+      "lines": [
+        "Advising using Opus 5",
+        "✶ Shimmying… (1m 14s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 77751,
+      "lines": [
+        "● Advising using Opus 5",
+        "✻ Shimmying… (1m 17s · ↓ 1.0k tokens)"
+      ]
+    },
+    {
+      "t": 80274,
+      "lines": [
+        "✢ Shimmying… (1m 19s · ↓ 1.2k tokens · thought for 1s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 84095,
+      "lines": [
+        "* Shimmying… (1m 23s · ↓ 1.2k tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 88122,
+      "lines": [
+        "* Shimmying… (1m 27s · ↓ 2.7k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 91591,
+      "lines": [
+        "✽ Shimmying… (1m 31s · ↓ 3.8k tokens · thought for 1s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 95400,
+      "lines": [
+        "✽ Shimmying… (1m 34s · ↓ 4.6k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 98875,
+      "lines": [
+        "✢ Shimmying… (1m 38s · ↓ 5.6k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 102357,
+      "lines": [
+        "· Shimmying… (1m 41s · ↓ 6.2k tokens · thought for 1s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 106262,
+      "lines": [
+        "✢ Shimmying… (1m 45s · ↓ 6.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 109852,
+      "lines": [
+        "✻ Shimmying… (1m 49s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 113427,
+      "lines": [
+        "✽ Shimmying… (1m 52s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 117013,
+      "lines": [
+        "* Shimmying… (1m 56s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 120593,
+      "lines": [
+        "· Shimmying… (2m 0s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 124060,
+      "lines": [
+        "* Shimmying… (2m 3s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 127537,
+      "lines": [
+        "✽ Shimmying… (2m 7s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 131024,
+      "lines": [
+        "* Shimmying… (2m 10s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 134608,
+      "lines": [
+        "· Shimmying… (2m 14s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 138077,
+      "lines": [
+        "* Shimmying… (2m 17s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 141550,
+      "lines": [
+        "✽ Shimmying… (2m 21s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 145014,
+      "lines": [
+        "* Shimmying… (2m 24s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 148598,
+      "lines": [
+        "· Shimmying… (2m 28s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 152077,
+      "lines": [
+        "* Shimmying… (2m 31s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 155770,
+      "lines": [
+        "✻ Shimmying… (2m 35s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 159237,
+      "lines": [
+        "✻ Shimmying… (2m 38s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 162831,
+      "lines": [
+        "✢ Shimmying… (2m 42s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 166341,
+      "lines": [
+        "· Shimmying… (2m 45s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 169989,
+      "lines": [
+        "✶ Shimmying… (2m 49s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 173572,
+      "lines": [
+        "✽ Shimmying… (2m 53s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 177053,
+      "lines": [
+        "✶ Shimmying… (2m 56s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 180634,
+      "lines": [
+        "· Shimmying… (3m 0s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 184111,
+      "lines": [
+        "* Shimmying… (3m 3s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 187801,
+      "lines": [
+        "✻ Shimmying… (3m 7s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 191275,
+      "lines": [
+        "✻ Shimmying… (3m 10s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 194743,
+      "lines": [
+        "✢ Shimmying… (3m 14s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 198211,
+      "lines": [
+        "✢ Shimmying… (3m 17s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 201790,
+      "lines": [
+        "✻ Shimmying… (3m 21s · ↓ 6.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 205264,
+      "lines": [
+        "✻ Shimmying… (3m 24s · ↓ 7.3k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

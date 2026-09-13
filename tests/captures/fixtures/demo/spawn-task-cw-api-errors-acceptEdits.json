@@ -754,5 +754,77 @@
       "t": 25069,
       "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;210;110;84m\u001b[18;1H✶\u001b[38;2;153;153;153m\u001b[16C4\u001b[21;3H\u001b[?25h\u001b[m\u001b]0;◑ API error handling refactor\u0007"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 816,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3342,
+      "lines": [
+        "● Searching for 1 pattern… (ctrl+o to expand)",
+        "✽ Calculating… (2s · ↓ 50 tokens)"
+      ]
+    },
+    {
+      "t": 6025,
+      "lines": [
+        "Searching for 1 pattern… (ctrl+o to expand)",
+        "✶ Calculating… (5s · ↓ 53 tokens)"
+      ]
+    },
+    {
+      "t": 8724,
+      "lines": [
+        "⎿ server\\routes.ts",
+        "· Calculating… (7s · ↓ 194 tokens)"
+      ]
+    },
+    {
+      "t": 11303,
+      "lines": [
+        "⎿ src\\App.tsx",
+        "✻ Calculating… (10s · ↓ 428 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 13983,
+      "lines": [
+        "● Advising using Opus 5",
+        "✶ Calculating… (12s · ↓ 1.0k tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 16967,
+      "lines": [
+        "Advising using Opus 5",
+        "* Calculating… (15s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 19805,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Calculating… (18s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 22392,
+      "lines": [
+        "● Advising using Opus 5",
+        "· Calculating… (21s · ↓ 1.1k tokens)"
+      ]
+    },
+    {
+      "t": 24967,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Calculating… (23s · ↓ 1.1k tokens)"
+      ]
+    }
   ]
 }

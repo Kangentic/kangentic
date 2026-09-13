@@ -20,6 +20,9 @@
  *   still=1          no motion: zero animation and transition durations, frozen marks and clocks,
  *                    and every terminal painted from its recording's final frame (without it,
  *                    each terminal replays its recording as it happened; demo/README.md)
+ *   loop=1           a working session that reaches its recording's end goes back to working and
+ *                    replays it, so a frame left running keeps moving. Off by default: a hero or
+ *                    a docs figure must not reset state under a visitor who has taken control.
  *   fs=<px>          root font size for the UI (8..32) and the terminal font size
  *
  * A scene the registry does not know, a rig-only scene, or a malformed state= blob renders a
@@ -143,6 +146,10 @@
     return;
   }
   var still = params.get('still') === '1';
+  // A still frame has no clock to loop, so asking for both is a contradiction rather than a
+  // preference: say so instead of quietly dropping one.
+  var loop = params.get('loop') === '1';
+  if (loop && still) errors.push('loop=1 and still=1 cannot both be set: a still frame has no replay to loop.');
   var fontSize = null;
   if (params.has('fs')) {
     var parsed = parseInt(params.get('fs') || '', 10);
@@ -332,7 +339,7 @@
     version: version,
     sceneName: sceneName,
     scene: effective,
-    params: { theme: theme, embed: embed, still: still, fontSize: fontSize },
+    params: { theme: theme, embed: embed, still: still, loop: loop, fontSize: fontSize },
     errors: errors,
     afterSeed: applyScene,
   };

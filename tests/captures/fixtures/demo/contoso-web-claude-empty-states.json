@@ -17,6 +17,162 @@
     "5. Chat about this"
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 859,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3380,
+      "lines": [
+        "● I'll start by exploring the codebase to understand the existing structure.",
+        "✽ Orbiting… (2s · ↓ 111 tokens)"
+      ]
+    },
+    {
+      "t": 6532,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 1s · ↑ 16.3k tokens"
+      ]
+    },
+    {
+      "t": 9632,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 4s · ↓ 16.4k tokens"
+      ]
+    },
+    {
+      "t": 12635,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 7s · ↓ 16.4k tokens"
+      ]
+    },
+    {
+      "t": 15599,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 10s · ↓ 20.3k tokens"
+      ]
+    },
+    {
+      "t": 18644,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 13s · ↓ 20.3k tokens"
+      ]
+    },
+    {
+      "t": 21657,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 16s · ↓ 26.9k tokens"
+      ]
+    },
+    {
+      "t": 24646,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 19s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 27648,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 22s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 30652,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 25s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 33655,
+      "lines": [
+        "● main",
+        "◯ Explore Explore dashboard/projects/billing pages 28s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 36311,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 30s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 39570,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 34s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 42565,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 37s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 45581,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 40s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 48626,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 43s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 51656,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 46s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 54670,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 49s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 57674,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 52s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 60620,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 55s · ↓ 27.3k tokens"
+      ]
+    },
+    {
+      "t": 63645,
+      "lines": [
+        "● main",
+        "◯ Explore Grepping src for dashboard and routing terms 58s · ↓ 27.3k tokens"
+      ]
+    }
+  ],
   "changes": {
     "files": [],
     "totalInsertions": 0,

@@ -10,6 +10,9 @@ import { buildDemoPreConfig } from './demo-dataset';
 import { loadDemoChanges, loadDemoEnds, loadDemoOpenFrames, loadDemoPeeks, loadDemoScrollback, readAppVersion, readLiveTailMs } from './demo-scrollback';
 
 export function buildMarketingPreConfig(): string {
+  // No peekTimelines here on purpose. The rig has no recordings index, so no session's clock ever
+  // runs and the timeline would be dead weight in the seed. A capture shoots one fixed moment,
+  // and a Monitor peek that changed on a timer would make the PNGs non-deterministic.
   return buildDemoPreConfig({
     scrollback: loadDemoScrollback(), changes: loadDemoChanges(), peeks: loadDemoPeeks(), ends: loadDemoEnds(),
     openFrames: loadDemoOpenFrames(), liveTailMs: readLiveTailMs(), appVersion: readAppVersion(),

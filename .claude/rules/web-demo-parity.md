@@ -46,6 +46,18 @@ three things staying in step, and each is enforced rather than remembered.
   the Monitor therefore change at the moment a window would show the answer land, not when the
   visitor happens to open one. A still frame paints that same opening moment, so a capture and the
   live frame start from the same place.
+- **What the Monitor shows moving is recorded too.** A card's output peek changes as the agent
+  works, so each recording carries the timeline of those changes (`peekTimeline`), derived from
+  its own stream by one shared module and sampled to a readable cadence with no random number in
+  it, because the built files are content-hashed. A frame showing only the Monitor still fetches
+  no recording. `loop=1` restarts a finished session on its own clock and repaints a mounted
+  terminal from the opening frame rather than re-feeding its history; it is off by default, and
+  a still frame arms no timer at all.
+- **A terminal that cannot take the bytes does not end the session it shows.** A grid the
+  recording does not fit gets a parsed frame and no stream, as main routes a geometry-changed
+  session on the desktop. That never finishes the session there, so it must not here: a working
+  session keeps its clock, its card and its Monitor peeks, and only the terminal text stands
+  still. Never conflate "cannot replay here" with "the agent finished".
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)
@@ -60,7 +72,10 @@ three things staying in step, and each is enforced rather than remembered.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots every bootable scene from a
   static server and asserts the marker, the embed and theme parameters, the error card for an
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
-  recording, that the live frame fetches its session's recording, and that a drag into an
+  recording, that the live frame fetches its session's recording, that a live Monitor's output
+  peeks change while a still frame's do not, that `loop=1` brings a finished session back and its
+  absence leaves it finished, that a terminal on a grid its recording does not fit leaves its
+  session working and streams nothing to it, and that a drag into an
   auto-spawn column and a new Command Terminal each start a session whose bytes arrive through
   the mock's data path. Runs as the `demo` job in `.github/workflows/ci.yml` and again inside
   `.github/workflows/deploy-demo.yml` before the Pages deploy.

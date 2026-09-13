@@ -17,6 +17,106 @@
     "the vets cache with stats."
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 3156,
+      "lines": [
+        "● Tip Set \"share\": \"disabled\" to prevent any session sharing",
+        "~\\oss\\spring-petclinic:main 1.18.30"
+      ]
+    },
+    {
+      "t": 7002,
+      "lines": [
+        "LSPs are disabled",
+        "⠋ Thinking"
+      ]
+    },
+    {
+      "t": 9615,
+      "lines": [
+        "→ Read src\\main\\java\\org\\springframework\\samples\\petclinic\\system\\CacheConfiguration.java",
+        "⠸ Thinking"
+      ]
+    },
+    {
+      "t": 12642,
+      "lines": [
+        "→ Read src\\main\\java\\org\\springframework\\samples\\petclinic\\system\\CacheConfiguration.java",
+        "⠸ Thinking"
+      ]
+    },
+    {
+      "t": 15717,
+      "lines": [
+        "→ Read src\\main\\java\\org\\springframework\\samples\\petclinic\\system\\CacheConfiguration.java",
+        "⠦ Thinking"
+      ]
+    },
+    {
+      "t": 19543,
+      "lines": [
+        "✱ Grep \"cache|Cache\" in src\\test (3 matches)",
+        "⠋ Thinking"
+      ]
+    },
+    {
+      "t": 23039,
+      "lines": [
+        "springframework/samples/petclinic/system/CacheConfiguration.java",
+        "⠋ Thinking"
+      ]
+    },
+    {
+      "t": 25690,
+      "lines": [
+        "springframework/samples/petclinic/system/CacheConfiguration.java",
+        "⠧ Thinking"
+      ]
+    },
+    {
+      "t": 28310,
+      "lines": [
+        "✱ Grep \"Caffeine|CaffeineCache|CacheManager\" (2 matches)",
+        "⠧ Thinking"
+      ]
+    },
+    {
+      "t": 30827,
+      "lines": [
+        "✱ Grep \"Caffeine|CaffeineCache|CacheManager\" (2 matches)",
+        "⠸ Thinking"
+      ]
+    },
+    {
+      "t": 33335,
+      "lines": [
+        "✱ Grep \"Caffeine|CaffeineCache|CacheManager\" (2 matches)",
+        "⠏ Thinking"
+      ]
+    },
+    {
+      "t": 36319,
+      "lines": [
+        "70 </dependency>",
+        "← Edit pom.xml"
+      ]
+    },
+    {
+      "t": 39348,
+      "lines": [
+        "83 <artifactId>mysql-connector-j</artifactId>",
+        "← Write src\\main\\java\\org\\springframework\\samples\\petclinic\\system\\CacheConfiguration.java"
+      ]
+    },
+    {
+      "t": 43803,
+      "lines": [
+        "+ Thought: 75ms",
+        "→ Read pom.xml [offset=40, limit=50]"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

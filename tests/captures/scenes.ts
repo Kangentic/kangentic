@@ -69,7 +69,13 @@ export const SCENES: Record<string, SceneDefinition> = {
   board: {
     name: 'board',
     reach: 'state',
-    description: 'The contoso-web board with agents running across Planning, Executing, Code Review, and Testing.',
+    description: 'The contoso-web board with agents running across Planning, Executing, Code Review, and Testing, the bottom panel on the working auth-middleware session.',
+    // The panel picks its own first tab, and the app prefers whatever needs a human
+    // (derivePanelSessionId), which lands on the WebSocket session sitting at a prompt. That is
+    // right for a desktop a user is returning to, and wrong for a frame someone is meeting the
+    // product through: the panel is the largest thing on the page and it should show an agent
+    // mid-turn. One click, the same one a visitor could make.
+    steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
   },
   task: {
     name: 'task',

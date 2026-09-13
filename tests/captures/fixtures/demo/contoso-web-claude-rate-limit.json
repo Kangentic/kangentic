@@ -17,6 +17,190 @@
     "❯ commit this"
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 1388,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3922,
+      "lines": [
+        "⎿ tests\\rate-limit.test.ts",
+        "✻ Manifesting… (2s · ↓ 148 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 6819,
+      "lines": [
+        "⎿ $ cat package.json && ls",
+        "✢ Manifesting… (5s · ↓ 361 tokens · thought for 2s)"
+      ]
+    },
+    {
+      "t": 9625,
+      "lines": [
+        "⎿ $ cat package.json && ls",
+        "✽ Manifesting… (8s · ↓ 611 tokens)"
+      ]
+    },
+    {
+      "t": 12208,
+      "lines": [
+        "⎿ $ cat package.json && ls",
+        "✢ Manifesting… (10s · ↓ 611 tokens)"
+      ]
+    },
+    {
+      "t": 14772,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Manifesting… (13s · ↓ 863 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 17574,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Manifesting… (16s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 20159,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Manifesting… (18s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 22783,
+      "lines": [
+        "● Advising using Opus 5",
+        "✢ Manifesting… (21s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 25417,
+      "lines": [
+        "Advising using Opus 5",
+        "✽ Manifesting… (23s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 28014,
+      "lines": [
+        "Advising using Opus 5",
+        "* Manifesting… (26s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 30679,
+      "lines": [
+        "Advising using Opus 5",
+        "· Manifesting… (29s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 33256,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Manifesting… (31s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 35822,
+      "lines": [
+        "● Advising using Opus 5",
+        "✻ Manifesting… (34s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 38409,
+      "lines": [
+        "● Advising using Opus 5",
+        "· Manifesting… (36s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 40979,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Manifesting… (39s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 43676,
+      "lines": [
+        "Advising using Opus 5",
+        "✽ Manifesting… (42s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 46255,
+      "lines": [
+        "● Advising using Opus 5",
+        "✢ Manifesting… (44s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 48842,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Manifesting… (47s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 51401,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Manifesting… (49s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 53972,
+      "lines": [
+        "Advising using Opus 5",
+        "✶ Manifesting… (52s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 56669,
+      "lines": [
+        "Advising using Opus 5",
+        "· Manifesting… (55s · ↓ 868 tokens)"
+      ]
+    },
+    {
+      "t": 59236,
+      "lines": [
+        "✻ Manifesting… (57s · ↓ 893 tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 63280,
+      "lines": [
+        "✻ Manifesting… (1m 2s · ↓ 1.5k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 66863,
+      "lines": [
+        "✢ Manifesting… (1m 5s · ↓ 1.8k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 70448,
+      "lines": [
+        "· Manifesting… (1m 9s · ↓ 1.9k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {
