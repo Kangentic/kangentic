@@ -11,10 +11,16 @@ vi.mock('../../../src/main/agent/transcript-service', () => ({
 }));
 
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
+import type { BrowserWindow } from 'electron';
 import { handleReadStream, terminalStreamKeyFor } from '../../../src/main/mobile-bridge/handlers/read-stream';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 import { SubscriptionRegistry } from '../../../src/main/mobile-bridge/session/subscription-registry';
+import { emitSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
+
+function fakeWindow(): BrowserWindow {
+  return { isDestroyed: () => false, webContents: { send: vi.fn() } } as unknown as BrowserWindow;
+}
 
 function fakeRequest(payload: Record<string, unknown>): CapabilityRequestMessage {
   return { type: 'capability-request', requestId: 'req-1', verb: 'read-stream', payload };
@@ -57,6 +63,7 @@ class FakeSessionManager extends EventEmitter {
   getSessionProjectId = vi.fn(() => 'proj-1');
   getDimensions = vi.fn((): { cols: number; rows: number } | null => ({ cols: 120, rows: 30 }));
   parkRestingGridForMobileSubscriber = vi.fn();
+  isSessionTeardownInFlight = vi.fn(() => false);
 }
 
 describe('handleReadStream', () => {
@@ -65,6 +72,11 @@ describe('handleReadStream', () => {
   beforeEach(() => {
     sessionManager = new FakeSessionManager();
     resolveTaskTranscriptMock.mockReset();
+    // getInFlightSpawnProgress() reads a module-level singleton keyed by
+    // taskId, and every fixture here uses 'task-1' - without this reset, a
+    // label left behind by one test would leak into another's session-ended
+    // assertions.
+    __resetSpawnProgressForTest();
   });
 
   it('rejects when the session does not exist', async () => {
@@ -418,6 +430,36 @@ describe('handleReadStream', () => {
     });
   });
 
+  it('a respawn (an in-flight spawn-progress label for the task) attaches spawnProgressLabel to session-ended', async () => {
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+    // Mirrors suspendLiveSessionForRespawn (task-move.ts): the label is
+    // emitted BEFORE the suspend that produces this exit.
+    emitSpawnProgress(fakeWindow(), 'task-1', 'switching-model');
+    sessionManager.emit('exit', 'sess-1', 0, true);
+
+    const calls = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect((calls[calls.length - 1][0] as { event: { payload: unknown } }).event.payload).toEqual({
+      type: 'session-ended',
+      intentional: true,
+      spawnProgressLabel: 'Switching model...',
+    });
+  });
+
+  it('a genuine park (no in-flight spawn-progress label) omits spawnProgressLabel entirely', async () => {
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+    sessionManager.emit('exit', 'sess-1', 0, true);
+
+    const calls = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const payload = (calls[calls.length - 1][0] as { event: { payload: object } }).event.payload;
+    expect('spawnProgressLabel' in payload).toBe(false);
+  });
+
   it('the subscribe snapshot carries the live session status', async () => {
     const context = { sessionManager } as unknown as IpcContext;
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
@@ -449,6 +491,55 @@ describe('handleReadStream', () => {
       expect(session.sendMessage).toHaveBeenCalledWith({
         type: 'event',
         event: { kind: 'terminal', sessionId: 'sess-1', taskId: 'task-1', payload: { data: 'h' } },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops terminal bytes once teardown begins (suspend/kill writing the exit sequence)', async () => {
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+    sessionManager.emit('data-tap', 'sess-1', 'legit output before teardown');
+    expect(session.sendMessage).toHaveBeenCalledTimes(1);
+
+    // suspend()/kill() has now flipped status / stamped intentionalExit,
+    // BEFORE writing the adapter's exit sequence into the PTY.
+    sessionManager.isSessionTeardownInFlight.mockReturnValue(true);
+    sessionManager.emit('data-tap', 'sess-1', '\x03/exit\r'); // the exit sequence itself
+    sessionManager.emit('data-tap', 'sess-1', 'bare shell prompt$ '); // the fullscreen TUI's alt-screen-exit repaint
+
+    // No new terminal event for either post-teardown chunk - only the one
+    // pushed before teardown began.
+    expect(session.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('bytes already parked on the coalesce timer when teardown begins still flush', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      // Past TERMINAL_IMMEDIATE_FLUSH_CHARS, so this lands on the coalesce
+      // timer rather than the fast path - genuinely queued, not yet sent.
+      const queuedOutput = 'z'.repeat(300);
+      sessionManager.emit('data-tap', 'sess-1', queuedOutput);
+      expect(session.sendMessage).not.toHaveBeenCalled();
+
+      // Teardown starts while those bytes are still parked.
+      sessionManager.isSessionTeardownInFlight.mockReturnValue(true);
+      sessionManager.emit('data-tap', 'sess-1', '\x03/exit\r');
+
+      await vi.runAllTimersAsync();
+
+      // The pre-teardown backlog ships; the exit sequence never joined it.
+      expect(session.sendMessage).toHaveBeenCalledTimes(1);
+      expect(session.sendMessage).toHaveBeenCalledWith({
+        type: 'event',
+        event: { kind: 'terminal', sessionId: 'sess-1', taskId: 'task-1', payload: { data: queuedOutput } },
       });
     } finally {
       vi.useRealTimers();

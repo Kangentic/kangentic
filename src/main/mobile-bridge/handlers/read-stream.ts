@@ -25,6 +25,7 @@ import {
   toTerminalDimensionsWire,
   toWireJson,
 } from './wire-mappers';
+import { getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
 
 /** Coalesce raw PTY output before pushing, so a burst of small onData chunks does not become a flood of tiny frames. */
 const TERMINAL_COALESCE_MS = 16;
@@ -225,6 +226,21 @@ function subscribeReadStream(
 
   const onDataTap = (tappedSessionId: string, data: string): void => {
     if (tappedSessionId !== sessionId) return;
+    // Once suspend()/kill() has begun tearing this session down, drop
+    // further bytes instead of queuing them: they are the adapter's own
+    // exit sequence (Ctrl+C, `/exit`) and the fullscreen TUI's repaint as it
+    // leaves the alternate screen, not agent output a live viewer should
+    // see. On the suspend() path desktop's own terminal pane is protected
+    // from this by an accidental race (its tab drops on the session-changed
+    // status flip, which fires before the exit sequence is even written).
+    // kill() has no such race - it deliberately leaves status at 'running'
+    // (a hard reset is 'exited', not resumable) and emits no flip before
+    // writeExitSequence, so the desktop pane does render kill()'s exit
+    // sequence. Either way this subscription has no listener on
+    // session-changed at all, so it must check explicitly, and it covers
+    // both paths. Whatever was already queued before teardown began
+    // still flushes normally - only NEW bytes are dropped.
+    if (context.sessionManager.isSessionTeardownInFlight(sessionId)) return;
     pendingTerminalChunks.push(data);
     pendingTerminalChars += data.length;
     if (pendingTerminalChars <= TERMINAL_IMMEDIATE_FLUSH_CHARS) {
@@ -285,6 +301,21 @@ function subscribeReadStream(
   // has to infer "over" from silence. The queued-removal exit path emits the
   // flag explicitly; the spawn-failure path emits no flag, and a spawn
   // failure is not a deliberate stop, so an absent flag maps to false.
+  //
+  // `intentional` alone cannot tell a same-column respawn (model/agent/
+  // effort switch) from a genuine park: SessionManager.suspend() marks
+  // `status = 'suspended'` before the force-kill for every caller, so both
+  // reach here as `intentional: true`. Attach the task's in-flight
+  // spawn-progress label when one exists - suspendLiveSessionForRespawn
+  // (task-move.ts) emits it as the FIRST statement of a respawn, well
+  // before the suspend() that produces this exit, and that file's own park
+  // branches clear it before suspending. The five parks that do NOT clear it
+  // (a manual pause, the idle-timeout suspend, the `kill_session` action,
+  // project-relocate, auto-spawn-reconcile - named in
+  // docs/session-lifecycle.md) can send a stale label on a real park until
+  // the 120s TTL sweeps it, so the label is a strong hint, not proof. See
+  // the doc comment on ActivityEventPayload's session-ended variant in
+  // @kangentic/protocol.
   const onExit = (exitedSessionId: string, _exitCode: number, intentional?: boolean): void => {
     if (exitedSessionId !== sessionId) return;
     flushTerminal(); // push any last coalesced output before we stop listening
@@ -292,11 +323,19 @@ function subscribeReadStream(
     // is the one number a user is most likely to look at.
     if (usageFlushTimer) clearTimeout(usageFlushTimer);
     flushUsage();
+    // Annotated, not inferred: getInFlightSpawnProgress()'s Record<string,
+    // string> index signature erases the missing-key case, which is the
+    // common one here (a park with no respawn in flight).
+    const spawnProgressLabel: string | undefined = getInFlightSpawnProgress()[taskId];
     sendEvent(session, {
       kind: 'activity',
       sessionId,
       taskId,
-      payload: { type: 'session-ended', intentional: intentional === true },
+      payload: {
+        type: 'session-ended',
+        intentional: intentional === true,
+        ...(spawnProgressLabel ? { spawnProgressLabel } : {}),
+      },
     });
     subscriptions.remove(subscriptionKeyFor(sessionId));
   };

@@ -170,6 +170,21 @@ describe('parseActivityEventPayload', () => {
     expect(() => parseActivityEventPayload({ type: 'session-ended', intentional: 0 })).toThrow(/intentional/);
   });
 
+  it('parses a session-ended payload carrying a spawnProgressLabel', () => {
+    const payload: JsonValue = { type: 'session-ended', intentional: true, spawnProgressLabel: 'Switching model...' };
+    expect(parseActivityEventPayload(payload)).toEqual(payload);
+  });
+
+  it('a session-ended payload without spawnProgressLabel stays label-less (pre-0.14.0 desktop)', () => {
+    const parsed = parseActivityEventPayload({ type: 'session-ended', intentional: true });
+    expect('spawnProgressLabel' in parsed).toBe(false);
+  });
+
+  it('rejects a session-ended payload with a non-string spawnProgressLabel', () => {
+    expect(() => parseActivityEventPayload({ type: 'session-ended', intentional: true, spawnProgressLabel: 42 })).toThrow(/spawnProgressLabel/);
+    expect(() => parseActivityEventPayload({ type: 'session-ended', intentional: true, spawnProgressLabel: null })).toThrow(/spawnProgressLabel/);
+  });
+
   it('rejects an invalid state', () => {
     expect(() => parseActivityEventPayload({ type: 'activity', state: 'busy', reason: { kind: 'idle' } })).toThrow(/state/);
   });
@@ -586,6 +601,9 @@ describe('isBridgeEvent', () => {
       isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'permission', promptId: 'p', pending: true, options: ['Yes', 'No'] } }),
     ).toBe(true);
     expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: false } })).toBe(true);
+    expect(
+      isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: true, spawnProgressLabel: 'Switching model...' } }),
+    ).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 'bytes' } })).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 48, rows: 26 } })).toBe(true);
     expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'task-updated', ids: ['t-1'] } })).toBe(true);
@@ -599,6 +617,9 @@ describe('isBridgeEvent', () => {
     expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'activity', state: 'busy', reason: { kind: 'idle' } } })).toBe(false);
     expect(
       isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'permission', promptId: 'p', pending: true, options: [1] } }),
+    ).toBe(false);
+    expect(
+      isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: true, spawnProgressLabel: 42 } }),
     ).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 42 } })).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 0, rows: 26 } })).toBe(false);

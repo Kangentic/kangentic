@@ -129,6 +129,48 @@ describe('SessionRegistry.hasLiveSessionForTask', () => {
 });
 
 // ---------------------------------------------------------------------------
+// isSessionTeardownInFlight
+// ---------------------------------------------------------------------------
+
+/**
+ * The signal a raw-byte forwarder (the mobile bridge's terminal tap) checks
+ * to stop streaming once suspend()/kill() has begun writing the adapter's
+ * exit sequence into the PTY - before either has written a byte, since
+ * `status` flips (suspend()) or `intentionalExit` is stamped (kill())
+ * synchronously ahead of that write.
+ */
+describe('SessionRegistry.isSessionTeardownInFlight', () => {
+  it('is false for a running session with no teardown in flight', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-running', makeManagedSession({ id: 'sess-running', status: 'running' }));
+    expect(registry.isSessionTeardownInFlight('sess-running')).toBe(false);
+  });
+
+  it('is true once suspend() flips status away from running', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-suspending', makeManagedSession({ id: 'sess-suspending', status: 'suspended' }));
+    expect(registry.isSessionTeardownInFlight('sess-suspending')).toBe(true);
+  });
+
+  it('is true once kill() stamps intentionalExit, even while status still reads running', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-killing', makeManagedSession({ id: 'sess-killing', status: 'running', intentionalExit: true }));
+    expect(registry.isSessionTeardownInFlight('sess-killing')).toBe(true);
+  });
+
+  it('is true for an exited session', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-exited', makeManagedSession({ id: 'sess-exited', status: 'exited' }));
+    expect(registry.isSessionTeardownInFlight('sess-exited')).toBe(true);
+  });
+
+  it('is true for a session that no longer exists in the registry', () => {
+    const registry = new SessionRegistry();
+    expect(registry.isSessionTeardownInFlight('sess-gone')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // findLiveSessionByTaskId
 // ---------------------------------------------------------------------------
 
