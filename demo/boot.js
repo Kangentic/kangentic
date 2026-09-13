@@ -171,6 +171,10 @@
     sidebar: { width: 280 },
     terminalPanelVisible: true,
     hasCompletedFirstRun: true,
+    // The app ships Ticket Numbers ON (DEFAULT_CONFIG.showTaskNumbers in src/shared/types.ts),
+    // and the frame has to show what a desktop install shows. Restated here because the mock
+    // bridge carries false, which is drift against that default rather than a demo choice.
+    showTaskNumbers: true,
     lastWhatsNewShownVersion: version,
   };
   if (still) overrides.animationsEnabled = false;
