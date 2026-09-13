@@ -217,7 +217,21 @@ export const DEMO_LANES_BY_PROJECT: Record<string, DemoLane[]> = {
  * board that looks decorated is the first thing a viewer distrusts about a demo. A new label
  * joins the slate group unless it means broken or slow.
  */
-const LABEL_BROKEN = '#b91c1c';
+/*
+ * A label carries ONE hex, and the frame ships a dark default theme and a light one (the site
+ * embeds theme=sand), so each colour is judged on its WORST contrast across the two rather than on
+ * how it looks in whichever was opened last. There is a hard ceiling on that: a single colour
+ * cannot clear 4.5 against both a near-black and a near-white ground, because the luminance that
+ * maximises the worse side lands at about 4.07 for both. So these are chosen to sit as close to
+ * that ceiling as a recognizable palette step allows, and 4.5 is not reachable by any hex.
+ *
+ * Measured against #18181b and #faf7f2, worst of the two: broken 3.67, slow 3.53, neutral 3.72.
+ * Broken was red-700 (#b91c1c) until it was measured at 2.74 on the dark theme, which is a fail,
+ * not a near miss: it is a light-background colour, and the frame's default ground is dark.
+ * red-600 is the step that trades the least light-theme contrast for the most dark-theme contrast.
+ * Slow and neutral already sat at their families' best worst-case and did not move.
+ */
+const LABEL_BROKEN = '#dc2626';
 const LABEL_SLOW = '#b45309';
 const LABEL_NEUTRAL = '#64748b';
 

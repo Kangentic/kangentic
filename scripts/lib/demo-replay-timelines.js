@@ -37,6 +37,10 @@ const PEEK_CHROME = new RegExp([
   'Add a follow-up', 'ctrl\\+c to stop', 'ctrl\\+r to review', 'ctrl\\+b twice to send',
   '^cursor-retrieval:', 'Use /mcp to connect', '(Reading|Running|Thinking)\\s+[\\d.]+k? tokens',
   'Plan, search, build anything', '^Working$', '^Auto$', 'truncated \\(\\d+ more lines',
+  // Claude's fixed choices at the foot of a numbered menu. They are the same two strings on every
+  // prompt it ever asks, so a card showing them says nothing about THIS session; skipping them
+  // lets the question itself reach the Monitor.
+  '^\\d+\\.\\s*Type something\\.?$', '^\\d+\\.\\s*Chat about this$',
   '^(Auto|[\\w.-]+) · \\d+(\\.\\d+)?%', '^~[\\\\/].* · [\\w./-]+$',
 ].join('|'), 'i');
 
@@ -133,8 +137,12 @@ async function computeReplayTimelines(options) {
     previousFrame = frame;
     frameTimeline.push({ t: window.t, frame });
   }
+  // The recording's own last displayed lines, so a backfill can refresh the stored peek when the
+  // chrome filter changes. Without it the timeline would move and the end peek would not, and the
+  // Monitor row would jump back to the old lines the moment a replay reached the end.
+  const finalPeek = peekFromTerminal(terminal);
   terminal.dispose();
-  return { peekTimeline: sampleByReadingTime(peekChanges), frameTimeline };
+  return { peekTimeline: sampleByReadingTime(peekChanges), frameTimeline, finalPeek };
 }
 
 module.exports = { PEEK_CHROME, peekFromTerminal, computeReplayTimelines, readingTimeOf, FRAME_INTERVAL_MS };
