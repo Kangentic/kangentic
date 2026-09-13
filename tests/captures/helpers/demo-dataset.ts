@@ -143,7 +143,7 @@ interface DemoBacklogItem {
 export const PROJECT_CONTOSO = 'proj-contoso-web';
 export const PROJECT_PETCLINIC = 'proj-spring-petclinic';
 export const PROJECT_BOUTIQUE = 'proj-online-boutique';
-export const GROUP_WORK = 'group-work';
+export const GROUP_CONTOSO = 'group-contoso';
 export const GROUP_OSS = 'group-open-source';
 
 export const TASK_MIDDLEWARE = 'task-cw-middleware';
@@ -170,12 +170,16 @@ const HOME = 'C:\\Users\\dev';
 const WORKTREE_SUBPATH = '\\.kangentic\\worktrees\\';
 
 export const DEMO_GROUPS: DemoProjectGroup[] = [
-  { id: GROUP_WORK, name: 'Work', position: 0, is_collapsed: false },
+  // Named for the client rather than the category, which is how an agency groups a sidebar and
+  // which says WHY these are grouped. "Open source" stays a category beside it: mixing the two
+  // shapes is what real sidebars do, and the two repos under it are recognizable enough that
+  // calling them "other" would undersell them.
+  { id: GROUP_CONTOSO, name: 'Contoso', position: 0, is_collapsed: false },
   { id: GROUP_OSS, name: 'Open source', position: 1, is_collapsed: false },
 ];
 
 export const DEMO_PROJECTS: DemoProject[] = [
-  { id: PROJECT_CONTOSO, name: 'contoso-web', path: `${HOME}\\work\\contoso-web`, github_url: 'https://github.com/contoso/contoso-web', default_agent: 'claude', group_id: GROUP_WORK, position: 0, lastOpenedMinutesAgo: 2, createdDaysAgo: 140 },
+  { id: PROJECT_CONTOSO, name: 'contoso-web', path: `${HOME}\\work\\contoso-web`, github_url: 'https://github.com/contoso/contoso-web', default_agent: 'claude', group_id: GROUP_CONTOSO, position: 0, lastOpenedMinutesAgo: 2, createdDaysAgo: 140 },
   { id: PROJECT_PETCLINIC, name: 'spring-petclinic', path: `${HOME}\\oss\\spring-petclinic`, github_url: 'https://github.com/spring-projects/spring-petclinic', default_agent: 'codex', group_id: GROUP_OSS, position: 1, lastOpenedMinutesAgo: 35, createdDaysAgo: 61 },
   { id: PROJECT_BOUTIQUE, name: 'online-boutique', path: `${HOME}\\oss\\online-boutique`, github_url: 'https://github.com/GoogleCloudPlatform/microservices-demo', default_agent: 'codex', group_id: GROUP_OSS, position: 2, lastOpenedMinutesAgo: 90, createdDaysAgo: 24 },
 ];

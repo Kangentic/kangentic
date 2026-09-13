@@ -115,11 +115,16 @@ Adding a scene is one entry. `board`, `task`, and `changes` are `state`; `monito
 `tests/captures/helpers/demo-dataset.ts`, shared by the marketing captures and the web build. Three
 projects in two groups, chosen on GitHub star and fork data and avoiding the placeholder stable
 (Acme and its Microsoft siblings, Initech and friends), with Contoso kept because developers in
-the Microsoft world know it:
+the Microsoft world know it.
+
+The two groups are named the way a sidebar actually gets named, and deliberately not in the same
+shape as each other: one after the client, one as a category. Real people mix those. "Contoso"
+says WHY its project is grouped, which "Work" did not, and "Open source" keeps two recognizable
+repos from being labelled as leftovers, which is what "Other projects" would do to them.
 
 | Group | Project | Stack | Default agent | Why |
 |---|---|---|---|---|
-| Work | `contoso-web` | React + TypeScript, Express API | Claude Code | The board the fixture always had, and the one a visitor lands on; two of its tasks run on Copilot CLI and Cursor, so the default board shows per-task agent choice rather than one model everywhere |
+| Contoso | `contoso-web` | React + TypeScript, Express API | Claude Code | The board the fixture always had, and the one a visitor lands on; two of its tasks run on Copilot CLI and Cursor, so the default board shows per-task agent choice rather than one model everywhere |
 | Open source | `spring-petclinic` | Java, Spring | Codex CLI | The most-forked sample on GitHub (30.5k forks, since 2013); one session runs on Gemini CLI |
 | Open source | `online-boutique` | Go, Kubernetes, gRPC | Codex CLI | The cloud-native reference app (20.9k stars, pushed this month) |
 
