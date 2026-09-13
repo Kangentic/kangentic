@@ -17,6 +17,43 @@
     "I did not run dotnet, per your instruction."
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 245,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\online-boutique"
+      ]
+    },
+    {
+      "t": 3110,
+      "lines": [
+        "• I’ll inspect the cart service implementation and nearby tests/config first, then patch only...",
+        "instruction."
+      ]
+    },
+    {
+      "t": 6979,
+      "lines": [
+        "src/cartservice\\src\\services\\CartService.cs:29: public CartService(ICartStore cartStore)",
+        "• I found RedisCartStore.cs and the service registration. Next I’m reading the store and test..."
+      ]
+    },
+    {
+      "t": 13943,
+      "lines": [
+        "• Running git diff -- src/cartservice/src/cartstore/RedisCartStore.cs",
+        "• Running rg -n \"SlidingExpiration|AbsoluteExpiration|DistributedCacheEntryOptions|TimeSpan.F..."
+      ]
+    },
+    {
+      "t": 20690,
+      "lines": [
+        "• Implemented in src/cartservice/src/cartstore/RedisCartStore.cs:26.",
+        "Changes:"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

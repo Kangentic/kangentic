@@ -830,5 +830,70 @@
       "t": 25080,
       "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;215;119;87m\u001b[26;1H✶\u001b[29;3H\u001b[?25h"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 1046,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3683,
+      "lines": [
+        "● I'll start by exploring the codebase to understand the existing structure.",
+        "✽ Whirring… (2s · ↓ 8 tokens)"
+      ]
+    },
+    {
+      "t": 6822,
+      "lines": [
+        "● Explore(Explore auth-related code)",
+        "✢ Whirring… (5s · ↓ 339 tokens)"
+      ]
+    },
+    {
+      "t": 9511,
+      "lines": [
+        "● main",
+        "◯ Explore Explore auth-related code 1s · ↓ 16.5k tokens"
+      ]
+    },
+    {
+      "t": 12186,
+      "lines": [
+        "● main",
+        "◯ Explore Explore auth-related code 4s · ↓ 16.5k tokens"
+      ]
+    },
+    {
+      "t": 15225,
+      "lines": [
+        "● main",
+        "◯ Explore Explore auth-related code 7s · ↓ 16.5k tokens"
+      ]
+    },
+    {
+      "t": 17913,
+      "lines": [
+        "● main",
+        "◯ Explore Explore auth-related code 9s · ↓ 19.9k tokens"
+      ]
+    },
+    {
+      "t": 21161,
+      "lines": [
+        "● main",
+        "◯ Explore Explore auth-related code 13s · ↓ 20.0k tokens"
+      ]
+    },
+    {
+      "t": 24183,
+      "lines": [
+        "● main",
+        "◯ Explore Explore auth-related code 16s · ↓ 20.0k tokens"
+      ]
+    }
   ]
 }

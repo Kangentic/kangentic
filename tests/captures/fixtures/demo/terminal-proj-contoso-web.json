@@ -46,5 +46,14 @@
       "t": 1503,
       "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[10;138H\u001b[12X\u001b[38;2;78;186;101m\u001b]8;id=u-47s4sr%15425368709798225181;https://claude.ai/code/session_01LELR3GQr7X3t4U7Kdqs688?from=cli\u001b\\\u001b[12C/rc\u001b[7;3H\u001b[?25h\u001b[m\u001b]8;;\u001b\\"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 802,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    }
   ]
 }

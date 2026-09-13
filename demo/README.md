@@ -67,6 +67,7 @@ All parameters are optional; `demo/boot.js` reads them once, before the mock loa
 | `embed` | `1` | Hides the OS window controls and renders edge to edge, for a host that sizes the iframe itself. Onboarding, update, and announcement toasts are already silent. |
 | `stage` | `0` | Opened directly (no `embed`), the page hands over to `stage.html`, which hosts the frame at the site's 1600 by 1000, centered and scaled down when the window is smaller, so every terminal recording plays at the size it was made for. `stage=0` renders edge to edge in whatever window there is; the smoke tier uses it at a 1600 by 1000 viewport. |
 | `still` | `1` | Zero animation and transition durations, the activity marks stop, the two ticking clocks freeze, no timer runs, and every terminal paints its recording's final frame. Without it each terminal replays its recording as it happened (see Live replay below). |
+| `loop` | `1` | A working session that reaches its recording's end goes back to working and replays it, so a frame left running keeps moving. Off by default, because a hero or a docs figure must not reset state under a visitor who has taken control. Refused together with `still=1`, which has no replay to loop. |
 | `fs` | `8` to `32` | Root font size for the UI and the terminal font size, in pixels. |
 
 On success the frame stamps `data-demo-ready="1"` and `data-demo-scene` on `<html>` and posts
@@ -216,6 +217,51 @@ moment), and a still frame and the marketing captures paint it for such a sessio
 view of the sample install starts from the same moment. The stream files sit under `recordings/` and are fetched from the same origin when a
 terminal mounts, so a still frame and a first paint fetch nothing.
 
+### The Monitor's output peek, and `loop=1`
+
+A Monitor card shows the last lines its session's terminal is displaying, and on the desktop
+those change as the agent works. That is most of what makes the Monitor read as live, and it has
+to hold on a page where no terminal is open at all, so it cannot come from a mounted xterm. Each
+recording therefore carries a `peekTimeline`: the displayed last lines and when they changed, on
+the stream's own clock, so the frame schedules them against the clock it replays the bytes on.
+The row changes whether or not a terminal is mounted, and a Monitor-only frame still fetches no
+recording.
+
+Raw, there is far too much of it. Two of the sample install's sessions change their last lines
+six times a second, which reads as a flicker rather than as an agent working. So
+`scripts/lib/demo-peek-timeline.js` samples the changes by READING TIME: a change is kept only
+once the one before it has been on screen long enough to read, between 2.5 and 6 seconds
+depending on how much text it carries. Real output varies in length, so the kept spacing comes
+out irregular on its own. Nothing in it is random, which matters because the built files are
+content-hashed and a build has to be reproducible. What each working session gets:
+
+| Session | Recording | Changes kept in its live window |
+|---|---|---|
+| `sess-cw-api-client` | 207 s | 45 |
+| `sess-cw-middleware` | 128 s | 26 |
+| `sess-ob-currency-a11y` | 20 s | 6 |
+| `sess-pc-flaky-tests` | 20 s | 5 |
+| `sess-ob-redis-ttl` | 21 s | 5 |
+
+The three short ones are short because their recordings are: twenty seconds does not hold ten
+readable updates, and stretching them would mean inventing output. `loop=1` is what keeps such a
+frame alive. When a session's replay reaches the end it finishes as it always does, waits six
+seconds so the state it finished in is readable, and starts the same stretch over. Each session
+loops on its own clock, so the Monitor keeps changing rather than going quiet until the longest
+recording comes round. A mounted terminal is repainted from the opening frame first (1.8 KB for
+the middleware session, against the 151 KB its replay emits), so a frame left running for hours
+does not grow a cycle of scrollback every time. A working session whose terminal mounted on a
+grid the recording does not fit loops too, since its card and its Monitor row are the part that
+moves; the restart emits nothing to that terminal, which is holding a parsed frame.
+
+The marketing captures pass no timeline at all. The rig has no recordings index, so no clock ever
+runs, and a peek that changed on a timer would make the PNGs different every run.
+
+A recording made before this existed gets its timeline from
+`node scripts/backfill-demo-peek-timelines.mjs`, which derives it from the stream that is already
+on disk. Same module as the capture script, so a backfilled recording and a fresh one agree; no
+agent, no API credit, and no re-record.
+
 The main process is not in a browser, so what its transition engine would start is recorded
 too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a hand list:
 
@@ -263,14 +309,23 @@ Consolas measures another font. A recording's bytes address rows for its own gri
 ConPTY re-emits even Claude's classic renderer with absolute cursor positions), so replayed into
 any other grid they land two frames' text on one row. Main applies one rule to that on the
 desktop, and the frame applies the same: bytes replay only into a terminal whose grid equals the
-recording's; any other grid gets the recording's serialized frame, which reflows, and the
-session stays a still there. That frame is fitted before it is served: the build drops the
+recording's; any other grid gets a serialized frame, which reflows, and nothing streams there.
+
+What it does NOT do is end the session. A geometry change does not finish an agent's turn on the
+desktop; main routes that session to its parsed frame and the agent goes on working. So a session
+the board shows as working keeps the clock the seed started, and its card, its sidebar count and
+its Monitor peeks go on changing while the terminal holds the frame the live replay opens at.
+Only a session already at its end paints its end. This is what leaves the DEFAULT board layout
+moving with the bottom panel open, where 15 rows can never be a recording's 37: the panel shows a
+real mid-work frame, and everything around it is live. Getting the panel itself to stream would
+need recordings at its own geometry, and its width moves with the display scale (219 columns at
+1, 202 at 2), so such a recording would fit one machine and no other. That frame is fitted before it is served: the build drops the
 plain spaces ConPTY pads every row with (they wrap into blank rows on a narrower grid), and at
 serve time the applier shrinks a right-aligned tail's cursor-forward gap to the mounted width
 (Claude's "/rc" at the footer's edge) and cuts trailing rule glyphs and styled bands there, so
 rows end where the CLI would have drawn them and the frame's cursor, placed relative to its
-bottom row, lands on its row. So the panel shows each session's final frame, and a scaled display
-sees stills where a 1:1 display sees the stream. Making every display live means recording at
+bottom row, lands on its row. So a scaled display sees a standing frame where a 1:1 display sees
+the stream, with the card and the Monitor live either way. Making every display live means recording at
 a grid whose cell is a whole number of device pixels at 1, 1.25, 1.5, and 2 (an 8 by 16 cell,
 say) with a bundled font, and re-running the matrix; deferred until Codex credits allow it.
 
@@ -295,21 +350,22 @@ static server on localhost, warm disk.
 |---|---|---|
 | index (the renderer) | 1752 KB | 484 KB |
 | xterm | 452 KB | 116 KB |
-| demo-seed.js (the sample install: opening and final frames, diffs) | 611 KB | 98 KB |
+| demo-seed.js (the sample install: opening and final frames, diffs, peek timelines) | 631 KB | 101 KB |
 | mock-electron-api.js (the bridge) | 200 KB | 45 KB |
 | react-vendor | 185 KB | 57 KB |
 | index.css + xterm.css | 110 KB | 18 KB |
 | Pill + datetime chunks | 84 KB | 28 KB |
 | demo-boot.js + demo-scenes.js | 21 KB | 7 KB |
-| **Eager total** | | **854 KB** |
+| **Eager total** | | **857 KB** |
 
 The whole `dist/demo/assets` is 16.2 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
 `demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
-it is the one eager file that grows with the dataset (98 KB gzipped for 16 sessions and 10
+it is the one eager file that grows with the dataset (101 KB gzipped for 16 sessions and 10
 diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
-from. The 36 timed streams under `recordings/` are 15.3 MB raw and 538 KB gzipped in total,
+from, and 3 KB more when they gained their peek timelines, which is what makes the Monitor move
+without a terminal open. The 36 timed streams under `recordings/` are 15.3 MB raw and 538 KB gzipped in total,
 fetched one at a time as terminals mount; the largest is the Gemini session, whose TUI redraws
 every frame (7.0 MB raw, 79 KB gzipped).
 

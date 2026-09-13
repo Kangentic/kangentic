@@ -24,6 +24,274 @@
       "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
     ]
   },
+  "peekTimeline": [
+    {
+      "t": 810,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3367,
+      "lines": [
+        "⎿ $ ls -la /c/Users/dev/work/contoso-web",
+        "✽ Lollygagging… (2s · ↓ 32 tokens)"
+      ]
+    },
+    {
+      "t": 5931,
+      "lines": [
+        "⎿ $ ls -la /c/Users/dev/work/contoso-web",
+        "✶ Lollygagging… (4s · ↓ 34 tokens)"
+      ]
+    },
+    {
+      "t": 8515,
+      "lines": [
+        "⎿ package.json",
+        "· Lollygagging… (7s · ↓ 158 tokens)"
+      ]
+    },
+    {
+      "t": 11095,
+      "lines": [
+        "⎿ README.md",
+        "✶ Lollygagging… (10s · ↓ 427 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 13782,
+      "lines": [
+        "⎿ Running…",
+        "✻ Lollygagging… (12s · ↓ 848 tokens)"
+      ]
+    },
+    {
+      "t": 16466,
+      "lines": [
+        "● Vite 8.3.0 does exist. Let me check compatibility constraints before changing anything.",
+        "· Lollygagging… (15s · ↓ 1.0k tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 20835,
+      "lines": [
+        "… +32 lines (ctrl+o to expand)",
+        "✢ Lollygagging… (19s · ↓ 1.3k tokens)"
+      ]
+    },
+    {
+      "t": 23416,
+      "lines": [
+        "⎿ Running…",
+        "✽ Lollygagging… (22s · ↓ 1.7k tokens · thought for 1s)"
+      ]
+    },
+    {
+      "t": 25987,
+      "lines": [
+        "⎿ Running…",
+        "✶ Lollygagging… (24s · ↓ 1.8k tokens)"
+      ]
+    },
+    {
+      "t": 28554,
+      "lines": [
+        "… +50 lines (ctrl+o to expand)",
+        "· Lollygagging… (27s · ↓ 2.1k tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 31795,
+      "lines": [
+        "✻ Lollygagging… (30s · ↓ 2.4k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 35275,
+      "lines": [
+        "✻ Lollygagging… (34s · ↓ 2.7k tokens · thought for 1s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 39097,
+      "lines": [
+        "✶ Lollygagging… (38s · ↓ 3.1k tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 43118,
+      "lines": [
+        "✶ Lollygagging… (42s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 46761,
+      "lines": [
+        "✢ Lollygagging… (45s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 50214,
+      "lines": [
+        "✢ Lollygagging… (49s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 53876,
+      "lines": [
+        "✻ Lollygagging… (52s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 57449,
+      "lines": [
+        "✽ Lollygagging… (56s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 61044,
+      "lines": [
+        "* Lollygagging… (1m 0s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 64855,
+      "lines": [
+        "✢ Lollygagging… (1m 4s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 68429,
+      "lines": [
+        "· Lollygagging… (1m 7s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 72012,
+      "lines": [
+        "✶ Lollygagging… (1m 11s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 75599,
+      "lines": [
+        "✽ Lollygagging… (1m 15s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 79293,
+      "lines": [
+        "✻ Lollygagging… (1m 18s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 82998,
+      "lines": [
+        "* Lollygagging… (1m 22s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 86570,
+      "lines": [
+        "· Lollygagging… (1m 26s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 90156,
+      "lines": [
+        "* Lollygagging… (1m 29s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 93854,
+      "lines": [
+        "✻ Lollygagging… (1m 33s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 97444,
+      "lines": [
+        "✽ Lollygagging… (1m 36s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 101018,
+      "lines": [
+        "* Lollygagging… (1m 40s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 104534,
+      "lines": [
+        "· Lollygagging… (1m 44s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 108087,
+      "lines": [
+        "* Lollygagging… (1m 47s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 111706,
+      "lines": [
+        "✻ Lollygagging… (1m 51s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 115253,
+      "lines": [
+        "✻ Lollygagging… (1m 54s · ↓ 3.1k tokens)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 118838,
+      "lines": [
+        "✢ Lollygagging… (1m 58s · ↓ 3.3k tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 122969,
+      "lines": [
+        "* Lollygagging… (2m 2s · ↓ 3.8k tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 127011,
+      "lines": [
+        "* Lollygagging… (2m 6s · ↓ 4.1k tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    }
+  ],
   "changes": {
     "files": [],
     "totalInsertions": 0,

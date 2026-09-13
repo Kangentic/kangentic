@@ -882,5 +882,42 @@
       "t": 25021,
       "data": "\u001b[?2026h\u001b[0 q\u001b[?25l\u001b[31;2H\u001b[K\u001b[32;35H\u001b[K\u001b[33;2H\u001b[K\u001b[48;2;41;41;41m\n\u001b[K\u001b[35;28H\u001b[K\u001b[36;2H\u001b[K\u001b[m\u001b[37;41H\u001b[K\u001b[?25h\u001b[?2026l"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 247,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\online-boutique"
+      ]
+    },
+    {
+      "t": 2748,
+      "lines": [
+        "Tip: New Build faster with Codex.",
+        "• I’ll inspect the loadgenerator structure and existing Locust tasks first, then add the cart..."
+      ]
+    },
+    {
+      "t": 6527,
+      "lines": [
+        "• The worktree is clean. I found the Locust entry point at src/loadgenerator/locustfile.py; n...",
+        "so the new profile is wired where operators can actually select it."
+      ]
+    },
+    {
+      "t": 10748,
+      "lines": [
+        "{{- end }}",
+        "{{- end }}"
+      ]
+    },
+    {
+      "t": 19988,
+      "lines": [
+        "• Running Get-Content -Path helm-chart\\values.yaml",
+        "• Running Get-Content -Path kustomize\\base\\loadgenerator.yaml"
+      ]
+    }
   ]
 }

@@ -17,6 +17,36 @@
     "❯ run the typecheck"
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 835,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3337,
+      "lines": [
+        "⎿ $ ls -a \"C:/Users/dev/work/contoso-web\"",
+        "✽ Calculating… (2s · ↓ 26 tokens)"
+      ]
+    },
+    {
+      "t": 5915,
+      "lines": [
+        "⎿ $ ls -a \"C:/Users/dev/work/contoso-web\"",
+        "✶ Calculating… (4s · ↓ 29 tokens)"
+      ]
+    },
+    {
+      "t": 8600,
+      "lines": [
+        "⎿ package.json",
+        "· Calculating… (7s · ↓ 133 tokens)"
+      ]
+    }
+  ],
   "changes": {
     "files": [],
     "totalInsertions": 0,

@@ -24,6 +24,183 @@
       "38 golang.org/x/crypto v0.55.0 // indirect"
     ]
   },
+  "peekTimeline": [
+    {
+      "t": 254,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\online-boutique"
+      ]
+    },
+    {
+      "t": 3800,
+      "lines": [
+        "COLLECTOR_ADDR environment variable. Do not run go build.",
+        "• I’ll inspect the shipping service setup and existing module dependencies first, then patch ..."
+      ]
+    },
+    {
+      "t": 8321,
+      "lines": [
+        "• Running Get-Content -Path src/shippingservice/go.sum | Select-String -Pattern \"opentelemetr...",
+        "◦ Running git status --short"
+      ]
+    },
+    {
+      "t": 12443,
+      "lines": [
+        "service. I’m patching only the service source and dependency metadata.",
+        "• Running Select-String -Path src/shippingservice/go.sum -Pattern \"otlptracegrpc|otlptrace v|..."
+      ]
+    },
+    {
+      "t": 18738,
+      "lines": [
+        "src\\checkoutservice\\go.mod:40: go.opentelemetry.io/proto/otlp v1.11.0 // indirect",
+        "• The checkout dependency versions are newer than shipping’s current module file, so I’m keep..."
+      ]
+    },
+    {
+      "t": 27585,
+      "lines": [
+        "• I’m going to make tracing setup return a shutdown function so the SDK can flush on process ...",
+        "is enabled."
+      ]
+    },
+    {
+      "t": 32673,
+      "lines": [
+        "201 + if err := tp.Shutdown(ctx); err != nil {",
+        "202 + log.Warnf(\"Failed to shutdown trace provider: %v\", err)"
+      ]
+    },
+    {
+      "t": 39580,
+      "lines": [
+        "173 collectorAddr := os.Getenv(collectorAddrEnv)",
+        "• I’m formatting the changed Go file now. After that I’ll update module metadata so the new i..."
+      ]
+    },
+    {
+      "t": 43605,
+      "lines": [
+        "• gofmt is not on PATH in this environment. I’ll keep the import block in standard order manu...",
+        "issues."
+      ]
+    },
+    {
+      "t": 49048,
+      "lines": [
+        "• Running Get-Content -Path src/checkoutservice/go.sum | Select-String -Pattern \"go\\.opentele...",
+        "go\\.opentelemetry\\.io/otel/sdk v1\\.46|go\\.opentelemetry\\.io/proto/otlp v1\\.11\""
+      ]
+    },
+    {
+      "t": 53680,
+      "lines": [
+        "• Since Go is not installed on PATH here, I can’t ask the toolchain to regenerate sums. I fou...",
+        "will copy only the needed module entries into shipping’s go.sum."
+      ]
+    },
+    {
+      "t": 59946,
+      "lines": [
+        "• I’m updating go.mod by moving the newly imported OpenTelemetry modules into the direct requ...",
+        "same version already used in shipping’s module graph."
+      ]
+    },
+    {
+      "t": 65684,
+      "lines": [
+        "38 golang.org/x/crypto v0.55.0 // indirect",
+        "• Next I’m adding the corresponding checksum entries from sibling module files, because the l..."
+      ]
+    },
+    {
+      "t": 70937,
+      "lines": [
+        "232:google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9/go.mod h1:4H...",
+        "• Running Get-Content -Path src/checkoutservice/go.mod | Select-Object -Skip 20 -First 30"
+      ]
+    },
+    {
+      "t": 76697,
+      "lines": [
+        "• The trace exporter pulls in a couple of OTLP modules that weren’t previously needed by ship...",
+        "OpenTelemetry entries."
+      ]
+    },
+    {
+      "t": 83014,
+      "lines": [
+        "133 +go.opentelemetry.io/proto/otlp v1.11.0/go.mod h1:SmVizdCOAm3XBtG1g1NnOdhW6jtddT72hLMhv8V...",
+        "134 golang.org/x/crypto v0.45.0 h1:jMBrvKuj23MTlT0bQEOBcAE0mjg8mK9RXFhRH6nyF3Q="
+      ]
+    },
+    {
+      "t": 90479,
+      "lines": [
+        "go.mod",
+        "• Running git status --short src/shippingservice/main.go src/shippingservice/go.mod src/shipp..."
+      ]
+    },
+    {
+      "t": 99430,
+      "lines": [
+        "src/frontend/go.sum",
+        "• Running rg -n \"github.com/cenkalti/backoff/v5|github.com/grpc-ecosystem/grpc-gateway/v2\" sr..."
+      ]
+    },
+    {
+      "t": 104274,
+      "lines": [
+        "└ (no output)",
+        "• Running Get-Content -Path src/frontend/go.mod | Select-String -Pattern \"opentelemetry|backo..."
+      ]
+    },
+    {
+      "t": 107806,
+      "lines": [
+        "• Shipping lacks two checksum entries that the OTLP exporter commonly brings in. I’m adding t...",
+        "file explicit and avoid leaving that cleanup for the next Go command."
+      ]
+    },
+    {
+      "t": 121760,
+      "lines": [
+        "• Now I’m adding the matching sums for those indirect modules from the existing sibling servi...",
+        "• Running Get-Content -Path src/shippingservice/go.sum -TotalCount 70"
+      ]
+    },
+    {
+      "t": 132246,
+      "lines": [
+        "• That patch also hit a nearby mismatch, so I’m splitting the checksum additions into smaller...",
+        "• Running Select-String -Path src/shippingservice/go.sum -Pattern \"cloud.google.com/go/profil..."
+      ]
+    },
+    {
+      "t": 139129,
+      "lines": [
+        "75 +github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oU...",
+        "76 github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 h1:GFCKgmp0tecUJ0sJ..."
+      ]
+    },
+    {
+      "t": 144346,
+      "lines": [
+        "• Running git diff --check -- src/shippingservice/main.go src/shippingservice/go.mod src/ship...",
+        "◦ Running git status --short src/shippingservice/main.go src/shippingservice/go.mod src/shipp..."
+      ]
+    },
+    {
+      "t": 150752,
+      "lines": [
+        "• The diff check passes for whitespace. Go commands are unavailable on PATH here, so I could ...",
+        "build."
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {

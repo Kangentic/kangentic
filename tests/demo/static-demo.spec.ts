@@ -225,6 +225,75 @@ interface DemoElectronWindow {
   };
 }
 
+interface DemoMonitorWindow {
+  __mockMonitorRows?: Array<{ sessionId: string; activity: string; outputPeek?: string[] }>;
+}
+
+/** The Monitor row state the mock publishes: what a card shows without opening a terminal. */
+function monitorRow(page: Page, sessionId: string): Promise<{ activity: string; peek: string } | null> {
+  return page.evaluate((id) => {
+    const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
+    return row ? { activity: row.activity, peek: (row.outputPeek ?? []).join(' | ') } : null;
+  }, sessionId);
+}
+
+/** How many DISTINCT output peeks a session's Monitor row shows over the given span. */
+async function countPeekChanges(page: Page, sessionId: string, spanMs: number): Promise<number> {
+  return page.evaluate(({ id, span }) => new Promise<number>((resolve) => {
+    let previous: string | null = null;
+    let changes = 0;
+    const timer = setInterval(() => {
+      const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
+      const peek = (row?.outputPeek ?? []).join(' | ');
+      if (previous !== null && peek !== previous) changes += 1;
+      previous = peek;
+    }, 100);
+    setTimeout(() => { clearInterval(timer); resolve(changes); }, span);
+  }), { id: sessionId, span: spanMs });
+}
+
+/**
+ * A task-detail window on "Add rate limiting", whose session the board seeds IDLE. Same shape as
+ * the task scene's workspace, so the window mounts its terminal on the grid the recording fits
+ * and takes the live path rather than the frame fallback.
+ */
+const RATE_LIMIT_WINDOW_STATE = {
+  config: {
+    workspaceByProject: {
+      'proj-contoso-web': {
+        version: 1,
+        windows: [{
+          taskId: 'task-cw-rate-limit',
+          kind: 'task-detail',
+          title: 'Add rate limiting',
+          geometry: { x: 0.21, y: 0.15, w: 0.58, h: 0.7 },
+          restoreGeometry: null,
+          state: 'floating',
+        }],
+        tileTree: null,
+        tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+        focusedTaskId: 'task-cw-rate-limit',
+      },
+    },
+  },
+};
+
+function encodeState(state: unknown): string {
+  return Buffer.from(JSON.stringify(state)).toString('base64url');
+}
+
+/** Total bytes the mock delivers for one session over the given span, through its own data path. */
+function streamedBytes(page: Page, sessionId: string, spanMs: number): Promise<number> {
+  return page.evaluate(({ id, span }) => new Promise<number>((resolve) => {
+    const api = (window as unknown as DemoElectronWindow).electronAPI;
+    let total = 0;
+    const unsubscribe = api.sessions.onData((candidate, data) => {
+      if (candidate === id) total += data.length;
+    });
+    setTimeout(() => { unsubscribe(); resolve(total); }, span);
+  }), { id: sessionId, span: spanMs });
+}
+
 function recordingRequests(page: Page): () => string[] {
   const urls: string[] = [];
   page.on('request', (request) => {
@@ -340,6 +409,99 @@ test('a still paints a working session at the moment the live frame opens it', a
   const live = await readFrames();
   expect(live.activity['sess-cw-middleware']).toBe('thinking');
   expect(live.activity['sess-pc-flaky-tests']).toBe('thinking');
+});
+
+test('a live Monitor changes its output peeks as the recordings play, and a still does not', async ({ page }) => {
+  // A Monitor card shows the last lines its session's terminal is displaying, and on the desktop
+  // those change as the agent works. The frame schedules the recording's own changes on the same
+  // clock it replays the bytes on, so the card moves without a terminal being open anywhere. A
+  // still has no clock, so its rows must sit exactly where the seed put them: a capture that
+  // shot a moving target would give the hero figures a different Monitor every run.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'monitor', embed: '1' });
+  await SCENE_MARKERS.monitor(page);
+  expect(await countPeekChanges(page, 'sess-cw-api-client', 12_000)).toBeGreaterThan(1);
+
+  await gotoScene(page, { view: 'monitor', embed: '1', still: '1' });
+  await SCENE_MARKERS.monitor(page);
+  expect(await countPeekChanges(page, 'sess-cw-api-client', 6_000)).toBe(0);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('loop=1 starts a finished session over, and without it the session stays finished', async ({ page }) => {
+  // The currency-a11y recording runs 20 seconds and ends with Copilot idle, so it is the one
+  // session that completes a whole cycle inside a test. Under loop=1 it goes back to working
+  // after a beat; without it, needs-you is where it stays.
+  test.setTimeout(120_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const session = 'sess-ob-currency-a11y';
+
+  await gotoScene(page, { view: 'monitor', embed: '1', loop: '1' });
+  await SCENE_MARKERS.monitor(page);
+  expect((await monitorRow(page, session))?.activity).toBe('thinking');
+  await expect.poll(async () => (await monitorRow(page, session))?.activity, { timeout: 45_000 }).toBe('idle');
+  await expect.poll(async () => (await monitorRow(page, session))?.activity, { timeout: 30_000 }).toBe('thinking');
+
+  await gotoScene(page, { view: 'monitor', embed: '1' });
+  await SCENE_MARKERS.monitor(page);
+  await expect.poll(async () => (await monitorRow(page, session))?.activity, { timeout: 45_000 }).toBe('idle');
+  // Well past the loop's pause: a frame that was not asked to loop must stay put.
+  await page.waitForTimeout(12_000);
+  expect((await monitorRow(page, session))?.activity).toBe('idle');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('loop=1 leaves a session that was never working alone', async ({ page }) => {
+  // Every session with a recording gets a replay entry, but only one the board seeds as WORKING
+  // carries a tail: the rest are already at their recording's end, so their clock lands the
+  // moment a terminal mounts. Looping those would flip an idle session to working and blank its
+  // terminal, having no opening frame to repaint from and no chunk left to schedule. The
+  // reachable case is a visitor opening a task window on such a session, which is a task-window
+  // mount on the grid its recording fits, so the frame-fallback guard never sees it.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'task', embed: '1', loop: '1', state: encodeState(RATE_LIMIT_WINDOW_STATE) });
+  await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Add rate limiting');
+  expect((await monitorRow(page, 'sess-cw-rate-limit'))?.activity).toBe('idle');
+  // Its recording is already at its end, so nothing should reach the terminal at all. A wrongly
+  // armed cycle announces itself here first: it clears the screen and repaints an opening frame
+  // this session does not have, which is a blank terminal. Twice the loop's six-second pause.
+  expect(await streamedBytes(page, 'sess-cw-rate-limit', 15_000)).toBe(0);
+  expect((await monitorRow(page, 'sess-cw-rate-limit'))?.activity).toBe('idle');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a terminal that cannot take the bytes does not end the session it shows', async ({ browser }) => {
+  // A geometry change does not end an agent's turn on the desktop: main routes that session to
+  // its parsed frame and the agent goes on working. So a working session whose terminal mounts
+  // on a grid its recording does not fit keeps its clock, its card and its Monitor peeks, and
+  // only the terminal text stands still. This is what leaves the default board layout moving
+  // with the bottom panel open, where the panel's 15 rows can never be a recording's 37.
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
+  const page = await context.newPage();
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1' }));
+  await waitForDemoReady(page);
+  await SCENE_MARKERS.task(page);
+  await expect.poll(() => mountedGrid(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toBeNull();
+  const grid = await mountedGrid(page, 'sess-cw-middleware');
+  test.skip(grid?.cols === 154 && grid?.rows === 37, 'this machine fits the recorded grid at 1.25 too');
+
+  // Nothing may reach that terminal, and its card must still be working once the moment its
+  // recording ends has passed. The peek is the part that carries the motion.
+  const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000);
+  expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBe(0);
+  expect(await peekChanges).toBeGreaterThan(0);
+  expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
+  expect(getUnexpectedErrors()).toEqual([]);
+  await context.close();
+});
+
+test('loop=1 and still=1 together are refused rather than silently reconciled', async ({ page }) => {
+  await page.goto(demoUrl({ view: 'monitor', embed: '1', still: '1', loop: '1' }));
+  const card = page.locator('[data-testid="demo-error"]');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('a still frame has no replay to loop');
 });
 
 test('the live task scene fetches its session recording from the serving origin', async ({ page }) => {

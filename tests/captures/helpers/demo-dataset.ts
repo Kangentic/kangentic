@@ -341,6 +341,7 @@ export function buildDemoPreConfig(options: {
   peeks?: Record<string, string[]>;
   ends?: Record<string, { durationMs: number; stopReason: string }>;
   openFrames?: Record<string, { serialized: string; peek: string[] }>;
+  peekTimelines?: Record<string, Array<{ t: number; lines: string[] }>>;
   liveTailMs?: number;
   currentProjectId?: string;
   appVersion?: string;
@@ -373,6 +374,9 @@ export function buildDemoPreConfig(options: {
   // The frame and Monitor peek at the moment the live frame opens each working session
   // (loadDemoOpenFrames): what a still and the captures show for it.
   const openFrames = options.openFrames ?? {};
+  // How each working session's Monitor peek changes as its recording plays (loadDemoPeekTimelines):
+  // the motion a Monitor card shows on the desktop, on the recording's own clock.
+  const peekTimelines = options.peekTimelines ?? {};
   // Every session with a terminal replays a recording; there is no hand-authored fallback. A
   // missing one would be a blank terminal in the frame and in every capture, so it fails the
   // build and the rig instead.
@@ -393,6 +397,7 @@ export function buildDemoPreConfig(options: {
       var changes = ${JSON.stringify(changes)};
       var peeks = ${JSON.stringify(peeks)};
       var openFrames = ${JSON.stringify(openFrames)};
+      var peekTimelines = ${JSON.stringify(peekTimelines)};
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
@@ -590,6 +595,19 @@ export function buildDemoPreConfig(options: {
         window.__mockMonitorRows = rows;
         if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
       }
+      // The inverse, for loop=1: the session goes back to working and the Monitor says so, the
+      // way it does on the desktop when the next turn starts.
+      function startSession(sessionId) {
+        var row = sessionById(sessionId);
+        if (!row || mockState.activityCache[sessionId] === 'thinking') return;
+        mockState.activityCache[sessionId] = 'thinking';
+        if (window.__mockFireActivity) window.__mockFireActivity(sessionId, 'thinking', null, row.projectId, row.taskId);
+        var rows = (window.__mockMonitorRows || []).map(function (monitorRow) {
+          return monitorRow.sessionId === sessionId ? Object.assign({}, monitorRow, { activity: 'thinking' }) : monitorRow;
+        });
+        window.__mockMonitorRows = rows;
+        if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
+      }
       function setMonitorPeek(sessionId, peek) {
         var changed = false;
         var rows = (window.__mockMonitorRows || []).map(function (row) {
@@ -601,6 +619,71 @@ export function buildDemoPreConfig(options: {
         window.__mockMonitorRows = rows;
         if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
       }
+      // Everything a working session's clock does between now and its recording's end, in one
+      // place: the Monitor peek changes on the way, the peek and the activity flip at the end,
+      // and under loop=1 the next cycle. The two callers (the seed below, and a terminal
+      // mounting) both clear the session's timers and then call this, so neither can schedule
+      // half of it. The byte stream is separate because only a mounted terminal needs it: the
+      // seed never fetches a recording, which is what keeps a Monitor-only frame off the wire.
+      var LOOP_PAUSE_MS = 6000;
+      var looping = !!(window.__demoBoot && window.__demoBoot.params && window.__demoBoot.params.loop);
+      function scheduleSessionClock(sessionId, entry, clock) {
+        if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
+        (peekTimelines[sessionId] || []).forEach(function (change) {
+          var delay = entry.startedAt + change.t - Date.now();
+          if (delay < 0) return;
+          replayTimers[sessionId].push(setTimeout(function () { setMonitorPeek(sessionId, change.lines); }, delay));
+        });
+        // When the replay reaches the recording's end: the Monitor's output peek becomes the
+        // recording's own last displayed lines, and a session whose agent finished flips to
+        // needs-you.
+        replayTimers[sessionId].push(setTimeout(function () {
+          if (clock.endPeek && clock.endPeek.length) setMonitorPeek(sessionId, clock.endPeek);
+          if (clock.endedOnItsOwn) finishSession(sessionId);
+          // Only a session the board seeds as WORKING has a stretch to replay: every other one
+          // carries tail 0, so its recording is already at its end and its clock lands at once.
+          // Looping those would flip an idle session to working and blank its terminal, since
+          // there is no opening frame to repaint from and no chunk left to schedule. A working
+          // session whose terminal cannot take the bytes still loops: its card and its Monitor
+          // row are the part that moves, and restartSession emits nothing to it.
+          if (!looping || entry.tail <= 0) return;
+          replayTimers[sessionId].push(setTimeout(function () { restartSession(sessionId, entry, clock); }, LOOP_PAUSE_MS));
+        }, Math.max(0, entry.startedAt + clock.durationMs - Date.now())));
+      }
+      // loop=1: the session goes back to working and replays the same stretch again, after a beat
+      // long enough to read the state it finished in. Each session loops on its own clock, so the
+      // Monitor keeps changing instead of going quiet until the longest recording comes round.
+      // A mounted terminal is repainted from the opening frame rather than left to grow a
+      // cycle's scrollback every time.
+      function restartSession(sessionId, entry, clock) {
+        clearReplayTimers(sessionId);
+        entry.startedAt = Date.now() - Math.max(0, clock.durationMs - entry.tail);
+        startSession(sessionId);
+        var open = openFrames[sessionId];
+        setMonitorPeek(sessionId, open ? open.peek : []);
+        // Never into a grid the recording does not fit: that terminal is on a parsed frame and
+        // a reset plus an opening frame would land two frames' text on one row.
+        if (entry.mounted && !entry.frameOnly && recordingCache[entry.file]) {
+          recordingCache[entry.file].then(function (recording) {
+            emitBytes(sessionId, '\\x1b[2J\\x1b[3J\\x1b[H' + (open ? open.serialized : ''), entry.projectId);
+            scheduleStreamBytes(sessionId, entry, recording);
+            scheduleSessionClock(sessionId, entry, clock);
+          });
+          return;
+        }
+        scheduleSessionClock(sessionId, entry, clock);
+      }
+      /** Queue the chunks still ahead of the session's clock, and return the ones already behind it. */
+      function scheduleStreamBytes(sessionId, entry, recording) {
+        if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
+        var elapsed = Date.now() - entry.startedAt;
+        var head = '';
+        recording.stream.forEach(function (chunk) {
+          if (chunk.t <= elapsed) { head += chunk.data; return; }
+          replayTimers[sessionId].push(setTimeout(function () { emitBytes(sessionId, chunk.data, entry.projectId); }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
+        });
+        return head;
+      }
       function liveScrollback(sessionId, entry) {
         return fetchRecording(entry.file).then(function (recording) {
           var last = recording.stream[recording.stream.length - 1];
@@ -610,22 +693,10 @@ export function buildDemoPreConfig(options: {
             // last stretch is already scrollback, and that stretch streams from here.
             entry.startedAt = Date.now() - Math.max(0, duration - entry.tail);
           }
-          var elapsed = Date.now() - entry.startedAt;
-          var head = '';
-          var pending = [];
-          recording.stream.forEach(function (chunk) { if (chunk.t <= elapsed) head += chunk.data; else pending.push(chunk); });
+          entry.mounted = true;
           clearReplayTimers(sessionId);
-          pending.forEach(function (chunk) {
-            replayTimers[sessionId].push(setTimeout(function () { emitBytes(sessionId, chunk.data, entry.projectId); }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
-          });
-          // When the replay reaches the recording's end: the Monitor's output peek becomes the
-          // recording's own last displayed lines (until then the row shows none, since lines read
-          // from half a repaint would be wrong), and a session whose agent finished flips to
-          // needs-you.
-          replayTimers[sessionId].push(setTimeout(function () {
-            if (recording.peek && recording.peek.length) setMonitorPeek(sessionId, recording.peek);
-            if (endedOnItsOwn(recording)) finishSession(sessionId);
-          }, Math.max(0, entry.startedAt + duration - Date.now())));
+          var head = scheduleStreamBytes(sessionId, entry, recording);
+          scheduleSessionClock(sessionId, entry, { durationMs: duration, endPeek: recording.peek, endedOnItsOwn: endedOnItsOwn(recording) });
           return head;
         });
       }
@@ -647,13 +718,10 @@ export function buildDemoPreConfig(options: {
         }
         entry.startedAt = Date.now() - Math.max(0, end.durationMs - entry.tail);
         // A recording shorter than the tail plays from its first byte, so the Monitor row shows
-        // no lines yet; the end timer below sets the recording's own.
+        // no lines yet; the clock's changes and its end timer fill them in.
         if (!openFrames[session.id]) setMonitorPeek(session.id, []);
         clearReplayTimers(session.id);
-        replayTimers[session.id].push(setTimeout(function () {
-          if (peeks[session.id]) setMonitorPeek(session.id, peeks[session.id]);
-          if (endedOnItsOwn(end)) finishSession(session.id);
-        }, Math.max(0, entry.startedAt + end.durationMs - Date.now())));
+        scheduleSessionClock(session.id, entry, { durationMs: end.durationMs, endPeek: peeks[session.id], endedOnItsOwn: endedOnItsOwn(end) });
       });
       window.__demoScrollback = scrollback;
       // The grid a terminal mounts with is the visitor's, not the recording's: the bottom panel
@@ -739,12 +807,26 @@ export function buildDemoPreConfig(options: {
           if (mountedGeometry[sessionId]) entry.file = layoutFileFor(entry, mountedGeometry[sessionId].cols);
           return fetchRecording(entry.file).then(function (recording) {
             if (geometryFits(sessionId, recording)) return liveScrollback(sessionId, entry);
+            // The bytes cannot replay into this grid, so the terminal paints a parsed frame
+            // instead, the way main routes a geometry-changed session on the desktop. That does
+            // not END the session there: the agent goes on working and only the replay is
+            // replaced. So a session the board shows as working keeps the clock the seed
+            // started, which emits no bytes of its own, and its card, its sidebar count and its
+            // Monitor peeks go on changing; the terminal holds the frame the live replay opens
+            // at, since a stream cannot be re-laid out without the CLI. frameOnly means exactly
+            // "never emit bytes to this session", nothing about whether it is finished.
+            entry.frameOnly = true;
+            var cols = mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0;
+            if (entry.tail > 0) {
+              var open = openFrames[sessionId];
+              return fitFrameToCols(open ? open.serialized : recording.serialized, cols);
+            }
+            // A session already at its end: the frame is the recording's end, so the row's peek
+            // and a finished session's state read as they would at the end here too.
             clearReplayTimers(sessionId);
-            // The frame is the recording's end, so the row's peek and a finished session's state
-            // read as they would at the end here too.
             if (recording.peek && recording.peek.length) setMonitorPeek(sessionId, recording.peek);
             if (endedOnItsOwn(recording)) finishSession(sessionId);
-            return fitFrameToCols(recording.serialized, mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0);
+            return fitFrameToCols(recording.serialized, cols);
           });
         }
         if (scrollback[sessionId]) return Promise.resolve(scrollback[sessionId]);

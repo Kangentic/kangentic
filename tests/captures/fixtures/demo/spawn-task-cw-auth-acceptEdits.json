@@ -770,5 +770,77 @@
       "t": 24968,
       "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[m\u001b[38;2;210;110;84m\u001b[30;1H*\u001b[1CGesticulating… \u001b[33;3H\u001b[?25h\u001b[m\u001b]0;◑ User auth flow\u0007"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 802,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3338,
+      "lines": [
+        "⎿ $ ls -la C:/Users/dev/work/contoso-web",
+        "✽ Gesticulating… (2s · ↓ 38 tokens)"
+      ]
+    },
+    {
+      "t": 5918,
+      "lines": [
+        "⎿ $ ls -la C:/Users/dev/work/contoso-web",
+        "✶ Gesticulating… (4s · ↓ 44 tokens)"
+      ]
+    },
+    {
+      "t": 8513,
+      "lines": [
+        "⎿ Running…",
+        "· Gesticulating… (7s · ↓ 142 tokens)"
+      ]
+    },
+    {
+      "t": 11064,
+      "lines": [
+        "… +198 lines (ctrl+o to expand)",
+        "✶ Gesticulating… (10s · ↓ 427 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 14092,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Gesticulating… (13s · ↓ 707 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 16957,
+      "lines": [
+        "Advising using Opus 5",
+        "* Gesticulating… (16s · ↓ 845 tokens · thought for 1s)"
+      ]
+    },
+    {
+      "t": 19813,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Gesticulating… (18s · ↓ 845 tokens)"
+      ]
+    },
+    {
+      "t": 22385,
+      "lines": [
+        "● Advising using Opus 5",
+        "· Gesticulating… (21s · ↓ 845 tokens)"
+      ]
+    },
+    {
+      "t": 24968,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Gesticulating… (23s · ↓ 845 tokens)"
+      ]
+    }
   ]
 }

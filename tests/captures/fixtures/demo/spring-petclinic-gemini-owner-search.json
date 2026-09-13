@@ -24,6 +24,29 @@
       "~\\oss\\spring-petclinic main no sandbox Auto"
     ]
   },
+  "peekTimeline": [
+    {
+      "t": 3435,
+      "lines": [
+        "workspace (/directory) sandbox /model",
+        "~\\oss\\spring-petclinic no sandbox Auto"
+      ]
+    },
+    {
+      "t": 137509,
+      "lines": [
+        "workspace (/directory) branch sandbox /model",
+        "~\\oss\\spring-petclinic main no sandbox Auto ✖ 1 error (F12 for details)"
+      ]
+    },
+    {
+      "t": 185122,
+      "lines": [
+        "3. Modify with external editor",
+        "4. No, suggest changes (esc)"
+      ]
+    }
+  ],
   "changes": {
     "files": [],
     "totalInsertions": 0,

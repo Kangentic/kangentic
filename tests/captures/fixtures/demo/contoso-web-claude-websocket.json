@@ -17,6 +17,162 @@
     "5. Chat about this"
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 852,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3387,
+      "lines": [
+        "⎿ src\\lib\\websocket.ts",
+        "✽ Hyperspacing… (2s · ↓ 81 tokens)"
+      ]
+    },
+    {
+      "t": 5969,
+      "lines": [
+        "● Explore(Find LiveUpdates usages)",
+        "✶ Hyperspacing… (4s · ↓ 284 tokens)"
+      ]
+    },
+    {
+      "t": 9095,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 3s · ↓ 16.3k tokens"
+      ]
+    },
+    {
+      "t": 12099,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 6s · ↓ 16.3k tokens"
+      ]
+    },
+    {
+      "t": 15044,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 9s · ↓ 18.2k tokens"
+      ]
+    },
+    {
+      "t": 18069,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 12s · ↓ 21.2k tokens"
+      ]
+    },
+    {
+      "t": 21087,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 15s · ↓ 23.9k tokens"
+      ]
+    },
+    {
+      "t": 24135,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 18s · ↓ 24.2k tokens"
+      ]
+    },
+    {
+      "t": 27017,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 20s · ↓ 24.5k tokens"
+      ]
+    },
+    {
+      "t": 30022,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 23s · ↓ 25.0k tokens"
+      ]
+    },
+    {
+      "t": 32669,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 26s · ↓ 25.4k tokens"
+      ]
+    },
+    {
+      "t": 35192,
+      "lines": [
+        "● main",
+        "◯ Explore Find LiveUpdates usages 29s · ↓ 25.8k tokens"
+      ]
+    },
+    {
+      "t": 37789,
+      "lines": [
+        "● main",
+        "◯ Explore Inspecting server/routes.ts and test deps 31s · ↓ 26.2k tokens"
+      ]
+    },
+    {
+      "t": 40458,
+      "lines": [
+        "Advising using Opus 5",
+        "· Hyperspacing… (39s · ↓ 531 tokens)"
+      ]
+    },
+    {
+      "t": 43042,
+      "lines": [
+        "Advising using Opus 5",
+        "* Hyperspacing… (41s · ↓ 531 tokens)"
+      ]
+    },
+    {
+      "t": 45587,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Hyperspacing… (44s · ↓ 531 tokens)"
+      ]
+    },
+    {
+      "t": 48186,
+      "lines": [
+        "Advising using Opus 5",
+        "* Hyperspacing… (47s · ↓ 531 tokens)"
+      ]
+    },
+    {
+      "t": 50875,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Hyperspacing… (49s · ↓ 531 tokens)"
+      ]
+    },
+    {
+      "t": 53455,
+      "lines": [
+        "● Advising using Opus 5",
+        "✽ Hyperspacing… (52s · ↓ 531 tokens)"
+      ]
+    },
+    {
+      "t": 56030,
+      "lines": [
+        "✶ Hyperspacing… (55s · ↓ 619 tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 60065,
+      "lines": [
+        "✶ Hyperspacing… (58s · ↓ 1.3k tokens · thought for 1s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    }
+  ],
   "changes": {
     "files": [],
     "totalInsertions": 0,

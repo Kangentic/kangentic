@@ -714,5 +714,70 @@
       "t": 25072,
       "data": "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[38;2;182;62;69m\u001b[17;1H✶\u001b[38;2;153;153;153m\u001b[11C4\u001b[20;3H\u001b[?25h"
     }
+  ],
+  "peekTimeline": [
+    {
+      "t": 831,
+      "lines": [
+        "▝▝ ▝▝ ~\\work\\contoso-web",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3352,
+      "lines": [
+        "● I'll start by exploring the codebase to understand the current API error handling.",
+        "✽ Vibing… (2s · ↓ 113 tokens)"
+      ]
+    },
+    {
+      "t": 6696,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 1s · ↑ 16.3k tokens"
+      ]
+    },
+    {
+      "t": 9739,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 4s · ↓ 16.4k tokens"
+      ]
+    },
+    {
+      "t": 12738,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 7s · ↓ 16.4k tokens"
+      ]
+    },
+    {
+      "t": 15743,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 10s · ↓ 19.2k tokens"
+      ]
+    },
+    {
+      "t": 18532,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 12s · ↓ 24.6k tokens"
+      ]
+    },
+    {
+      "t": 21266,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 15s · ↓ 26.5k tokens"
+      ]
+    },
+    {
+      "t": 23806,
+      "lines": [
+        "● main",
+        "◯ Explore Explore API error handling 18s · ↓ 26.5k tokens"
+      ]
+    }
   ]
 }

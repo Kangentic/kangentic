@@ -413,29 +413,9 @@ async function serializeThroughXterm(raw, cols, rows) {
   return { serialized, altScreen, peek };
 }
 
-/**
- * Footer, status, and input-placeholder rows are each CLI's chrome, not the agent's output; the
- * Monitor peek skips them (Claude's mode footer, Codex's prompt hint and model line, Copilot's
- * session footer, OpenCode's status bar, Gemini's key hints).
- */
-const PEEK_CHROME = /(esc to (cancel|interrupt)|enter to select|ctrl\+p commands|\? for shortcuts|shift\+tab to cycle|accept edits on|tab to amend|open sidebar|Type your message|^› |^❯|^gpt-[\w.-]+ (low|medium|high|xhigh) ·|Session: [\d.]+ AIC used|Build · |\d+(\.\d+)?K \(\d+%\)|to navigate)/i;
-
-/**
- * The last two lines of the terminal as it DISPLAYS them, for the Monitor card's output peek.
- * Read from the rendered buffer rather than the byte stream, so cursor-positioned words keep
- * their spacing. Box borders at either edge are trimmed; a TUI's frame is not output either.
- */
-function peekFromTerminal(terminal) {
-  const buffer = terminal.buffer.active;
-  const kept = [];
-  for (let row = buffer.length - 1; row >= 0 && kept.length < 2; row--) {
-    const line = buffer.getLine(row);
-    const text = (line ? line.translateToString(true) : '').replace(/\s+/g, ' ').replace(/^[\s│┃]+|[\s│┃]+$/g, '');
-    if (!/[A-Za-z]{3}/.test(text) || PEEK_CHROME.test(text) || /^[─-▟\s]+$/.test(text)) continue;
-    kept.unshift(text.length > 96 ? `${text.slice(0, 93)}...` : text);
-  }
-  return kept;
-}
+// The Monitor peek, and the timeline of how it changes over the recording, are computed by the
+// one module the backfill script shares, so a new recording and an old one cannot disagree.
+const { peekFromTerminal, computePeekTimeline } = require('./lib/demo-peek-timeline');
 
 // ---------------------------------------------------------------- main
 async function main() {
@@ -566,6 +546,16 @@ async function main() {
     openFrame = { beforeEndMs: options.liveTail, serialized: cleanOpen, peek: cleanOpenPeek };
     console.error(`[capture] open frame at ${(openAt / 1000).toFixed(1)}s: ${cleanOpen.length} bytes`);
   }
+  // How the Monitor card's output peek changes as the agent works, sampled to a cadence a reader
+  // can follow. The stream is already sanitized, so the lines read off it are too; they are
+  // checked again here because a peek is read from the RENDERED buffer, where cursor positioning
+  // can join text the sanitizer only ever saw in separate windows.
+  const peekTimeline = await computePeekTimeline({ stream: cleanStream, cols: options.cols, rows: options.rows });
+  for (const change of peekTimeline) {
+    for (const line of change.lines) sanitizer.assertClean(line, `peek timeline at ${change.t} ms`);
+  }
+  console.error(`[capture] peek timeline: ${peekTimeline.length} change(s) across ${(lastWindow ? lastWindow.t / 1000 : 0).toFixed(0)}s`);
+
   const changes = collectChanges(options.cwd, sanitizer);
   for (const file of changes.files) {
     sanitizer.assertClean(file.original, `changes ${file.path} (original)`);
@@ -597,6 +587,7 @@ async function main() {
     serialized: cleanSerialized,
     peek: cleanPeek,
     openFrame,
+    peekTimeline,
     changes,
     stream: cleanStream,
   };

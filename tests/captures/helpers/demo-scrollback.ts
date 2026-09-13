@@ -30,6 +30,8 @@ interface DemoCaptureRecord {
   stopReason?: string;
   /** The frame beforeEndMs before the end, with its displayed last lines: the moment the live frame opens a working session at. */
   openFrame?: { beforeEndMs: number; serialized: string; peek: string[] } | null;
+  /** How the displayed last lines change over the recording, on the stream's own clock. */
+  peekTimeline?: Array<{ t: number; lines: string[] }>;
 }
 
 interface DemoManifest {
@@ -212,6 +214,27 @@ export function loadDemoOpenFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Rec
     frames[sessionId] = { serialized: trimRowPadding(record.openFrame.serialized), peek: Array.isArray(record.openFrame.peek) ? record.openFrame.peek : [] };
   }
   return frames;
+}
+
+/**
+ * How each session's Monitor peek changes over its recording, keyed by session id, on the
+ * recording's own clock. A Monitor card shows the last lines its terminal is displaying, and on
+ * the desktop those change as the agent works; the live frame schedules these against the same
+ * clock it replays the bytes on, so the card changes when the terminal does.
+ *
+ * Whole-recording, deliberately: no window constant to keep in step with liveTailMs, and nothing
+ * that goes stale when a session's tail changes. It costs 2.5 KB gzipped across the sample
+ * install's working sessions (demo/README.md).
+ */
+export function loadDemoPeekTimelines(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, Array<{ t: number; lines: string[] }>> {
+  const timelines: Record<string, Array<{ t: number; lines: string[] }>> = {};
+  for (const { sessionId, record } of loadRecordings(fixturesDir)) {
+    if (!Array.isArray(record.peekTimeline) || record.peekTimeline.length === 0) continue;
+    const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+    if (session?.activity !== 'thinking') continue;
+    timelines[sessionId] = record.peekTimeline;
+  }
+  return timelines;
 }
 
 /** The working-tree diff each recorded session left behind, keyed by session id. */

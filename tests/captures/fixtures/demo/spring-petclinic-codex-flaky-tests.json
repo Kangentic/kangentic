@@ -17,6 +17,43 @@
     "• Running Get-Content -Path src\\main\\resources\\db\\mysql\\schema.sql"
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 256,
+      "lines": [
+        "permissions: YOLO mode",
+        "gpt-5.5 default · ~\\oss\\spring-petclinic"
+      ]
+    },
+    {
+      "t": 3552,
+      "lines": [
+        "• I’ll inspect the failing integration test and the relevant JPA mappings first, then make th...",
+        "deterministic without invoking Maven."
+      ]
+    },
+    {
+      "t": 8720,
+      "lines": [
+        "• Running Get-Content -Path src\\test\\java\\org\\springframework\\samples\\petclinic\\PetClinicInte...",
+        "• Running Get-Content -Path src\\main\\java\\org\\springframework\\samples\\petclinic\\owner\\Owner.java"
+      ]
+    },
+    {
+      "t": 16092,
+      "lines": [
+        "• Running Get-Content -Path src\\main\\resources\\db\\mysql\\data.sql",
+        "• Running Get-Content -Path src\\main\\resources\\templates\\owners\\ownerDetails.html"
+      ]
+    },
+    {
+      "t": 19984,
+      "lines": [
+        "• Running Get-Content -Path src\\test\\java\\org\\springframework\\samples\\petclinic\\owner\\OwnerCo...",
+        "• Running Get-Content -Path src\\main\\resources\\db\\mysql\\schema.sql"
+      ]
+    }
+  ],
   "changes": {
     "files": [],
     "totalInsertions": 0,

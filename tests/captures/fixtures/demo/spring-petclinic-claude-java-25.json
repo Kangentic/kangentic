@@ -17,6 +17,134 @@
     "Do you want to make this edit to Dockerfile?"
   ],
   "openFrame": null,
+  "peekTimeline": [
+    {
+      "t": 836,
+      "lines": [
+        "▝▝ ▝▝ ~\\oss\\spring-petclinic",
+        "/rc connecting…"
+      ]
+    },
+    {
+      "t": 3461,
+      "lines": [
+        "⎿ \"java.version|<java\"",
+        "✽ Slithering… (2s · ↓ 95 tokens)"
+      ]
+    },
+    {
+      "t": 6031,
+      "lines": [
+        "⎿ .github\\workflows\\gradle-build.yml",
+        "✶ Slithering… (5s · ↓ 417 tokens · thinking with medium effort)"
+      ]
+    },
+    {
+      "t": 9049,
+      "lines": [
+        "● Advising using Opus 5",
+        "✶ Slithering… (8s · ↓ 928 tokens · thought for 1s)"
+      ]
+    },
+    {
+      "t": 11862,
+      "lines": [
+        "● Advising using Opus 5",
+        "✻ Slithering… (10s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 14434,
+      "lines": [
+        "● Advising using Opus 5",
+        "· Slithering… (13s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 16955,
+      "lines": [
+        "Advising using Opus 5",
+        "* Slithering… (15s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 19803,
+      "lines": [
+        "Advising using Opus 5",
+        "✻ Slithering… (18s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 22385,
+      "lines": [
+        "● Advising using Opus 5",
+        "· Slithering… (21s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 24964,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Slithering… (23s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 27767,
+      "lines": [
+        "● Advising using Opus 5",
+        "✻ Slithering… (26s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 30327,
+      "lines": [
+        "Advising using Opus 5",
+        "✢ Slithering… (29s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 33031,
+      "lines": [
+        "Advising using Opus 5",
+        "* Slithering… (32s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 35808,
+      "lines": [
+        "● Advising using Opus 5",
+        "✻ Slithering… (34s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 38399,
+      "lines": [
+        "● Advising using Opus 5",
+        "· Slithering… (37s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 40975,
+      "lines": [
+        "● Advising using Opus 5",
+        "* Slithering… (39s · ↓ 931 tokens)"
+      ]
+    },
+    {
+      "t": 43783,
+      "lines": [
+        "✻ Slithering… (42s · ↓ 981 tokens · thinking with medium effort)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    },
+    {
+      "t": 47807,
+      "lines": [
+        "✻ Slithering… (46s · ↓ 1.5k tokens · thought for 2s)",
+        "⎿ Tip: Use /btw to ask a quick side question without interrupting Claude's current work"
+      ]
+    }
+  ],
   "changes": {
     "files": [
       {
