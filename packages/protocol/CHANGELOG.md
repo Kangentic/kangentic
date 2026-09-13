@@ -2,6 +2,22 @@
 
 <!-- releases -->
 
+## [protocol-v0.13.1] - 2026-09-12
+
+`BoardTaskWire.pr_merge_readiness` becomes optional (`?: string | null`),
+matching `BoardColumnWire.spawns_session`. It shipped required in 0.13.0 even
+though `parseBoardTaskWire` already reads an absent key as null, so the
+required declaration bought nothing and forced every consumer that hand-builds
+a `BoardTaskWire` literal to list a field the parser already defaults.
+
+No runtime or parse behavior changes and `PROTOCOL_VERSION` stays '3'. One
+direction is worth naming for readers: the field's type now includes
+`undefined`, so a consumer that reads it under `strict` without handling that
+case needs a check it did not need before. Producers are strictly freer.
+
+### Fixes
+- Make `BoardTaskWire.pr_merge_readiness` optional (a9624bac)
+
 ## [protocol-v0.13.0] - 2026-09-11
 
 Adds `BoardTaskWire.pr_merge_readiness` and `BoardColumnWire.spawns_session`.
