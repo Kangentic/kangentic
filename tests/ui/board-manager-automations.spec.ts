@@ -815,7 +815,9 @@ test.describe('Column automations', () => {
 
     await menu.getByText('{{title}}', { exact: true }).click();
     await expect(menu).toBeHidden();
-    await expect(message).toHaveValue('/review {{title}}');
+    // The trailing space comes with the chip: accepting a variable leaves the
+    // caret ready for the rest of the sentence rather than butted against `}}`.
+    await expect(message).toHaveValue('/review {{title}} ');
   });
 
   test('the picker offers the automation context variables and says which are usually empty', async () => {
