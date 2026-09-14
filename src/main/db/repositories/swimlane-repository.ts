@@ -54,6 +54,12 @@ interface SwimlaneRow {
 export function deleteSwimlaneRowWithReferences(db: Database.Database, id: string): void {
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(id, id);
+    // The column's automations. `column_automations.swimlane_id` declares
+    // ON DELETE CASCADE and `foreign_keys = ON` is set, so this is belt and
+    // braces rather than the only mechanism. It is here anyway because every
+    // other reference in this function is explicit, and a reader should not
+    // have to know a pragma is on to know the rows go.
+    db.prepare('DELETE FROM column_automations WHERE swimlane_id = ?').run(id);
     // Clear dangling plan_exit_target_id references
     db.prepare('UPDATE swimlanes SET plan_exit_target_id = NULL WHERE plan_exit_target_id = ?').run(id);
     db.prepare('DELETE FROM swimlanes WHERE id = ?').run(id);

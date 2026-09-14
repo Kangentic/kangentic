@@ -27,6 +27,10 @@ src/
       shared/     # Shared utilities (interpolateTemplate, resolveBridgeScript, execVersion)
       adapters/   # Per-agent subfolders (claude/, codex/, gemini/, qwen-code/, opencode/, aider/)
       commands/   # MCP command handlers
+    automations/  # Column automation adapter system (mirrors agent/, boards/, pr/)
+      shared/     # AutomationAdapter contract, context, errors, describe helpers
+      adapters/   # Per-type subfolders (send-message/, run-script/, webhook/, notify/, legacy/)
+      automation-registry.ts  # Central AutomationRegistry + automationRegistry singleton
     boards/       # Board integration adapter system (mirrors agent/)
       shared/     # BoardAdapter interface + auth, mapping, download, rate-limit helpers
       adapters/   # Per-provider subfolders (github-issues/, azure-devops/, jira/, etc.)
@@ -409,6 +413,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `project-scoped-ipc.md` - renderer-driven task/session mutations forward an explicit interaction-time `projectId` (`src/preload/`, `src/main/ipc/`, `src/renderer/stores/`).
 - `esbuild-cjs-imports.md` - ES `import`, not bare `require()`, in bundled main/preload code.
 - `agent-adapters-boundary.md` - no agent-name branching outside `src/main/agent/adapters/`.
+- `automation-adapters.md` - an automation type is declared once in `AUTOMATION_MANIFEST` and implemented under `src/main/automations/adapters/`; the runner owns escaping, timeouts and retry (`src/main/automations/`).
 - `cli-features-over-custom-layers.md` - do not shadow an agent CLI's native controls (`src/main/agent/`).
 - `dev-tooling-build-exclusion.md` - dev tooling build-excluded via `__KANGENTIC_DEV__` (`src/devtools/`).
 - `docs-stay-in-sync.md` - update docs when changing anchor source files (types, IPC, migrations, adapters, settings).

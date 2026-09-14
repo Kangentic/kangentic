@@ -17,8 +17,10 @@ User drags task between columns
   → BoardStore.moveTask() -- optimistic UI update
   → IPC task:move
   → Main: update DB positions
+  → Main: TransitionEngine runs the SOURCE column's On exit automations
   → Main: check priority rules (To Do? Done? Active session? No session?)
-  → Main: TransitionEngine executes action chain (create_worktree → spawn_agent)
+  → Main: TransitionEngine runs the TARGET column's On enter automations
+  → Main: the agent starts before the first automation that needs it
   → SessionManager spawns PTY (or queues it)
   → PTY streams output → 16ms batched flush → IPC session:data → xterm render
   → Bridge scripts write status/activity/events files → fs.watch → IPC → Zustand stores
@@ -168,20 +170,19 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `swimlane:reorder` | invoke | Reorder swimlanes by ID array |
 | `swimlane:updatedByAgent` | on | Push event when an MCP agent changes a project's columns: a column create, update, or delete, or (reusing the same deliberately kind-agnostic signal) a same-column task reorder via `kangentic_reorder_tasks` / `kangentic_move_task`'s `position`, where no swimlane field itself changed |
 
-### Actions (4 channels)
-| Channel | Pattern | Purpose |
-|---------|---------|---------|
-| `action:list` | invoke | Fetch all actions |
-| `action:create` | invoke | Create action with type and config |
-| `action:update` | invoke | Update action |
-| `action:delete` | invoke | Delete action |
+### Automations (7 channels)
 
-### Transitions (3 channels)
+Replaced the `action:*` and `transition:*` channels, which had no renderer callers.
+
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transition:list` | invoke | Fetch all transitions |
-| `transition:set` | invoke | Set action chain for lane A→B |
-| `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
+| `automation:list` | invoke | Fetch every column's automations |
+| `automation:replaceForColumn` | invoke | Replace one column's whole list (the Column Manager's Save) |
+| `automation:runsForTask` | invoke | Run history for a task, newest first |
+| `automation:latestRuns` | invoke | The newest run per automation, for the row's last-run line |
+| `automation:runAgain` | invoke | Re-run ONE automation against the task's current state, writing a fresh run row |
+| `automation:runFailed` | on | Push event when a run failed or was interrupted, rationed per automation |
+| `automation:runsInterrupted` | on | Push event after the project-open sweep, one summary per open |
 
 ### Sessions (42 channels)
 | Channel | Pattern | Purpose |
@@ -517,10 +518,11 @@ Stores the project list. Tables:
 
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
-- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, auto_command_mode, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at
+- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
 - **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
-- **actions** -- Executable steps. Types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`. Config stored as JSON.
-- **swimlane_transitions** -- Maps lane pairs to action chains. Fields: from_swimlane_id (`*` = any), to_swimlane_id, action_id, execution_order
+- **column_automations** -- What runs when a task enters or leaves a column. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, plus the legacy `spawn_agent`), trigger (`enter`/`exit`), position, enabled, config_json, created_at, updated_at. One list per column, numbered per trigger, with names unique per column
+- **automation_runs** -- One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at. Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept
+- **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [database.md](database.md)
 - **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
 - **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
@@ -579,25 +581,37 @@ When a task moves between swimlanes, the IPC handler checks priorities in order:
 1. **Target is To Do** → Kill session, preserve worktree
 2. **Target is Done** → Suspend session (resumable), archive task
 3. **Target has auto_spawn=false** → Suspend session
-4. **Task has active session** → A permission-mode delta (destination's effective mode differs from the session record's spawn-time mode) suspends and respawns so the new `--permission-mode` / `--model` / `--effort` land as CLI flags. Otherwise live-inject model/effort/auto_command when the adapter supports it, respawn on a concrete model/effort delta without live-swap, or keep the session alive. See [Transition Engine](transition-engine.md) Priority 3 for the full sub-case order.
-5. **Task has no session** → Create worktree (if enabled), execute transition action chain. For resumed sessions, `auto_command` is preloaded as the resume prompt. For fresh spawns, it is injected via `TerminalSubmitScheduler.scheduleKeystrokes`. Note that escalation to a restart-with-prompt is wired ONLY on the warm-session column move (`task-move.ts`); neither fresh-spawn call site passes an `escalate` handler, so an unconfirmed fresh-spawn `auto_command` stops at `failed`. See [Command Injection](command-injection.md) for the delivery ladder.
+4. **Task has active session** → A permission-mode delta (destination's effective mode differs from the session record's spawn-time mode) suspends and respawns so the new `--permission-mode` / `--model` / `--effort` land as CLI flags. Otherwise live-inject model/effort/the column's message when the adapter supports it, respawn on a concrete model/effort delta without live-swap, or keep the session alive. Either keep-alive return then runs the destination's On enter group, with the already-delivered message named to the runner so it is not sent twice. See [Transition Engine](transition-engine.md) Priority 3 for the full sub-case order.
+5. **Task has no session** → Create worktree (if enabled), run the destination's On enter group with the fallback spawn handed in, so the agent starts right before the first automation that needs it. For resumed sessions, the column's message is preloaded as the resume prompt. For fresh spawns, it is injected via `TerminalSubmitScheduler.scheduleKeystrokes`. Note that escalation to a restart-with-prompt is wired ONLY on the warm-session column move (`task-move.ts`); neither fresh-spawn call site passes an `escalate` handler, so an unconfirmed fresh-spawn message stops at `failed`. See [Command Injection](command-injection.md) for the delivery ladder.
 
-Transitions only fire for case 5. The action chain runs in `execution_order`: typically `create_worktree` → `spawn_agent`.
+The SOURCE column's On exit group runs ahead of all five, in Phase 1 inside the short lock, after
+the DB write and before the priority branches: Priority 1 kills the session, so an exit automation
+that needs the agent has to find it still attached. An exit row never aborts the move, and the
+group is capped at 60 seconds in aggregate whatever the adapters declare, because holding the
+short lock is what wedges that task's next move. Every row is isolated: a failure records its
+outcome in `automation_runs` and the next row still runs.
 
-### Action Types
+### Automation adapters
 
-| Type | What it does |
-|------|-------------|
-| `spawn_agent` | Build Claude CLI command, spawn PTY. Resumes if suspended session exists. |
-| `send_command` | Write interpolated text to running PTY stdin |
-| `run_script` | Spawn one-off shell command (no persistence) |
-| `kill_session` | Suspend session, clear task.session_id |
-| `create_worktree` | Create git worktree with sparse-checkout |
-| `cleanup_worktree` | Remove worktree directory and optionally branch |
-| `create_pr` | Reserved. Not yet implemented. |
-| `webhook` | POST to URL with interpolated body |
+Each type is an adapter under `src/main/automations/adapters/`, registered in
+`automation-registry.ts` and declared once in `AUTOMATION_MANIFEST`
+(`src/shared/automation-manifest.ts`), which the renderer reads for the picker, the dialog's
+fields, and the row sentence. The engine dispatches through the registry, so a new type is one
+folder and one manifest entry. See `.claude/rules/automation-adapters.md` for the contract.
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{projectPath}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{attachments}}`, `{{port}}`. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
+| Type | Label | Needs | Timeout | What it does |
+|------|-------|-------|---------|-------------|
+| `send_message` | Send message to agent | the agent | the scheduler's own 120s | Deliver an interpolated message to the task's agent, through the three delivery rungs |
+| `run_script` | Run script | none | 5 minutes, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
+| `webhook` | Call webhook | none | 30s | Send a request with an interpolated body, retried on a transport error, 429 or 5xx with an idempotency key |
+| `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
+| `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |
+
+The retired `send_command`, `kill_session`, `create_worktree`, `cleanup_worktree` and `create_pr`
+types are gone, rows and all: each was a no-op or a duplicate of the move path. A hand-written
+`kangentic.json` naming one is warned and skipped rather than rejected.
+
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}` and `{{trigger}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
 
 ## PTY Session Manager
 
@@ -694,7 +708,7 @@ All stores in `src/renderer/stores/`. They call `window.electronAPI.*` for IPC a
 
 ### BoardStore (`board-store.ts`)
 
-State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
+State: `tasks`, `swimlanes`, `automations`, `automationsLoaded`, `automationRuns`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
 
 - **Optimistic updates** -- all mutations update UI immediately, then sync via IPC. Errors revert via full `loadBoard()`.
 - **Stale move protection** - per-task `moveGenerations` counters prevent older async reloads from clobbering newer moves of the same task.
@@ -702,6 +716,7 @@ State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `comp
 - **Move confirmations queue** - `pendingMoveConfirms` is FIFO. As a single slot, a second confirmation overwrote the first, and that move had already returned `ok` without calling the IPC, leaving an optimistic placement no write backed.
 - **Session cascade** -- after task move, reloads sessions to detect spawns/kills from transition engine. Auto-activates new sessions with toast notification.
 - **Completion animation** -- `setCompletingTask()` mounts the FlyingCard with the captured drop rect; a per-task completion gate joins the fly finishing (`markCompletionAnimationDone`) and the move being approved (`approveCompletion`, after a clean worktree probe or a confirmed dialog), and `persistCompletion` runs the actual move once both signals land.
+- **Automations** (`board-store/automations-slice.ts`) -- `loadAutomations()` fetches every column's list, `loadAutomationRuns()` fetches the newest run per automation for the row's last-run line, and `replaceAutomationsForColumn()` writes one column's whole list and re-reads. `selectAutomationCounts(swimlaneId)` derives the runnable enter/exit counts the rail, the board glyph and the overview all read, so the same number cannot mean three things.
 
 ### SessionStore (`session-store.ts`)
 
@@ -810,6 +825,36 @@ On project open (`src/main/transition-engine/session-startup/`):
 - **Output batching** -- 16ms flush interval prevents per-character IPC overhead
 - **Scrollback cap** -- 512KB prevents unbounded memory growth
 
+## Automation Adapters
+
+`src/main/automations/`
+
+One folder per automation type, mirroring `src/main/boards/` and `src/main/pr/`. The registry
+dispatches by type, so the transition engine, the IPC handlers and the renderer contain no
+per-type branching.
+
+```
+src/main/automations/
+  shared/
+    automation-adapter.ts   # AutomationAdapter contract + AutomationContext
+    automation-errors.ts    # the typed failures a run records
+  adapters/
+    send-message/           # deliver the column's message to the agent
+    run-script/             # child process in the task's worktree, awaits the exit
+    webhook/                # request with retry, idempotency key, response.ok check
+    notify/                 # one desktop notification
+    legacy/spawn-agent.ts   # status 'legacy', never offered for a new automation
+  automation-registry.ts    # AutomationRegistry + automationRegistry singleton
+  automation-runner.ts      # per-row isolation, timeouts, and the automation_runs record
+  automation-run-outcome.ts # rationed failure push to the renderer
+  interpolate-config.ts     # per-field escaping from the manifest's `escape`
+  column-message.ts         # which row is the column's message, for the profile overlay
+```
+
+The manifest (`src/shared/automation-manifest.ts`) is renderer-safe and holds each type's label,
+description, icon name, `needs`, fields, timeout and retry policy.
+`tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
+
 ## Board Adapters
 
 `src/main/boards/`
@@ -883,7 +928,7 @@ Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-defau
 - [Agent Integration](agent-integration.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, how to add a new provider
 - [Mobile Bridge](mobile-bridge.md) - Pairing ceremony, signed device roster, capability verbs, relay transport
-- [Transition Engine](transition-engine.md) -- Action types, templates, priority rules
+- [Transition Engine](transition-engine.md) -- Automation adapters, triggers, template variables, priority rules
 - [Database](database.md) -- Full schema reference, migrations, repository pattern
 - [Configuration](configuration.md) -- Config cascade, all settings keys
 - [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging

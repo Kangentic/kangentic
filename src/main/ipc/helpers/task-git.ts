@@ -407,8 +407,8 @@ export async function ensureTaskWorktree(
     return;
   }
   // No-commits and base-branch-resolution guards live inside
-  // WorktreeManager.ensureWorktree (via resolveWorktreeBase) so every caller - this one, the
-  // create_worktree transition action, MCP auto-spawn - gets identical behavior.
+  // WorktreeManager.ensureWorktree (via resolveWorktreeBase) so every caller - this one, MCP
+  // auto-spawn, the branch-switch handler - gets identical behavior.
   // A task that predates the numeric folder scheme and has already been through
   // Done has no worktree_path left to remember where it lived. Recover that from
   // its session history BEFORE creating, so it returns to its original path

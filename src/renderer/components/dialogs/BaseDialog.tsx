@@ -304,3 +304,56 @@ export function BaseDialog({
     </div>
   );
 }
+
+/**
+ * The standard dialog footer pair: a quiet Cancel beside an accent confirm.
+ *
+ * Exists because this exact markup was retyped per dialog, and the copies had
+ * already drifted - the board manager's pair is `px-6 min-w-[96px]` on the
+ * shared accent tokens while the Edit automation dialog grew its own
+ * `px-3 py-1.5` buttons on a raw `bg-accent`/`text-white`. Two dialogs opened
+ * from the same surface therefore ended in two different sizes of button.
+ *
+ * Pair it with `BaseDialog`'s own `footer` prop, never a hand-rolled
+ * `<footer>` inside `children`: the prop is what supplies the `px-4 py-3`
+ * and the top rule that line the footer up with the header above it.
+ */
+export function DialogFooterActions({
+  onCancel,
+  onConfirm,
+  confirmLabel,
+  cancelLabel = 'Cancel',
+  confirmDisabled = false,
+  cancelTestId,
+  confirmTestId,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  confirmLabel: string;
+  cancelLabel?: string;
+  confirmDisabled?: boolean;
+  cancelTestId?: string;
+  confirmTestId?: string;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-3">
+      <button
+        type="button"
+        onClick={onCancel}
+        data-testid={cancelTestId}
+        className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+      >
+        {cancelLabel}
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={confirmDisabled}
+        data-testid={confirmTestId}
+        className="px-6 py-1.5 min-w-[96px] text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
+      >
+        {confirmLabel}
+      </button>
+    </div>
+  );
+}

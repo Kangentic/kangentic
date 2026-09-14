@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { BoardProfile, Task, Swimlane } from '../../../shared/types';
+import type { AutomationRunAgainResult, BoardProfile, Task, Swimlane } from '../../../shared/types';
 import type { PRResolveOptions } from '../../pr/shared/pr-connector';
 
 export interface CommandContext {
@@ -100,6 +100,20 @@ export interface CommandContext {
   onSwimlaneDeleted: (swimlane: Swimlane) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
+  /**
+   * Re-run ONE automation against a task's CURRENT state.
+   *
+   * A callback rather than something the handler does itself, for the same
+   * reason `onTaskMove` is one: it takes the task lock, builds a transition
+   * engine, and can type at a live agent, none of which a DB-only command
+   * handler has access to. The production builder points it at the same
+   * `runAutomationAgain` the failure toast's Run again action uses, so the two
+   * cannot diverge about what a re-run means.
+   *
+   * Optional because ~23 test suites hand-build a context; the tool refuses
+   * with a plain message when it is absent rather than throwing.
+   */
+  onRunAutomation?: (automationId: string, taskId: string) => Promise<AutomationRunAgainResult>;
 }
 
 export interface CommandResponse {

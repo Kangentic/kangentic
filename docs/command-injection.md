@@ -1,6 +1,6 @@
 # Command Injection
 
-Kangentic injects per-column "auto-commands" and per-column model/effort settings into a live agent session when a task moves between columns. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
+Kangentic injects a column's message to its agent, and that column's model/effort settings, into a live agent session when a task moves between columns. The message comes from a **Send message to agent** automation on the column (see [Column automations](configuration.md#column-automations)); it used to be the `auto_command` field, and this document still uses that name for the delivery machinery, which did not change: the scheduler, the verifier contract, and the four `auto_command_*` outcome columns on `tasks` are all as they were. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
 
 ## What gets injected (the settings delta)
 
@@ -111,7 +111,7 @@ The scan is bounded by a 50ms tolerance window around the send time (`Date.now()
 
 ## The delivery ladder
 
-`auto_command` reaches the agent by more than one mechanism, and they do not have equal guarantees. Delivery is an ordered ladder that ends in one:
+A column's message reaches the agent by more than one mechanism, and they do not have equal guarantees. Delivery is an ordered ladder that ends in one:
 
 | Rung | Mechanism | When | Guarantee |
 |---|---|---|---|
@@ -126,7 +126,21 @@ Rung 3 is what makes the guarantee falsifiable rather than aspirational. It rout
 
 - It is gated on the same turn-completion predicate deferred mode uses, never a bare `idle` check. A bare idle would fire during an API retry backoff or a `Monitor` wait and kill live work.
 - It is attempted at most once. If the restart's argv prompt still does not confirm, the outcome is `failed`.
-- It carries **only** the user's auto_command. An adapter-emitted settings write joined into an argv prompt stops being a slash invocation and becomes literal message text, and `--resume` preserves already-applied settings anyway.
+- It carries **only** the user's message. An adapter-emitted settings write joined into an argv prompt stops being a slash invocation and becomes literal message text, and `--resume` preserves already-applied settings anyway.
+
+### The exit path is rung 2 only, and it is AWAITED
+
+A **Send message to agent** automation in a column's On EXIT group is the one injection in the app that cannot be fire-and-forget, and the reason is structural rather than a matter of taste. `scheduleKeystrokes` returns as soon as the burst is started, and every priority branch below the exit hook opens with `terminalSubmitScheduler.cancel(task.id)` before it kills (To Do), suspends (Done, a non-spawning column) or re-points (a live session) the session. So a scheduled exit burst is cancelled a few milliseconds later, mid-burst, by the very move that asked for it.
+
+Measured in a preview against a live session: the run row read `succeeded` / "Delivered" in one millisecond, and the agent received the burst's leading Ctrl+U and nothing else, ever. The text was never written. No typecheck or unit test could see it, and the row said it worked.
+
+`deliverExitMessage` (`src/main/ipc/helpers/exit-message-delivery.ts`) awaits the scheduler's own outcome, so the cancels run after delivery rather than through it and the run row records what happened instead of what was scheduled. The same message then measured 2203ms and arrived in full. Three consequences:
+
+- **Rung 3 is unavailable.** The task is leaving the column; a restart to re-deliver its exit message would be spawning a session for a column the task is no longer in. An unconfirmed burst is the end of the ladder here.
+- **`unconfirmed` counts as delivered.** Eleven of twelve adapters have no submission verifier, so failing the row on "could not be checked" would fail it on every agent but Claude.
+- **The wait is bounded by the run's own signal**, which is this row's slice of the 60s exit budget. That cap is why holding the short lock is acceptable: the budget that bounds a hung exit script bounds a hung exit message too.
+
+The ENTER path deliberately does not await. Nothing there cancels, and awaiting would hold Phase 3's lock across a deferred message's full 120s wait.
 
 ## Handshakes, not fixed sleeps
 
@@ -424,7 +438,10 @@ An adapter with no verifier cannot reach 100% delivery: with no confirmation sig
 
 ## Delivery modes
 
-A column declares WHEN its auto_command fires, via `Swimlane.auto_command_mode`:
+A column declares WHEN its message fires, via the `mode` field on its **Send message to agent**
+automation. That used to be `Swimlane.auto_command_mode`, a per-column field; the message is an
+automation now (see [Column automations](configuration.md#column-automations)), so the choice
+belongs to the row that supplies the text. The two values and their meanings are unchanged:
 
 - **`immediate`** (default) - inject as soon as the task lands, interrupting the agent's current turn if there is one. The interruption is reported, not silent.
 - **`deferred`** - hold until the agent's current turn genuinely finishes.

@@ -33,6 +33,7 @@ import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
 import { agentRegistry } from '../../main/agent/agent-registry';
 import { DEFAULT_AGENT } from '../../shared/types';
+import { isSamePath } from '../../shared/paths';
 import type { BoardColumnConfig, PermissionMode, Project } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 
@@ -105,16 +106,91 @@ const REPLACED_PERMISSION_MODE: PermissionMode = 'auto';
  * `JSON.parse` boundary, and this code dispatches on a string-literal
  * comparison against it.
  */
-type PreviewTeamColumn = Pick<BoardColumnConfig, 'id' | 'permissionMode'>;
+type PreviewTeamColumn = Pick<BoardColumnConfig, 'id' | 'name' | 'permissionMode'>;
 
 interface PreviewTeamConfig {
   columns?: PreviewTeamColumn[];
 }
 
 /**
- * Point every preview column at the cheap tier by writing the clone's LOCAL board
- * override (`kangentic.local.json`), which merges over the committed team config
- * per column by id.
+ * Display automations for the preview board, keyed by column name. All OFF.
+ *
+ * A preview exists to be looked at, and an empty automations column shows
+ * nothing about how a row reads: the type glyph, the one-line sentence, the
+ * switch, the truncation of a long script. Seeding rows makes the surface
+ * judgeable without anyone hand-building them first, and it puts a real list
+ * under the column so its spacing and numbering can be seen.
+ *
+ * SPREAD over several columns rather than piled on one, because clicking a
+ * column and finding it bare reads as broken rather than as empty. Each column
+ * carries a different SHAPE, so one pass down the rail shows every way a list
+ * can look:
+ *
+ * - Executing: one row of every type, across both groups. The variety case,
+ *   and the only list long enough to judge spacing and per-group numbering.
+ * - Planning: one row in each group. The ordinary case, and the one that shows
+ *   both group headings populated without the list running long.
+ * - To Do: exit-only, and deliberately a `send_message` on a column whose
+ *   "Start an agent here" is off. That row CANNOT run, so it renders with its
+ *   switch disabled and the reason in the tooltip. That state is otherwise
+ *   invisible until someone builds it by hand, and it is the one most likely
+ *   to be got wrong.
+ *
+ * OFF, deliberately. These are display fixtures, not behaviour: a preview move
+ * must not POST to example.com or run `npm ci`. A switched-off row still
+ * renders every part of itself at reduced opacity, which is a state worth being
+ * able to see anyway. It does mean the rail count, the board glyph and the
+ * overview cells all read 0 for these columns, since those count only what will
+ * RUN; flipping any one switch lights that path up.
+ *
+ * NOT on Code Review, Testing or Merge. A column's `automations` here REPLACES
+ * that column's whole list on merge, and those three carry a real `autoCommand`
+ * in the committed `kangentic.json` (`/code-review`, `/pull-request`,
+ * `/merge-pull-request`) that applies as their message row. Seeding them would
+ * silently delete it, and the preview would stop reflecting the board the team
+ * actually runs. Add a column here only after checking it has no committed
+ * automations of its own.
+ *
+ * They ride `kangentic.local.json` rather than being written straight to the
+ * database, because `apply-config` runs on every project open and would replace
+ * them: the committed config declares automations, so its
+ * additive-versus-destructive rule owns every column's list. Going through the
+ * file means the fixtures also exercise the real config-to-database path.
+ */
+const PREVIEW_AUTOMATIONS_BY_COLUMN: Record<string, {
+  onEnter?: Record<string, unknown>[];
+  onExit?: Record<string, unknown>[];
+}> = {
+  Executing: {
+    onEnter: [
+      { name: 'Tell the agent', type: 'send_message', enabled: false, message: 'Pick up {{title}} and start on {{branchName}}.', mode: 'immediate' },
+      { name: 'Install dependencies', type: 'run_script', enabled: false, script: 'npm ci', timeoutMinutes: 5 },
+      { name: 'Notify me', type: 'notify', enabled: false, title: '{{title}}', body: 'moved to {{toColumn}}' },
+    ],
+    onExit: [
+      { name: 'Ping the channel', type: 'webhook', enabled: false, url: 'https://hooks.example.com/kangentic', method: 'POST' },
+    ],
+  },
+  Planning: {
+    onEnter: [
+      { name: 'Announce the plan', type: 'notify', enabled: false, title: 'Planning {{taskNumber}}', body: '{{title}}' },
+    ],
+    onExit: [
+      { name: 'Record the decision', type: 'webhook', enabled: false, url: 'https://hooks.example.com/plans', method: 'POST', body: '{"task":"{{taskNumber}}","to":"{{toColumn}}"}' },
+    ],
+  },
+  'To Do': {
+    onExit: [
+      { name: 'Wake the agent', type: 'send_message', enabled: false, message: 'Starting {{title}}.', mode: 'immediate' },
+    ],
+  },
+};
+
+/**
+ * Write the preview clone's LOCAL board override (`kangentic.local.json`), which
+ * merges over the committed team config per column by id. It carries two things:
+ * every column at the cheap tier, and the display automations above on one of
+ * them.
  *
  * The local file, not the team file. Editing the checked-out `kangentic.json` was
  * tried and is wrong twice over: `fillPreviewClone` later runs `git reset --hard
@@ -148,6 +224,9 @@ export async function forcePreviewCheapModels(cloneDir: string): Promise<void> {
         // key entirely lets the team value through the per-column merge.
         ...(column.permissionMode === REPLACED_PERMISSION_MODE
           ? { permissionMode: PREVIEW_PERMISSION_MODE }
+          : {}),
+        ...(PREVIEW_AUTOMATIONS_BY_COLUMN[column.name]
+          ? { automations: PREVIEW_AUTOMATIONS_BY_COLUMN[column.name] }
           : {}),
       }));
     if (columns.length === 0) return;
@@ -187,7 +266,34 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
   // so the columns reconcile straight to the cheap tier rather than briefly
   // adopting the committed Opus/xhigh values.
   await forcePreviewCheapModels(cloneDir);
-  const project = context.projectRepo.create({
+
+  // ADOPT the existing project row for this clone dir, exactly as the block above
+  // adopts the clone itself. Without this, every boot registered a SECOND row for
+  // the same directory and the sidebar grew by two projects per restart: measured
+  // at 14 rows pointing at just `project-1` and `project-2`.
+  //
+  // Registering unconditionally was only ever safe because the data dir (and with
+  // it `index.db`) is supposed to be wiped twice, on exit and again at boot. Both
+  // wipes are best-effort `fs.rmSync` that swallow their failure, and on Windows
+  // they routinely lose to a just-exited Electron's SQLite handles and the clone's
+  // own git files, so the boot lands on the previous run's database. Retrying
+  // harder cannot make that guarantee: an idempotent registration does not need
+  // one, which is why the fix goes here rather than into the cleanup.
+  const matching = context.projectRepo.list().filter((candidate) => isSamePath(candidate.path, cloneDir));
+  const [adopted, ...duplicates] = matching;
+  // Heal what the old unconditional registration already wrote. Without this the
+  // rows it accumulated would simply stop growing, which leaves whoever hit the
+  // bug staring at the same fourteen-project sidebar forever. Safe here and only
+  // here: this runs at boot before any project is opened, every row named is a
+  // preview clone under the preview-projects root, and the survivor keeps the id,
+  // so its board and tasks are untouched.
+  for (const duplicate of duplicates) {
+    context.projectRepo.delete(duplicate.id);
+  }
+  if (duplicates.length > 0) {
+    console.warn(`[DEV] Removed ${duplicates.length} duplicate "${projectName}" project row(s) left by an earlier preview.`);
+  }
+  const project = adopted ?? context.projectRepo.create({
     name: projectName,
     path: cloneDir,
     default_agent: DEFAULT_AGENT,
@@ -211,6 +317,14 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
     console.warn(`[DEV] Preview trust seeding failed for ${cloneDir}:`, trustError);
   }
   // create() prepends at position 0; append so the sidebar keeps creation order.
+  //
+  // Runs for an ADOPTED row too, which looks like it would reshuffle the sidebar
+  // on every boot and does not: boot always adopts project-1 then project-2, so
+  // appending each in turn CONVERGES on that order rather than rotating it. Start
+  // at [2, 1] and the two calls land [1, 2]; start at [1, 2] and they land [1, 2]
+  // again. Skipping it for adopted rows was tried and is what left a healed
+  // sidebar showing Project 2 above Project 1: with nothing reordering them, the
+  // survivors kept whatever positions the duplicate rows happened to hold.
   const orderedIds = context.projectRepo
     .list()
     .filter((existing) => existing.id !== project.id)

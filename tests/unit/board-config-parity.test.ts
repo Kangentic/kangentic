@@ -33,6 +33,8 @@ const hoisted = vi.hoisted(() => ({
   lanes: [] as unknown[],
   createCalls: [] as Array<Record<string, unknown>>,
   updateCalls: [] as Array<Record<string, unknown>>,
+  /** Whole-column automation writes, keyed by swimlane id. */
+  automationWrites: [] as Array<{ swimlaneId: string; rows: unknown[] }>,
 }));
 
 vi.mock('../../src/main/db/database', () => ({
@@ -49,6 +51,19 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
     setGhost = vi.fn();
     deleteEmptyGhosts = vi.fn(() => 0);
     reorder = vi.fn();
+  },
+}));
+
+vi.mock('../../src/main/db/repositories/automation-repository', () => ({
+  AutomationRepository: class {
+    listAll = vi.fn(() => []);
+    listForColumn = vi.fn(() => []);
+    getForTrigger = vi.fn(() => []);
+    replaceForColumn = vi.fn((swimlaneId: string, rows: unknown[]) => {
+      hoisted.automationWrites.push({ swimlaneId, rows });
+      return rows;
+    });
+    deleteForColumn = vi.fn();
   },
 }));
 
@@ -87,10 +102,14 @@ const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
   is_archived: 'team',
   permission_mode: 'team',
   auto_spawn: 'team',
-  auto_command: 'team',
-  // Team-shared for the same reason auto_command is: it changes how the
-  // column's shared command behaves for every teammate, not just locally.
-  auto_command_mode: 'team',
+  // RETIRED, and 'db-only' for a specific reason rather than to quiet this
+  // guard. The column's message is a `send_message` automation now, and it is
+  // still team-shared: it round-trips through `columns[].automations`, pinned by
+  // board-config-automations-roundtrip.test.ts. What is left on the swimlane row
+  // is a legacy column nothing reads and nothing writes from the config, so
+  // serializing it would put the message in two places that could disagree.
+  auto_command: 'db-only',
+  auto_command_mode: 'db-only',
   plan_exit_target_id: 'team',
   agent_override: 'team',
   model_override: 'team',
@@ -118,8 +137,6 @@ const ROUNDTRIP_CASES: Array<{ field: keyof Swimlane; configKey: keyof BoardColu
   { field: 'is_archived', configKey: 'archived', dbValue: true, configValue: true },
   { field: 'permission_mode', configKey: 'permissionMode', dbValue: 'plan', configValue: 'plan' },
   { field: 'auto_spawn', configKey: 'autoSpawn', dbValue: true, configValue: true },
-  { field: 'auto_command', configKey: 'autoCommand', dbValue: '/code-review', configValue: '/code-review' },
-  { field: 'auto_command_mode', configKey: 'autoCommandMode', dbValue: 'deferred', configValue: 'deferred' },
   { field: 'agent_override', configKey: 'agentOverride', dbValue: 'codex', configValue: 'codex' },
   { field: 'model_override', configKey: 'modelOverride', dbValue: 'opus', configValue: 'opus' },
   { field: 'effort_override', configKey: 'effortOverride', dbValue: 'high', configValue: 'high' },

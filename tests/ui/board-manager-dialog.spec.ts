@@ -38,7 +38,7 @@ async function openManagerByHeader(columnName: string) {
   const column = page.locator(`[data-swimlane-name="${columnName}"]`);
   await column.locator(`text=${columnName}`).click();
   await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 3000 });
-  await expect(page.locator('h3', { hasText: 'Edit Columns' })).toBeVisible();
+  await expect(page.locator('h3', { hasText: 'Column Manager' })).toBeVisible();
 }
 
 async function closeManager() {

@@ -22,6 +22,7 @@ export {
   deleteTaskWorktree,
   reapSessionLeftovers,
 } from './task-cleanup';
+export { reportAutomationFailures } from './automation-failures';
 export { openAttachmentFile } from './attachment-open';
 export type { OpenableAttachment, OpenAttachmentOptions } from './attachment-open';
 export { openPathBounded, OPEN_PATH_TIMEOUT_MS } from './open-path';

@@ -1,17 +1,10 @@
+import { stripShellMetacharacters } from './template-escape';
+
 export interface ShortcutContext {
   cwd: string;
   branchName: string;
   taskTitle: string;
   projectPath: string;
-}
-
-/**
- * Escape shell metacharacters to prevent injection.
- * Strips characters that are dangerous in both cmd.exe and POSIX shells.
- */
-function escapeShellValue(value: string): string {
-  // Remove characters that can break out of quotes or chain commands
-  return value.replace(/[`$\\!"&|;<>(){}[\]\r\n]/g, '');
 }
 
 /**
@@ -26,6 +19,6 @@ export function resolveShortcutCommand(template: string, context: ShortcutContex
   return template
     .replace(/\{\{cwd\}\}/g, context.cwd)
     .replace(/\{\{branchName\}\}/g, context.branchName)
-    .replace(/\{\{taskTitle\}\}/g, escapeShellValue(context.taskTitle))
+    .replace(/\{\{taskTitle\}\}/g, stripShellMetacharacters(context.taskTitle))
     .replace(/\{\{projectPath\}\}/g, context.projectPath);
 }

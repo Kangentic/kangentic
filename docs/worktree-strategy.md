@@ -83,9 +83,12 @@ The configured base branch is checked in priority order:
 
 1. Task's `base_branch` field (per-task override). An empty string is treated as not set (falls
    through to source 2), not as an explicit, guaranteed-unresolvable candidate.
-2. Action config's `baseBranch` (per-transition override)
-3. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
-4. `config.git.defaultBaseBranch` (per-user fallback, defaults to `main`)
+2. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
+3. `config.git.defaultBaseBranch` (per-user fallback, defaults to `main`)
+
+There is no per-automation override. The retired `create_worktree` action carried a `baseBranch`
+in its config; automations do not create worktrees at all, because the move path's
+`ensureTaskWorktree` already does.
 
 That configured value is then **verified against the repo's actual refs** by
 `resolveWorktreeBase` (`src/main/git/base-branch.ts`), called from
@@ -109,13 +112,12 @@ When a fallback candidate wins (e.g. `master` for an unconfigured `main`), it is
 new default too, so the branch name stays unprefixed instead of being namespaced under the
 substitute (see Branch Naming above). An explicit per-task base is never substituted.
 
-**Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 through 4,
-including a per-transition `create_worktree` action's `baseBranch`, are folded into
-`defaultBaseBranch` by `executeCreateWorktree` (`transition-engine.ts`) and therefore DO fall
-through to `main` / `master`. So an action configured with a base branch the repo does not have
-silently creates the worktree from `main` instead of failing, which is the substitution the
-per-task rule exists to prevent. Promoting it to an explicit base would also flip its branch
-naming from unprefixed to namespaced, so the fix is not mechanical.
+**Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 and 3 are
+both `defaultBaseBranch` and therefore DO fall through to `main` / `master`. So a project
+configured with a base branch the repo does not have silently creates the worktree from `main`
+instead of failing, which is the substitution the per-task rule exists to prevent. Promoting a
+configured default to an explicit base would also flip its branch naming from unprefixed to
+namespaced, so the fix is not mechanical.
 
 The chosen base branch is stored in the worktree's git config as `kangentic.baseBranch` so agents can read it without filesystem access.
 
@@ -177,8 +179,8 @@ the Branch row's hint and its disabled Worktree option state the outcome before 
 (`src/renderer/utils/worktree-placement.tsx`). The persisted reason is still the ground truth.
 
 The no-commits guard lives inside `WorktreeManager.ensureWorktree` (via `resolveWorktreeBase`), not
-in `ensureTaskWorktree` itself, so the `create_worktree` transition action (which also calls
-`ensureWorktree`) gets the identical fallback and records the same reason. `ensureTaskBranchCheckout`
+in `ensureTaskWorktree` itself, so every `ensureWorktree` caller gets the identical fallback and
+records the same reason. `ensureTaskBranchCheckout`
 keeps its own separate no-commits guard, since it does not go through
 `WorktreeManager.ensureWorktree`.
 
@@ -226,12 +228,15 @@ that error goes depends on the entry point:
   as a toast rather than only a console line (`notifySpawnBlocked` in `ipc/helpers/task-git.ts`,
   which covers the worktree and checkout steps plus the `agent` step - the spawn itself, whose
   most common failure is an agent CLI that is not installed or not on PATH).
-- **The `create_worktree` transition action** catches it and logs to console only, so it is the one
-  path with no toast today.
 - **`TASK_SWITCH_BRANCH`** (`src/main/ipc/handlers/task-branch.ts`) calls `ensureTaskWorktree`
   uncaught, so the error propagates as a rejected `ipcMain.handle` promise - Electron forwards it
   to the renderer's `invoke()` call, not a toast from this list, but however the branch-switch UI
   surfaces a rejected mutation.
+
+Those are all the entry points, and every one of them now surfaces the failure. The list used to
+carry a fourth, the `create_worktree` transition action, which caught the error and logged to
+console only. It was the one path with no toast; it is gone with the action type, and automations
+never create worktrees (the move path's `ensureTaskWorktree` already has).
 
 A related but distinct signal: a spawn that REUSES a pre-existing worktree (created eagerly from
 the branch picker, or by an earlier move of a long-lived task) never re-fetches or moves that
@@ -428,10 +433,13 @@ Task moved to active column (e.g., Planning)
   → File watchers emit usage/activity/events to UI
 
 Task moved between active columns (e.g., Planning → Code Review)
-  → Session stays alive; an auto_command on the target is injected as keystrokes
-    (timing per the column's auto_command_mode: immediate or deferred)
+  → The source column's exit automations run first, while its session is still
+    attached, capped at 60s in aggregate
+  → Session stays alive; a send_message automation on the target is injected as
+    keystrokes (timing per that automation's own mode: immediate or deferred)
+  → The target's remaining enter automations run after the move lands
   → Only a permission-mode change, or a model/effort change the agent cannot
-    swap live, forces suspend + respawn - and then the auto_command rides along
+    swap live, forces suspend + respawn - and then the message rides along
     as the resume prompt instead of being typed
 
 Task moved to Done

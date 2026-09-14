@@ -134,6 +134,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           archivedTotalCount: boardState.archivedTotalCount,
           archivedFullyLoaded: boardState.archivedFullyLoaded,
           shortcuts: boardState.shortcuts,
+          automations: boardState.automations,
         },
         backlog: backlogState.items,
         config: configState.config,
@@ -190,6 +191,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           archivedTotalCount: snapshot.board.archivedTotalCount,
           archivedFullyLoaded: snapshot.board.archivedFullyLoaded,
           shortcuts: snapshot.board.shortcuts,
+          automations: snapshot.board.automations,
           // A lane pin is transient in-flight state for THIS project's board and
           // must never survive a switch. The cold path self-heals (loadBoard's
           // reconcile sees the pinned task absent from the new project's

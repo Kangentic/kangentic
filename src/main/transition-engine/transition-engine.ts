@@ -1,30 +1,39 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Task, Action, ActionConfig, AppConfig, PermissionMode } from '../../shared/types';
+import type {
+  Task,
+  ActionConfig,
+  AppConfig,
+  PermissionMode,
+  Swimlane,
+  AutomationConfig,
+  AutomationTrigger,
+  AutoCommandMode,
+  ColumnAutomation,
+  NotificationInput,
+} from '../../shared/types';
+import { runAutomations, type AutomationRunSummary } from '../automations/automation-runner';
+import type { AutomationRepository } from '../db/repositories/automation-repository';
+import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
 import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
-import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
-import { interpolateTemplate, resolveTaskTemplateVars } from '../agent/shared';
+import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
-import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../git/worktree-manager';
-import { readWorktreeHead } from '../git/worktree-head';
-import { prepareWorktreeFolder } from '../git/task-worktree-folder';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
 import { getDevPortForTask } from '../dev-ports/dev-port-allocator';
-import { retireRecord, markRecordSuspended } from './session-lifecycle';
+import { retireRecord } from './session-lifecycle';
 import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
 import { isResumeConversationAbsent } from './resume-conversation-guard';
 import { sessionOutputPaths } from './session-paths';
-import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { AttachmentRepository } from '../db/repositories/attachment-repository';
@@ -33,6 +42,12 @@ interface TransitionEngineConfig {
   permissionMode: string;
   projectPath: string | null;
   projectId: string;
+  /**
+   * The open project's display name. Carried so `{{projectName}}` can resolve
+   * and so a webhook payload can say which project it came from. The factory
+   * already reads the project row for `default_agent` and used to drop the rest.
+   */
+  projectName: string | null;
   gitConfig: AppConfig['git'];
   mcpServerEnabled?: boolean;
   /** Project-scoped URL for the in-process MCP HTTP server. */
@@ -74,11 +89,12 @@ export class TransitionEngine {
   constructor(
     private sessionManager: SessionManager,
     private terminalSubmit: TerminalSubmit,
-    private actionRepo: ActionRepository,
     private taskRepo: TaskRepository,
     private getConfig: () => TransitionEngineConfig,
     private sessionRepo?: SessionRepository,
     private attachmentRepo?: AttachmentRepository,
+    private automationRepo?: AutomationRepository,
+    private automationRunRepo?: AutomationRunRepository,
   ) {}
 
   /**
@@ -100,81 +116,197 @@ export class TransitionEngine {
       attachmentPaths,
       devPort: getDevPortForTask(task.id),
       projectPath: this.getConfig().projectPath,
+      projectName: this.getConfig().projectName ?? null,
+      // A spawn prompt is not a move, so the four move keywords resolve empty
+      // here and the picker does not offer them in this context.
+      move: null,
     });
     await this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : DEFAULT_SPAWN_PROMPT_TEMPLATE,
     }, task, templateVars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides);
   }
 
-  async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides, onProgress?: (phase: string) => void): Promise<void> {
-    const transitions = this.actionRepo.getTransitionsFor(fromSwimlaneId, toSwimlaneId);
-    if (transitions.length === 0) return;
+  /**
+   * Run one column's automations for one trigger.
+   *
+   * This replaced a `switch` over seven action types. The dispatch now goes
+   * through `automationRegistry`, and the per-row guarantees (isolation,
+   * timeouts, the run record, retry) live in `runAutomations`, which is where
+   * they can be tested once instead of being re-implemented per type.
+   *
+   * Kept named `executeTransition` deliberately: it is one of the two call
+   * sites `spawn-entry-point-parity.test.ts` classifies, and renaming it would
+   * quietly take the board path out of that guard's sight.
+   */
+  async executeTransition(
+    task: Task,
+    column: Swimlane,
+    trigger: AutomationTrigger,
+    options: {
+      signal: AbortSignal;
+      startAgent?: (pendingPrompt?: string) => Promise<void>;
+      // `signal` is the automation run's own, so a caller that WAITS for
+      // delivery (the exit hook does; see `deliverExitMessage`) is bounded by
+      // the same budget that bounds every other row. A caller that only
+      // schedules delivery ignores it.
+      deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+      legacySpawnAgent?: (config: AutomationConfig) => Promise<void>;
+      showNotification: (input: NotificationInput) => void;
+      onProgress?: (phase: string) => void;
+      fromColumn?: Swimlane | null;
+      toColumn?: Swimlane | null;
+      /** Rows the caller delivered itself. See `RunAutomationsOptions`. */
+      alreadyDelivered?: ReadonlySet<string>;
+      /** A recovery move out of Done. See `RunAutomationsOptions`. */
+      suppressAgentMessages?: boolean;
+    },
+  ): Promise<AutomationRunSummary> {
+    const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
+    if (!this.automationRepo || !this.automationRunRepo) return empty;
 
-    for (const transition of transitions) {
-      signal?.throwIfAborted();
-      const action = this.actionRepo.getById(transition.action_id);
-      if (!action) continue;
+    const automations = this.automationRepo.getForTrigger(column.id, trigger);
+    if (automations.length === 0) return empty;
 
-      await this.executeAction(action, task, permissionOverride, skipPromptTemplate, signal, agentOverride, spawnOverrides, onProgress);
-    }
+    return this.runAutomationGroup(automations, task, column, trigger, options);
   }
 
-  private async executeAction(action: Action, task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides, onProgress?: (phase: string) => void): Promise<void> {
-    let config: ActionConfig;
-    try {
-      config = JSON.parse(action.config_json);
-    } catch (err) {
-      console.error(`[TRANSITION] Failed to parse config for action ${action.id}:`, err);
-      return; // skip action with malformed config
-    }
+  /**
+   * Re-run ONE automation against the task's CURRENT state.
+   *
+   * Separate from `executeTransition` because there is no transition: the task
+   * is wherever it is now, which may not be this automation's column at all.
+   * That is deliberate and is what the toast and the row both say, because a
+   * task can have moved twice since a failure and replaying a stale context
+   * would be a worse lie than not offering the button.
+   *
+   * No `startAgent`: a re-run is not a move, so it must not spawn. A row that
+   * needs an agent the task does not have records the skip with the reason,
+   * exactly as an exit row does.
+   */
+  async executeSingleAutomation(
+    task: Task,
+    column: Swimlane,
+    automation: ColumnAutomation,
+    options: {
+      signal: AbortSignal;
+      deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+      showNotification: (input: NotificationInput) => void;
+      onProgress?: (phase: string) => void;
+    },
+  ): Promise<AutomationRunSummary> {
+    const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
+    if (!this.automationRepo || !this.automationRunRepo) return empty;
+
+    return this.runAutomationGroup([automation], task, column, automation.trigger, {
+      ...options,
+      // A re-run has no move to name, so the two move keywords resolve empty
+      // rather than to whatever the task's last move happened to be.
+      fromColumn: null,
+      toColumn: null,
+    });
+  }
+
+  /** The shared body: template variables, the adapter context, and the runner. */
+  private async runAutomationGroup(
+    automations: ColumnAutomation[],
+    task: Task,
+    column: Swimlane,
+    trigger: AutomationTrigger,
+    options: {
+      signal: AbortSignal;
+      startAgent?: (pendingPrompt?: string) => Promise<void>;
+      deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+      legacySpawnAgent?: (config: AutomationConfig) => Promise<void>;
+      showNotification: (input: NotificationInput) => void;
+      onProgress?: (phase: string) => void;
+      fromColumn?: Swimlane | null;
+      toColumn?: Swimlane | null;
+      alreadyDelivered?: ReadonlySet<string>;
+      suppressAgentMessages?: boolean;
+    },
+  ): Promise<AutomationRunSummary> {
+    const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
+    if (!this.automationRunRepo) return empty;
+
+    const config = this.getConfig();
     const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
     // task_xml gets the RAW description so multi-line markdown survives;
     // {{description}} stays sanitized for legacy single-line prose templates.
     const templateVars = resolveTaskTemplateVars({
       task,
-      defaultBaseBranch: this.getConfig().gitConfig.defaultBaseBranch,
+      defaultBaseBranch: config.gitConfig.defaultBaseBranch,
       attachmentPaths,
       devPort: getDevPortForTask(task.id),
-      projectPath: this.getConfig().projectPath,
+      projectPath: config.projectPath,
+      projectName: config.projectName ?? null,
+      // `column` is the column this automation BELONGS to, which is the same
+      // column either end of the move names, but a row should be able to say so
+      // without knowing which end it is on. `fromColumn` is legitimately empty
+      // for a task born into a column rather than moved into one.
+      move: {
+        column: column.name,
+        fromColumn: options.fromColumn?.name ?? null,
+        toColumn: options.toColumn?.name ?? null,
+        trigger,
+      },
     });
 
-    switch (action.type) {
-      case 'spawn_agent':
-        if (skipPromptTemplate) {
-          config.promptTemplate = undefined;
-        }
-        await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
-        break;
+    return runAutomations({
+      automations,
+      column,
+      runs: this.automationRunRepo,
+      signal: options.signal,
+      startAgent: options.startAgent,
+      alreadyDelivered: options.alreadyDelivered,
+      suppressAgentMessages: options.suppressAgentMessages,
+      context: {
+        task,
+        column,
+        fromColumn: options.fromColumn ?? null,
+        toColumn: options.toColumn ?? null,
+        trigger,
+        // A script always runs task-relative now: its worktree, or the project
+        // checkout when it has none. The old `workingDir` setting existed to opt
+        // INTO the worktree, which is what happens by default here.
+        cwd: task.worktree_path || config.projectPath || process.cwd(),
+        projectId: config.projectId,
+        projectPath: config.projectPath,
+        projectName: config.projectName ?? null,
+        templateVars,
+        sessionHost: this.sessionManager,
+        deliverToAgent: options.deliverToAgent,
+        showNotification: options.showNotification,
+        legacySpawnAgent: options.legacySpawnAgent,
+        onProgress: options.onProgress,
+      },
+    });
+  }
 
-      case 'send_command':
-        // Fire-and-forget: executeSendCommand internally spawns a fire-and-
-        // forget keystroke burst, so awaiting here would just hold the action
-        // chain on the synchronous prefix (interpolate + sanitize). `void`
-        // signals intent to TypeScript and any future no-floating-promises
-        // lint rule.
-        void this.executeSendCommand(config, task, templateVars);
-        break;
-
-      case 'run_script':
-        await this.executeRunScript(config, task, templateVars);
-        break;
-
-      case 'kill_session':
-        await this.executeKillSession(task);
-        break;
-
-      case 'webhook':
-        await this.executeWebhook(config, templateVars);
-        break;
-
-      case 'create_worktree':
-        await this.executeCreateWorktree(config, task, signal, onProgress);
-        break;
-
-      case 'cleanup_worktree':
-        await this.executeCleanupWorktree(task);
-        break;
-    }
+  /**
+   * The legacy `spawn_agent` automation's body, reached only through
+   * `AutomationContext.legacySpawnAgent`. Public because the adapter cannot
+   * carry it: spawning needs CLI detection, trust, permission resolution and
+   * the PTY, none of which belongs behind the adapter contract.
+   */
+  async runLegacySpawnAgent(
+    config: AutomationConfig,
+    task: Task,
+    permissionOverride?: PermissionMode | null,
+    signal?: AbortSignal,
+    agentOverride?: string,
+    spawnOverrides?: SpawnOverrides,
+  ): Promise<void> {
+    const engineConfig = this.getConfig();
+    const templateVars = resolveTaskTemplateVars({
+      task,
+      defaultBaseBranch: engineConfig.gitConfig.defaultBaseBranch,
+      attachmentPaths: this.attachmentRepo?.getPathsForTask(task.id) ?? [],
+      devPort: getDevPortForTask(task.id),
+      projectPath: engineConfig.projectPath,
+      projectName: engineConfig.projectName ?? null,
+      move: null,
+    });
+    await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
   }
 
   private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<void> {
@@ -445,188 +577,4 @@ export class TransitionEngine {
     }
   }
 
-  private async executeSendCommand(config: ActionConfig, task: Task, vars: Record<string, string>): Promise<void> {
-    if (!task.session_id) return;
-    const raw = config.command
-      ? interpolateTemplate(config.command, vars)
-      : '';
-    const command = sanitizeForPty(raw);
-    if (!command) return;
-    // Route through TerminalSubmit so the keystroke pattern (Ctrl+C → text →
-    // Esc → Enter) matches auto_command and settings injection. Sending raw
-    // `text + '\r'` directly leaves the slash-command picker open - the
-    // same regression class that bit auto_command. Fire-and-forget here:
-    // executeSendCommand is called from `executeAction` which has no
-    // back-pressure on the action chain; awaiting would serialize all
-    // transition actions on the keystroke settle.
-    void this.terminalSubmit.submitKeystrokes(task.session_id, [command], {
-      sendCtrlC: true,
-      source: `send_command:${task.id.slice(0, 8)}`,
-    }).catch((error) => {
-      console.error('[TRANSITION] executeSendCommand failed:', error);
-    });
-  }
-
-  private async executeRunScript(config: ActionConfig, task: Task, vars: Record<string, string>): Promise<void> {
-    const script = config.script
-      ? interpolateTemplate(config.script, vars)
-      : '';
-    if (!script) return;
-
-    const appConfig = this.getConfig();
-    const cwd = config.workingDir === 'worktree' && task.worktree_path
-      ? task.worktree_path
-      : appConfig.projectPath || process.cwd();
-
-    await this.sessionManager.spawn({
-      id: randomUUID(),
-      taskId: task.id + '-script',
-      projectId: appConfig.projectId,
-      command: script,
-      cwd,
-    });
-  }
-
-  private async executeKillSession(task: Task): Promise<void> {
-    if (task.session_id) {
-      // Mark session as 'suspended' in DB before killing the PTY.
-      // This allows a subsequent spawn_agent action (e.g. Planning → Running)
-      // to resume the conversation via --resume, preserving Claude's context.
-      if (this.sessionRepo) {
-        const record = this.sessionRepo.getLatestForTask(task.id);
-        if (record) {
-          markRecordSuspended(this.sessionRepo, record.id, 'system');
-        }
-      }
-
-      await this.sessionManager.suspend(task.session_id);
-      this.taskRepo.update({
-        id: task.id,
-        session_id: null,
-      });
-    }
-  }
-
-  private async executeWebhook(config: ActionConfig, vars: Record<string, string>): Promise<void> {
-    if (!config.url) return;
-    const url = interpolateTemplate(config.url, vars);
-    const body = config.body
-      ? interpolateTemplate(config.body, vars)
-      : undefined;
-
-    try {
-      await fetch(url, {
-        method: config.method || 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...config.headers,
-        },
-        body,
-      });
-    } catch (err) {
-      console.error('[TRANSITION] Webhook failed:', err);
-    }
-  }
-
-  private async executeCreateWorktree(config: ActionConfig, task: Task, signal?: AbortSignal, onProgress?: (phase: string) => void): Promise<void> {
-    const appConfig = this.getConfig();
-    if (!appConfig.projectPath) return;
-
-    // Recover the pre-numeric-scheme folder for a legacy task whose worktree_path
-    // was already cleared by a Done move, so it returns to its original path
-    // rather than being relocated. See TaskRepository.recoverLegacyWorktreeFolder.
-    prepareWorktreeFolder(task, this.taskRepo, appConfig.projectPath);
-
-    const wm = new WorktreeManager(appConfig.projectPath);
-    const gitConfig = {
-      ...appConfig.gitConfig,
-      defaultBaseBranch: config.baseBranch || appConfig.gitConfig.defaultBaseBranch,
-      copyFiles: config.copyFiles || appConfig.gitConfig.copyFiles,
-    };
-
-    // Forward the abort signal and progress callback so this action path matches
-    // the normal task-move spawn path: an abort cancels an in-flight worktree
-    // create / init script, and the card shows the "Creating worktree..." /
-    // "Running setup script..." phases. The signal originates in executeAction;
-    // onProgress is supplied by the spawn caller that holds the renderer window.
-    const result = await wm.withLock(
-      () => wm.ensureWorktree(task, gitConfig, { signal, onProgress }),
-      { label: `transition-ensure:${task.id.slice(0, 8)}` },
-    );
-    if (!result) return;
-    if ('skipped' in result) {
-      // Same contract as ensureTaskWorktree: a genuine skip is recorded so the
-      // board can say the agent runs in the shared checkout; a reuse keeps the
-      // existing worktree and must not carry a stale reason.
-      const reason = result.reason === 'reused' ? null : result.reason;
-      if ((task.worktree_skip_reason ?? null) !== reason) {
-        this.taskRepo.setWorktreeSkipReason(task.id, reason);
-        task.worktree_skip_reason = reason;
-      }
-      return;
-    }
-
-    this.taskRepo.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder, result.baseBranch);
-    // Refresh the in-memory task, as ensureTaskWorktree does after the same
-    // write. executeTransition hands ONE task object to every action in the
-    // chain with no re-read between them, so a `create_worktree` followed by
-    // `spawn_agent` would otherwise spawn with `task.worktree_path` still null
-    // and run the agent unisolated in the main checkout. `prepareWorktreeFolder`
-    // above already mutates `worktree_folder` in place, which makes a stale
-    // `worktree_path` on the same object harder to notice, not easier.
-    Object.assign(task, this.taskRepo.getById(task.id));
-  }
-
-  private async executeCleanupWorktree(task: Task): Promise<void> {
-    if (!task.worktree_path || !task.branch_name) return;
-
-    const appConfig = this.getConfig();
-    if (!appConfig.projectPath) return;
-
-    // Kill the PTY session and wait for process exit before removing the
-    // worktree directory. The PTY holds CWD + conpty handles that block
-    // directory removal on Windows.
-    if (task.session_id) {
-      this.sessionManager.kill(task.session_id);
-      await this.sessionManager.awaitExit(task.session_id);
-      // The row stays in the registry (this action reclaims the worktree, not
-      // the session record), so tell the renderer the session ended: a bare
-      // kill announces nothing the renderer acts on, and the card would keep
-      // its spinner for an agent that is gone.
-      this.sessionManager.announceSessionEnded(task.session_id);
-    }
-
-    const wm = new WorktreeManager(appConfig.projectPath);
-    let removed = false;
-    // Capture the tip before the checkout goes (see task-cleanup.ts): the
-    // commit is the PR anchor that survives the removal.
-    const { sha: capturedSha } = await readWorktreeHead(task.worktree_path);
-    // Reap orphans + clear node_modules BEFORE taking the git lock, mirroring
-    // task-cleanup.ts: the multi-second fs removal must not hold the
-    // per-project queue and head-of-line-block spawns. Safe outside the lock:
-    // executeTransition callers hold withTaskLock(taskId), and removeWorktree
-    // re-runs prepareWorktreeForRemoval internally as a cheap no-op.
-    await prepareWorktreeForRemoval(task.worktree_path, 'moderate');
-    await wm.withLock(async () => {
-      removed = await wm.removeWorktree(task.worktree_path!, { removalProfile: 'moderate' });
-      if (removed && appConfig.gitConfig.autoCleanup) {
-        await wm.removeBranch(task.branch_name!);
-      }
-      // BACKGROUND: same rationale as task-cleanup.ts - batch cleanup must not
-      // park a fresh spawn at USER priority.
-    }, { label: `transition-cleanup:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND });
-
-    // Only clear DB fields if the directory was actually removed.
-    // Keeping them set allows resource-cleanup to retry on next startup.
-    // `pushed_branch` is kept: a remote fact and a PR anchor, like `pr_number`.
-    if (removed) {
-      this.taskRepo.update({
-        id: task.id,
-        worktree_path: null,
-        branch_name: null,
-        resolved_base_branch: null,
-        ...(capturedSha ? { head_sha: capturedSha } : {}),
-      });
-    }
-  }
 }

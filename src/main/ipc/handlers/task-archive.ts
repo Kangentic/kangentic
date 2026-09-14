@@ -89,7 +89,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
-    const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+    const { tasks, swimlanes, automations, automationRuns, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
 
     // Serialize the unarchive + spawn flow against any other in-flight
     // lifecycle op for this task. Unarchive writes the DB row synchronously,
@@ -168,7 +168,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           if (doneLane) {
             const db = getProjectDb(resolvedProjectId);
             const sessionRepo = new SessionRepository(db);
-            const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+            const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
             try {
               await spawnAgent({
@@ -201,7 +201,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
-    const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+    const { tasks, swimlanes, automations, automationRuns, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
     const toLane = swimlanes.getById(targetSwimlaneId);
 
     for (const id of ids) {
@@ -258,7 +258,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             if (doneLane) {
               const db = getProjectDb(resolvedProjectId);
               const sessionRepo = new SessionRepository(db);
-              const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+              const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
               // Same shared-chokepoint recovery-move contract as the single
               // TASK_UNARCHIVE handler above: suppressAutoCommand +

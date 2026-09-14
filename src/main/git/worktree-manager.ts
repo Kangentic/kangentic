@@ -706,8 +706,8 @@ export class WorktreeManager {
     // initialises a repo for a folder that had none (see `ensureGitRepo`), and the user's very
     // next action is usually a task move. Running in the project directory is the honest answer;
     // worktrees start working on their own once there is a first commit. Living here (rather than
-    // at each `ensureWorktree` caller) means the `create_worktree` transition action gets the
-    // same guard as the normal task-move path.
+    // at each `ensureWorktree` caller) means every entry point gets the same guard as the
+    // normal task-move path.
     const resolution = await resolveWorktreeBase(
       this.projectPath,
       task.base_branch ?? null,

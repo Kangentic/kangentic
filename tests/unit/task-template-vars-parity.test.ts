@@ -13,7 +13,12 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TASK_TEMPLATE_VAR_NAMES, TASK_TEMPLATE_VARS } from '../../src/shared/task-template-vars';
+import {
+  TASK_TEMPLATE_VAR_NAMES,
+  TASK_TEMPLATE_VARS,
+  TEMPLATE_VARIABLE_PATTERN,
+  templateVarsFor,
+} from '../../src/shared/task-template-vars';
 import { TASK_TEMPLATE_RESOLVERS, resolveTaskTemplateVars } from '../../src/main/agent/shared/task-template-resolvers';
 import { interpolateTaskTemplate } from '../../src/main/agent/shared/template-utils';
 import type { Task } from '../../src/shared/types';
@@ -65,6 +70,44 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     for (const entry of TASK_TEMPLATE_VARS) {
       expect(entry.chip).toBe(`{{${entry.name}}}`);
     }
+  });
+
+  it('every name is matched by the shared pattern, so it can actually substitute', () => {
+    // Nothing enforced this before, and it is not cosmetic: a name like
+    // `pr-url` passes every other assertion in this file while silently never
+    // substituting, because both interpolators tokenize on `\w+`. The shared
+    // pattern IS the definition now, so asking it directly cannot drift.
+    for (const name of TASK_TEMPLATE_VAR_NAMES) {
+      const matches = [...`{{${name}}}`.matchAll(TEMPLATE_VARIABLE_PATTERN)];
+      expect(matches.length, `${name} is not a substitutable name`).toBe(1);
+      expect(matches[0][1]).toBe(name);
+    }
+  });
+
+  it('every entry declares at least one context', () => {
+    // An entry with no context is offered nowhere, which makes it dead weight
+    // that still has to be resolved and documented.
+    for (const entry of TASK_TEMPLATE_VARS) {
+      expect(entry.contexts.length, `${entry.name} declares no context`).toBeGreaterThan(0);
+    }
+  });
+
+  it('the picker filters by context, so a spawn prompt is never offered a move keyword', () => {
+    const spawn = templateVarsFor('spawn').map((entry) => entry.name);
+    const automation = templateVarsFor('automation').map((entry) => entry.name);
+
+    // The four move keywords have no meaning outside a move: a spawn prompt is
+    // not one, so offering them there would be offering a permanent empty
+    // string.
+    for (const name of ['column', 'fromColumn', 'toColumn', 'trigger']) {
+      expect(spawn, `${name} must not be offered in a spawn prompt`).not.toContain(name);
+      expect(automation, `${name} must be offered in an automation`).toContain(name);
+    }
+
+    // Everything else is available in both, and an automation sees the whole
+    // catalog.
+    expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length);
+    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - 4);
   });
 
   it('every chip is documented in docs/transition-engine.md', () => {
@@ -317,8 +360,12 @@ describe('BoardManagerDialog variable list is sourced from the catalog', () => {
   );
 
   it('renders the variable list by mapping the shared catalog', () => {
-    expect(source).toContain("import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars'");
-    expect(source).toMatch(/TASK_TEMPLATE_VARS\.map\(/);
+    expect(source).toMatch(/from '\.\.\/\.\.\/\.\.\/shared\/task-template-vars'/);
+    // Either the whole catalog or one context of it. The context filter is
+    // still the shared declaration, and offering a keyword where it cannot
+    // resolve is the thing `contexts` exists to prevent.
+    expect(source).toMatch(/(TASK_TEMPLATE_VARS|templateVarsFor\([^)]*\))/);
+    expect(source).toMatch(/(TASK_TEMPLATE_VARS|AUTOMATION_TEMPLATE_VARS)\.map\(/);
   });
 
   it('hardcodes no template-variable chips of its own', () => {

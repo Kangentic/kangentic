@@ -103,7 +103,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     await page.locator('input[placeholder="Task title"]').fill('Draft Survives Task');
 
     await page.locator('[data-testid="task-profile-edit"]').click();
-    const boardManager = page.locator('text=Edit Columns').first();
+    const boardManager = page.locator('text=Column Manager').first();
     await expect(boardManager).toBeVisible();
 
     // The New Task dialog suppresses its own Escape while the manager is over it.

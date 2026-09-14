@@ -18,7 +18,7 @@ Each doc file and the source files that are its authority:
 | `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split) |
 | `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/transition-engine/agent-resolver.ts` |
 | `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
-| `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
+| `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/main/automations/**` (the adapter registry, the runner, per-field escaping), `src/shared/automation-manifest.ts`, `src/shared/types.ts` (AutomationType, AutomationTrigger, AutomationRunStatus, AutomationConfig) |
 | `command-injection.md` | `src/main/transition-engine/injection-plan.ts`, `src/main/transition-engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
 | `database.md` | `src/main/db/migrations/**`, `src/main/db/database.ts`, `src/main/db/repositories/*.ts` |
 | `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/shared/paths.ts` (adaptCommandForShell, convertWindowsExePath, quoteArg, isPowerShellShell; called from `src/main/pty/lifecycle/session-spawn-flow.ts`), `src/shared/shell-quote.ts` (escapeForDoubleQuotedShell and the shell predicates, shared with the renderer), `src/main/agent/shared/shim-launch.ts`, `electron-builder.yml`, `scripts/build.js` |
@@ -91,7 +91,12 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 |--------|----------------|------------|
 | `PermissionMode` | Union variants | configuration.md (canonical, the user-facing setting), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `TaskRunMode` | Union variants | database.md |
-| `ActionType` | Union variants | transition-engine.md |
+| `AutomationType` | Union variants | transition-engine.md (canonical, one heading per adapter), configuration.md and mcp-server.md (the 4 stable types plus the `send_command` alias and the legacy `spawn_agent`) |
+| `AutomationTrigger` | Union variants | transition-engine.md |
+| `AutomationRunStatus` | Union variants | transition-engine.md (canonical), database.md (the same variants as stored column values) |
+| `ColumnAutomation` | Interface fields | database.md (schema table) |
+| `AutomationRun` | Interface fields | database.md (schema table) |
+| `ActionType` | Union variants | RETIRED. The engine no longer branches on it; it survives only for the retired `actions` / `swimlane_transitions` tables and legacy `kangentic.json` reads. database.md and configuration.md mark it retired; do not report it as a missing-doc gap against transition-engine.md |
 | `SessionStatus` | Union variants | session-lifecycle.md |
 | `SessionRecordStatus` | Union variants | session-lifecycle.md (canonical, the state machine), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `SwimlaneRole` | Union variants | database.md |
@@ -157,6 +162,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
 | MCP tool manifest | `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`) | mcp-server.md (one heading per tool). Also enforced mechanically by `tests/unit/mcp-tool-list-parity.test.ts`. |
+| Automation adapters | `src/shared/automation-manifest.ts` (`AUTOMATION_MANIFEST`) and `src/main/automations/automation-registry.ts` | transition-engine.md (canonical, one heading per type with its fields, escaping, timeout and retry), architecture.md (the folder layout beside `pr/` and `boards/`), configuration.md and mcp-server.md (type summary tables). Registry-to-manifest parity is enforced by `tests/unit/automation-adapter-parity.test.ts`; the DOCS side is not mechanically checked. |
 | Board adapters | `src/main/boards/board-registry.ts` (registered providers) | board-integration.md (provider table, including each provider's stable/stub status) |
 | PR adapters | `src/main/pr/pr-registry.ts` (`connectors`) | pr-integration.md (provider list; keep planned-but-unimplemented providers marked as such) |
 | External scripts registry | `scripts/copy-external-scripts.js` (`EXTERNAL_SCRIPTS`) | No `docs/` target by design. Enforced by `tests/unit/external-scripts-parity.test.ts` and `.claude/rules/external-scripts-parity.md`; listed here so an auditor does not report it as a missing-doc gap. |
@@ -219,7 +225,10 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: template variable list is mirrored in configuration.md (canonical) and cross-referenced in transition-engine.md and agent-integration.md.
 
 - `src/shared/task-template-vars.ts`
-  WHY: the auto_command / spawn_agent promptTemplate catalog (title, description, task_xml, taskId, projectPath, worktreePath, branchName, baseBranch, prUrl, prNumber, attachments, port) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). agent-integration.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
+  WHY: the template-variable catalog every automation field, the per-task auto_command, and the legacy spawn_agent promptTemplate read (22 names: task_xml, title, description, taskId, taskNumber, projectPath, projectName, worktreePath, branchName, baseBranch, prUrl, prNumber, prState, issueKey, issueUrl, labels, attachments, port, plus the 4 move-only names column, fromColumn, toColumn, trigger) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Each entry's `contexts` decides where it is offered, and `availability` flags the ones that are usually empty; the table's PROSE (the keyword count, which context uses which interpolator) is not mechanically checked and is where this anchor has drifted before. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). agent-integration.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
+
+- `src/shared/automation-manifest.ts`
+  WHY: each automation type declares itself once here (label, icon, `status`, `needs`, fields with their per-field `escape`, `timeoutMs`, `retry`), and transition-engine.md tabulates all of it. Also holds `RETIRED_ACTION_TYPES`, `EXIT_GROUP_BUDGET_MS` and `DEFAULT_SCRIPT_TIMEOUT_MINUTES`, each of which is quoted as a number in the docs. Registry-to-manifest parity is mechanical (`tests/unit/automation-adapter-parity.test.ts`); the docs side is not, so an added type or a changed budget needs a hand pass. See .claude/rules/automation-adapters.md.
 
 - `src/main/agent/agent-adapter.ts`
   WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getCommandInjectionVerifier, summarize, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in agent-integration.md. Catches drift that types.ts re-exports miss.

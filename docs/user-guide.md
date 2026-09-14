@@ -26,13 +26,12 @@ New projects start with seven columns:
 | **Merge** | (auto) | Agent keeps running. Add a message telling it how to ship the work (e.g. merge a verified PR and pull back). |
 | **Done** | done | Suspends the session (preserving context) and archives the task. |
 
-None of the default columns carries a message or a description: the defaults are names, icons,
-and colors only, since what a column should tell its agent depends on your repo and agent. Both
-fields are yours to fill in from Board manager.
+None of the default columns carries automations or a description: the defaults are names, icons,
+and colors only, since what a column should do when a task arrives depends on your repo and agent.
+Both are yours to fill in from the Column Manager.
 Message examples in this guide, like `/code-review`, come from Kangentic's own development
-board, not from the defaults. ("Message to agent" is the column editor's label for what
-`kangentic.json` and the database store as `autoCommand` / `auto_command`; this guide uses
-both terms interchangeably.)
+board, not from the defaults. A column's message to its agent is one kind of automation, a
+**Send message to agent** row; see [Automations](#automations).
 
 ## Task Lifecycle
 
@@ -58,12 +57,13 @@ because one varies settings per column while the other pins them for the task's 
 **Board Profiles** are the answer to "I want Opus xhigh for Planning but Sonnet high for Merge."
 A profile is a named alternate set of per-column settings, so a heavy task and a light task can
 ride the same board at different tiers without either user changing the shared column config.
-Profiles are created and edited in **Edit Columns** (the Board Manager), where selecting one
+Profiles are created and edited in the **Column Manager**, where selecting one
 switches the column editors to that profile's values; column structure (which columns exist, their
-names and order) is shared across all profiles and is locked while a profile is selected. Profiles
-are saved to `kangentic.json`, so they reach teammates through git.
+names and order) is shared across all profiles and is locked while a profile is selected. So are
+automations: a column's list is the same under every profile, and the list is read-only while one
+is selected. Profiles are saved to `kangentic.json`, so they reach teammates through git.
 
-The pencil button beside the Profile dropdown opens Edit Columns, which is the only place profiles
+The pencil button beside the Profile dropdown opens the Column Manager, which is the only place profiles
 are authored - so creating your first one and retuning an existing one are the same trip. Until a
 board has any, the dropdown shows **Default**, disabled: the concept stays visible without adding a
 second creation path to keep in sync.
@@ -110,8 +110,8 @@ Drag a task from To Do to any active column (Planning, Executing, etc.). Kangent
 A move out of To Do is the only kind of move that sends the task itself to the agent: the title,
 description, and any attachment paths become the opening prompt (the seeded template
 `{{task_xml}}{{attachments}}`). A move between two active columns resumes the same
-conversation - the description is not sent again, and the destination column's **Message to
-agent** (`auto_command`), if it has one, is the only new instruction the agent receives.
+conversation - the description is not sent again, and the destination column's **Send message to
+agent** automation, if it has one, is the only new instruction the agent receives.
 Moving a task back to To Do kills its session, so moving it out again starts a fresh
 conversation and sends the task once more.
 
@@ -127,11 +127,11 @@ conversation and sends the task once more.
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
   - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which settings change it
-- **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that triggers an auto_command), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the auto_command name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
+- **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that runs the destination's automations), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the running automation's name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ### Move Between Active Columns
 
-Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has an `auto_command` configured (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the `auto_command` rides along as the resume prompt instead.
+Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the message rides along as the resume prompt instead. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
 
 The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
 
@@ -378,7 +378,8 @@ Click the **+** button at the end of the column row.
 
 ### Edit a Column
 
-Click the column header's settings icon. You can configure:
+Click a column header to open the **Column Manager**. Settings are on the left, the column's
+automations on the right.
 
 | Setting | Description |
 |---------|-------------|
@@ -389,14 +390,62 @@ Click the column header's settings icon. You can configure:
 | **Agent** | Override the project's default agent for this column (e.g., use Codex for code review) |
 | **Model** / **Effort** | Override the project's default model and reasoning effort for agents in this column |
 | **Permission Mode** | Override the global permission mode for agents in this column |
-| **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on) |
-| **Receive context from prior agent** | On a cross-agent move into this column, hand the previous agent's conversation to the new one |
-| **Session** / **On enter** | Whether the column runs the task's main session or its own isolated one, and whether entering resumes or always starts fresh |
-| **Message to agent** | Sent to the agent when a task enters the column. Plain instructions or a slash command; template variables fill in task details. Stored as `autoCommand` in `kangentic.json` |
-| **Message timing** | Whether the message interrupts the agent or waits for its current turn to finish |
+| **Auto Spawn** ("Start an agent here") | Whether moving a task here spawns an agent (default: on). Turning it off also stops any **Send message to agent** automation on the column, since there is no agent to type at; those rows show as off with a disabled switch and the reason. |
+| **Hand off context when the agent changes** | On a move that changes the agent, hand the previous agent's conversation to the new one instead of starting it with just the task title and description |
+| **Session** | Whether the column runs the task's main session or its own isolated one. An isolated session is separate from the main one and starts clean on every entry, which suits an adversarial code review |
 | **Plan Exit Target** | For plan-mode columns: where tasks move when planning completes |
 
+The column's message to its agent is no longer a field here. It is an automation, and it lives in
+the list on the right: see [Automations](#automations) below.
+
 When a column's agent override differs from the current session's agent, moving a task into that column triggers a cross-agent handoff. The outgoing agent's context (transcript, git changes, metrics) is automatically packaged and delivered to the incoming agent.
+
+### Automations
+
+What a column does when a task enters or leaves it. Each column owns one ordered list, split into
+**On enter** and **On exit**, and each row has its own switch. A row belongs to one column; there
+is no sharing and no library.
+
+Four types:
+
+| Type | What it does |
+|------|--------------|
+| **Send message to agent** | Types a message at the column's agent. Plain instructions or a slash command. |
+| **Run script** | Runs a script in the task's worktree, or the project checkout when it has none. |
+| **Call webhook** | Calls a URL. Retries a transport error, 429 or 5xx up to three times. |
+| **Notify me** | Raises one desktop notification. Clicking it opens the task. |
+
+**Adding one.** Each group has its own **Add automation** control, so where you add decides when
+it runs. The picker offers the four types, and below them every row on every other column, to
+copy. A copy is independent of the original. A type the column cannot run is offered disabled,
+with the reason.
+
+**Editing one.** Clicking the row opens a dialog with the name, the type, the type's own fields,
+and When. Nothing else. The pencil does the same, for a pointer that is already over it; the grip,
+the switch and the trash keep their own jobs and do not open it. A name is required and must be unique on its column. Every text field takes
+template variables: type `{{` to pick one, or use the **Template variable** button. A known
+variable is highlighted; an unknown one is flagged and sent as written.
+
+**Reordering.** Drag a row by its grip. Dragging it across the group heading changes when it runs
+as well as where it sits.
+
+**The agent starts by itself.** Nothing in the list starts the agent, and there is no Start agent
+row. On enter, Kangentic starts the column's agent right before the first automation that needs
+one, which today means a **Send message to agent** row. On exit there is no agent to start, so
+such a row is skipped with that reason recorded.
+
+**When something fails.** Every run is recorded, whatever happens, and the row shows its last run
+under its description. A failure raises one toast naming the automation and the column, with a
+**Run again** action that re-runs it against the task's current state. Nothing is retried
+automatically: a fired webhook and a half-run script are not safe to repeat blind. A run that was
+in flight when Kangentic quit is marked interrupted the next time the project opens.
+
+**To Do and Done** run exit automations only. Nothing runs when a task enters them.
+
+**Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
+they are shared with your team through git. The board header shows a lightning glyph with the
+count of automations that will actually run there, and **All columns** in the Column Manager shows
+every column's counts side by side.
 
 ### Reorder Columns
 
@@ -848,6 +897,6 @@ Terminal:
 ## Tips
 
 - **Plan mode workflow:** Use a Planning column with `permission_mode='plan'` and `plan_exit_target_id` pointing to your Executing column. The agent plans first, then auto-moves to execution.
-- **Column messages:** Set a message (`auto_command`) on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
+- **Column messages:** Add a **Send message to agent** automation on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
 - **Concurrent agents:** Increase `maxConcurrentSessions` to run more agents in parallel. Each needs its own worktree to avoid conflicts.
 - **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off.

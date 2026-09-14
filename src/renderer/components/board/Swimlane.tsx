@@ -8,6 +8,7 @@ import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
+import { AutomationGlyph } from './AutomationGlyph';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 export interface SwimlaneProps {
@@ -97,6 +98,8 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
         </span>
 
         <CountBadge count={tasks.length} />
+
+        <AutomationGlyph swimlaneId={swimlane.id} />
 
         <button
           type="button"

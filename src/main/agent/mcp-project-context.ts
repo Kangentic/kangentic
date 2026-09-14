@@ -8,6 +8,7 @@ import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../db/database';
 import { autoSpawnForTask, captureSessionLeftovers, reapSessionLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
+import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { WorktreeManager } from '../git/worktree-manager';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
@@ -261,6 +262,13 @@ export function buildCommandContextForProject(
       ipcContext.configManager.save({ backlog: { labelColors: colors } } as Partial<AppConfig>);
       sendToRenderer(ipcContext.mainWindow, IPC.BACKLOG_LABEL_COLORS_CHANGED);
     },
+
+    // The SAME entry point the failure toast's Run again action uses, so an
+    // agent re-running an automation and a user clicking Run again get
+    // identical behavior: the task lock, the five-minute budget, a fresh run
+    // row, and the task's current state rather than the state at failure time.
+    onRunAutomation: (automationId, taskId) =>
+      runAutomationAgain(ipcContext, projectId, taskId, automationId),
   };
 }
 

@@ -83,16 +83,25 @@ export const IPC = {
   SWIMLANE_REORDER: 'swimlane:reorder',
   SWIMLANE_UPDATED_BY_AGENT: 'swimlane:updatedByAgent',
 
-  // Actions
-  ACTION_LIST: 'action:list',
-  ACTION_CREATE: 'action:create',
-  ACTION_UPDATE: 'action:update',
-  ACTION_DELETE: 'action:delete',
-
-  // Transitions
-  TRANSITION_LIST: 'transition:list',
-  TRANSITION_SET: 'transition:set',
-  TRANSITION_GET_FOR: 'transition:getFor',
+  // Column automations. Replaced the ACTION_* and TRANSITION_* channels, which
+  // had no renderer callers: named actions and `from -> to` transitions were
+  // never editable in the app.
+  AUTOMATION_LIST: 'automation:list',
+  AUTOMATION_REPLACE_FOR_COLUMN: 'automation:replaceForColumn',
+  AUTOMATION_RUNS_FOR_TASK: 'automation:runsForTask',
+  AUTOMATION_LATEST_RUNS: 'automation:latestRuns',
+  /**
+   * Re-run ONE automation against the task's CURRENT state, writing a fresh run
+   * row. Reached from the failure toast's Run again action and from MCP.
+   */
+  AUTOMATION_RUN_AGAIN: 'automation:runAgain',
+  /** Main -> renderer: one automation failed or was interrupted. */
+  AUTOMATION_RUN_FAILED: 'automation:runFailed',
+  /**
+   * Main -> renderer: runs left `running` by a quit were marked interrupted on
+   * project open. One summary per open, never one per row.
+   */
+  AUTOMATION_RUNS_INTERRUPTED: 'automation:runsInterrupted',
 
   // Sessions
   SESSION_SPAWN: 'session:spawn',

@@ -1,4 +1,8 @@
+import type Database from 'better-sqlite3';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { setColumnMessage } from '../../automations/column-message';
+import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
@@ -11,6 +15,8 @@ import {
 } from './column-enums';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type {
+  AutoCommandMode,
+  PermissionMode,
   SwimlaneCreateInput,
   SwimlaneUpdateInput,
   SessionTarget,
@@ -20,6 +26,15 @@ import type {
 /** The defaults a brand-new column starts at, matching the two NOT NULL column DEFAULTs. */
 const DEFAULT_SESSION_TARGET: SessionTarget = 'main';
 const DEFAULT_SESSION_SPAWN_STRATEGY: SessionSpawnStrategy = 'create_or_resume';
+
+/**
+ * The message this column actually sends, for the `autoCommand` field these
+ * tools echo back. Goes through the same resolver the engine uses, so what a
+ * caller reads is what the column will deliver.
+ */
+function readColumnMessage(db: Database.Database, swimlaneId: string): string | null {
+  return resolveColumnMessage(new AutomationRepository(db).listForColumn(swimlaneId))?.message ?? null;
+}
 
 export const handleUpdateColumn: CommandHandler = (
   params: Record<string, unknown>,
@@ -67,8 +82,14 @@ export const handleUpdateColumn: CommandHandler = (
     updates.auto_spawn = Boolean(params.autoSpawn);
     changedFields.push('autoSpawn');
   }
-  if (params.autoCommand !== undefined) {
-    updates.auto_command = params.autoCommand === null ? null : String(params.autoCommand).slice(0, 4000);
+  // `autoCommand` is NOT a lane field any more. It writes the column's first
+  // `send_message` enter automation, which is the row the engine delivers.
+  // Deferred until after the lane write below, so a call that also renames the
+  // column does not half-apply if the rename throws.
+  const messageWrite = params.autoCommand === undefined
+    ? null
+    : { text: params.autoCommand === null ? null : String(params.autoCommand).slice(0, 4000) };
+  if (messageWrite) {
     changedFields.push('autoCommand');
   }
   if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
@@ -158,6 +179,17 @@ export const handleUpdateColumn: CommandHandler = (
   const swimlaneRepo = new SwimlaneRepository(db);
   const updated = swimlaneRepo.update(updates);
 
+  let messageNote = '';
+  if (messageWrite) {
+    const mode = params.autoCommandMode === undefined || params.autoCommandMode === null
+      ? undefined
+      : (String(params.autoCommandMode) === 'deferred' ? 'deferred' : 'immediate') satisfies AutoCommandMode;
+    const result = setColumnMessage(new AutomationRepository(db), updated.id, messageWrite.text, mode);
+    messageNote = result.action === 'unchanged'
+      ? ' This column had no message to clear.'
+      : ` The message is the "${result.name}" automation on this column's On enter group (${result.action}).`;
+  }
+
   // `swimlane` is the pre-update row resolved above. Handing it over lets the
   // host propagate the change into live sessions the same way the UI's
   // SWIMLANE_UPDATE does; without a before-row it cannot tell what changed.
@@ -165,7 +197,7 @@ export const handleUpdateColumn: CommandHandler = (
 
   return {
     success: true,
-    message: `Updated ${changedFields.join(', ')} for column "${updated.name}".`,
+    message: `Updated ${changedFields.join(', ')} for column "${updated.name}".${messageNote}`,
     data: {
       id: updated.id,
       name: updated.name,
@@ -174,8 +206,10 @@ export const handleUpdateColumn: CommandHandler = (
       icon: updated.icon,
       role: updated.role,
       autoSpawn: updated.auto_spawn,
-      autoCommand: updated.auto_command,
-      autoCommandMode: updated.auto_command_mode,
+      // The column's live message, read back off the automation. Echoing
+      // `updated.auto_command` reported the retired field, which is null on
+      // every board the migration has touched.
+      autoCommand: readColumnMessage(db, updated.id),
       agentOverride: updated.agent_override,
       modelOverride: updated.model_override,
       effortOverride: updated.effort_override,
@@ -225,14 +259,11 @@ export const handleCreateColumn: CommandHandler = (
   if (params.autoSpawn !== undefined && params.autoSpawn !== null) {
     input.auto_spawn = Boolean(params.autoSpawn);
   }
-  if (params.autoCommand !== undefined && params.autoCommand !== null) {
-    input.auto_command = String(params.autoCommand).slice(0, 4000);
-  }
-  if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
-    const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
-    if ('error' in parsed) return { success: false, error: parsed.error };
-    input.auto_command_mode = parsed.value;
-  }
+  // Not a lane field. Written as the new column's message automation once the
+  // row exists, since an automation needs its column's id.
+  const initialMessage = params.autoCommand === undefined || params.autoCommand === null
+    ? null
+    : String(params.autoCommand).slice(0, 4000);
   if (params.agentOverride !== undefined && params.agentOverride !== null) {
     input.agent_override = String(params.agentOverride);
   }
@@ -326,11 +357,20 @@ export const handleCreateColumn: CommandHandler = (
     return swimlaneRepo.create(input);
   })();
 
+  let messageNote = '';
+  if (initialMessage) {
+    const mode = params.autoCommandMode === undefined || params.autoCommandMode === null
+      ? undefined
+      : (String(params.autoCommandMode) === 'deferred' ? 'deferred' : 'immediate') satisfies AutoCommandMode;
+    const result = setColumnMessage(new AutomationRepository(db), created.id, initialMessage, mode);
+    messageNote = ` Its message is the "${result.name}" automation on its On enter group.`;
+  }
+
   context.onSwimlaneUpdated(created);
 
   return {
     success: true,
-    message: `Created column "${created.name}" at position ${created.position}.`,
+    message: `Created column "${created.name}" at position ${created.position}.${messageNote}`,
     data: {
       id: created.id,
       name: created.name,
@@ -340,8 +380,7 @@ export const handleCreateColumn: CommandHandler = (
       role: created.role,
       position: created.position,
       autoSpawn: created.auto_spawn,
-      autoCommand: created.auto_command,
-      autoCommandMode: created.auto_command_mode,
+      autoCommand: readColumnMessage(db, created.id),
       agentOverride: created.agent_override,
       modelOverride: created.model_override,
       effortOverride: created.effort_override,
