@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
-import { Pill } from './Pill';
+import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from './Pill';
 import { OverlayPopover } from './OverlayPopover';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 
@@ -109,8 +109,13 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
             <Pill
               key={label}
               size="sm"
-              className={color ? 'bg-surface-control/60 font-medium' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
-              style={color ? { color } : undefined}
+              // A configured label used to get `surface-control/60`, which is 60 percent of the
+              // SAME token as the field it sits in, and no border: the pill was painted its own
+              // background and vanished. It now carries the tint its colour gives it, matching
+              // the pill on a card. An unconfigured label keeps the solid fill and edge below,
+              // since it has no colour to tint with.
+              className={color ? 'font-medium border' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
+              style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
             >
               {/* The text is centered by `Pill` itself (it trims bare text to
                   its cap height, see `trimTextChildren`). The button is a flex

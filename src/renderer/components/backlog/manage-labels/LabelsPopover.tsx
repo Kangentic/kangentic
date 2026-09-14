@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Tags, Trash2, Plus, Pencil } from 'lucide-react';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
-import { Pill } from '../../Pill';
+import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useBoardStore } from '../../../stores/board-store';
 import { useConfigStore } from '../../../stores/config-store';
@@ -274,8 +274,8 @@ function LabelRow({
           ) : (
             <Pill
               size="sm"
-              className="bg-surface-control/60 font-medium cursor-pointer"
-              style={{ color: effectiveColor }}
+              className="font-medium border cursor-pointer"
+              style={{ color: effectiveColor, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
             >
               {name}
             </Pill>
