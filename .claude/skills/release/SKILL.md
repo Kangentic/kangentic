@@ -37,7 +37,17 @@ PREVIOUS version. That is why Step 2 reads all three files back.
 
 ## Step 0 -- Determine Bump Type
 
-1. **Find the previous tag:** Run `git describe --tags --abbrev=0`. Note whether this succeeds or fails (no tags = first release).
+1. **Find the previous tag:** Run `git describe --tags --abbrev=0 --match "v*"`. Note whether this
+   succeeds or fails (no tags = first release).
+
+   **`--match "v*"` is load-bearing, not decoration.** `@kangentic/protocol` ships on its own
+   cadence from this same branch, so a `protocol-v*` tag is often the most recent reachable one.
+   Without the filter this returns that protocol tag, and both this step and Step 3 then read a
+   range that starts in the middle of the desktop release. Releasing v0.41.0 hit exactly this:
+   the bare command returned `protocol-v0.14.0`, and three protocol releases had landed inside
+   the real v0.40.0..v0.41.0 range. Nothing about the truncated output looks wrong, which is the
+   whole problem. The changelog comes out short but plausible, and the bump derivation reads the
+   same truncated range, so a minor can silently derive as a patch.
 2. **Collect commits since last tag:** Run `git log <previousTag>..HEAD --oneline --no-decorate` (or `git log --oneline --no-decorate` if no previous tag).
 3. **Analyze conventional commit prefixes to derive a bump type:**
    - Any commit with `!` after the type (e.g., `feat!:`, `fix!:`) or containing `BREAKING CHANGE` in the subject -- suggest **major**
@@ -121,6 +131,28 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    cancelled before any platform job uploaded, and torn down; v0.39.1's commit message recorded the
    number as free, and v0.40.0 later shipped normally on it. That declaration lived in a commit
    message and was not self-verifying, so these four checks are what make a reuse safe.
+8. **Verify CI is green on the commit being released.** Run
+   `gh run list --repo Kangentic/kangentic --workflow=ci.yml --branch main --limit 1 --json headSha,status,conclusion`
+   and compare `headSha` against `git rev-parse HEAD`. The `--json` fields are the point: the
+   default table prints no SHA, so without them the step cannot check the half that matters.
+
+   Require `conclusion: success` AND `headSha` equal to HEAD. On `failure`, stop: the code does
+   not pass its own gate. If `status` is not `completed`, wait for it. If `headSha` is not HEAD,
+   the last push never triggered CI and there is nothing here to trust, so say that rather than
+   reading a stale run as a pass.
+
+   This is the authoritative gate, and it is strictly broader than Step 1's local run. CI runs
+   lint, typecheck, build, 3 unit shards, 11 UI shards, and 5 Linux Electron E2E shards on this
+   exact commit. Step 1 runs typecheck and the UI tier, and nothing else: a lint error, a unit
+   regression, a broken build, or an E2E failure would all sail past it. One `gh` call covers
+   every one of those in about a second.
+
+   Confirm the green is a real green, not a green-via-retry. CI runs UI and E2E with `retries: 1`,
+   so a flake hides inside a passing check. `gh run view <runId> --repo Kangentic/kangentic --log`
+   filtered for `flaky` must come back empty. A hit is a flake, and the project's standing
+   never-leave-a-flake rule makes an unresolved one a blocker: fix it, rewrite it
+   deterministically, or remove it with a justification before releasing. Do not ask whether to
+   release around it.
 
 Report the current version (from package.json), the bump type, and what the new version will be before proceeding.
 
@@ -129,10 +161,35 @@ Report the current version (from package.json), the bump type, and what the new 
 Spawn Step 1.5's `doc-auditor` agent before starting these, so the audit runs alongside them. Read
 Step 1.5 now for why, and for what may and may not be applied while Step 1 is still running.
 
-Run these checks sequentially. Stop on the first failure.
+Pre-flight step 8 has already confirmed the authoritative gate. This step is a second, local
+look that exists because CI's sharding and this machine's load schedule different races: the
+v0.41.0 run surfaced a real latent flake here that all 11 green UI shards had never hit.
+
+Run these checks sequentially.
 
 1. Run `npm run typecheck`. If it fails, report type errors and stop.
-2. Run `npx playwright test --project=ui`. If it fails, report test failures and stop.
+2. Run `npx playwright test --project=ui`.
+
+**Triaging a Step 1.2 failure.** What a failure means depends on its shape, and the two shapes
+want opposite responses. Sort it before reacting:
+
+- **An assertion failure is yours.** A spec that fails an `expect` is a test defect or a real
+  regression, and either way it blocks. Diagnose it, fix it, and re-run. The project's
+  never-leave-a-flake rule applies in full: fix, rewrite deterministically, or remove with a
+  justification. Never ask whether to release around it.
+- **A worker process abort is the machine's.** `worker process exited unexpectedly (code=...)`
+  carries no assertion, no selector, and no wait to harden, so there is no de-flake edit that
+  addresses it. Chromium died. On Windows, `3221226505` (`0xC0000409`) under three workers and
+  1500-plus tests is resource exhaustion, not a product defect.
+
+  A process abort does NOT block when all three hold: the spec is untouched in this release's
+  commit range, it passes on a scoped re-run, and pre-flight step 8's CI run is green on this
+  commit with no `flaky` hits. Record it in the Step 7 report as an environmental failure and
+  keep going. If any of the three does not hold, treat it as an assertion failure and stop.
+
+Re-running the full suite a third time to chase a clean local exit is not diligence; it is a
+ten-minute coin flip that cannot tell you anything the three checks above have not already
+answered.
 
 ## Step 1.5 -- Documentation Audit
 
@@ -160,6 +217,18 @@ unapplied.
    missing.
 3. **Document every undocumented `feat:` commit** since the previous tag: scan for features not
    covered in `docs/` and write the missing coverage. Unconditional - do not ask.
+
+   Points 2 and 3 are separate mandates and the auditor's prose-versus-anchor label governs point
+   2 only. A feature can be fully enumerated somewhere in `docs/` (so point 2 correctly reports no
+   gap) and still be undocumented where a user would look, which is point 3's job. v0.41.0's PR
+   merge-readiness pill was exactly this: `pr-integration.md` enumerated all six readiness values
+   and both settings that drive them, while `user-guide.md` never said the pill exists or where it
+   renders, so a user could read the setting that flips a PR to `ready` and not know what changed
+   on screen. Point 3 covers that; point 2 does not.
+
+   Keep the write proportional. Point 3 asks for the missing coverage of a shipped feature, not a
+   docs pass: name the thing where a user would look for it and link to the page that already
+   enumerates the detail.
 4. **Check `@kangentic/protocol` changelog parity.** Desktop releases are frequent and protocol
    releases are not, so this is the check most likely to catch a protocol release that bypassed
    `/release-protocol`. It is a read-and-fix check, not a protocol release: never bump, tag, or
@@ -198,7 +267,10 @@ and `publish-protocol.yml` workflow, not this one. See that skill for details.
 
 ## Step 3 -- Generate Changelog
 
-1. **Find the previous tag:** Run `git describe --tags --abbrev=0`. If no tags exist, use the root commit as the starting point (this is the first release).
+1. **Find the previous tag:** Run `git describe --tags --abbrev=0 --match "v*"` (the filter matters
+   for the reason Step 0 point 1 gives: without it this returns a `protocol-v*` tag and the
+   changelog silently covers the wrong range). If no tags exist, use the root commit as the
+   starting point (this is the first release).
 2. **Collect commits:** Run `git log <previousTag>..HEAD --oneline --no-decorate` (or `git log --oneline --no-decorate` if no previous tag).
 3. **Group commits** into categories using conventional commit prefixes:
    - **Breaking Changes** -- commits with `!` after the type (e.g., `feat!:`, `fix!:`) or containing `BREAKING CHANGE` in the subject
@@ -263,10 +335,13 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
 
 1. Stage the changed files: `git add package.json package-lock.json packages/launcher/package.json CHANGELOG.md RELEASE_NOTES.md`
    (If this is a first release with no version bump, only stage `CHANGELOG.md RELEASE_NOTES.md`)
-2. Write the commit message using the **Write tool** to `.kangentic/COMMIT_MSG.tmp`:
+2. Write the commit message using the **Write tool** to `.kangentic/COMMIT_MSG.tmp` (a
+   main-checkout path, and the file normally already holds a previous release's message, so read
+   it first if the tool refuses to overwrite an unread file):
    ```
    chore(release): vX.Y.Z
    ```
+   Add the session's attribution lines below the subject if the harness asks for them.
 3. Commit: `git commit -F .kangentic/COMMIT_MSG.tmp`
 
 ## Step 5 -- Tag
@@ -338,9 +413,10 @@ token, the request bodies, and the traps; do not re-derive them here.
 1. **Derive the candidates:** Run
    `git log <previousTag>..vX.Y.Z --grep="DESKTOP-" --format=%H%n%B`, where `<previousTag>` is the
    value Step 0 captured and `vX.Y.Z` is the tag Step 5 created. Do NOT re-derive `<previousTag>`
-   here. Step 5 has already tagged this release, so `git describe --tags --abbrev=0` now returns
-   the NEW tag and the range comes back empty. That is the one silent failure this step has, and an
-   empty range reads exactly like a clean run. Collect every shortId the commit bodies name.
+   here. Step 5 has already tagged this release, so a fresh `git describe --tags --abbrev=0
+   --match "v*"` now returns the NEW tag and the range comes back empty. That is the one silent
+   failure this step has, and an empty range reads exactly like a clean run. Collect every shortId
+   the commit bodies name.
 2. **Sort the candidates mechanically, then act without asking.** The scan produces candidates, not
    answers, because a commit body cites shortIds it does not fix. Read each candidate's issue
    payload first, both its `status` and its newest `set_resolved_in_release` activity entry: a
