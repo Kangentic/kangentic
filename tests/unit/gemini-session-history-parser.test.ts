@@ -48,8 +48,8 @@ describe('GeminiSessionHistoryParser', () => {
       expect(result.usage!.model.id).toBe('gemini-3-flash-preview');
       expect(result.usage!.contextWindow.totalInputTokens).toBe(11199);
       expect(result.usage!.contextWindow.totalOutputTokens).toBe(47);
-      expect(result.usage!.contextWindow.contextWindowSize).toBe(1_000_000);
-      expect(result.usage!.contextWindow.usedPercentage).toBeCloseTo(11199 / 1_000_000 * 100, 5);
+      expect(result.usage!.contextWindow.contextWindowSize).toBe(0);
+      expect(result.usage!.contextWindow.usedPercentage).toBe(0);
     });
 
     it('walks messages backwards and finds the most recent gemini entry', () => {
@@ -73,50 +73,39 @@ describe('GeminiSessionHistoryParser', () => {
       const result = GeminiSessionHistoryParser.parse(json, 'full');
       expect(result.usage!.model.id).toBe('gemini-3-pro');
       expect(result.usage!.contextWindow.totalInputTokens).toBe(500);
-      expect(result.usage!.contextWindow.contextWindowSize).toBe(2_000_000);
+      expect(result.usage!.contextWindow.contextWindowSize).toBe(0);
     });
 
-    it('resolves context window sizes for known model families', () => {
-      const cases: Array<{ model: string; expected: number }> = [
-        { model: 'gemini-3-flash-preview', expected: 1_000_000 },
-        { model: 'gemini-3-pro', expected: 2_000_000 },
-        { model: 'gemini-2.5-pro', expected: 2_000_000 },
-        { model: 'gemini-2.5-flash', expected: 1_000_000 },
-        { model: 'gemini-2.0-flash', expected: 1_000_000 },
+    it('uses the 0 sentinel for every model, known-looking or not', () => {
+      // There used to be a model-id to context-window lookup table here, kept
+      // in sync by hand against Google's model cards. It is gone: Gemini's
+      // session JSON carries no window size and the Gemini CLI has no command
+      // that reports one, so there is nothing to discover and we refuse to
+      // guess. The 0 sentinel tells the TaskCard renderer to hide the progress
+      // bar and show the model name alone.
+      //
+      // These ids are deliberately ones the old table answered, so this case
+      // fails if a lookup chain ever comes back.
+      const models = [
+        'gemini-3-flash-preview',
+        'gemini-3-pro',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
+        'gemini-5-hypothetical-future-model',
       ];
-      for (const { model, expected } of cases) {
+      for (const model of models) {
         const json = JSON.stringify({
           sessionId: 'test',
           messages: [
-            { type: 'gemini', model, tokens: { input: 0, output: 0, total: 0 } },
+            { type: 'gemini', model, tokens: { input: 1234, output: 56, total: 1290 } },
           ],
         });
         const result = GeminiSessionHistoryParser.parse(json, 'full');
-        expect(result.usage!.contextWindow.contextWindowSize).toBe(expected);
+        expect(result.usage!.contextWindow.contextWindowSize, model).toBe(0);
+        expect(result.usage!.contextWindow.usedPercentage, model).toBe(0);
+        // Token counts are still reported - only the window size / % is hidden.
+        expect(result.usage!.contextWindow.totalInputTokens, model).toBe(1234);
       }
-    });
-
-    it('uses 0 as sentinel contextWindowSize for unknown models', () => {
-      // Unknown models must NOT get a guessed context window. The
-      // 0 sentinel tells the TaskCard renderer to hide the progress
-      // bar and show only the model name (graceful degradation).
-      const json = JSON.stringify({
-        sessionId: 'test',
-        messages: [
-          {
-            type: 'gemini',
-            model: 'gemini-5-hypothetical-future-model',
-            tokens: { input: 1234, output: 56, total: 1290 },
-          },
-        ],
-      });
-      const result = GeminiSessionHistoryParser.parse(json, 'full');
-      expect(result.usage).not.toBeNull();
-      expect(result.usage!.model.id).toBe('gemini-5-hypothetical-future-model');
-      expect(result.usage!.contextWindow.contextWindowSize).toBe(0);
-      expect(result.usage!.contextWindow.usedPercentage).toBe(0);
-      // Token counts are still reported - only the window size / % is hidden.
-      expect(result.usage!.contextWindow.totalInputTokens).toBe(1234);
     });
 
     it('returns null usage when no gemini messages exist', () => {

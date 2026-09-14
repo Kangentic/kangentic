@@ -3039,6 +3039,23 @@ export interface AppConfig {
    *  the release that introduced it - at which point every config on disk already
    *  carries `true`. Until then it stays, like `hasCompletedFirstRun` below. */
   hasMigratedWindowLightDismissDefault: boolean;
+  /** One-shot marker for the purge of seeded entries out of `discoveredModelsByAgent`.
+   *
+   *  `loadAgentList` used to seed that cache from `capabilities.models` with a union that
+   *  only ever grew, so anything an adapter ever reported became permanent. Cursor's
+   *  hardcoded fallback list therefore outlived its own deletion: 'GPT-4 Turbo' and friends
+   *  are already written into every config on disk, and a seeded entry is indistinguishable
+   *  from a learned one, so there is nothing to filter on.
+   *
+   *  The migration in `ConfigManager.load()` clears the whole map once. The cost is that
+   *  genuinely learned models are forgotten and re-learned on next use; the alternative is
+   *  offering models the CLI no longer serves, which is the bug this is fixing. It runs in
+   *  main before the renderer's first read, so no renderer write can spread a stale value
+   *  back over it.
+   *
+   *  Retirable (with its migration block) once no supported install can still predate the
+   *  release that introduced it, like `hasMigratedWindowLightDismissDefault` above. */
+  hasPurgedSeededDiscoveredModels: boolean;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
    *  dismissed suggestion does not reappear on the next app launch. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -3293,6 +3310,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoFocusIdleSession: false,
   windowLightDismiss: 'focused',
   hasMigratedWindowLightDismissDefault: false,
+  hasPurgedSeededDiscoveredModels: false,
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,

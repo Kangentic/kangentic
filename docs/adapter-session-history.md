@@ -177,20 +177,18 @@ metadata lives in the header line, not in a whole-file object.
 
 ### Context window size
 
-**Not present in the file.** The parser uses a hardcoded model-name → window-size lookup:
+**Not present in the file, and not available anywhere else.** The parser emits the `0` "unknown
+size" sentinel for every Gemini model, so the card shows token counts with no progress bar.
 
-| Model prefix | Context window |
-|---|---|
-| `gemini-3-flash*` | 1,000,000 |
-| `gemini-3-pro*` | 2,000,000 |
-| `gemini-3*` | 1,000,000 |
-| `gemini-2.5-pro*` | 2,000,000 |
-| `gemini-2.5-flash*` | 1,000,000 |
-| `gemini-2.5*` | 1,000,000 |
-| `gemini-2.0*` | 1,000,000 |
-| (default) | 1,000,000 |
+There used to be a hardcoded model-prefix to window-size lookup here, transcribed from Google's
+model cards and kept current by hand. It is gone, per
+`.claude/rules/cli-features-over-custom-layers.md`: we do not track model releases, and a guessed
+limit renders a percentage that looks precise and is not. Gemini's session JSON carries no window
+size and the Gemini CLI has no command that reports one, so there is nothing to discover and the
+honest answer is to show nothing.
 
-Source: Google's published model cards. Update the table in `gemini/session-history-parser.ts` when Google publishes new model specs.
+The bar comes back on its own if Gemini ever starts reporting a window, through the live-telemetry
+path that fills `discoveredContextWindowsByAgent`. Do not reintroduce the table.
 
 ### Assumptions that could break on CLI upgrades
 

@@ -302,9 +302,9 @@ export class CursorAdapter implements AgentAdapter {
     return null;
   }
 
-  async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
+  async discoverCapabilities(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities> {
     // discoverCursorCapabilities is best-effort and always returns a result
-    return discoverCursorCapabilities(cliPath);
+    return discoverCursorCapabilities(cliPath, forceRefresh);
   }
 
   getInjectionSequence(spec: SettingsChangeSpec): string[] {
