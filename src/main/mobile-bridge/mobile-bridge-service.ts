@@ -36,7 +36,7 @@ import { terminalStreamKeyFor, TERMINAL_STREAM_KEY_PREFIX } from './handlers/rea
 import { sizeGuardKeyFor } from './handlers/terminal-size-guard';
 import { SessionLifecycleBoardFeed } from './session-lifecycle-feed';
 import { PushRegistrationStore } from './push/push-registration-store';
-import { PushNotifier } from './push/push-notifier';
+import { collectConnectedDeviceIds, PushNotifier } from './push/push-notifier';
 import { SpawnStallWatcher } from './push/spawn-stall-watcher';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import type { IpcContext } from '../ipc/ipc-context';
@@ -192,15 +192,11 @@ export class MobileBridgeService extends EventEmitter {
     this.pushNotifier = new PushNotifier({
       sessionManager: context.sessionManager,
       registrationStore: this.pushRegistrations,
-      // Presence = a live established bridge session for that device; the
-      // user is already watching from it, so it is never pinged.
-      getEstablishedDeviceIds: () => {
-        const establishedDeviceIds = new Set<string>();
-        for (const [deviceId, session] of this.sessions) {
-          if (session.isEstablished) establishedDeviceIds.add(deviceId);
-        }
-        return establishedDeviceIds;
-      },
+      // Presence = a bridge session reporting 'connected' for that device;
+      // the user is already watching from it, so it is never pinged.
+      // Deliberately not isEstablished - see collectConnectedDeviceIds's
+      // doc comment for the silent-death window that rules it out.
+      getConnectedDeviceIds: () => collectConnectedDeviceIds(this.sessions),
       resolveTaskContext: (sessionId) => {
         const projectId = context.sessionManager.getSessionProjectId(sessionId);
         const taskId = context.sessionManager.getSessionTaskId(sessionId);
