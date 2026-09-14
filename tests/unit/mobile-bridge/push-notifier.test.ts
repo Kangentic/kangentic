@@ -23,7 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { collectConnectedDeviceIds, PushNotifier, type PushNotifierOptions } from '../../../src/main/mobile-bridge/push/push-notifier';
+import { collectConnectedDeviceIds, redactPushTokens, PushNotifier, type PushNotifierOptions } from '../../../src/main/mobile-bridge/push/push-notifier';
 import type { PushRegistrationStore } from '../../../src/main/mobile-bridge/push/push-registration-store';
 import type { FetchLike } from '../../../src/main/mobile-bridge/push/expo-push-client';
 import type { WakeResult } from '../../../src/main/mobile-bridge/push/wake-channel';
@@ -57,6 +57,42 @@ const REGISTRATION = {
   registeredAt: '2026-07-16T00:00:00.000Z',
 };
 const IOS_REGISTRATION = { ...REGISTRATION, deviceId: 'device-ios', platform: 'ios' as const };
+
+describe('redactPushTokens', () => {
+  /**
+   * Direct regex coverage, distinct from the indirect log-assertion tests
+   * below that only ever feed the long "Exponent" form. Expo's actual
+   * documented not-registered message uses the SHORT "ExpoPushToken[...]"
+   * form - the `(?:nent)?` group in the regex is what makes that match at
+   * all. Deleting that group would leave every indirect test green (they
+   * only ever use the long form) while silently failing to redact the form
+   * Expo's own docs use.
+   */
+  it('redacts the short ExpoPushToken[...] form, not just ExponentPushToken[...]', () => {
+    expect(redactPushTokens('"ExpoPushToken[xyz]" is not a registered push notification recipient')).toBe(
+      '"ExponentPushToken[redacted]" is not a registered push notification recipient',
+    );
+  });
+
+  it('redacts the long ExponentPushToken[...] form', () => {
+    expect(redactPushTokens('token was ExponentPushToken[abc123]')).toBe('token was ExponentPushToken[redacted]');
+  });
+
+  /**
+   * The `g` flag. A thrown error's stack can quote the token it was posting
+   * to more than once (e.g. once in the message, once in a nested cause).
+   * Without `g`, only the first occurrence would be redacted and the second
+   * would leak straight into the log.
+   */
+  it('redacts every occurrence in a string that quotes the token more than once', () => {
+    const text = 'sending to ExponentPushToken[first] failed; retry target was ExponentPushToken[first] again';
+    expect(redactPushTokens(text)).toBe('sending to ExponentPushToken[redacted] failed; retry target was ExponentPushToken[redacted] again');
+  });
+
+  it('leaves text with no token unchanged', () => {
+    expect(redactPushTokens('socket reset')).toBe('socket reset');
+  });
+});
 
 describe('PushNotifier', () => {
   let sessionManager: FakeSessionManager;
