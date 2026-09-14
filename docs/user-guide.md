@@ -208,6 +208,7 @@ Click a task card to open the detail dialog. From here you can:
 - Run shortcuts from the header bar (configurable pills that launch external tools)
 - Open the **Commands & Skills** popover to browse and run Claude Code commands (`.claude/commands/`) and skills (`.claude/skills/`) from the project directory. Search by name, navigate with arrow keys, press Enter to invoke.
 - Open the task's transcript in the read-only [conversation viewer](#the-conversation-viewer) via the **View conversation** pill (speech-bubble icon). Muted until the task has session history, live or historical.
+- See the **pull request pill** in the header once a PR is linked, carrying its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). `ready` means clicking Merge right now would succeed, which is a stronger claim than "no conflicts". The same pill appears on the task card. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which Git settings change it.
 - Access the kebab menu (three-dot icon) for additional actions:
   - **Edit** - switch to edit mode for title and description
   - **Open worktree** / **Open project folder** - open the task's directory in your file manager; the label names which one it is

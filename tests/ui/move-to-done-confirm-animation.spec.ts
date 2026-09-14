@@ -28,7 +28,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { clickPastDragSwallow, waitForViteReady } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -205,45 +205,6 @@ async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: str
   // Drop outcome (dialog appearance) is asserted by the caller.
 }
 
-/**
- * dnd-kit's AbstractPointerSensor arms a capture-phase document `click` ->
- * stopPropagation listener on drag start and removes it in detach() on a 50ms
- * timer. That timer is a browser main-thread task, so under parallel Playwright
- * workers it can land hundreds of ms late, and the first click anywhere on the
- * page after a drop then goes nowhere. The button stays enabled and
- * hit-testable throughout, so a longer timeout never helps. Only a second click
- * does.
- *
- * The re-click is bounded and returns as soon as the dialog closes, so a click
- * that lands the first time costs nothing extra. The caller still asserts the
- * dialog closed, which keeps the red-green property: an approveCompletion that
- * stopped releasing the gate leaves the dialog open through every attempt and
- * fails on that assertion.
- */
-async function clickMoveThroughDragClickSwallow(page: Page): Promise<void> {
-  const confirmButton = page.locator('button:has-text("Move")').first();
-  const dialogTitle = page.locator('text=Move to Done?');
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    if (await dialogTitle.isHidden()) {
-      return;
-    }
-    try {
-      await confirmButton.click({ timeout: 2000 });
-    } catch {
-      // The button detached because the dialog is already closing. The
-      // isHidden() check on the next iteration returns.
-      continue;
-    }
-    try {
-      await dialogTitle.waitFor({ state: 'hidden', timeout: 1500 });
-      return;
-    } catch {
-      // The click was swallowed and the dialog is still open. Click again.
-      continue;
-    }
-  }
-}
 
 test.describe('Move to Done - confirm dialog animated path', () => {
   test('clicking Move after the confirm dialog releases the gate and archives the task', async () => {
@@ -285,8 +246,13 @@ test.describe('Move to Done - confirm dialog animated path', () => {
       }, TASK_ID);
       expect(isArchivedBeforeConfirm).toBe(false);
 
-      // Click the Move/confirm button to release the gate.
-      await clickMoveThroughDragClickSwallow(page);
+      // Click the Move/confirm button to release the gate. The click comes
+      // straight off a dnd-kit drop, so it has to survive a swallowed first
+      // click; the assertion below is still what decides the test.
+      await clickPastDragSwallow(
+        page.locator('button:has-text("Move")').first(),
+        page.locator('text=Move to Done?'),
+      );
 
       // Dialog must close immediately.
       await expect(page.locator('text=Move to Done?')).toBeHidden({ timeout: 3000 });
