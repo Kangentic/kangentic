@@ -533,6 +533,46 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-011-exit-plan-mode-rejected (task #640 red witness)', () => {
+    // Real capture: `tool_start ExitPlanMode` -> `idle:permission` -> 38.9
+    // SECONDS of zero events -> `prompt`. The rejection produced no PostToolUse
+    // (the plan approval never ran) and no Stop (the turn aborted, so the model
+    // was never re-invoked) - the only thing that ever cleared the flag in the
+    // real session was the user typing something new. Sliced BEFORE that
+    // `prompt` event, this fixture is the engine-level proof that a denied
+    // permission prompt has no hook-driven or timer-driven recovery of its
+    // own: `activity-engine.test.ts`'s "no blind timeout regression" test
+    // proves this for a synthetic stream; this proves it against the real
+    // capture that motivated the fix. Previously exercised only by
+    // `plan-exit-approval-gate.test.ts` (which asserts the raw event shape,
+    // not engine state) - no activity-engine test replayed it until now.
+    const FIXTURE = 'session-011-exit-plan-mode-rejected.jsonl';
+
+    function sliceThroughDeniedIdle(events: SessionEvent[]): SessionEvent[] {
+      const deniedIdleIndex = events.findIndex(
+        (candidate) => candidate.type === EventType.Idle && candidate.detail === 'permission',
+      );
+      expect(deniedIdleIndex).toBeGreaterThan(0);
+      return events.slice(0, deniedIdleIndex + 1);
+    }
+
+    it('stays permission indefinitely with no recovery event (the bug, pinned)', () => {
+      const events = loadFixture(FIXTURE);
+      const result = replay(sliceThroughDeniedIdle(events));
+      expect(result.finalActivity).toBe('permission');
+      expect(result.finalState.permissionPending).toBe(true);
+      // No watchdog compensation fired to rescue it - permission has none.
+      expect(result.forceThinkingCompensations).toBe(0);
+      expect(result.staleThinkingCompensations).toBe(0);
+    });
+
+    it('the full capture (including the self-healing prompt) does recover, confirming the slice above is the denial itself, not a fixture defect', () => {
+      const result = replay(loadFixture(FIXTURE));
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.permissionPending).toBe(false);
+    });
+  });
+
   // ───────────────────────────────────────────────────────────────────
   // The coupled tool-blind-remap bug (foreground Agent completion was
   // mis-mapped to background_shell_end). The two input-layer bugs
@@ -1265,6 +1305,7 @@ describe('ActivityEngine replay tests', () => {
         'session-006-ask-user-question-resume.jsonl',
         'session-007-exit-plan-mode-resume.jsonl',
         'session-010-subagent-permission-resume.jsonl',
+        'session-011-exit-plan-mode-rejected.jsonl',
         'session-008-coupled-bg-shell-corrected.jsonl',
         'session-008-coupled-bg-shell-red-fix1-only.jsonl',
         'session-008-coupled-bg-shell-red-fix2-only.jsonl',

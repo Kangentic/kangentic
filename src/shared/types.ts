@@ -4227,6 +4227,34 @@ export interface AdapterRuntimeStrategy {
       shellIds: string[];
     }): string[];
   };
+
+  /**
+   * How the agent exposes a permission prompt's RESOLUTION from its durable
+   * session transcript, when the agent's hook protocol cannot report it
+   * itself. A manual DENY at Claude's TUI aborts the turn rather than
+   * ending it, so no hook fires at all - `Stop` never comes (the model is
+   * never re-invoked), `PostToolUse` fires only on success, and
+   * `PermissionDenied` exists only for auto-mode denials. Without an
+   * out-of-band signal, `permissionPending` sticks until a human types
+   * into the session again.
+   */
+  readonly permissionPrompts?: {
+    /**
+     * Report which of `toolIds` were REJECTED, per a terminal marker in
+     * the agent's durable session transcript at or after `sinceMs`. An
+     * approval is out of scope here: it already clears through the normal
+     * ToolEnd hook. Returns the matched subset. Must not throw: return
+     * [] when the transcript is missing, unreadable, or nothing terminal
+     * appeared. Omit entirely for agents whose transcript carries no such
+     * signal, or whose hook protocol already reports denials directly.
+     */
+    reportRejectedPromptTools?(options: {
+      cwd: string;
+      agentSessionId: string;
+      toolIds: string[];
+      sinceMs: number;
+    }): string[];
+  };
 }
 
 /**

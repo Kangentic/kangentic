@@ -442,6 +442,12 @@ export class SessionManager extends EventEmitter {
         return session.agentParser?.runtime?.backgroundShells
           ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds }) ?? [];
       },
+      reportRejectedPermissionTools: (sessionId, toolIds, sinceMs) => {
+        const session = this.registry.get(sessionId);
+        if (!session?.agentSessionId) return [];
+        return session.agentParser?.runtime?.permissionPrompts
+          ?.reportRejectedPromptTools?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, toolIds, sinceMs }) ?? [];
+      },
       isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
     }, {

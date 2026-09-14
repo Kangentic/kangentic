@@ -819,6 +819,60 @@ export class ActivityEngine {
   }
 
   /**
+   * Subsystem H entry point (task #640): the transcript poller
+   * (`SessionTelemetry`) reports that a permission prompt was manually
+   * REJECTED - a signal Claude's hook protocol can never deliver, since a
+   * denied tool never runs (no `PostToolUse`) and the turn ABORTS rather
+   * than ending (no `Stop`). Without this, `permissionPending` sticks until
+   * a human types into the session again.
+   *
+   * No-op unless `toolId` matches the CURRENTLY awaited tool: a stale or
+   * mismatched report (a later prompt already replaced it, or the flag
+   * already cleared through the normal approved-tool path) must never
+   * clear a live, different prompt.
+   *
+   * Deliberately does NOT touch `turnActive`. The rejected tool never ran,
+   * so its own `pendingToolStack` entry is dropped here (mirroring the
+   * "Idle clamp" in `updateCounters` - the entry is stale by definition;
+   * permission idles normally leave the stack intact so an APPROVAL can
+   * resume the same tool, but a rejection is the one path that must still
+   * clear it). `turnActive` is left exactly as the initiating
+   * `idle:permission` event already set it: false at the common top-level
+   * depth-0 case (already cleared, so the predicate lands on `idle` once
+   * `permissionPending` clears), or still true when the prompt was raised
+   * inside a LIVE subagent (`subagentDepth > 0` keeps the parent's
+   * `turnActive` set - see "Subagent depth" in docs/activity-detection.md),
+   * in which case the predicate correctly falls back to `thinking` rather
+   * than `idle`. This mirrors the approved-tool clear, which also touches
+   * neither field - a rejection and an approval leave identical downstream
+   * behavior once the flag itself is cleared.
+   */
+  markPermissionRejected(sessionId: string, toolId: string): void {
+    if (this.disposed) return;
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    if (!state.permissionPending || state.permissionAwaitedToolId !== toolId) return;
+    const before = snapshotCounters(state);
+
+    state.permissionPending = false;
+    state.permissionAwaitedToolId = null;
+
+    const pendingIndex = state.pendingToolStack.findIndex((entry) => entry.id === toolId);
+    if (pendingIndex >= 0) {
+      state.pendingToolStack.splice(pendingIndex, 1);
+      state.pendingToolCount = Math.max(0, state.pendingToolCount - 1);
+      state.currentTool = state.pendingToolStack[state.pendingToolStack.length - 1]?.name ?? null;
+      if (state.pendingToolCount === 0) {
+        state.pendingToolStack.length = 0;
+        state.currentTool = null;
+      }
+    }
+
+    const delta = formatCounterDelta(before, snapshotCounters(state));
+    this.reevaluate(sessionId, state, 'event:permission-rejected:transcript', delta);
+  }
+
+  /**
    * Subsystem G entry point: on Kangentic restart with a resumed
    * session whose Claude CLI has surviving descendant processes, adopt
    * those as anonymous bg shells. The watcher then prunes them as
