@@ -394,26 +394,13 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       const agentList = await window.electronAPI.agents.list(forceRefresh);
       set({ agentList, agentListLoaded: true });
 
-      // Seed the discovered-models cache from `capabilities.models` so every
-      // launch starts with at least the JSONL-walk result merged in. Only writes
-      // when there's actually new material - avoids a config round-trip on every
-      // detection refresh.
-      const current = get().config.discoveredModelsByAgent ?? {};
-      const updates: Record<string, string[]> = {};
-      for (const info of agentList) {
-        const fresh = info.capabilities?.models;
-        if (!fresh || fresh.length === 0) continue;
-        const existing = current[info.name] ?? [];
-        const union = new Set<string>([...existing, ...fresh]);
-        if (union.size > existing.length) {
-          updates[info.name] = Array.from(union).sort((a, b) => a.localeCompare(b));
-        }
-      }
-      if (Object.keys(updates).length > 0) {
-        get().updateConfig({
-          discoveredModelsByAgent: { ...current, ...updates },
-        });
-      }
+      // Deliberately does NOT seed `discoveredModelsByAgent` from
+      // `capabilities.models`. `useKnownModels` already unions the live
+      // capabilities at read time, so seeding added nothing but permanence:
+      // the union only ever grew, so a model an adapter stopped reporting
+      // could never leave a picker. That is how a hardcoded Cursor fallback
+      // list outlived its own deletion. The persisted cache now holds only
+      // what `rememberDiscoveredModel` learns from a model actually running.
     },
 
     rememberDiscoveredModel: (agent, model) => {

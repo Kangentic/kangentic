@@ -210,6 +210,33 @@ export class ConfigManager {
       }
     }
 
+    // One-time purge: clear `discoveredModelsByAgent`. `loadAgentList` used to seed
+    // that cache from each adapter's `capabilities.models` with a union that only
+    // ever grew, so any model an adapter ever reported became permanent - including
+    // the eight-entry hardcoded Cursor fallback list this release deletes. A seeded
+    // entry is byte-identical to a learned one, so there is nothing to filter on and
+    // the whole map goes. Genuinely learned models are re-learned the next time one
+    // runs (`rememberDiscoveredModel`, from live status telemetry); offering models
+    // the CLI no longer serves is the bug being fixed, so that trade is the point.
+    //
+    // This must run in MAIN, before the renderer's first read: the renderer's writers
+    // spread the current value (`{ ...current, [agent]: next }`), so a renderer holding
+    // a pre-purge config would write the stale map straight back. Same
+    // unreadable-file deferral as the migration above, for the same reason.
+    //
+    // The clear must stay a mutation of `this.config` followed by saving that WHOLE
+    // object. `discoveredModelsByAgent` is not in `CONFIG_DICTIONARY_PATHS`, so it gets
+    // merge semantics, and `save({ discoveredModelsByAgent: {} })` would merge an empty
+    // map into the populated one and purge nothing. It works here only because `current`
+    // and `partial` are the same already-emptied object.
+    if (!this.config.hasPurgedSeededDiscoveredModels) {
+      this.config.hasPurgedSeededDiscoveredModels = true;
+      this.config.discoveredModelsByAgent = {};
+      if (!configFileUnreadable) {
+        this.save(this.config);
+      }
+    }
+
     return this.config;
   }
 
