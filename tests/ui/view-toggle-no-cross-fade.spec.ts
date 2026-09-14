@@ -34,40 +34,49 @@ async function expectFreshNode(page: Page, testId: string): Promise<void> {
 test.describe('View toggle: no cross-fade across Board/Backlog switch', () => {
   test('actions slot: switching Board -> Backlog mounts a fresh New Task button', async () => {
     const { browser, page } = await launchPage();
-    await createProject(page, `view-toggle-actions-b2k-${Date.now()}`);
+    try {
+      await createProject(page, `view-toggle-actions-b2k-${Date.now()}`);
 
-    await stamp(page, 'add-column-button');
-    await page.locator('[data-testid="view-toggle-backlog"]').click();
-    await page.locator('[data-testid="new-backlog-task-btn"]').waitFor({ state: 'visible' });
+      await stamp(page, 'add-column-button');
+      await page.locator('[data-testid="view-toggle-backlog"]').click();
+      await page.locator('[data-testid="new-backlog-task-btn"]').waitFor({ state: 'visible' });
 
-    await expectFreshNode(page, 'new-backlog-task-btn');
-    await browser.close();
+      await expectFreshNode(page, 'new-backlog-task-btn');
+    } finally {
+      await browser.close();
+    }
   });
 
   test('actions slot: switching Backlog -> Board mounts a fresh Add column button', async () => {
     const { browser, page } = await launchPage();
-    await createProject(page, `view-toggle-actions-k2b-${Date.now()}`);
+    try {
+      await createProject(page, `view-toggle-actions-k2b-${Date.now()}`);
 
-    await page.locator('[data-testid="view-toggle-backlog"]').click();
-    await page.locator('[data-testid="new-backlog-task-btn"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="view-toggle-backlog"]').click();
+      await page.locator('[data-testid="new-backlog-task-btn"]').waitFor({ state: 'visible' });
 
-    await stamp(page, 'new-backlog-task-btn');
-    await page.locator('[data-testid="view-toggle-board"]').click();
-    await page.locator('[data-testid="add-column-button"]').waitFor({ state: 'visible' });
+      await stamp(page, 'new-backlog-task-btn');
+      await page.locator('[data-testid="view-toggle-board"]').click();
+      await page.locator('[data-testid="add-column-button"]').waitFor({ state: 'visible' });
 
-    await expectFreshNode(page, 'add-column-button');
-    await browser.close();
+      await expectFreshNode(page, 'add-column-button');
+    } finally {
+      await browser.close();
+    }
   });
 
   test('filter slot: switching Board -> Backlog mounts a fresh Filter button', async () => {
     const { browser, page } = await launchPage();
-    await createProject(page, `view-toggle-filter-b2k-${Date.now()}`);
+    try {
+      await createProject(page, `view-toggle-filter-b2k-${Date.now()}`);
 
-    await stamp(page, 'board-filter-btn');
-    await page.locator('[data-testid="view-toggle-backlog"]').click();
-    await page.locator('[data-testid="backlog-filter-btn"]').waitFor({ state: 'visible' });
+      await stamp(page, 'board-filter-btn');
+      await page.locator('[data-testid="view-toggle-backlog"]').click();
+      await page.locator('[data-testid="backlog-filter-btn"]').waitFor({ state: 'visible' });
 
-    await expectFreshNode(page, 'backlog-filter-btn');
-    await browser.close();
+      await expectFreshNode(page, 'backlog-filter-btn');
+    } finally {
+      await browser.close();
+    }
   });
 });
