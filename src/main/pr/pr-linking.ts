@@ -75,10 +75,15 @@ const pendingVerdictRepolls = new Map<string, { attempt: number; timer: NodeJS.T
  * A verdict worth holding through a transient `unknown`. `queued` / `running`
  * count: a blocking check in flight is a real answer, and its next real answer
  * is `ready` or `blocked`, not `unknown`.
+ *
+ * Written as "anything the platform actually answered" rather than as a list of
+ * the five, which is the same set today and stays right on its own: every
+ * member of `PRMergeReadiness` except `unknown` is a real answer, so a value
+ * added to the union is held by default instead of silently reading as
+ * undetermined until somebody notices the list had not grown.
  */
 function isDeterminedVerdict(value: PRMergeReadiness | null): boolean {
-  return value === 'ready' || value === 'blocked' || value === 'conflicting'
-    || value === 'queued' || value === 'running';
+  return value !== null && value !== 'unknown';
 }
 
 function schedulePendingVerdictRepoll(taskId: string, deps: PRLinkDeps): void {

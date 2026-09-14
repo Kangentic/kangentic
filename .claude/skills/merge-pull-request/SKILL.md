@@ -122,8 +122,11 @@ perfectly able to make.
    `gh pr checks <pr> --json name,state` and confirm the count of SUCCESS equals the total.
 
    `mergeStateStatus` will usually read `BLOCKED` rather than `CLEAN` here because the maintainer's
-   own PR has no approving review; that block is EXPECTED and is waived by the `--admin` merge in
-   Step 3. But if a CHECK is failing or still pending (not merely the review), stop (or wait -
+   own PR has no approving review. It reads `BEHIND` instead when another PR landed on
+   `<sourceBranch>` and step 2's rebase was skipped or did not catch it, since this repo requires
+   branches to be up to date. Both blocks are EXPECTED and both are waived by the `--admin` merge
+   in Step 3, which is why the board chip reads `ready` for either. Do not stop on them. But if a
+   CHECK is failing or still pending (not merely the review or a stale base), stop (or wait -
    step 4); never `--admin` past a red or pending check.
 4. If the rebase (step 2) re-triggered checks and they are pending, wait for them with
    `gh pr checks <pr> --watch --fail-fast --interval 30` (Bash `timeout` about `2400000` ms). If
@@ -137,9 +140,13 @@ waives the missing review:
 
 Run: `gh pr merge <pr> --admin --rebase --delete-branch`
 
-- `--admin`: waives the required approving review (the maintainer's own PR gets no second reviewer).
-  It does NOT relax the CI gate - Step 2 already verified the checks are green; this only clears the
-  review block. NEVER run it without that green-check verification (it would also bypass the checks).
+- `--admin`: waives the required approving review (the maintainer's own PR gets no second reviewer),
+  and with `--rebase` it also lands a branch that is `BEHIND`, since the rebase replays the commits
+  onto the current base tip. It does NOT relax the CI gate - Step 2 already verified the checks are
+  green; this only clears the protection blocks. NEVER run it without that green-check verification
+  (it would also bypass the checks). What the rebase does not do is re-run the checks against the
+  new base, which is what an up-to-date-branch rule exists for; Step 2's rebase is the place to
+  force that when it matters.
 - `--rebase`: lands the individual commits on the source branch (no merge commit).
 - `--delete-branch`: deletes the remote PR head branch (`<prHead>`). The local `<branch>` has a
   different name (the slug-hex), so gh's local-branch delete is a no-op and the worktree branch

@@ -304,7 +304,8 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
  * `succeeded` while branch-policy evaluation is off or unreadable). It is
  * distinct from a null column, which means never checked or no PR. The promise
  * is read for the VIEWER: with `git.prBypassCountsAsReady` on, a GitHub PR
- * whose only block is a missing review is `ready` when the viewer's bypass
+ * still waiting on a required review, which GitHub reports as `BLOCKED` or as
+ * `BEHIND` once somebody else's PR lands, is `ready` when the viewer's bypass
  * would merge it, so two people on the same repo can correctly see different
  * verdicts. The runtime list comes first so
  * `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
@@ -2713,12 +2714,13 @@ export interface AppConfig {
      */
     prEvaluateBranchPolicies: boolean;
     /**
-     * Count the viewer's own merge bypass as `ready`. On GitHub a PR whose only
-     * block is a missing required review reads `BLOCKED`, yet a viewer who can
+     * Count the viewer's own merge bypass as `ready`. On GitHub a PR still
+     * waiting on a required review reads `BLOCKED`, or `BEHIND` once somebody
+     * else's PR lands and leaves it behind the base, yet a viewer who can
      * bypass branch protection (`viewerCanMergeAsAdmin`) merges it at once, and
      * the board's Merge column does exactly that with `gh pr merge --admin`
      * once every check is green. On, the GitHub connector spends one
-     * `gh api graphql` probe per such review-blocked green PR per sweep and
+     * `gh api graphql` probe per such green PR per sweep and
      * folds the answer to `ready`. Never past a check that has not passed: the
      * bypass is a capability (it reads true on a red PR too), so the same probe
      * reads the branch's required checks and every one of them must have

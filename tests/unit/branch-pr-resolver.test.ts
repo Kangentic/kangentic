@@ -789,9 +789,11 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
    * required all report it. The rollup splits the first from the others, and a
    * check in flight wins over a required review on purpose (the chip tracks CI
    * while it runs, then flips to `blocked` when only the review remains); a
-   * failed check never yields to a running one. Every other state ignores the
-   * rollup: a CLEAN / UNSTABLE PR with checks running is `ready`, because the
-   * Merge button works and the checks in flight are therefore not required.
+   * failed check never yields to a running one. BEHIND takes the same branch,
+   * because it is the value GitHub reports INSTEAD of BLOCKED once the base
+   * moves. Every other state ignores the rollup: a CLEAN / UNSTABLE PR with
+   * checks running is `ready`, because the Merge button works and the checks in
+   * flight are therefore not required.
    */
   it.each([
     ['BLOCKED with no rollup key', 'BLOCKED', '', undefined, 'blocked'],
@@ -822,7 +824,15 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['CLEAN with a check in progress', 'CLEAN', '', [checkRun('IN_PROGRESS')], 'ready'],
     ['UNSTABLE with a queued check', 'UNSTABLE', '', [checkRun('QUEUED')], 'ready'],
     ['CLEAN with a check in progress and a required review', 'CLEAN', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'blocked'],
-    ['BEHIND with a check in progress', 'BEHIND', '', [checkRun('IN_PROGRESS')], 'blocked'],
+    // BEHIND reads the rollup exactly as BLOCKED does, and this row is why:
+    // GitHub reports BEHIND instead of BLOCKED once the base moves under an
+    // otherwise identical PR, so a rollup branch that covered one and not the
+    // other would flip the chip on a merge somebody else did. Unlike the fold
+    // below, this is not gated on `bypassCountsAsReady`.
+    ['BEHIND with a check in progress', 'BEHIND', '', [checkRun('IN_PROGRESS')], 'running'],
+    ['BEHIND with a queued check', 'BEHIND', '', [checkRun('QUEUED')], 'queued'],
+    ['BEHIND with every check green', 'BEHIND', '', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
+    ['BEHIND with a failed check beside a running one', 'BEHIND', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
     ['DRAFT with a check in progress', 'DRAFT', '', [checkRun('IN_PROGRESS')], 'blocked'],
     ['DIRTY with a check in progress', 'DIRTY', '', [checkRun('IN_PROGRESS')], 'conflicting'],
     ['UNKNOWN with a check in progress', 'UNKNOWN', '', [checkRun('IN_PROGRESS')], 'unknown'],
@@ -862,6 +872,54 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
       + '"updatedAt":"2026-09-10T22:57:32Z","url":"https://github.com/owner/repo/pull/45"}';
     const result = await gitHubPRConnector.resolveByNumber!('/repo', 45);
     expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  /**
+   * The BEHIND shape, as `gh` printed it for a PR whose base moved after its
+   * checks went green. Without a bypass answer it still reads `blocked`, so
+   * this pins the parse rather than the fold: a viewer who cannot merge as
+   * admin sees GitHub's own verdict for a stale base, unchanged.
+   */
+  it('resolveByNumber parses a literal gh BEHIND payload into blocked without a bypass', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"fix/push-notifier-stale-presence-delivery","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BEHIND","mergeable":"MERGEABLE","number":47,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-13T18:12:03Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-13T18:10:41Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-13T18:13:55Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-13T18:12:20Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-13T18:20:07Z","url":"https://github.com/owner/repo/pull/47"}';
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 47);
+    expect(result?.mergeReadiness).toBe('blocked');
+    expect(result?.state).toBe('open');
+  });
+
+  /**
+   * The same payload as above, differing only in the bypass answer: one
+   * real-shape fixture pins both outcomes of the BEHIND branch, parse and
+   * fold alike.
+   */
+  it('resolveByNumber folds the same literal gh BEHIND payload into ready under the bypass', async () => {
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.ghStdout = '{"baseRefName":"main","headRefName":"fix/push-notifier-stale-presence-delivery","isCrossRepository":false,"isDraft":false,'
+      + '"mergeStateStatus":"BEHIND","mergeable":"MERGEABLE","number":47,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN",'
+      + '"statusCheckRollup":[{"__typename":"CheckRun","completedAt":"2026-09-13T18:12:03Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/2","name":"Lint, Typecheck, Build",'
+      + '"startedAt":"2026-09-13T18:10:41Z","status":"COMPLETED","workflowName":"CI"},'
+      + '{"__typename":"CheckRun","completedAt":"2026-09-13T18:13:55Z","conclusion":"SUCCESS",'
+      + '"detailsUrl":"https://github.com/owner/repo/actions/runs/1/job/3","name":"Unit tests (Vitest)",'
+      + '"startedAt":"2026-09-13T18:12:20Z","status":"COMPLETED","workflowName":"CI"}],'
+      + '"updatedAt":"2026-09-13T18:20:07Z","url":"https://github.com/owner/repo/pull/47"}';
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+      canBypass(['Lint, Typecheck, Build', 'Unit tests (Vitest)']),
+    );
+    const result = await gitHubPRConnector.resolveByNumber!('/repo', 47, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('ready');
+    expect(bypass).toHaveBeenCalledTimes(1);
   });
 
   it('resolveByNumber parses a literal gh rollup with a check in progress into running', async () => {
@@ -941,7 +999,22 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['CLEAN with a required review and an empty rollup', 'CLEAN', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
     ['CLEAN with a required review when the viewer cannot bypass', 'CLEAN', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
     ['UNSTABLE with a required review and a failed non-required check', 'UNSTABLE', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
-    ['BEHIND with a required review and every check green (a stale base never folds)', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'blocked'],
+    // BEHIND folds exactly as BLOCKED does. It used to be excluded ("a stale
+    // base never folds"), which made a green review-required PR read `ready`
+    // until a sibling landed and `blocked` afterwards, with nothing about the
+    // PR itself changing - GitHub reports one `mergeStateStatus` for a PR that
+    // is behind AND review-blocked, and which one it names is decided by the
+    // base moving. The rows under it are the same guards the BLOCKED fold
+    // carries, so the widening stopped at these two states.
+    ['BEHIND with a required review and every check green', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
+    ['the same BEHIND PR with the option off', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), { bypassCountsAsReady: false }, 'blocked'],
+    ['the same BEHIND PR when the viewer cannot bypass', 'BEHIND', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
+    ['BEHIND with a required review and a FAILED check, bypass or not', 'BEHIND', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BEHIND with every check green and the review approved (something else blocks)', 'BEHIND', 'APPROVED', green, canBypass(), BYPASS_ON, 'blocked'],
+    ['BEHIND with a required context missing from the rollup', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(['CI', 'Lint, Typecheck, Build']), BYPASS_ON, 'blocked'],
+    // DRAFT and DIRTY are what BEHIND stopped being: a draft is the author's
+    // own switch and a conflict is real, so no permission clears either.
+    ['DRAFT with a required review and every check green', 'DRAFT', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'blocked'],
     ['DIRTY with a required review and every check green', 'DIRTY', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'conflicting'],
     // The required-context comparison. A `passing` rollup is "nothing here
     // failed", not "everything required ran": a check GitHub still EXPECTS is
@@ -1006,8 +1079,8 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
   /**
    * The probe is spent only where its answer can change the verdict: the
    * option on, an open non-draft PR, the review still required, the merge
-   * state one a review alone blocks, and every check settled green. Never one
-   * call per open PR per sweep, which is what lets the setting default on.
+   * state one the bypass clears, and every check settled green. Never one call
+   * per open PR per sweep, which is what lets the setting default on.
    */
   it.each([
     ['the option is absent', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), undefined],
@@ -1020,7 +1093,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['the review is approved and something else blocks', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', statusCheckRollup: green }), BYPASS_ON],
     ['the PR is a draft', pr({ number: 7, isDraft: true, mergeStateStatus: 'DRAFT', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
     ['the PR is merged', pr({ number: 7, state: 'MERGED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
-    ['the base is behind', pr({ number: 7, mergeStateStatus: 'BEHIND', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
+    ['the branch conflicts', pr({ number: 7, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), BYPASS_ON],
     ['the item carries no mergeability', pr({ number: 7 }), BYPASS_ON],
   ] as Array<[string, GhPrListItem, PRResolveOptions | undefined]>)(
     'resolveByNumber never spends the bypass probe when %s',
@@ -1041,6 +1114,26 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     expect(result?.mergeReadiness).toBe('ready');
     expect(bypass).toHaveBeenCalledTimes(1);
     expect(bypass).toHaveBeenCalledWith('/r', 393);
+  });
+
+  /**
+   * The BEHIND counterpart of the test above, and the one that is red with the
+   * fold reverted: before BEHIND joined `isBypassClearableMergeState` the probe
+   * gate rejected it, so this PR never spent a call and read `blocked`.
+   * Measured live on a review-required repository with strict status checks:
+   * BEHIND + MERGEABLE + REVIEW_REQUIRED, every required context green,
+   * `viewerCanMergeAsAdmin` true, with GitHub's own PR page offering "Merge
+   * without waiting for requirements to be met".
+   */
+  it('resolveByNumber spends the probe on a BEHIND PR whose base moved under it', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 405, mergeStateStatus: 'BEHIND', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }),
+    );
+    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass(['CI', 'ci/legacy']));
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 405, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('ready');
+    expect(bypass).toHaveBeenCalledTimes(1);
+    expect(bypass).toHaveBeenCalledWith('/r', 405);
   });
 
   it('resolveForBranch folds the bypass for the ONE chosen candidate', async () => {

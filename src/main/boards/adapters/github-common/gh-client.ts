@@ -69,8 +69,10 @@ export type GhStatusState = 'EXPECTED' | 'ERROR' | 'FAILURE' | 'PENDING' | 'SUCC
  * Checks API apps, with a lifecycle `status` and a `conclusion` once complete)
  * or a legacy commit status context (a single `state`). `gh` carries no
  * `isRequired` on either, so the connector cannot tell a required check from
- * an optional one and reads the rollup only when `mergeStateStatus` already
- * says the PR is BLOCKED.
+ * an optional one. It reads the rollup at the two places the answer can change
+ * the verdict: when `mergeStateStatus` says BLOCKED or BEHIND, the two states a
+ * merge bypass clears, and when a PR that would otherwise read `ready` still
+ * has a required review outstanding.
  */
 export type GhStatusCheckRollupItem =
   | { __typename: 'CheckRun'; name: string; status: GhCheckRunStatus; conclusion: GhCheckRunConclusion | null }
