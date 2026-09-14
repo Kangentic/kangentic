@@ -111,6 +111,15 @@ function selectFile(page: Page, namePattern: RegExp) {
 
 test.describe('Changes panel: collapse unchanged regions', () => {
   test('toggling collapse folds the large unchanged region of an open diff', async () => {
+    // Four Monaco diff loads (initial mount, the scope switch, other.ts, back to
+    // big.ts) plus a menu toggle and two next-change jumps. The per-step polls
+    // below declare roughly 55s of patience, which the ui project's 15s test
+    // budget makes unreachable - the test timeout always fires first, so those
+    // timeouts are not the real gate. On a loaded runner the whole test lands
+    // right at the budget and the last poll gets cut off (observed on CI:
+    // failed at 14.9s reading a stale lineChangeCount, passed on retry at
+    // 14.8s). Opt into the 3x budget so the per-step timeouts decide.
+    test.slow();
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Collapse Task').first();
     await card.click();
 
