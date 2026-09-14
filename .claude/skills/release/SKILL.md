@@ -154,8 +154,8 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    `bash-single-command.md` forbids both, the guard hook denies the pipe outright, and an agent
    that hits that wall mid-release may skip the check instead of working around it. If the
    combined log comes back truncated, re-run it one job at a time with
-   `gh run view --job <jobId> --repo Kangentic/kangentic --log`; `gh run view <runId>
-   --repo Kangentic/kangentic` lists the job ids. A hit is a flake, and the project's standing
+   `gh run view --job <jobId> --repo Kangentic/kangentic --log`, taking the job ids from the
+   plain `gh run view <runId>`. A hit is a flake, and the project's standing
    never-leave-a-flake rule makes an unresolved one a blocker: fix it, rewrite it
    deterministically, or remove it with a justification before releasing. Do not ask whether to
    release around it.
