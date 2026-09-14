@@ -11,6 +11,7 @@ import {
 } from './transcript-parser';
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
+import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { ensureDiffPanelClosed } from './diff-panel';
 import { migrateClaudeProjectData } from './project-relocation';
@@ -174,6 +175,12 @@ export class ClaudeAdapter implements AgentAdapter {
       // turn, but IS appended to the native transcript. See
       // background-shell-transcript.ts for the full rationale.
       reportTerminatedShells: (options) => reportTerminatedBackgroundShells(options),
+    },
+    // A manual TUI deny aborts the turn with no hook of any kind - see
+    // permission-rejection-transcript.ts for the full rationale. This is
+    // the only signal that can clear a denied `permissionPending`.
+    permissionPrompts: {
+      reportRejectedPromptTools: (options) => reportRejectedPromptTools(options),
     },
   };
 

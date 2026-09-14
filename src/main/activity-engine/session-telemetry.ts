@@ -17,6 +17,12 @@ import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 const MAX_EVENTS_PER_SESSION = 500;
 
 /**
+ * Poll cadence for the manually-rejected-permission-prompt check (task
+ * #640), matching the bg-shell watcher's 2s cycle.
+ */
+const PERMISSION_REJECTION_POLL_MS = 2_000;
+
+/**
  * Safely extract the `hookContext` string from a raw JSONL line written
  * by event-bridge.js. Returns null for any parse failure or unexpected
  * shape.
@@ -73,6 +79,17 @@ interface SessionTelemetryCallbacks {
    * transcript knowledge stays behind this generic callback.
    */
   reportTerminatedBackgroundShells?(sessionId: string, shellIds: string[]): string[];
+  /**
+   * Report which of `toolIds` were manually REJECTED, per a terminal
+   * marker in the agent's durable session transcript at or after
+   * `sinceMs`. An approval is out of scope here: it already clears
+   * through the normal ToolEnd hook. Called every poll tick for each
+   * session awaiting a permission decision (task #640) - a denial fires
+   * no hook of any kind, so this transcript check is the only way the
+   * flag ever clears without a human typing into the session.
+   * Agent-specific transcript knowledge stays behind this generic callback.
+   */
+  reportRejectedPermissionTools?(sessionId: string, toolIds: string[], sinceMs: number): string[];
   /**
    * May the bg-shell watcher's agent-absence sweep judge this session? See
    * `SessionManager.isAgentAbsenceCandidate` for the arms. Optional, and it
@@ -166,6 +183,21 @@ export class SessionTelemetry {
   private readonly eventCache = new Map<string, SessionEvent[]>();
   private _idleTimeoutMinutes = 0;
   private idleTimeoutInterval: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Sessions currently `permissionPending`, tracked via the engine's own
+   * `onActivityChange` transitions (task #640). Drives the lazy start/stop of
+   * `permissionRejectionPollInterval`, mirroring the bg-shell watcher's own
+   * lazy-polling precedent: idle Kangentic (no session awaiting a decision)
+   * costs zero timers. A flat always-running interval costs zero
+   * filesystem calls but still one timer, and was tried first and
+   * rejected: it broke the existing "watcher polling stops entirely when
+   * the last session is cleared" `vi.getTimerCount()` invariant
+   * (session-telemetry-wiring.test.ts).
+   */
+  private readonly permissionPendingSessions = new Set<string>();
+  /** Poll for a manually-rejected permission prompt - see
+   *  `pollRejectedPermissionPrompts`. Null while no session is pending. */
+  private permissionRejectionPollInterval: ReturnType<typeof setInterval> | null = null;
 
   private readonly callbacks: SessionTelemetryCallbacks;
 
@@ -202,6 +234,15 @@ export class SessionTelemetry {
         // by the next state change; this is a deliberate trade-off
         // to avoid writing on every counter increment.
         this.writeDebugSnapshot(sessionId);
+        // Task #640: track entry/exit of the 'permission' state so the
+        // rejection-poll interval can start/stop lazily (see
+        // permissionPendingSessions' doc comment).
+        if (activity === 'permission') {
+          this.permissionPendingSessions.add(sessionId);
+          this.ensurePermissionRejectionPollRunning();
+        } else if (this.permissionPendingSessions.delete(sessionId)) {
+          this.stopPermissionRejectionPollIfIdle();
+        }
       },
       onSyntheticEvent: (sessionId, event) => {
         // Push the engine-originated synthetic event (e.g. watchdog-driven
@@ -388,6 +429,65 @@ export class SessionTelemetry {
         this.callbacks.onIdleTimeout(sessionId);
       }
     });
+  }
+
+  // ==== Permission-rejection poll (task #640) ====
+
+  /** Start the poll interval if it isn't already running. Called whenever a
+   *  session enters `permission` - the interval must be armed before the
+   *  FIRST tick can observe it, not just while one is already pending. */
+  private ensurePermissionRejectionPollRunning(): void {
+    if (this.permissionRejectionPollInterval) return;
+    this.permissionRejectionPollInterval = setInterval(
+      () => this.pollRejectedPermissionPrompts(),
+      PERMISSION_REJECTION_POLL_MS,
+    );
+    this.permissionRejectionPollInterval.unref();
+  }
+
+  /** Stop the poll interval once no session is awaiting a decision - mirrors
+   *  the bg-shell watcher's own "stop polling when the last session clears"
+   *  behavior (see `permissionPendingSessions`' doc comment). */
+  private stopPermissionRejectionPollIfIdle(): void {
+    if (this.permissionPendingSessions.size > 0) return;
+    if (!this.permissionRejectionPollInterval) return;
+    clearInterval(this.permissionRejectionPollInterval);
+    this.permissionRejectionPollInterval = null;
+  }
+
+  /**
+   * Check every session currently `permissionPending` for a manual denial
+   * recorded in its durable transcript, and clear the flag on a match.
+   *
+   * A denial fires NO hook event of any kind (see
+   * `permission-rejection-transcript.ts` and
+   * `ActivityEngine.markPermissionRejected` for the full rationale), so
+   * without this poll the flag sticks forever once nobody types into the
+   * session again - the mobile-answer-then-put-the-phone-down case that
+   * surfaced task #640. A null `permissionAwaitedToolId` (the pending stack
+   * was empty at prompt time - no correlation id to check) is left exactly
+   * as it behaves today rather than guessing from a looser match, which
+   * parallel-subagent tool churn could trip (the same reason
+   * `updatePermissionFlag`'s awaited-tool clear requires an exact id).
+   */
+  private pollRejectedPermissionPrompts(): void {
+    if (!this.callbacks.reportRejectedPermissionTools) return;
+    // Snapshot first: markPermissionRejected below can synchronously mutate
+    // permissionPendingSessions (via the onActivityChange it triggers), and
+    // iterating a Set while deleting from it mid-iteration is exactly the
+    // kind of thing not worth relying on here.
+    for (const sessionId of Array.from(this.permissionPendingSessions)) {
+      const state = this.activityEngine.getState(sessionId);
+      if (!state?.permissionPending) continue;
+      const toolId = state.permissionAwaitedToolId;
+      if (toolId === null) continue;
+      if (!this.callbacks.isSessionRunning(sessionId)) continue;
+      const sinceMs = state.needsUserSince ?? 0;
+      const rejectedIds = this.callbacks.reportRejectedPermissionTools?.(sessionId, [toolId], sinceMs) ?? [];
+      if (rejectedIds.includes(toolId)) {
+        this.activityEngine.markPermissionRejected(sessionId, toolId);
+      }
+    }
   }
 
   // ==== Status-update ingest (Claude statusline) ====
@@ -653,6 +753,12 @@ export class SessionTelemetry {
     this.activityEngine.deleteSession(sessionId);
     this.ptyTracker.clearSession(sessionId);
     this.notifySessionEnded(sessionId);
+    // deleteSession removes engine state directly - it never commits a
+    // transition, so onActivityChange never fires to clear this session out
+    // of permissionPendingSessions on its own (task #640).
+    if (this.permissionPendingSessions.delete(sessionId)) {
+      this.stopPermissionRejectionPollIfIdle();
+    }
   }
 
   /** Delete all state for a session (full removal). */
@@ -667,6 +773,10 @@ export class SessionTelemetry {
     this.prCommandDetector.removeSession(sessionId);
     this.pushCommandDetector.removeSession(sessionId);
     this.notifySessionEnded(sessionId);
+    // Same reasoning as clearSessionTracking above.
+    if (this.permissionPendingSessions.delete(sessionId)) {
+      this.stopPermissionRejectionPollIfIdle();
+    }
     // Note: we deliberately do NOT remove the debug-dump file here.
     // Surviving past session-end is the whole point - so a developer
     // can read "what was the engine doing right before the session
@@ -678,6 +788,10 @@ export class SessionTelemetry {
     if (this.idleTimeoutInterval) {
       clearInterval(this.idleTimeoutInterval);
       this.idleTimeoutInterval = null;
+    }
+    if (this.permissionRejectionPollInterval) {
+      clearInterval(this.permissionRejectionPollInterval);
+      this.permissionRejectionPollInterval = null;
     }
     this.userInterrupts.dispose();
     this.ptyTracker.dispose();
