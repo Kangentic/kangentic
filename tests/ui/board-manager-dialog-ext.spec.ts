@@ -17,7 +17,7 @@
  *    same string as its title (was the static "Delete column").
  */
 import { test, expect } from '@playwright/test';
-import { launchPage, waitForBoard, createProject } from './helpers';
+import { launchPage, waitForBoard, createProject, clickPastDragSwallow } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -755,7 +755,13 @@ test.describe('BoardManagerDialog extended', () => {
 
     // Save persists the new order (risk-7 preservation across the save flow's
     // own store churn is covered deterministically by reconcileLaneOrder units).
-    await dialog.locator('[data-testid="board-manager-save"]').click();
+    // This click comes straight off the rail drop, so it has to survive a
+    // swallowed first click; the waitFor below is still what decides the test.
+    await clickPastDragSwallow(
+      dialog.locator('[data-testid="board-manager-save"]'),
+      dialog,
+      'detached',
+    );
     await dialog.waitFor({ state: 'detached', timeout: 3000 });
 
     const persisted = await page.evaluate(async () =>

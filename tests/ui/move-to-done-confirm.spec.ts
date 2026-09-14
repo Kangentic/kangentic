@@ -11,7 +11,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { clickPastDragSwallow, waitForViteReady } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -260,7 +260,10 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
       await dragTaskToColumn(page, 'Ready To Ship', 'Done');
       await expect(page.locator('text=Move to Done?')).toBeVisible({ timeout: 3000 });
 
-      await page.locator('button:has-text("Cancel")').click();
+      await clickPastDragSwallow(
+        page.locator('button:has-text("Cancel")'),
+        page.locator('text=Move to Done?'),
+      );
 
       await expect(page.locator('text=Move to Done?')).toBeHidden({ timeout: 3000 });
 

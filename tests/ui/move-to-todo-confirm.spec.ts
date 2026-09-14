@@ -9,7 +9,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { clickPastDragSwallow, waitForViteReady } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -225,7 +225,10 @@ test.describe('Move to To Do - Pending Changes Confirmation', () => {
       await expect(page.locator('text=Reset task?')).toBeVisible({ timeout: 3000 });
 
       // Click "Keep Working" to cancel
-      await page.locator('button:has-text("Keep Working")').click();
+      await clickPastDragSwallow(
+        page.locator('button:has-text("Keep Working")'),
+        page.locator('text=Reset task?'),
+      );
 
       // Dialog should close
       await expect(page.locator('text=Reset task?')).toBeHidden({ timeout: 3000 });
@@ -252,7 +255,10 @@ test.describe('Move to To Do - Pending Changes Confirmation', () => {
       await expect(page.locator('text=Reset task?')).toBeVisible({ timeout: 3000 });
 
       // Click "Reset" to confirm
-      await page.locator('button:has-text("Reset")').click();
+      await clickPastDragSwallow(
+        page.locator('button:has-text("Reset")'),
+        page.locator('text=Reset task?'),
+      );
 
       // Dialog should close
       await expect(page.locator('text=Reset task?')).toBeHidden({ timeout: 3000 });

@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -83,6 +83,59 @@ export async function pressResizeHandle(
     await page.mouse.up();
   }
   throw new Error(`${selector} did not enter its drag after ${PRESS_ATTEMPTS} presses`);
+}
+
+/**
+ * Click a control right after a dnd-kit drop, retrying past a swallowed click.
+ *
+ * `@dnd-kit/core`'s `AbstractPointerSensor` arms a document-level, capture-phase
+ * `click` -> `stopPropagation` listener on drag start and removes it in
+ * `detach()` with `setTimeout(this.documentListeners.removeAll, 50)`. That timer
+ * is a browser main-thread task, so under parallel workers it lands late and the
+ * first click ANYWHERE on the page after a drop goes nowhere.
+ *
+ * The symptom is maximally misleading. The button is enabled, `pointer-events`
+ * is `auto`, `elementFromPoint` returns the button itself, and there is no
+ * toast, console error, or React error. It stays that way for as long as you
+ * wait, so raising a timeout cannot help: the listener is removed on a timer the
+ * test cannot observe or wait for. Only a second click does.
+ *
+ * `settles` is the caller's proof the click took effect, usually the dialog
+ * going `hidden` or `detached`. The helper returns on the first settle, so a
+ * click that lands the first time costs nothing beyond the wait the caller
+ * needed anyway. It deliberately does NOT throw when the attempts run out: the
+ * caller keeps its own assertion, so a genuinely broken handler still fails the
+ * spec on that assertion instead of being retried into a false pass.
+ *
+ * Verified in `node_modules/@dnd-kit/core/dist/core.cjs.development.js`
+ * (`handleStart` adds the listener, `detach` removes it on the 50 ms timer).
+ */
+export async function clickPastDragSwallow(
+  target: Locator,
+  settles: Locator,
+  state: 'hidden' | 'detached' | 'visible' | 'attached' = 'hidden',
+  options: { attempts?: number; settleTimeoutMs?: number } = {},
+): Promise<void> {
+  const attempts = options.attempts ?? 4;
+  const settleTimeoutMs = options.settleTimeoutMs ?? 1500;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const isLastAttempt = attempt === attempts - 1;
+    try {
+      await target.click({ timeout: 2000 });
+    } catch (error) {
+      // Usually the control is already gone, meaning an earlier click did take
+      // effect and the surface is tearing down, so fall through to the settle
+      // wait. But this also catches a strict-mode violation, a selector that
+      // never resolves, and a click an overlay is blocking, which are all test
+      // bugs. Let the last attempt's error escape so it names itself here
+      // instead of resurfacing as the caller's settle assertion seconds later.
+      if (isLastAttempt) throw error;
+    }
+    const settled = await settles.waitFor({ state, timeout: settleTimeoutMs })
+      .then(() => true)
+      .catch(() => false);
+    if (settled) return;
+  }
 }
 
 /**
