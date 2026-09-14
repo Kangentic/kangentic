@@ -24,6 +24,7 @@ import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
+import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
@@ -688,6 +689,7 @@ export function App() {
     // with session-lifecycle or notification concerns and remain here.
 
     const tasks = window.electronAPI?.tasks;
+    const automations = window.electronAPI?.automations;
 
     // Spawn progress (worktree creation, branch checkout phases)
     if (tasks?.onSpawnProgress) {
@@ -771,6 +773,72 @@ export function App() {
       }));
     }
 
+
+    // An automation did not do what the board says it does. Main pushes only
+    // failures, and rations them to one per automation per minute (see
+    // automation-run-outcome.ts), so anything arriving here is worth a toast.
+    // Current project only: the message names a column and a task the user
+    // cannot see from another project.
+    if (automations?.onRunFailed) {
+      cleanups.push(automations.onRunFailed((failure) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (failure.projectId && failure.projectId !== activeProjectId) return;
+
+        // The automation AND the column, because neither alone locates it:
+        // two columns can hold rows with the same name.
+        const detail = failure.detail ? ` ${failure.detail}` : '';
+        useToastStore.getState().addToast({
+          message: `${describeAutomationFailure(failure)}.${detail}`,
+          variant: 'warning',
+          duration: 12000,
+          // Re-runs against the task's CURRENT state, which the label says,
+          // because the task may have moved twice since the failure. An
+          // interrupted run is offered the same action: it is the one status
+          // where the work definitely did not finish.
+          action: {
+            label: 'Run again',
+            onClick: () => {
+              void useBoardStore.getState()
+                .runAutomationAgain(failure.automationId, failure.taskId)
+                .then((result) => {
+                  useToastStore.getState().addToast({
+                    message: result.ok
+                      ? `Ran "${result.automationName}" again against the task's current state. ${result.detail ?? result.status}`
+                      : result.error,
+                    variant: result.ok && result.status === 'succeeded' ? 'success' : 'warning',
+                    duration: 8000,
+                  });
+                })
+                .catch((error: unknown) => {
+                  useToastStore.getState().addToast({
+                    message: error instanceof Error ? error.message : 'The automation could not be run again.',
+                    variant: 'error',
+                    duration: 8000,
+                  });
+                });
+            },
+          },
+        });
+      }));
+    }
+
+    // Runs a quit left mid-flight, swept on project open. One notice for the
+    // whole sweep, never one per row: the shutdown path is synchronous by rule,
+    // so this is expected after any quit during a move and a per-row storm
+    // would make it noise.
+    if (automations?.onRunsInterrupted) {
+      cleanups.push(automations.onRunsInterrupted((summary) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (summary.projectId && summary.projectId !== activeProjectId) return;
+        useToastStore.getState().addToast({
+          message: summary.count === 1
+            ? '1 automation was still running when Kangentic last closed. It did not finish.'
+            : `${summary.count} automations were still running when Kangentic last closed. They did not finish.`,
+          variant: 'info',
+          duration: 10000,
+        });
+      }));
+    }
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
       cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {
@@ -897,6 +965,8 @@ if (import.meta.hot) {
     useConfigStore.getState().detectGit();
     useBoardStore.getState().loadBoard();
     useBoardStore.getState().loadBoardProfiles();
+    useBoardStore.getState().loadAutomations();
+    useBoardStore.getState().loadAutomationRuns();
     useBacklogStore.getState().loadBacklog();
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();

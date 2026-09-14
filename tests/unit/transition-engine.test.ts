@@ -292,7 +292,6 @@ function makeEngine(options: {
   const sessionManager = options.sessionManager ?? makeSessionManager();
   const sessionRepo = options.sessionRepo ?? makeSessionRepo();
   const action = options.action ?? makeAction();
-  const actionRepo = makeActionRepo(action);
   const taskRepo = makeTaskRepo();
   const attachmentRepo = makeAttachmentRepo();
 
@@ -300,6 +299,7 @@ function makeEngine(options: {
     permissionMode: 'default',
     projectPath: options.projectPath ?? '/some/project',
     projectId: 'proj-1',
+    projectName: 'Mock project',
     gitConfig: {
       worktreesEnabled: false,
       defaultBaseBranch: 'main',
@@ -321,14 +321,34 @@ function makeEngine(options: {
   const engine = new TransitionEngine(
     sessionManager as unknown as EngineArgs[0],
     terminalSubmit as unknown as EngineArgs[1],
-    actionRepo as unknown as EngineArgs[2],
-    taskRepo as unknown as EngineArgs[3],
-    getConfig as unknown as EngineArgs[4],
-    sessionRepo as unknown as EngineArgs[5],
-    attachmentRepo as unknown as EngineArgs[6],
+    taskRepo as unknown as EngineArgs[2],
+    getConfig as unknown as EngineArgs[3],
+    sessionRepo as unknown as EngineArgs[4],
+    attachmentRepo as unknown as EngineArgs[5],
   );
 
-  return { engine, sessionManager, sessionRepo, taskRepo, actionRepo, terminalSubmit };
+  /**
+   * Drive the spawn the way the legacy `spawn_agent` automation does.
+   *
+   * These tests exercise `executeSpawnAgent`, which used to be reachable only
+   * through a transitions lookup. That lookup is gone (automations belong to a
+   * column now), so they call the chokepoint the legacy adapter calls instead.
+   * The behavior under test is unchanged; only the way in is.
+   */
+  const runSpawn = (
+    task: unknown,
+    permissionOverride?: Parameters<typeof engine.runLegacySpawnAgent>[2],
+    signal?: AbortSignal,
+    agentOverride?: string,
+  ): Promise<void> => engine.runLegacySpawnAgent(
+    JSON.parse(action.config_json) as Parameters<typeof engine.runLegacySpawnAgent>[0],
+    task as Parameters<typeof engine.runLegacySpawnAgent>[1],
+    permissionOverride,
+    signal,
+    agentOverride,
+  );
+
+  return { engine, runSpawn, sessionManager, sessionRepo, taskRepo, terminalSubmit };
 }
 
 // ---------------------------------------------------------------------------
@@ -354,8 +374,8 @@ describe('TransitionEngine - raw/sanitized description split', () => {
       return `claude ${options.prompt ?? ''}`;
     });
 
-    const { engine } = makeEngine({});
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    const { runSpawn } = makeEngine({});
+    await runSpawn(task);
 
     expect(capturedPrompt).toBeDefined();
     // The raw newlines must survive into the XML envelope
@@ -386,8 +406,8 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     const sessionManager = makeSessionManager();
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionManager, sessionRepo, action: legacyAction });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo, action: legacyAction });
+    await runSpawn(task);
 
     expect(capturedPrompt).toBeDefined();
     // The sanitized var should not contain raw newlines
@@ -457,8 +477,8 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     const task = makeTask({ description: rawDescription });
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task);
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const inserted = sessionRepo.insert.mock.calls[0][0] as { prompt?: string };
@@ -475,8 +495,8 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     const task = makeTask();
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task);
 
     // The session must have been inserted first, then the applied settings written.
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
@@ -508,13 +528,8 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
     const task = makeTask({ permission_mode: 'plan' });
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(
-      task as Parameters<typeof engine.executeTransition>[0],
-      'todo',
-      'doing',
-      'acceptEdits', // permissionOverride from the destination swimlane
-    );
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task, 'acceptEdits');
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
@@ -528,13 +543,8 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
     const task = makeTask({ permission_mode: 'auto' });
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(
-      task as Parameters<typeof engine.executeTransition>[0],
-      'todo',
-      'doing',
-      'plan', // permissionOverride from the destination swimlane
-    );
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task, 'plan');
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
@@ -545,13 +555,8 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
     const task = makeTask({ permission_mode: null });
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(
-      task as Parameters<typeof engine.executeTransition>[0],
-      'todo',
-      'doing',
-      'acceptEdits',
-    );
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task, 'acceptEdits');
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
@@ -564,136 +569,12 @@ describe('TransitionEngine - permission_mode resolution precedence', () => {
     const task = makeTask({ permission_mode: 'auto' });
     const sessionRepo = makeSessionRepo();
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(
-      task as Parameters<typeof engine.executeTransition>[0],
-      'todo',
-      'doing',
-      null,
-    );
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task, null);
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
     expect(inserted.permission_mode).toBe('auto');
-  });
-});
-
-describe('TransitionEngine - create_worktree action threads signal + progress', () => {
-  type EnsureWorktreeOptions = { signal?: AbortSignal; onProgress?: (phase: string) => void };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    worktreeManagerMock.ensureWorktree.mockResolvedValue({
-      worktreePath: '/some/project/.kangentic/worktrees/460',
-      branchName: 'kangentic/fix-login-flow',
-      worktreeFolder: '460',
-      // Deliberately NOT the project default: the base a worktree is actually
-      // cut from is the whole reason this value is recorded, and a fixture that
-      // used the default could not tell the two apart.
-      baseBranch: 'develop',
-    });
-  });
-
-  it('forwards the abort signal and onProgress callback into ensureWorktree', async () => {
-    const task = makeTask({ worktree_path: null });
-    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
-    const { engine, taskRepo } = makeEngine({ action });
-
-    const controller = new AbortController();
-    const onProgress = vi.fn();
-
-    await engine.executeTransition(
-      task as Parameters<typeof engine.executeTransition>[0],
-      'todo',
-      'doing',
-      undefined,
-      undefined,
-      controller.signal,
-      undefined,
-      undefined,
-      onProgress,
-    );
-
-    expect(worktreeManagerMock.ensureWorktree).toHaveBeenCalledTimes(1);
-    const [, , options] = worktreeManagerMock.ensureWorktree.mock.calls[0] as [unknown, unknown, EnsureWorktreeOptions];
-    expect(options.signal).toBe(controller.signal);
-    expect(options.onProgress).toBe(onProgress);
-
-    // Success path persists path, branch, the write-once folder name, and the
-    // base the worktree was actually cut from, together in one transaction.
-    expect(taskRepo.recordWorktree).toHaveBeenCalledWith(
-      task.id,
-      '/some/project/.kangentic/worktrees/460',
-      'kangentic/fix-login-flow',
-      '460',
-      'develop',
-    );
-
-    // And the IN-MEMORY task is refreshed from the row, not just the DB.
-    // executeTransition passes this same object to every later action, so a
-    // `create_worktree` followed by `spawn_agent` would otherwise compute its
-    // cwd from a null worktree_path and run the agent in the main checkout.
-    expect(task.worktree_path).toBe('/some/project/.kangentic/worktrees/460');
-    expect(task.worktree_folder).toBe('460');
-  });
-
-  it('passes undefined signal/progress when the caller supplies none', async () => {
-    const task = makeTask({ worktree_path: null });
-    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
-    const { engine } = makeEngine({ action });
-
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    expect(worktreeManagerMock.ensureWorktree).toHaveBeenCalledTimes(1);
-    const [, , options] = worktreeManagerMock.ensureWorktree.mock.calls[0] as [unknown, unknown, EnsureWorktreeOptions];
-    expect(options.signal).toBeUndefined();
-    expect(options.onProgress).toBeUndefined();
-  });
-
-  // The three tests below are this action's own skip-handling: an inline
-  // twin of recordWorktreeSkip (task-git.ts), which already has dedicated
-  // coverage in task-git-remote-worktree-skip.test.ts. Reverting only this
-  // branch (transition-engine.ts's `if ('skipped' in result)`) back to
-  // unconditionally persisting `result.reason` (including the literal
-  // 'reused') or dropping the `!==` guard would leave the twin file green.
-  it('persists a genuine skip reason and mirrors it onto the in-memory task', async () => {
-    worktreeManagerMock.ensureWorktree.mockResolvedValueOnce({ skipped: true, reason: 'not-a-repo' });
-    const task = makeTask({ worktree_path: null, worktree_skip_reason: null });
-    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
-    const { engine, taskRepo } = makeEngine({ action });
-
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    expect(taskRepo.recordWorktree).not.toHaveBeenCalled();
-    expect(taskRepo.setWorktreeSkipReason).toHaveBeenCalledWith(task.id, 'not-a-repo');
-    expect(task.worktree_skip_reason).toBe('not-a-repo');
-  });
-
-  it('clears the skip reason to null on a "reused" result, never persisting the literal "reused"', async () => {
-    worktreeManagerMock.ensureWorktree.mockResolvedValueOnce({ skipped: true, reason: 'reused' });
-    const task = makeTask({
-      worktree_path: '/some/project/.kangentic/worktrees/460',
-      worktree_skip_reason: 'not-a-repo',
-    });
-    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
-    const { engine, taskRepo } = makeEngine({ action });
-
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    expect(taskRepo.recordWorktree).not.toHaveBeenCalled();
-    expect(taskRepo.setWorktreeSkipReason).toHaveBeenCalledWith(task.id, null);
-    expect(task.worktree_skip_reason).toBeNull();
-  });
-
-  it('does not rewrite a skip reason the task already carries', async () => {
-    worktreeManagerMock.ensureWorktree.mockResolvedValueOnce({ skipped: true, reason: 'not-a-repo' });
-    const task = makeTask({ worktree_path: null, worktree_skip_reason: 'not-a-repo' });
-    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
-    const { engine, taskRepo } = makeEngine({ action });
-
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    expect(taskRepo.setWorktreeSkipReason).not.toHaveBeenCalled();
   });
 });
 
@@ -725,12 +606,8 @@ describe('TransitionEngine - migrateResumeCwdIfRenamed wiring', () => {
     //   const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
     const task = makeTask({ worktree_path: '/new/worktree/path' });
 
-    const { engine } = makeEngine({ sessionRepo });
-    await engine.executeTransition(
-      task as Parameters<typeof engine.executeTransition>[0],
-      'todo',
-      'doing',
-    );
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(task);
 
     // The migration must be called exactly once, threaded with:
     //   oldCwd = intent.resumeFromCwd = match.cwd  (the session's original worktree cwd)
@@ -842,9 +719,9 @@ describe('TransitionEngine - resume-time agent-session-id reconcile wiring (exec
     const worktreeDir = path.join(projectPath, 'a-different-worktree');
     const task = makeTask({ worktree_path: worktreeDir });
     const sessionManager = makeSessionManager();
-    const { engine } = makeEngine({ sessionManager, sessionRepo, projectPath });
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo, projectPath });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     // Red: deleting the `await reconcileResumeAgentSessionId({...})` call in
     // executeSpawnAgent (falling back to `intent.agentSessionId` directly)
@@ -908,9 +785,9 @@ describe('TransitionEngine - resume-time agent-session-id reconcile wiring (exec
     });
 
     const task = makeTask({ worktree_path: null });
-    const { engine } = makeEngine({ sessionRepo, projectPath });
+    const { runSpawn } = makeEngine({ sessionRepo, projectPath });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(capturedSessionId).toBe(STORED_ID);
     expect(sessionRepo.updateAgentSessionId).not.toHaveBeenCalled();
@@ -944,7 +821,7 @@ describe('TransitionEngine - remote execution wiring (executeSpawnAgent chokepoi
 
     const task = makeTask();
     const sessionManager = makeSessionManager();
-    const { engine } = makeEngine({
+    const { runSpawn } = makeEngine({
       sessionManager,
       executionServers: {
         claude: { url: 'http://10.0.0.9:5100', auth: { kind: 'none' } },
@@ -954,7 +831,7 @@ describe('TransitionEngine - remote execution wiring (executeSpawnAgent chokepoi
       },
     });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(sessionManager.spawnedSessions).toHaveLength(1);
     const command = sessionManager.spawnedSessions[0].command;
@@ -979,9 +856,9 @@ describe('TransitionEngine - remote execution wiring (executeSpawnAgent chokepoi
 
     const task = makeTask();
     // executionServers/execution both default to {} (local execution).
-    const { engine } = makeEngine({});
+    const { runSpawn } = makeEngine({});
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(capturedExecutionTarget).toBeUndefined();
   });
@@ -1031,14 +908,14 @@ describe('TransitionEngine - launch-option wiring (executeSpawnAgent chokepoint)
 
     const task = makeTask();
     const sessionManager = makeSessionManager();
-    const { engine } = makeEngine({
+    const { runSpawn } = makeEngine({
       sessionManager,
       launchOptions: {
         claude: { disableApps: true },
       },
     });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(sessionManager.spawnedSessions).toHaveLength(1);
     const command = sessionManager.spawnedSessions[0].command;
@@ -1061,159 +938,16 @@ describe('TransitionEngine - launch-option wiring (executeSpawnAgent chokepoint)
     });
 
     const task = makeTask();
-    const { engine } = makeEngine({
+    const { runSpawn } = makeEngine({
       launchOptions: {
         claude: { disableApps: true },
       },
     });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(capturedLaunchOptions).toBeUndefined();
   });
-});
-
-describe('TransitionEngine - executeAction builds ONE shared templateVars for every action type', () => {
-  // Coverage hole: executeAction resolves templateVars = resolveTaskTemplateVars(...) once and
-  // feeds spawn_agent, send_command, run_script, AND webhook from that single object (see
-  // .claude/rules/task-template-vars-parity.md, rule #7: "only the interpolation MECHANICS are
-  // scoped, not the resolved VALUES"). Every existing test above only drives spawn_agent, so a
-  // regression on the OTHER three consumers (e.g. reverting {{baseBranch}} back to the old
-  // `task.base_branch || ''` behavior) fails nothing. This pins send_command specifically:
-  // task.base_branch is null, so {{baseBranch}} must resolve to the effective project default
-  // ('main', from getConfig().gitConfig.defaultBaseBranch) rather than an empty string.
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    // run_script/webhook tests below stub the global fetch; unstub
-    // unconditionally so a stub never leaks into an unrelated test file run
-    // in the same worker.
-    vi.unstubAllGlobals();
-  });
-
-  it('send_command: a null task.base_branch interpolates {{baseBranch}} to the effective project default, not empty', async () => {
-    const task = makeTask({ base_branch: null, session_id: 'sess-abc12345' });
-    const action = makeAction({
-      type: 'send_command',
-      config_json: JSON.stringify({ command: '/review {{baseBranch}}' }),
-    });
-    // submitKeystrokes must return a real Promise: executeSendCommand chains
-    // `.catch(...)` onto its return value, which throws synchronously against
-    // the file's default no-op `vi.fn()` stub (returns undefined).
-    const terminalSubmit = { submitKeystrokes: vi.fn(async () => {}) };
-
-    const { engine } = makeEngine({ action, terminalSubmit });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    // Red: reverting executeAction's templateVars to `{ baseBranch: task.base_branch || '' }`
-    // (the pre-refactor shape) makes this '/review' (empty, collapsed by sanitizeForPty),
-    // never '/review main'.
-    expect(terminalSubmit.submitKeystrokes).toHaveBeenCalledTimes(1);
-    expect(terminalSubmit.submitKeystrokes).toHaveBeenCalledWith(
-      'sess-abc12345',
-      ['/review main'],
-      { sendCtrlC: true, source: `send_command:${task.id.slice(0, 8)}` },
-    );
-  });
-
-  it('run_script: a null task.base_branch interpolates {{baseBranch}} to the effective project default, not empty', async () => {
-    // Guards the OTHER two consumers the comment above flags: run_script and
-    // webhook (this test + the next) both read the SAME executeAction-built
-    // templateVars as send_command, but a call-site-specific regression (e.g.
-    // someone passing a different/empty vars object into just this one
-    // switch-case line) would fail nothing without a dedicated assertion here.
-    const task = makeTask({ base_branch: null });
-    const action = makeAction({
-      type: 'run_script',
-      config_json: JSON.stringify({ script: 'deploy.sh {{baseBranch}}' }),
-    });
-    const sessionManager = makeSessionManager();
-
-    const { engine } = makeEngine({ action, sessionManager });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    // Red: reverting executeAction's templateVars to the pre-refactor
-    // `{ baseBranch: task.base_branch || '' }` shape makes this 'deploy.sh '
-    // (empty), never 'deploy.sh main'.
-    expect(sessionManager.spawnedSessions).toHaveLength(1);
-    expect(sessionManager.spawnedSessions[0].command).toBe('deploy.sh main');
-  });
-
-  it('webhook: a null task.base_branch interpolates {{baseBranch}} into both url and body, not empty', async () => {
-    const task = makeTask({ base_branch: null });
-    const action = makeAction({
-      type: 'webhook',
-      config_json: JSON.stringify({
-        url: 'https://example.test/notify?branch={{baseBranch}}',
-        body: JSON.stringify({ branch: '{{baseBranch}}' }),
-      }),
-    });
-    const fetchMock = vi.fn(async () => new Response(''));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const { engine } = makeEngine({ action });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    // Red: reverting executeAction's templateVars to the pre-refactor shape
-    // makes both of these resolve with an empty branch, never 'main'.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('https://example.test/notify?branch=main');
-    expect(init.body).toBe(JSON.stringify({ branch: 'main' }));
-  });
-
-  it('spawn_agent: {{projectPath}} resolves to the configured project path, never the task worktree path (transition-engine.ts:134)', async () => {
-    // Coverage hole: task-template-vars-parity.test.ts pins the projectPath
-    // RESOLVER in isolation (a hand-built context), which cannot catch a call
-    // site passing the wrong value. executeAction's own templateVars build
-    // (transition-engine.ts ~line 134) is what this test pins: it must pass
-    // getConfig().projectPath, never task.worktree_path, even though a plain
-    // `cwd` variable a few lines below in executeSpawnAgent legitimately
-    // prefers the worktree (task.worktree_path || appConfig.projectPath).
-    // {{projectPath}} is documented to always mean the main checkout (see
-    // task-template-resolvers.ts's projectPath doc comment), so this task is
-    // given a worktree_path that is DISTINCT from the configured project
-    // path: asserting only "non-empty" would still pass if the call site were
-    // swapped to task.worktree_path.
-    const task = makeTask({ worktree_path: '/mock/worktrees/task-abc-1' });
-    const action = makeAction({
-      type: 'spawn_agent',
-      config_json: JSON.stringify({ promptTemplate: '{{projectPath}}' }),
-    });
-
-    let capturedPrompt: string | undefined;
-    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
-      capturedPrompt = options.prompt;
-      return `claude ${options.prompt ?? ''}`;
-    });
-
-    const { engine } = makeEngine({ action, projectPath: '/mock/main-project' });
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
-
-    // Red: swapping executeAction's `projectPath: this.getConfig().projectPath`
-    // for `task.worktree_path`, or dropping the field entirely (undefined
-    // resolves to ''), makes this '/mock/worktrees/task-abc-1' or '' instead
-    // of the configured project path.
-    expect(capturedPrompt).toBe('/mock/main-project');
-  });
-
-  // Note: resumeSuspendedSession builds its OWN templateVars object (a
-  // separate call site at transition-engine.ts ~line 98), which is the other
-  // half of this coverage hole. It is deliberately NOT pinned here:
-  // resumeSuspendedSession always calls executeSpawnAgent with a FIXED
-  // promptTemplate of '{{task_xml}}{{attachments}}' (or undefined when
-  // skipPromptTemplate) - there is no public path to get {{projectPath}}
-  // into that template, and resolveSpawnIntent only reads templateVars to
-  // interpolate promptTemplate (never for the resume-mode `prompt`, which
-  // takes `resumePrompt` verbatim). So the resolved projectPath value at that
-  // call site has no observable effect through the current interpolation
-  // surface; asserting on it would require reaching past the public API
-  // (mocking resolveTaskTemplateVars or resolveSpawnIntent directly), which
-  // this file's established style avoids. If a future promptTemplate at that
-  // call site ever references {{projectPath}}, add a resumeSuspendedSession
-  // test here mirroring the one above.
 });
 
 describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent chokepoint)', () => {
@@ -1243,9 +977,9 @@ describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent 
 
     const task = makeTask();
     const sessionRepo = makeSessionRepo();
-    const { engine } = makeEngine({ sessionRepo, mcpServerUrl: 'http://127.0.0.1:1234/mcp/proj-1' });
+    const { runSpawn } = makeEngine({ sessionRepo, mcpServerUrl: 'http://127.0.0.1:1234/mcp/proj-1' });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
     const insertedId = (sessionRepo.insert.mock.calls[0][0] as { id: string }).id;
@@ -1265,9 +999,9 @@ describe('TransitionEngine - MCP caller-session URL stamping (executeSpawnAgent 
     });
 
     const task = makeTask();
-    const { engine } = makeEngine({});
+    const { runSpawn } = makeEngine({});
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(capturedOptions?.mcpServerUrl).toBeUndefined();
   });
@@ -1358,9 +1092,9 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     // wrote under, matching makeTask's own default.
     const task = makeTask({ worktree_path: null });
     const sessionManager = makeSessionManager();
-    const { engine } = makeEngine({ sessionManager, sessionRepo, projectPath });
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo, projectPath });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     // Red: reverting executeSpawnAgent's
     // `intent = resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true })`
@@ -1426,9 +1160,9 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     });
 
     const task = makeTask({ worktree_path: null });
-    const { engine } = makeEngine({ sessionRepo, projectPath });
+    const { runSpawn } = makeEngine({ sessionRepo, projectPath });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     // Red: dropping the `...listForTaskNewestFirst(...).filter(...).map(...)`
     // spread (passing only `[intent.retireRecordId]`) leaves RECORD_ID as the
@@ -1466,10 +1200,10 @@ describe('TransitionEngine - executeSpawnAgent throws a typed error when the age
   it('executeAction (spawn_agent): rejects with AgentCliNotFoundError and never spawns', async () => {
     const task = makeTask();
     const sessionManager = makeSessionManager();
-    const { engine } = makeEngine({ sessionManager });
+    const { runSpawn } = makeEngine({ sessionManager });
 
     await expect(
-      engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing'),
+      runSpawn(task),
     ).rejects.toThrow(AgentCliNotFoundError);
 
     // Detection gates the spawn rather than running alongside it.
@@ -1478,10 +1212,10 @@ describe('TransitionEngine - executeSpawnAgent throws a typed error when the age
 
   it('carries the shared, non-doubled "CLI not found" message', async () => {
     const task = makeTask();
-    const { engine } = makeEngine({});
+    const { runSpawn } = makeEngine({});
 
     await expect(
-      engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing'),
+      runSpawn(task),
     ).rejects.toThrow(agentCliNotFoundMessage(mockAdapter.displayName));
   });
 });
@@ -1516,9 +1250,9 @@ describe('TransitionEngine - Windows .cmd shim launch resolution wiring (execute
     const task = makeTask();
     const sessionManager = makeSessionManager();
     sessionManager.getShell.mockResolvedValue(PWSH);
-    const { engine } = makeEngine({ sessionManager });
+    const { runSpawn } = makeEngine({ sessionManager });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(resolveShimLaunchMock).toHaveBeenCalledTimes(1);
     expect(resolveShimLaunchMock).toHaveBeenCalledWith({
@@ -1542,9 +1276,9 @@ describe('TransitionEngine - Windows .cmd shim launch resolution wiring (execute
     const task = makeTask();
     const sessionManager = makeSessionManager();
     const sessionRepo = makeSessionRepo();
-    const { engine } = makeEngine({ sessionManager, sessionRepo });
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     // Red: a chokepoint keeping `agentPath: detection.path` or `prompt` (the
     // intent's) instead of the helper's fields fails one of these.
@@ -1571,9 +1305,9 @@ describe('TransitionEngine - Windows .cmd shim launch resolution wiring (execute
     });
     const sessionManager = makeSessionManager();
     sessionManager.getShell.mockResolvedValue(PWSH);
-    const { engine } = makeEngine({ sessionManager });
+    const { runSpawn } = makeEngine({ sessionManager });
 
-    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+    await runSpawn(task);
 
     expect(sessionManager.spawnedSessions).toHaveLength(1);
     const command = sessionManager.spawnedSessions[0].command;

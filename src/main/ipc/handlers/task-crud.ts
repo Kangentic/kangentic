@@ -95,7 +95,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.TASK_CREATE, async (_, input, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-    const { tasks, swimlanes, actions, attachments } = getProjectRepos(context, resolvedProjectId);
+    const { tasks, swimlanes, automations, automationRuns, attachments } = getProjectRepos(context, resolvedProjectId);
     const { pendingAttachments, ...taskInput } = input;
     const task = tasks.create(taskInput);
     trackMilestone('first_task');
@@ -149,7 +149,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
           const db = getProjectDb(projectId);
           const sessionRepo = new SessionRepository(db);
-          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+          const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
 
           // Route through the shared spawn chokepoint (spawn preamble: the
           // first-spawn override lock + agent resolution, then transition

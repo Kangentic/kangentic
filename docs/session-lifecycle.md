@@ -502,9 +502,9 @@ When a suspended task moves to an active column:
   because a resume with a prompt starts a real turn. See
   [Command Injection](command-injection.md) for the full delivery ladder.
 - The **first move OUT of Done** (the recovery / restore move, whatever the
-  destination column) resumes the session WITHOUT injecting the destination
-  column's `auto_command`. Restoring a Done task is usually to inspect the
-  session or ask a question, so the column automation (e.g. `/merge-pull-request`)
+  destination column) resumes the session WITHOUT delivering the destination
+  column's message. Restoring a Done task is usually to inspect the
+  session or ask a question, so the message (e.g. `/merge-pull-request`)
   sits idle until the next move. This is unconditional and matches crash
   recovery, which also resumes command-free. Every Done-out path goes through
   `spawnAgent`'s `suppressAutoCommand`: the unarchive handlers
@@ -512,7 +512,15 @@ When a suspended task moves to an active column:
   calls, and a non-archived Done-out move (MCP `move_task`, legacy rows) gets
   it from `handleTaskMove` when `fromLane.role === 'done'`. Model / effort /
   permission-mode settings still apply on the recovery move. The next move
-  injects per column config as usual.
+  delivers per column config as usual.
+
+  **Only rows that need the agent are suppressed.** The destination's On enter
+  group still runs, so a script, a webhook or a notification fires as it
+  normally would; a recovery move is not a reason to stop telling a webhook the
+  task moved. The flag reaches the runner as `suppressAgentMessages` and each
+  suppressed row is recorded `skipped` with the reason, rather than being
+  allowed to run against a `deliverToAgent` that silently does nothing and then
+  report "Delivered". See [Transition Engine](transition-engine.md#command-injection).
 
 ## Crash Recovery (Session Recovery)
 
@@ -533,7 +541,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 
 ## Isolated Sessions (Per-Column Session Model)
 
-A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields (set on the Automation tab of the Board Manager) control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`:
+A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`. Only the first is offered in the UI, on the Column Manager's Conversation card: `session_spawn_strategy` is derived from it by `resolveForceFresh` and is settable by hand in `kangentic.json` only (see [configuration.md](configuration.md#swimlane-level-configuration) for why the two combinations that derivation does not reach are both bad).
 
 - **`session_target`** (`main` | `isolated`, default `main`) - which session track a task runs on. `main` is the task's shared main conversation (resumed as the task moves between normal columns); `isolated` is this column's own separate, context-isolated session, keyed by the swimlane id. Resolved by `resolveSessionTarget` / `resolveIsolatedSwimlaneId`; the discriminator is `sessions.isolated_swimlane_id` (`NULL` = main, swimlane id = isolated).
 - **`session_spawn_strategy`** (`create_or_resume` | `always_spawn_new`, default `create_or_resume`) - what to do with that track on entry. `create_or_resume` resumes the track's session if one exists, else spawns it; `always_spawn_new` always spawns fresh, retiring the prior session for that `(task, target)`. Read by `resolveForceFresh`, which is a plain comparison for any stored column: the DB column is `NOT NULL DEFAULT 'create_or_resume'` and `SwimlaneRepository.create` writes a concrete string, so the context-aware fallback in that function never evaluates for a real lane and survives only for a partial object.

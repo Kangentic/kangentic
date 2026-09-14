@@ -46,6 +46,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { makeTaskCounter, type TaskCounter } from './mcp-http/handler-helpers';
 import { registerTaskTools } from './mcp-http/task-tools';
 import { registerProfileTools } from './mcp-http/profile-tools';
+import { registerAutomationTools } from './mcp-http/automation-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
@@ -357,6 +358,7 @@ export function buildConfiguredMcpServer(
   );
   registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices);
   registerProfileTools(mcpServer, resolver);
+  registerAutomationTools(mcpServer, resolver);
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);

@@ -208,6 +208,10 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     tasks: taskRepo,
     swimlanes: swimlaneRepo,
     actions: { getTransitionsFor: vi.fn(() => []) },
+    // The column's message lives in its automations now, so every move reads
+    // them. Empty: these cases are about git churn, not messages.
+    automations: { listForColumn: vi.fn(() => []), getForTrigger: vi.fn(() => []) },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
     attachments: { deleteByTaskId: vi.fn() },
   });
   return context;

@@ -11,12 +11,20 @@ vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 
 import { forcePreviewCheapModels } from '../../src/devtools/main/ephemeral-projects';
+import { stableAutomationTypes } from '../../src/shared/automation-manifest';
+
+interface EmittedPreviewAutomation {
+  name: string;
+  type: string;
+  enabled?: boolean;
+}
 
 interface EmittedPreviewColumn {
   id: string;
   modelOverride: string;
   effortOverride: string;
   permissionMode?: string;
+  automations?: { onEnter?: EmittedPreviewAutomation[]; onExit?: EmittedPreviewAutomation[] };
 }
 
 interface EmittedPreviewLocalConfig {
@@ -89,6 +97,67 @@ describe('forcePreviewCheapModels (preview cheap-model local override)', () => {
     // A column with no permissionMode at all in the team config is likewise
     // left alone.
     expect('permissionMode' in (byId.get('col-none') as object)).toBe(false);
+  });
+
+  it('puts one switched-off automation of every stable type on the variety column, and spreads the rest', async () => {
+    // The preview's display fixtures. They ride this file rather than being
+    // written to the database because `apply-config` runs on every project open
+    // and owns each column's list, so a direct write is replaced before anyone
+    // sees it. Asserted here because nothing else can: typecheck and lint both
+    // pass against a fixture that silently stopped being emitted, which is
+    // exactly how the first attempt failed.
+    fs.writeFileSync(teamConfigPath, JSON.stringify({
+      version: 1,
+      columns: [
+        { id: 'col-todo', name: 'To Do', role: 'todo', permissionMode: null },
+        { id: 'col-executing', name: 'Executing', role: null, permissionMode: 'auto' },
+        { id: 'col-planning', name: 'Planning', role: null, permissionMode: 'plan' },
+        { id: 'col-review', name: 'Code Review', role: null, permissionMode: 'auto', autoCommand: '/code-review' },
+      ],
+    }, null, 2));
+
+    await forcePreviewCheapModels(cloneDir);
+
+    const emitted = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8')) as EmittedPreviewLocalConfig;
+    const byId = new Map(emitted.columns.map((column) => [column.id, column]));
+    const rowsOf = (id: string) => {
+      const fixtures = byId.get(id)?.automations;
+      return [...(fixtures?.onEnter ?? []), ...(fixtures?.onExit ?? [])];
+    };
+
+    // Every stable type across the seeded columns, so adding an adapter without
+    // a fixture goes red here rather than showing up as a preview that cannot
+    // demonstrate the new type.
+    const allRows = [...rowsOf('col-executing'), ...rowsOf('col-planning'), ...rowsOf('col-todo')];
+    expect([...new Set(allRows.map((row) => row.type))].sort()).toEqual([...stableAutomationTypes()].sort());
+
+    // Executing is the variety column: one of every type, both groups.
+    const executing = byId.get('col-executing')?.automations;
+    expect([...new Set(rowsOf('col-executing').map((row) => row.type))].sort())
+      .toEqual([...stableAutomationTypes()].sort());
+    expect(executing?.onEnter?.length).toBeGreaterThan(0);
+    expect(executing?.onExit?.length).toBeGreaterThan(0);
+
+    // Planning populates both group headings without running long, which is the
+    // shape the rail lands on most often.
+    expect(byId.get('col-planning')?.automations?.onEnter?.length).toBe(1);
+    expect(byId.get('col-planning')?.automations?.onExit?.length).toBe(1);
+
+    // To Do is exit-only (an enter row can never fire on a role column) and
+    // carries the CANNOT-RUN state on purpose: a `send_message` where no agent
+    // starts renders with its switch disabled and the reason in the tooltip.
+    expect(byId.get('col-todo')?.automations?.onEnter).toBeUndefined();
+    expect(byId.get('col-todo')?.automations?.onExit?.[0]?.type).toBe('send_message');
+
+    // OFF, every one, on every column. These are display fixtures, not
+    // behavior: a preview move must not POST to example.com or run a package
+    // install.
+    for (const row of allRows) expect(row.enabled).toBe(false);
+
+    // Never a column the committed config already gives automations to. A
+    // column's list REPLACES on merge, so seeding Code Review / Testing / Merge
+    // would silently delete the `autoCommand` message the team board runs.
+    expect('automations' in (byId.get('col-review') as object)).toBe(false);
   });
 
   it('is a no-op (no throw, no kangentic.local.json) when kangentic.json does not exist', async () => {

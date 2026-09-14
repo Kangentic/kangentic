@@ -30,6 +30,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 | MCP HTTP Server | `src/main/agent/mcp-http-server.ts` | In-process Node `http` server using `@modelcontextprotocol/sdk` Streamable HTTP transport. Binds 127.0.0.1 by default (configurable via `mcpServer.bindAddress`), random `:0` port, random per-launch token validated via `X-Kangentic-Token`. See [Network Access](#network-access). |
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_reorder_tasks`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_create_column`, `kangentic_delete_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Profile Tools | `src/main/agent/mcp-http/profile-tools.ts` | Board Profile read + authoring (`kangentic_list_board_profiles`, `kangentic_create_board_profile`, `kangentic_update_board_profile`, `kangentic_delete_board_profile`). Entries are keyed by column NAME so a profile can be copied between projects; see [Board Profiles](#board-profiles). |
+| Automation Tools | `src/main/agent/mcp-http/automation-tools.ts` | Column automation read, write, run log, and re-run (`kangentic_list_automations`, `kangentic_set_automations`, `kangentic_get_automation_runs`, `kangentic_run_automation`). See [Column automations](#column-automations). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_get_activity_intervals`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Steering Tools | `src/main/agent/mcp-http/steering-tools.ts` | The write side of the session surface (`kangentic_send_session_message`) plus its debugging read (`kangentic_get_session_messages_sent`). Kept out of `session-tools.ts` because the send needs live main-process singletons (SessionManager, TerminalSubmit) that `CommandContext` does not carry. |
 | Session Send Coordinator | `src/main/agent/mcp-http/session-send.ts` | Delivery + guards behind the steering tools: per-target serialization, the sliding-window ceiling, the steer-chain depth backstop, deferred `deliverWhen: "idle"` delivery, and out-of-band provenance recording (the message itself carries no in-band prefix). |
@@ -236,9 +237,15 @@ Heavy profile into project X"*, *"what differs between project A's and B's profi
 `kangentic_list_board_profiles` calls and a diff).
 
 The per-column settings a profile may carry are `agentOverride`, `modelOverride`, `effortOverride`,
-`permissionMode`, `autoCommand`, `autoCommandMode`, `autoSpawn`, `handoffContext`, `sessionTarget`,
-`sessionSpawnStrategy`, and `planExitTarget` (a column *name*). To Do and Done columns never spawn
-agents, so entries for them have no effect.
+`permissionMode`, `autoSpawn`, `handoffContext`, `sessionTarget`, `sessionSpawnStrategy`, and
+`planExitTarget` (a column *name*). To Do and Done columns never spawn agents, so entries for them
+have no effect.
+
+A column's message to its agent is NOT one of them. It is a `send_message` automation now, and
+automations are shared by every profile, which is what the Column Manager's pane says and why that
+pane is read-only under a profile. The retired `autoCommand` and `autoCommandMode` keys are refused
+with a pointer to [kangentic_set_automations](#kangentic_set_automations) rather than accepted and
+ignored.
 
 ### kangentic_list_board_profiles
 
@@ -655,8 +662,8 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 | `color` | string | No | Hex color (e.g. `"#71717a"`) |
 | `icon` | string \| null | No | Lucide icon name, or `null` to clear |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. For the ACTIVE project, changing it also applies to the tasks already in the column, immediately: switching it on spawns for each task with no session (never for a user-paused one, and never in To Do or Done), switching it off suspends the live sessions there |
-| `autoCommand` | string \| null | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`). `null` clears. |
-| `autoCommandMode` | string | No | `immediate` (default) or `deferred`. When `autoCommand` reaches the agent: `immediate` injects on arrival, interrupting a turn in progress; `deferred` waits for the current turn to finish. Inert without `autoCommand`. Not nullable; pass `"immediate"` to go back to the default. |
+| `autoCommand` | string \| null | No | The message this column sends its agent on entry (e.g. `"/review --strict"`). Supports template variables. Writes the column's first `send_message` automation in its On enter group, creating one if it has none; `null` deletes it. See [Column automations](#column-automations). |
+| `autoCommandMode` | string | No | `immediate` (type it as soon as the agent is ready) or `deferred` (wait for the agent to finish its current turn). Defaults to the row's existing mode, then `immediate`. |
 | `agentOverride` | string \| null | No | Force a specific agent for this column. `null` uses project default. |
 | `modelOverride` | string \| null | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`, `"claude-opus-4-7"`). `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: a model change restarts them in place with `--resume`. |
 | `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change is injected live, without a restart. |
@@ -700,8 +707,8 @@ every lane, including the archived Done lane.
 | `color` | string | No | Hex color (e.g. `"#71717a"`). Defaults to blue. |
 | `icon` | string | No | Lucide icon name |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. Defaults to `true`. |
-| `autoCommand` | string | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`) |
-| `autoCommandMode` | string | No | `immediate` (default) or `deferred`. Whether `autoCommand` interrupts a turn in progress or waits for it to finish. Inert without `autoCommand`. |
+| `autoCommand` | string | No | The message this column sends its agent on entry (e.g. `"/review --strict"`). Creates the column's first `send_message` automation in its On enter group. See [Column automations](#column-automations). |
+| `autoCommandMode` | string | No | `immediate` (default) or `deferred` (wait for the agent to finish its current turn). |
 | `agentOverride` | string | No | Force a specific agent for this column. Omit to use the project default. |
 | `modelOverride` | string | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`) |
 | `effortOverride` | string | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"high"`, `"xhigh"`) |
@@ -751,6 +758,131 @@ database on project open, so a delete that left the file alone would be undone o
 | `column` | string | Yes | Column name to delete (case-insensitive) |
 
 This cannot be undone.
+
+### Column automations
+
+What a column does when a task enters or leaves it. Each column owns one ordered list, split into
+two groups (On enter and On exit), and each row has its own switch. Four types ship:
+
+| Type | What it does | Fields |
+|------|--------------|--------|
+| `send_message` | Types a message at the column's agent | `message`, `mode` (`immediate` / `deferred`) |
+| `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (1 to 120, default 5) |
+| `webhook` | Calls a URL, retrying a transport error, 429 or 5xx up to 3 times | `url`, `method`, `body`, `headers` |
+| `notify` | Raises one desktop notification | `title`, `body` |
+
+Two names are accepted but not offered:
+
+- **`send_command`** is an alias for `send_message`, and its `command` field an alias for
+  `message`. That was the type's id before its field was renamed, and an older skill still spells
+  it that way, so a write naming it is stored as `send_message`.
+- **`spawn_agent`** (field `promptTemplate`) is the one legacy type. It cannot be created, it is
+  not in the table above, and it exists only so a row that predates the automations model still
+  runs. Starting an agent is the column's own "Start an agent here" setting, not an automation.
+
+Every text field takes the template variables listed in
+[transition-engine.md](transition-engine.md), substituted literally: an unknown name is sent as
+written rather than dropped. A script also receives each one as a `KANGENTIC_*` environment
+variable, which is the quoting-safe way to read one.
+
+Three rules decide whether a row actually runs, and they are reported by
+`kangentic_list_automations` rather than left to be discovered:
+
+- A row whose switch is off is skipped.
+- A `send_message` row on a column whose `autoSpawn` is off can never run: no agent starts there.
+- An On enter row on To Do or Done can never run: neither column runs automations on entry.
+
+Every execution writes a row to the run log, whatever happens, which is what
+`kangentic_get_automation_runs` reads. A row left `running` was in flight when Kangentic quit; the
+shutdown path is synchronous by rule, so it could not be drained, and nothing is retried
+automatically (a fired webhook and a half-run script are not safe to repeat blind).
+
+### kangentic_list_automations
+
+Read a column's automations, or the whole board's. This is the right first call for "what does this
+board do": a board-wide read answers it once instead of one call per column.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `column` | string | No | Column name (case-insensitive). Omit to read every column. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, and the type's own fields.
+A row that cannot run as things stand is flagged with the reason.
+
+### kangentic_set_automations
+
+Replace one column's automations wholesale. The array becomes that column's entire list, in order,
+so read the current rows with `kangentic_list_automations` first and send them back with your
+change applied. Pass `[]` to remove them all.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `column` | string | Yes | Column whose automations to replace (case-insensitive) |
+| `automations` | array | Yes | The column's complete new list, in run order. Max 50. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+Each entry takes `name` (required, unique within the column ignoring case), `type`, an optional
+`on` (`enter` by default), an optional `enabled` (true by default), an optional `id`, and the
+type's own fields flat on the object:
+
+```json
+{
+  "column": "Code Review",
+  "automations": [
+    { "id": "623a36ef-...", "name": "Review", "type": "send_message", "message": "/code-review {{baseBranch}}" },
+    { "name": "Ping the channel", "type": "webhook", "url": "https://hooks.example.com/abc" },
+    { "name": "Archive the log", "type": "run_script", "on": "exit", "enabled": false, "script": "scripts/archive.sh" }
+  ]
+}
+```
+
+Whole-column rather than per-row because a reorder, a delete and an insert arrive together, and
+applying them separately would make the unique name index reject an intermediate state the final
+state does not have. Carry each existing row's `id` through so it keeps its identity and its run
+history; a row with no `id` is created fresh. Array order is each row's position within its trigger
+group, so the two groups number independently.
+
+A row the column cannot run as things stand is stored and warned about, not refused: building a
+list before switching the column's agent on is a legitimate order of operations.
+
+### kangentic_get_automation_runs
+
+Read the run log. Ask by task (everything that ran for one card) or by column (every run of the
+automations that column holds now). Newest first.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `task` | string | No | Task ID (numeric display ID or UUID). One of `task` or `column` is required. |
+| `column` | string | No | Column name (case-insensitive). One of `task` or `column` is required. |
+| `limit` | number | No | Maximum runs to return, 1 to 50. Defaults to 50. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+Each run carries its status (`running`, `succeeded`, `failed`, `skipped`, `interrupted`), the
+`detail` (the failure reason, the skip reason, or a one-line success such as `HTTP 204` or
+`exit 0`), the attempt count, and its timestamps. The log denormalizes the automation's name and
+type and takes no foreign key to the automation, so renaming or deleting one does not empty its
+history.
+
+### kangentic_run_automation
+
+Run one automation now, against the named task's current state. Use it to retry a failed automation
+or to test one you just wrote.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `column` | string | Yes | Column the automation belongs to (case-insensitive) |
+| `automation` | string | Yes | Automation name on that column (case-insensitive) |
+| `task` | string | Yes | Task ID (numeric display ID or UUID) to run it against |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+Current state, not the state of the move that first ran it. A task can have moved twice since a
+failure, so `{{toColumn}}` resolves against where it is now, while `{{fromColumn}}` and
+`{{trigger}}` resolve empty because there is no move. It writes a fresh run row either way.
+
+It will not start an agent: a `send_message` automation against a task with no live session is
+recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so
+a hung row cannot wedge that task's next move.
 
 ### kangentic_delete_task
 

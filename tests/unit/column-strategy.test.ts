@@ -3,6 +3,7 @@ import {
   resolveColumnStrategy,
   findTaskProfile,
   resolveEffectiveAutoCommand,
+  resolveColumnMessage,
   applyProfileToLane,
 } from '../../src/main/transition-engine/column-strategy';
 import type { BoardProfile, BoardProfileEntry, Swimlane } from '../../src/shared/types';
@@ -16,8 +17,6 @@ function makeLane(overrides: Partial<LaneStrategyFields> = {}): LaneStrategyFiel
     model_override: 'claude-opus-5',
     effort_override: 'high',
     permission_mode: 'auto',
-    auto_command: '/implement',
-    auto_command_mode: 'deferred',
     auto_spawn: true,
     handoff_context: true,
     session_target: 'main',
@@ -40,8 +39,6 @@ describe('resolveColumnStrategy', () => {
         model_override: 'claude-opus-5',
         effort_override: 'high',
         permission_mode: 'auto',
-        auto_command: '/implement',
-        auto_command_mode: 'deferred',
         auto_spawn: true,
         handoff_context: true,
         session_target: 'main',
@@ -65,8 +62,6 @@ describe('resolveColumnStrategy', () => {
         model_override: null,
         effort_override: null,
         permission_mode: null,
-        auto_command: null,
-        auto_command_mode: 'immediate',
         auto_spawn: false,
         handoff_context: false,
         session_target: 'main',
@@ -100,14 +95,13 @@ describe('resolveColumnStrategy', () => {
     it('a present key set to null CLEARS the base column pin to the agent default', () => {
       const lane = makeLane();
       const profile = makeProfile({
-        'lane-executing': { modelOverride: null, effortOverride: null, agentOverride: null, permissionMode: null, autoCommand: null },
+        'lane-executing': { modelOverride: null, effortOverride: null, agentOverride: null, permissionMode: null },
       });
       const resolved = resolveColumnStrategy({ lane, profile });
       expect(resolved.model_override).toBeNull();
       expect(resolved.effort_override).toBeNull();
       expect(resolved.agent_override).toBeNull();
       expect(resolved.permission_mode).toBeNull();
-      expect(resolved.auto_command).toBeNull();
     });
 
     it('distinguishes clear-to-null from inherit within one entry', () => {
@@ -119,41 +113,28 @@ describe('resolveColumnStrategy', () => {
     });
   });
 
-  // auto_command_mode is its own tri-state field, mirroring the string overrides
-  // above, but its "clear" arm falls back to the string default 'immediate'
-  // rather than to null - `AutoCommandMode` has no null member, so there is no
-  // "agent default" to clear to.
-  describe('auto_command_mode - the same three states as the string overrides', () => {
-    it('a present key with a value overrides the lane', () => {
-      const lane = makeLane({ auto_command_mode: 'immediate' });
-      const profile = makeProfile({ 'lane-executing': { autoCommandMode: 'deferred' } });
-      const resolved = resolveColumnStrategy({ lane, profile });
-      expect(resolved.auto_command_mode).toBe('deferred');
+  // The column's message is NOT a strategy field any more. It is a
+  // `send_message` automation, and automations are shared by every profile, so
+  // a profile entry cannot re-point it. This pins the retirement in both
+  // directions: the resolver stops carrying the two fields, and a profile
+  // carrying the retired keys cannot resurrect them.
+  describe('the retired message fields', () => {
+    it('does not carry auto_command or auto_command_mode', () => {
+      const resolved = resolveColumnStrategy({ lane: makeLane(), profile: null });
+      expect(resolved).not.toHaveProperty('auto_command');
+      expect(resolved).not.toHaveProperty('auto_command_mode');
     });
 
-    it('an absent key inherits the lane, not the "immediate" default', () => {
-      const lane = makeLane({ auto_command_mode: 'deferred' });
-      // The entry exists (for modelOverride) but never mentions autoCommandMode.
-      const profile = makeProfile({ 'lane-executing': { modelOverride: 'claude-sonnet-5' } });
-      const resolved = resolveColumnStrategy({ lane, profile });
-      expect(resolved.auto_command_mode).toBe('deferred');
-    });
-
-    // RED-GREEN GUARD: a `??`-based resolver (`entry.autoCommandMode ?? lane.auto_command_mode`)
-    // would silently inherit here instead of clearing, since it can't distinguish
-    // "key present, value undefined" from "key absent".
-    it('a present key set to null CLEARS to the "immediate" default', () => {
-      const lane = makeLane({ auto_command_mode: 'deferred' });
-      // `AutoCommandMode` has no null member, so a stray null is not
-      // representable in the type - it can still arrive at runtime from a
-      // hand-edited kangentic.json, which is exactly what the resolver's
-      // defensive `?? 'immediate'` (rather than a bare `entry.autoCommandMode`)
-      // exists to survive. Cast through `unknown` to construct that shape.
+    it('ignores a profile entry that still carries the retired keys', () => {
       const profile = makeProfile({
-        'lane-executing': { autoCommandMode: null } as unknown as BoardProfileEntry,
+        'lane-executing': { autoCommand: '/stale', autoCommandMode: 'deferred' } as unknown as BoardProfileEntry,
       });
-      const resolved = resolveColumnStrategy({ lane, profile });
-      expect(resolved.auto_command_mode).toBe('immediate');
+      const resolved = resolveColumnStrategy({ lane: makeLane(), profile });
+      expect(resolved).not.toHaveProperty('auto_command');
+      expect(resolved).not.toHaveProperty('auto_command_mode');
+      // And the rest of the fold still works, so the entry is not discarded
+      // wholesale just because it carries a retired key.
+      expect(resolved.model_override).toBe('claude-opus-5');
     });
   });
 
@@ -318,15 +299,48 @@ describe('resolveEffectiveAutoCommand', () => {
     expect(resolveEffectiveAutoCommand('', '/column-command')).toBe('');
   });
 
-  it('resolves the profile-folded column value, not the raw lane', () => {
-    // In profile mode the caller passes strategy.auto_command, which has already
-    // had the profile delta applied - so a profile that re-points a column's
-    // command flows through both paths identically.
-    const strategy = resolveColumnStrategy({
-      lane: makeLane({ auto_command: '/base-command' }),
-      profile: makeProfile({ 'lane-executing': { autoCommand: '/profile-command' } }),
-    });
-    expect(resolveEffectiveAutoCommand(null, strategy.auto_command)).toBe('/profile-command');
+  it('takes the column tier from resolveColumnMessage, which is the automation row', () => {
+    // The column tier is no longer a lane field: both paths (the cold spawn and
+    // the warm live injection) read the column's first enabled `send_message`
+    // enter automation and hand THAT to this helper. Pinned here so a future
+    // caller cannot go back to reading a lane.
+    const message = resolveColumnMessage([
+      { id: 'row-1', type: 'send_message', trigger: 'enter', enabled: true, position: 0, config: { message: '/column-command' } },
+    ]);
+    expect(resolveEffectiveAutoCommand(null, message?.message)).toBe('/column-command');
+  });
+});
+
+describe('resolveColumnMessage', () => {
+  it('picks the FIRST enabled send_message enter row by position', () => {
+    const message = resolveColumnMessage([
+      { id: 'row-2', type: 'send_message', trigger: 'enter', enabled: true, position: 1, config: { message: '/second' } },
+      { id: 'row-1', type: 'send_message', trigger: 'enter', enabled: true, position: 0, config: { message: '/first' } },
+    ]);
+    expect(message).toEqual({ id: 'row-1', message: '/first', mode: 'immediate' });
+  });
+
+  it('skips a switched-off row, an exit row, and another type', () => {
+    const message = resolveColumnMessage([
+      { id: 'off', type: 'send_message', trigger: 'enter', enabled: false, position: 0, config: { message: '/off' } },
+      { id: 'exit', type: 'send_message', trigger: 'exit', enabled: true, position: 1, config: { message: '/exit' } },
+      { id: 'script', type: 'run_script', trigger: 'enter', enabled: true, position: 2, config: { script: 'echo hi' } },
+    ]);
+    expect(message).toBeNull();
+  });
+
+  it('carries the row\'s own mode, which is what the warm injection delivers with', () => {
+    const message = resolveColumnMessage([
+      { id: 'row-1', type: 'send_message', trigger: 'enter', enabled: true, position: 0, config: { message: '/x', mode: 'deferred' } },
+    ]);
+    expect(message?.mode).toBe('deferred');
+  });
+
+  it('reads the legacy `command` key a migrated send_command row still carries', () => {
+    const message = resolveColumnMessage([
+      { id: 'row-1', type: 'send_message', trigger: 'enter', enabled: true, position: 0, config: { command: '/legacy' } },
+    ]);
+    expect(message?.message).toBe('/legacy');
   });
 });
 

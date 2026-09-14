@@ -26,14 +26,28 @@ import { COLUMN_ENUM_FIELDS, parseEnumParam } from './column-enums';
 import type { BoardProfile, BoardProfileEntry } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
+/**
+ * Retired entry keys, with what to use instead.
+ *
+ * `autoCommand` is here because a column's message is an automation now, and
+ * automations are shared by every profile (the Column Manager's pane says so and
+ * is read-only under one). Accepting the key would store a value nothing reads,
+ * which is the shape of silent failure this whole subsystem was built to end, so
+ * the call is refused and names the tool that does work.
+ */
+const RETIRED_ENTRY_FIELDS: Record<string, string> = {
+  autoCommand:
+    'A column\'s message is an automation now, and automations are shared by every profile.'
+    + ' Set it with kangentic_set_automations on that column instead.',
+  autoCommandMode: 'Set the send_message automation\'s "mode" field with kangentic_set_automations instead.',
+};
+
 /** Profile entry fields, paired with the `BoardProfileEntry` key each maps to. */
 const ENTRY_FIELDS = [
   'agentOverride',
   'modelOverride',
   'effortOverride',
   'permissionMode',
-  'autoCommand',
-  'autoCommandMode',
   'autoSpawn',
   'handoffContext',
   'sessionTarget',
@@ -120,6 +134,15 @@ function translateColumnsToIds(
         error: `Unknown column "${columnName}". This board's columns are: ${names.join(', ')}.`
           + ' Profile entries are keyed by column name; nothing was saved.',
       };
+    }
+    for (const [retired, guidance] of Object.entries(RETIRED_ENTRY_FIELDS)) {
+      if (Object.prototype.hasOwnProperty.call(rawEntry, retired)) {
+        return {
+          ok: false,
+          error: `"${retired}" on column "${columnName}" is no longer a profile setting. ${guidance}`
+            + ' Nothing was saved; re-send this call without that key.',
+        };
+      }
     }
     const entry: Record<string, unknown> = {};
     for (const field of ENTRY_FIELDS) {

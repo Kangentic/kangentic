@@ -17,8 +17,31 @@ export interface DataTableColumn<TRow, TKey extends string = string> {
   headerTitle?: string;
 }
 
+/**
+ * A band spanning several adjacent columns, drawn as a second header row ABOVE
+ * the column labels. Optional and additive: a table that passes none renders
+ * exactly as before.
+ *
+ * Bands must cover every column in order, so the spans sum to `columns.length`.
+ * A band with an empty label draws nothing and is how a leading column (the
+ * row's name) sits under the group row without being in a group.
+ */
+export interface DataTableColumnGroup {
+  label: string;
+  /** How many adjacent columns this band covers. */
+  span: number;
+  /** Optional leading glyph, rendered at the label's size. */
+  icon?: React.ReactNode;
+}
+
 interface DataTableProps<TRow, TKey extends string = string> {
   columns: DataTableColumn<TRow, TKey>[];
+  /**
+   * Bands above the column headers. Their spans must sum to `columns.length`;
+   * a mismatch throws in development rather than rendering a silently skewed
+   * header, which is the failure mode that is hard to see in a screenshot.
+   */
+  columnGroups?: DataTableColumnGroup[];
   data: TRow[];
   rowKey: (row: TRow) => string;
   onRowClick?: (row: TRow) => void;
@@ -191,6 +214,7 @@ function SortableRow<TRow, TKey extends string>({
 
 export function DataTable<TRow, TKey extends string = string>({
   columns,
+  columnGroups,
   data,
   rowKey,
   onRowClick,
@@ -227,6 +251,36 @@ export function DataTable<TRow, TKey extends string = string>({
     overscan: 10,
     enabled: virtualized,
   });
+
+  // The optional band row. Rendered only when groups are supplied, so every
+  // existing table is byte-identical.
+  const groupRow = columnGroups ? (() => {
+    const covered = columnGroups.reduce((total, group) => total + group.span, 0);
+    if (covered !== columns.length) {
+      throw new Error(
+        `DataTable columnGroups cover ${covered} columns but there are ${columns.length}`,
+      );
+    }
+    return (
+      <tr className="bg-surface-raised">
+        {sortableEnabled && <th className="w-[32px]" />}
+        {columnGroups.map((group, groupIndex) => (
+          <th
+            key={`${group.label}-${groupIndex}`}
+            colSpan={group.span}
+            className="px-3 pt-2 pb-1 text-left align-bottom"
+          >
+            {group.label && (
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
+                {group.icon}
+                {group.label}
+              </span>
+            )}
+          </th>
+        ))}
+      </tr>
+    );
+  })() : null;
 
   const headerRow = (
     <tr className="border-b-2 border-edge bg-surface-raised">
@@ -284,6 +338,7 @@ export function DataTable<TRow, TKey extends string = string>({
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
         <table className="w-full table-fixed text-sm">
           <thead className="sticky top-0 z-10">
+            {groupRow}
             {headerRow}
           </thead>
           <tbody>
@@ -366,6 +421,7 @@ export function DataTable<TRow, TKey extends string = string>({
     <div className="flex-1 min-h-0 overflow-auto">
       <table className="w-full table-fixed text-sm">
         <thead className="sticky top-0 z-10">
+          {groupRow}
           {headerRow}
         </thead>
         <tbody>

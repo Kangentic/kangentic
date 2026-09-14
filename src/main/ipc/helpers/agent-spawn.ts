@@ -1,12 +1,13 @@
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
-import { ActionRepository } from '../../db/repositories/action-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { TransitionEngine } from '../../transition-engine/transition-engine';
 import { getProjectDb } from '../../db/database';
-import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
+import { interpolateTemplate, interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
@@ -14,13 +15,15 @@ import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT, NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
-import type { Task, Swimlane, Project } from '../../../shared/types';
+import type { Task, Swimlane, Project, AutoCommandMode } from '../../../shared/types';
+import { showDesktopNotification } from '../handlers/system';
+import { reportAutomationFailures } from './automation-failures';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { runSpawnPreamble, projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
-import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
+import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
@@ -87,7 +90,8 @@ export function resolveSpawnOverrides(
 /** Create a TransitionEngine wired to explicit project context (not singletons). */
 export function createTransitionEngine(
   context: IpcContext,
-  actions: ActionRepository,
+  automations: AutomationRepository,
+  automationRuns: AutomationRunRepository,
   tasks: TaskRepository,
   sessionRepo: SessionRepository,
   attachments: AttachmentRepository,
@@ -95,7 +99,7 @@ export function createTransitionEngine(
   projectPath: string | null,
 ): TransitionEngine {
   return new TransitionEngine(
-    context.sessionManager, context.terminalSubmit, actions, tasks,
+    context.sessionManager, context.terminalSubmit, tasks,
     () => {
       const config = context.configManager.getEffectiveConfig(projectPath || undefined);
       const gitConfig = { ...config.git };
@@ -109,6 +113,7 @@ export function createTransitionEngine(
         permissionMode: config.agent.permissionMode,
         projectPath,
         projectId,
+        projectName: project?.name ?? null,
         gitConfig,
         mcpServerEnabled: config.mcpServer?.enabled ?? true,
         mcpServerUrl: context.mcpServerHandle?.urlForProject(projectId),
@@ -122,6 +127,8 @@ export function createTransitionEngine(
     },
     sessionRepo,
     attachments,
+    automations,
+    automationRuns,
   );
 }
 
@@ -235,6 +242,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       attachmentPaths: options.attachments?.getPathsForTask(currentTask.id) ?? [],
       devPort: getDevPortForTask(currentTask.id),
       projectPath: options.projectPath ?? null,
+      projectName: project?.name ?? null,
+      // A spawn prompt is not a move; the picker does not offer the move
+      // keywords in this context.
+      move: null,
     });
 
   const run = async (): Promise<void> => {
@@ -374,9 +385,33 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         console.error('[spawnAgent] Failed to finalize handoff:', error);
       }
 
-      const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, toLane.auto_command);
+      // The column's message now lives in its first enabled `send_message`
+      // enter automation rather than in `swimlanes.auto_command`. The task's own
+      // MCP-set command still outranks it, which is the precedence
+      // `resolveEffectiveAutoCommand` exists to keep identical on every path.
+      const columnMessage = resolveColumnMessage(
+        getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id),
+      );
+      const taskOverride = currentTask.auto_command?.trim();
+      const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, columnMessage?.message);
       if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
-        const interpolated = interpolateTaskTemplate(effectiveAutoCommand, resolveAutoCommandVars(currentTask));
+        // Which interpolator depends on which tier won, and the two genuinely
+        // differ. A task's `auto_command` keeps DROP-AND-COLLAPSE, which is the
+        // rule `task-template-vars-parity.md` states for it. A column's message
+        // is an automation field, and every automation field substitutes
+        // literally through the runner's `interpolateAutomationConfig` - which
+        // is also what the field's own editor promises, in as many words:
+        // "Unknown variable: nope. It will be sent as written."
+        //
+        // The normal path already splits them exactly here (`takeMessage`
+        // swaps a drop-and-collapse task override over a literally-interpolated
+        // column row). This branch is the cross-agent handoff, and it used to
+        // drop-and-collapse BOTH, so the same message delivered one way on a
+        // handoff and another way on every other move.
+        const vars = resolveAutoCommandVars(currentTask);
+        const interpolated = taskOverride
+          ? interpolateTaskTemplate(effectiveAutoCommand, vars)
+          : interpolateTemplate(effectiveAutoCommand, vars);
         context.terminalSubmitScheduler.scheduleKeystrokes(
           currentTask.id,
           currentTask.session_id,
@@ -384,7 +419,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           {
             freshlySpawned: true,
             verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-            mode: toLane.auto_command_mode ?? 'immediate',
+            mode: columnMessage?.mode ?? 'immediate',
             onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
           },
         );
@@ -394,135 +429,189 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     return;
   }
 
-  // --- Normal path: execute transition actions then fallback ---
-  // targetAgent is passed through so spawn_agent actions use the correct agent.
+  // --- Normal path: the column's enter automations, then the fallback spawn ---
+  //
+  // The automations own the ordered list; the spawn is injected into it as
+  // `startAgent`, so the agent starts before the FIRST row that needs one
+  // rather than at a fixed point in the list. A script row above a message row
+  // therefore still runs before the agent exists, which is the order the list
+  // shows the user.
 
-  try {
-    await engine.executeTransition(
-      task, fromSwimlaneId, toLane.id, toLane.permission_mode, skipPromptTemplate, signal, targetAgent,
-      resolveSpawnOverrides(task, toLane, project),
-      // A create_worktree action runs inside the transition; give it the same
-      // progress labels as the default task-move worktree path so its
-      // "Creating worktree..." / "Running setup script..." phases reach the card.
-      createProgressCallback(context.mainWindow, task.id),
-    );
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    console.error('[spawnAgent] Transition engine error (continuing to fallback):', error);
+  /**
+   * The task's own MCP-set `auto_command` outranks the column's first message.
+   * That precedence is `resolveEffectiveAutoCommand`'s rule, which exists because
+   * the spawn path and the live-injection path once disagreed about it, so a
+   * task carrying its own command worked on a cold spawn and was silently
+   * dropped on a warm move. Consumed ONCE: a second message row belongs to the
+   * column, not the task.
+   */
+  let pendingTaskOverride: string | null = null;
+  if (!options.suppressAutoCommand && task.auto_command?.trim()) {
+    pendingTaskOverride = interpolateTaskTemplate(task.auto_command.trim(), resolveAutoCommandVars(task));
   }
 
-  // Re-read after the transition. If a spawn_agent ACTION already created the
-  // session, we return here and the fallback below never runs - so its
-  // auto_command / continuationPrompt delivery is skipped for that leg. The
-  // action delivers its own promptTemplate, but a separately configured
-  // auto_command is NOT injected on top in that case. This is the same
-  // narrowing every spawnAgent entry point (move, create, promote, MCP create)
-  // shares; the default board is unaffected (its one action-backed column,
-  // Planning, has no auto_command).
-  let currentTask = tasks.getById(task.id);
-  if (!currentTask || currentTask.session_id) return;
+  const takeMessage = (message: string): string => {
+    if (pendingTaskOverride === null) return message;
+    const override = pendingTaskOverride;
+    pendingTaskOverride = null;
+    return override;
+  };
 
-  // Fallback: no transition spawned a session - resume or spawn fresh
-  console.log(`[spawnAgent] No session after transitions, spawning ${targetAgent} for task ${task.id.slice(0, 8)}`);
+  /**
+   * The row whose message the spawn took as its own opening prompt, so
+   * `deliverToAgent` does not then type it at the agent a second time.
+   */
+  let promptTakenFromRow: string | null = null;
 
-  // Resolve resume eligibility scoped to the DESTINATION session (agent type +
-  // isolated swimlane), mirroring executeSpawnAgent's resolveSpawnIntent. A
-  // task-level check (getLatestForTask) would treat a suspended MAIN session as
-  // "resumable" when entering an isolated column, which would mis-route the
-  // auto_command and drop it; scoping by isolation keeps this decision in
-  // lockstep with the actual spawn.
-  const destinationIsolatedSwimlaneId = resolveIsolatedSwimlaneId(toLane);
-  const destinationAdapter = agentRegistry.get(targetAgent);
-  const destinationResumeRecord = destinationAdapter
-    ? sessionRepo.getLatestForTaskByTypeAndIsolation(task.id, destinationAdapter.sessionType, destinationIsolatedSwimlaneId)
-    : undefined;
-  const canResumeDestination = isResumeEligible(destinationResumeRecord);
+  /**
+   * The column the task came FROM, for `{{fromColumn}}` and a webhook payload.
+   * A drag move already carries it as the settings-source lane; every other
+   * entry point (create, promote, MCP create, unarchive) passes the `'*'`
+   * wildcard, which means there is no specific source to name.
+   */
+  const resolveFromColumn = (): Swimlane | null => {
+    if (options.settingsSourceLane) return options.settingsSourceLane;
+    if (fromSwimlaneId === '*') return null;
+    try {
+      return getProjectRepos(context, options.projectId).swimlanes.getById(fromSwimlaneId) ?? null;
+    } catch {
+      // No project open. A template variable resolving empty is the right
+      // degradation here; refusing to run the automations would not be.
+      return null;
+    }
+  };
 
-  // Auto_command delivery. The command is handed to the spawn as the INITIAL
-  // PROMPT (runs immediately, no keystroke timing) whenever the session has no
-  // task prompt of its own to run:
-  //   - resume: --resume carries it as the next message;
-  //   - fresh + skipPromptTemplate: a promptless fresh spawn (e.g. an isolated
-  //     review column, which omits the "do this task" prompt). Without this the
-  //     CLI sits idle at an empty prompt, never emits a 'thinking' event, and
-  //     the keystroke scheduler waits out its full 30s fallback before the
-  //     command appears - which reads as "the auto_command never ran".
-  // Only a fresh spawn that DOES get a task template needs the post-spawn
-  // keystroke, because the task description owns the prompt slot.
-  // suppressAutoCommand (recovery move out of Done) zeroes out the command so
-  // everything downstream degrades naturally: deliverAutoCommandAsPrompt becomes
-  // false, resumePrompt falls back to the (Done-out: absent) continuationPrompt
-  // so the resume is promptless, and the post-spawn keystroke is skipped. A
-  // fresh-spawn outcome also sits idle because skipPromptTemplate is already
-  // true for any non-To-Do source.
-  const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, toLane.auto_command);
-  const interpolatedAutoCommand = !options.suppressAutoCommand && effectiveAutoCommand?.trim()
-    ? interpolateTaskTemplate(effectiveAutoCommand, resolveAutoCommandVars(currentTask))
-    : undefined;
-  const deliverAutoCommandAsPrompt = interpolatedAutoCommand !== undefined
-    && (canResumeDestination || skipPromptTemplate === true);
-  // The continuation prompt (plan-exit auto-move) is a resume-only fallback:
-  // the auto_command is the user's explicit per-column automation and wins,
-  // and a fresh spawn has no prior conversation for "proceed" to refer to.
-  // Known limitation: a user-configured spawn_agent transition action spawns
-  // before this fallback runs, so the continuation is dropped there.
-  const resumePrompt = deliverAutoCommandAsPrompt
-    ? interpolatedAutoCommand
-    : (canResumeDestination ? options.continuationPrompt : undefined);
+  const startAgent = async (pendingPrompt?: string): Promise<void> => {
+    const beforeSpawn = tasks.getById(task.id);
+    if (!beforeSpawn || beforeSpawn.session_id) return;
 
-  try {
-    // Always pass targetAgent so the column's agent_override is respected.
-    // Without this, first-time spawns (task.agent=null, isHandoff=false)
-    // would fall through to the project default or 'claude' hardcoded fallback.
-    await engine.resumeSuspendedSession(
-      currentTask, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal,
-      targetAgent,
-      undefined,
-      resolveSpawnOverrides(currentTask, toLane, project),
-    );
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    console.error('[spawnAgent] Failed to start session:', error);
-    // This used to be the deepest silent failure on the board path: nothing
-    // reached the user, so only the failure-rate signal was kept. It now
-    // notifies as well, which closes the #538 symptom for the spawn step (see
-    // notifySpawnBlocked). The counter stays unconditional; the Sentry report
-    // self-excludes for a user-configuration error such as a missing CLI (see
-    // reportHandledError), so a misconfigured machine is counted and surfaced
-    // without becoming an un-actionable issue.
-    //
-    // Both legs land here. A spawn_agent transition ACTION that throws is
-    // swallowed above and creates no session, so the `session_id` early return
-    // does not fire and this fallback runs - which is why that catch needs no
-    // counter of its own.
-    //
-    // The "same error" guarantee holds only for a CLI-DETECTION failure, which
-    // is deterministic and runs first: the fallback re-runs the same detect and
-    // re-throws the same AgentCliNotFoundError. An action that fails AFTER
-    // detection (a PTY spawn error, say) is retried from scratch by the
-    // fallback, so it may fail differently or even succeed - meaning the
-    // message the user sees describes the RETRY's outcome, not necessarily the
-    // original action's failure.
-    trackEvent('spawn_failed', { agent: targetAgent, reason: 'resume' });
-    reportHandledError(error, { source: 'spawn', reason: 'resume', agent: targetAgent });
-    notifySpawnBlocked(context, currentTask, 'agent', error, options.projectId);
-    return;
-  }
+    console.log(`[spawnAgent] Starting ${targetAgent} for task ${task.id.slice(0, 8)}`);
 
-  currentTask = tasks.getById(task.id);
+    // Resume eligibility scoped to the DESTINATION session (agent type +
+    // isolated swimlane), mirroring executeSpawnAgent's resolveSpawnIntent. A
+    // task-level check (getLatestForTask) would treat a suspended MAIN session
+    // as resumable when entering an isolated column, which would mis-route the
+    // message and drop it.
+    const destinationIsolatedSwimlaneId = resolveIsolatedSwimlaneId(toLane);
+    const destinationAdapter = agentRegistry.get(targetAgent);
+    const destinationResumeRecord = destinationAdapter
+      ? sessionRepo.getLatestForTaskByTypeAndIsolation(task.id, destinationAdapter.sessionType, destinationIsolatedSwimlaneId)
+      : undefined;
+    const canResumeDestination = isResumeEligible(destinationResumeRecord);
 
-  if (currentTask?.session_id && interpolatedAutoCommand !== undefined && !deliverAutoCommandAsPrompt) {
+    // A message takes the spawn's INITIAL PROMPT slot whenever the session has
+    // no task prompt of its own to run: a resume carries it as the next
+    // message, and a promptless fresh spawn (an isolated review column) would
+    // otherwise sit at an empty prompt, emit no 'thinking' event, and make the
+    // keystroke scheduler wait out its full 30s fallback before the message
+    // appears. That reads as "the automation never ran".
+    const message = takeMessage(pendingPrompt ?? '');
+    const takesPromptSlot = message !== '' && (canResumeDestination || skipPromptTemplate === true);
+    if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt;
+
+    // The continuation prompt (plan-exit auto-move) is a resume-only fallback:
+    // the column's message is the user's explicit automation and wins, and a
+    // fresh spawn has no prior conversation for "proceed" to refer to.
+    const resumePrompt = takesPromptSlot
+      ? message
+      : (canResumeDestination ? options.continuationPrompt : undefined);
+
+    try {
+      // Always pass targetAgent so the column's agent_override is respected.
+      // Without it a first-time spawn would fall through to the project default.
+      await engine.resumeSuspendedSession(
+        beforeSpawn, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal,
+        targetAgent,
+        undefined,
+        resolveSpawnOverrides(beforeSpawn, toLane, project),
+      );
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      // This used to be the deepest silent failure on the board path. The
+      // counter stays unconditional; the Sentry report self-excludes for a user
+      // configuration error such as a missing CLI, so a misconfigured machine is
+      // counted and surfaced without becoming an un-actionable issue.
+      console.error('[spawnAgent] Failed to start session:', error);
+      trackEvent('spawn_failed', { agent: targetAgent, reason: 'resume' });
+      reportHandledError(error, { source: 'spawn', reason: 'resume', agent: targetAgent });
+      notifySpawnBlocked(context, beforeSpawn, 'agent', error, options.projectId);
+      // Rethrown, unlike the old fallback which returned: the runner records
+      // the row that asked for the agent as skipped with this reason, so a
+      // failed spawn is visible per automation rather than only in the log.
+      throw error;
+    }
+  };
+
+  const deliverToAgent = async (message: string, mode: AutoCommandMode): Promise<void> => {
+    // A recovery move (out of Done) suppresses the column's messages, so
+    // everything downstream degrades naturally rather than re-running work.
+    if (options.suppressAutoCommand) return;
+    if (promptTakenFromRow !== null && promptTakenFromRow === message) {
+      promptTakenFromRow = null;
+      return;
+    }
+
+    const effective = takeMessage(message);
+    if (!effective) return;
+
+    const currentTask = tasks.getById(task.id);
+    if (!currentTask?.session_id) return;
+
     context.terminalSubmitScheduler.scheduleKeystrokes(
       currentTask.id,
       currentTask.session_id,
-      [{ text: interpolatedAutoCommand, verify: 'submitted' }],
+      [{ text: effective, verify: 'submitted' }],
       {
         freshlySpawned: true,
         verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-        mode: toLane?.auto_command_mode ?? 'immediate',
+        mode,
         onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
       },
     );
+  };
+
+  try {
+    const enterSummary = await engine.executeTransition(task, toLane, 'enter', {
+      // A caller with no signal (create, promote, MCP create) cannot be
+      // superseded, so a controller that never aborts keeps the runner's
+      // contract without making the parameter optional there.
+      signal: signal ?? new AbortController().signal,
+      startAgent,
+      // The runner records the skip. `deliverToAgent`'s own early return would
+      // leave `send_message` reporting "Delivered" for a message nobody got.
+      suppressAgentMessages: options.suppressAutoCommand,
+      deliverToAgent,
+      legacySpawnAgent: (legacyConfig) => engine.runLegacySpawnAgent(
+        legacyConfig, task, toLane.permission_mode, signal, targetAgent,
+        resolveSpawnOverrides(task, toLane, project),
+      ),
+      showNotification: (input) => showDesktopNotification(context, input),
+      onProgress: createProgressCallback(context.mainWindow, task.id),
+      fromColumn: resolveFromColumn(),
+      toColumn: toLane,
+    });
+    // The runner recorded every row; this is the other sink, the one that
+    // interrupts, and it is rationed per automation per minute.
+    reportAutomationFailures(context, enterSummary, task, options.projectId);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    // The runner isolates each row, so reaching here means the LIST itself
+    // could not run (a repository read failed). The fallback below still tries
+    // to start the agent, which is the behavior a column with no automations
+    // would have had anyway.
+    console.error('[spawnAgent] Automations failed:', error);
+  }
+
+  // Nothing in the list started the agent, so the column's own "Start an agent
+  // here" setting does. An automation that started one already returned above.
+  const afterAutomations = tasks.getById(task.id);
+  if (!afterAutomations || afterAutomations.session_id) return;
+
+  try {
+    await startAgent();
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    // startAgent has already logged, counted, and notified.
   }
   };
 
@@ -538,11 +627,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
  * until the CLI comes alive, by which point it is. Building eagerly against
  * the id would give up on the exact path that most needed the check.
  */
-function resolveInjectionVerifier(
-  agentName: string,
+export function resolveInjectionVerifier(
+  agentName: string | null,
   sessionRepo: SessionRepository,
   taskId: string,
 ): CommandVerifier | null {
+  // A task that never spawned records no agent, so there is nothing to resolve
+  // and nothing to verify against. The exit-automation caller can reach that.
+  if (!agentName) return null;
   const adapter = agentRegistry.get(agentName);
   if (!adapter) return null;
   return buildCommandInjectionVerifier(adapter, sessionRepo, taskId);
@@ -581,7 +673,7 @@ export async function autoSpawnForTask(
       const projectPath = project?.path ?? null;
       if (!projectPath) return;
 
-      const { tasks, actions, attachments } = getProjectRepos(context, projectId);
+      const { tasks, automations, automationRuns, attachments } = getProjectRepos(context, projectId);
       const fullTask = tasks.getById(task.id);
       if (!fullTask) return;
 
@@ -642,7 +734,7 @@ export async function autoSpawnForTask(
         }
 
         const sessionRepo = new SessionRepository(db);
-        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+        const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
 
         await spawnAgent({ context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
 

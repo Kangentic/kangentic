@@ -21,8 +21,6 @@ const PROFILE_ENTRY_SCHEMA = z.object({
   modelOverride: z.string().max(200).nullable().optional().describe('Model to run this column with (e.g. "opus", "claude-opus-5").'),
   effortOverride: z.string().max(50).nullable().optional().describe('Effort/reasoning level for this column (e.g. "xhigh", "high"). Valid values are agent-specific.'),
   permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for this column.'),
-  autoCommand: z.string().max(4000).nullable().optional().describe('Slash command run when the agent spawns in this column (e.g. "/code-review").'),
-  autoCommandMode: z.enum(['immediate', 'deferred']).nullable().optional().describe('When that command reaches the agent: "immediate" interrupts a turn in progress, "deferred" waits for the current turn to finish.'),
   autoSpawn: z.boolean().nullable().optional().describe('Whether moving a task into this column spawns an agent.'),
   handoffContext: z.boolean().nullable().optional().describe('Whether this column hands the previous session\'s context to the new agent.'),
   sessionTarget: z.enum(['main', 'isolated']).nullable().optional().describe('Whether this column reuses the task\'s main session or gets its own isolated one.'),
@@ -34,7 +32,9 @@ const COLUMNS_DESCRIPTION =
   'Per-column settings, keyed by COLUMN NAME (e.g. {"Planning": {"modelOverride": "opus", "effortOverride": "xhigh"}}). '
   + 'Use kangentic_list_columns for valid names. Sparse by design: list only the columns this profile changes. '
   + 'An unknown column name fails the whole call rather than being silently dropped. '
-  + 'To Do and Done columns never spawn agents, so entries for them have no effect.';
+  + 'To Do and Done columns never spawn agents, so entries for them have no effect. '
+  + 'A column\'s message to its agent is NOT here: it is a send_message automation, and automations '
+  + 'are shared by every profile. Use kangentic_set_automations for it.';
 
 /**
  * Register the Board Profile tools.

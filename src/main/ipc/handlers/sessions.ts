@@ -141,7 +141,7 @@ export function registerSessionHandlers(context: IpcContext): void {
       const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
-      const { tasks, actions, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+      const { tasks, automations, automationRuns, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
 
       try {
         // Phase 1 (locked, short): validate task + lane, build plan.
@@ -225,7 +225,7 @@ export function registerSessionHandlers(context: IpcContext): void {
           const db = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(db);
           const engine = createTransitionEngine(
-            context, actions, tasks, sessionRepo, attachmentRepo,
+            context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
             resolvedProjectId, resolvedProjectPath,
           );
 

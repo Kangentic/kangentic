@@ -160,8 +160,8 @@ there is no background reclaim.
 | is_archived | INTEGER | NOT NULL | 0 |
 | permission_mode | TEXT | | NULL |
 | auto_spawn | INTEGER | NOT NULL | 1 |
-| auto_command | TEXT | | NULL |
-| auto_command_mode | TEXT | NOT NULL | 'immediate' |
+| auto_command | TEXT | | NULL (retired) |
+| auto_command_mode | TEXT | NOT NULL | 'immediate' (retired) |
 | plan_exit_target_id | TEXT | | NULL |
 | is_ghost | INTEGER | NOT NULL | 0 |
 | agent_override | TEXT | | NULL |
@@ -179,6 +179,12 @@ value is never trusted on the way in or out: `applyBoardConfigToDb` normalizes a
 `kangentic.json`, `SwimlaneRepository.mapRow` narrows on read via `normalizeSwimlaneRole`, and an
 unconditional migration clears any stray value already on disk (migration 59). `role` is write-once
 at create and is deliberately absent from `SwimlaneUpdateInput`.
+
+`auto_command` and `auto_command_mode` are RETIRED. The column's message to its agent is a
+`send_message` row in `column_automations` now; the automations migration moved every non-empty
+value into one, nulled the first field and reset the second, and nothing reads either any more.
+They are left in place so an older build can still open the database. The per-TASK `auto_command`
+on `tasks` is unaffected and still MCP-only.
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `docs/session-lifecycle.md` "Isolated Sessions"):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.
@@ -283,19 +289,121 @@ lock never fires for it. `auto_command` is deliberately **not** in the exclusivi
 it is an MCP-only escape hatch, so a task may carry both a profile and its own auto-command, and it
 never implies override mode.
 
-### actions table
+### schema_meta table
+
+Key/value flags for data migrations that cannot answer "have I run" from the data itself.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| key | TEXT | PRIMARY KEY | |
+| value | TEXT | NOT NULL | |
+
+One key so far, written by the automations migration. That migration is one-way and deliberately
+leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
+presence of converted rows proves nothing: a board could legitimately have automations and no
+transitions, or both.
+
+Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
+mark) rather than migration bookkeeping.
+
+### column_automations table
+
+What a column does when a task enters or leaves it. Replaces the `actions` + `swimlane_transitions`
+pair, which modelled a shared action referenced by N transitions; an automation belongs to exactly
+one column.
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
 | id | TEXT | PRIMARY KEY | |
+| swimlane_id | TEXT | NOT NULL, FK->swimlanes ON DELETE CASCADE | |
 | name | TEXT | NOT NULL | |
 | type | TEXT | NOT NULL | |
-| config_json | TEXT | NOT NULL | '{}' |
+| trigger | TEXT | NOT NULL | 'enter' |
+| position | INTEGER | NOT NULL | |
+| enabled | INTEGER | NOT NULL | 1 |
+| config_json | TEXT | NOT NULL | |
 | created_at | TEXT | NOT NULL | |
+| updated_at | TEXT | NOT NULL | |
 
-Valid types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`.
+Valid types: `send_message`, `run_script`, `webhook`, `notify`, plus legacy `spawn_agent` on boards
+that already had one. `trigger` is `enter` or `exit`. It is TEXT rather than a boolean `on_exit`
+deliberately, so a third trigger (an agent going idle, a PR merging) is a new value rather than a
+migration.
 
-### swimlane_transitions table
+`position` is assigned PER TRIGGER, so each group numbers from 0 independently and the two can
+never interleave.
+
+The foreign key is genuine and enforced (`database.ts` sets `foreign_keys = ON`). The one on
+`swimlane_transitions.from_swimlane_id` had to be dropped for its `'*'` wildcard; this table has no
+wildcard. `SwimlaneRepository.delete` also cascades explicitly, rather than relying on a pragma
+being set.
+
+Indices:
+
+- `idx_column_automations_lookup` on (swimlane_id, trigger, position) - the read the engine does on
+  every move.
+- `idx_column_automations_name` UNIQUE on (swimlane_id, name COLLATE NOCASE) - what makes per-column
+  name uniqueness TRUE rather than merely validated in the editor, so a hand-edited `kangentic.json`
+  or an MCP write cannot break it. `COLLATE NOCASE` folds ASCII only while the editor's
+  `toLowerCase()` folds Unicode, so the editor rejects a superset, which is the safe direction. The
+  migration dedupes names BEFORE creating this index, or it fails.
+
+### automation_runs table
+
+One row per execution, written `running` before the attempt and closed on every exit path. This is
+the durable record; the failure toast is the rationed interruption, following
+`auto-command-outcome.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| automation_id | TEXT | NOT NULL | |
+| automation_name | TEXT | NOT NULL | |
+| type | TEXT | NOT NULL | |
+| task_id | TEXT | NOT NULL, FK->tasks ON DELETE CASCADE | |
+| swimlane_id | TEXT | NOT NULL | |
+| trigger | TEXT | NOT NULL | |
+| status | TEXT | NOT NULL | |
+| detail | TEXT | | |
+| attempts | INTEGER | NOT NULL | 0 |
+| started_at | TEXT | NOT NULL | |
+| finished_at | TEXT | | |
+
+`status` is `running`, `succeeded`, `failed`, `skipped`, or `interrupted`. `detail` carries the skip
+reason, the error, or a one-line success (`HTTP 204`, `exit 0`).
+
+`automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
+a run log that empties itself when you rename or delete the automation is not a log.
+
+Two indices, one per question the log is asked:
+
+| Index | Columns | Serves |
+|-------|---------|--------|
+| `idx_automation_runs_task` | (task_id, started_at DESC) | A task's own run history, newest first (`automation:runsForTask`) |
+| `idx_automation_runs_automation` | (automation_id, started_at DESC) | The newest run per automation, for the Column Manager row's last-run line (`automation:latestRuns`) |
+
+**Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
+`markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
+`pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table. The
+sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
+`running` row at boot is a known orphan, and without this "these always run" is false on every
+restart.
+
+`startedBefore` is the process start time, and it is load-bearing rather than defensive. The sweep
+runs on a COLD project open, which includes the boot-time activation of every OTHER project five
+seconds in, and inside one project's activation block the sweep is fired without awaiting while that
+same project's auto-spawn runs. An unbounded sweep would stamp a genuinely in-flight enter
+automation as `interrupted` and raise a toast saying it did not finish.
+
+Nothing is retried automatically, ever. A fired webhook and a half-run script are not safe to repeat
+blind, so the user gets Run again on the row instead.
+
+### actions table (retired)
+
+Kept in the schema so an older build can still open the database, and never read after the
+automations migration. Was: `id`, `name`, `type`, `config_json`, `created_at`.
+
+### swimlane_transitions table (retired)
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -308,6 +416,10 @@ Valid types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `creat
 Note: `from_swimlane_id` has no foreign key constraint. This allows a wildcard value (`*`) as the source, meaning the transition fires regardless of which column the task came from.
 
 Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
+
+Retired with `actions`, and for the same reason: it is left in place only so an older build can
+open the database. Every row was converted to a `column_automations` row on the `to` column by the
+automations migration, and nothing reads either table now.
 
 ### sessions table
 
@@ -678,7 +790,7 @@ Persistent cache of remote board items for the Import dialog, keyed by `(externa
 
 ## Migration Strategy
 
-Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane and action seeding lives in `src/main/db/migrations/default-data.ts`. The strategy uses three approaches depending on the change:
+Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane seeding lives in `src/main/db/migrations/default-data.ts`; nothing seeds actions, transitions or automations any more. The strategy uses three approaches depending on the change:
 
 - **Initial schema** uses `CREATE TABLE IF NOT EXISTS` so first-run and re-runs are idempotent.
 - **Incremental changes** use `ALTER TABLE ADD COLUMN` with existence checks via `PRAGMA table_info()` to avoid errors on already-migrated databases.
@@ -760,6 +872,8 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 64. **`turn_spawn_links`** - adds the table that makes `parent_tool_use_id` resolvable, mapping a subagent-spawning tool call's id to the turn that emitted it, plus `idx_turn_spawn_links_turn` on `(turn_uuid)` for the reverse direction. Migration 63 stored the child's half of that link and nothing stored the parent's: `conversation_turn_usage.turn_uuid` is the transcript record's own uuid for a main-thread row and `sub:<subagentId>:<messageId>` for a subagent one, and neither is a tool-use id, so the column named a key no row carried. No backfill: links accrue as sessions are indexed, and a task with none reports its fan-outs under a null driver rather than losing them. One idempotent `CREATE TABLE IF NOT EXISTS` plus one idempotent `CREATE INDEX IF NOT EXISTS`.
 65. **`remote_item_cache` table** - creates the persistent cache of remote board items for the Import dialog, keyed by `(external_source, repository, external_id)`. The dialog paints it instantly on open (`backlog:importGetCached`, no network) and reconciles only items changed since `MAX(remote_updated_at)` (`backlog:importReconcile`), so browsing a large tracker no longer re-fetches everything and no longer spawns one `az rest` per Azure DevOps work item just to render the list. `state_category` is the normalized `'open' | 'closed'` bucket, kept for a future SQL-level filter; the copy the dialog actually reads is `stateCategory` inside `payload`, which also carries `alreadyImported` forced false (re-stamped from the live backlog on read) and has Azure DevOps comments deferred to import time. See the `remote_item_cache table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
 
+63. **`column_automations` and `automation_runs` tables, and the actions-to-automations data migration** - creates both tables and their four indices (see the table sections above), then converts what the old `actions` + `swimlane_transitions` pair held. Every transition row becomes a `column_automations` row on its `to` column, in `(from, to, execution_order)` order, with the action's name, type and config copied; an action referenced N times becomes N independent automations, because an automation belongs to exactly one column. Names are made unique per column BEFORE the unique index is created, or its creation fails. Three types are DROPPED rather than ported, rows and all: `kill_session` (at Priority 4 the task has no active session, so the seeded `* -> Planning` row did nothing), `create_worktree` (duplicates the move path's `ensureTaskWorktree`) and `cleanup_worktree` (duplicates what a To Do move does). The seeded "Start Planning Agent" is skipped too, since its prompt equals `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which the fallback spawn already uses; a `spawn_agent` row with any OTHER prompt IS copied, as the one legacy automation. Every swimlane with a non-empty `auto_command` gains a `send_message` enter row carrying the message and its mode, and both swimlane fields are then cleared. `workingDir` is dropped from `run_script` configs. Idempotent via a `schema_meta` flag, so a second run is a no-op; `tests/unit/automations-migration.test.ts` pins each of those cases.
+
 ### Key Migrations (Global DB)
 
 Listed in execution order (idempotent, gated on `IF NOT EXISTS` / `pragma table_info`):
@@ -833,21 +947,38 @@ Operates on a per-project DB.
 | `reorder(ids)` | Set positions from ordered array. Enforces constraints: todo must be position 0, custom columns (role=null) cannot be position 0. |
 | `delete(id)` | Delete a custom column. System columns (`todo`, `done`) cannot be deleted. Columns with tasks cannot be deleted. Also cleans up related transitions and dangling `plan_exit_target_id` references. |
 
-### ActionRepository
+### AutomationRepository
+
+Operates on a per-project DB. Replaces `ActionRepository`, which was deleted with its handlers.
+
+| Method | Description |
+|--------|-------------|
+| `listAll()` | Every column's automations, which is what the renderer store holds |
+| `listForColumn(columnId)` | One column's rows, both groups, ordered by trigger then position |
+| `getForTrigger(columnId, trigger)` | That trigger's ENABLED rows in run order. The read the engine does on a move. |
+| `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the two groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
+| `deleteForColumn(columnId)` | Drop a column's rows. `SwimlaneRepository.delete` calls it explicitly, even though the foreign key cascades too. |
+
+### AutomationRunRepository
 
 Operates on a per-project DB.
 
 | Method | Description |
 |--------|-------------|
-| `list()` | All actions ordered by name ASC |
-| `getById(id)` | Single action by ID |
-| `create(input)` | Insert a new action |
-| `update(input)` | Partial update -- only provided fields are changed |
-| `delete(id)` | Delete action and all associated transitions |
-| `listTransitions()` | All transitions ordered by from_swimlane_id, to_swimlane_id, execution_order |
-| `getTransitionsFor(fromId, toId)` | Get transitions for a specific move. Exact source match takes priority; falls back to wildcard `*` source if no exact match exists. |
-| `getAgentSwimlaneIds()` | Returns the set of swimlane IDs that have `spawn_agent` transitions targeting them |
-| `setTransitions(fromId, toId, actionIds)` | Replace all transitions for a given from/to pair. Deletes existing, inserts new with execution_order from array index. |
+| `start(run)` | Write the `running` row before the attempt |
+| `finish(id, status, detail, attempts)` | Close it on every exit path |
+| `recordSkipped(run, reason)` | Write a row that opens and closes at once. A skip never ran, so it has no window to be interrupted in. |
+| `listForTask(taskId, limit)` | Everything that ran for one card, newest first |
+| `listForAutomation(automationId, limit)` | Every run of one automation, newest first |
+| `latestByAutomation()` | Newest run per automation, which is what the Column Manager's last-run line reads. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
+| `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
+| `pruneTo(limit)` | Keep the newest N rows. Nothing else bounds the table. |
+
+### ActionRepository (deleted)
+
+Was the reader for `actions` and `swimlane_transitions`. Deleted with the `ACTION_*` and
+`TRANSITION_*` IPC channels, which had zero renderer callers; `AUTOMATION_LIST` and
+`AUTOMATION_REPLACE_FOR_COLUMN` took their place.
 
 ### SessionRepository
 
@@ -1010,17 +1141,16 @@ the flag back on for the `done` role on every board-config apply. Anything that 
 have explicit done-column handling. See
 [mcp-server.md](mcp-server.md#kangentic_list_columns).
 
-No lane is seeded with a `description` or an `auto_command`: both are left empty for the user
-to fill in (a `description` round-trips into the project's committed `kangentic.json`, so a
-prefilled one would land in every user's repo). The seed is bound to the UI tier's mock copy by
+No lane is seeded with a `description`: it is left empty for the user to fill in, because a
+`description` round-trips into the project's committed `kangentic.json` and a prefilled one would
+land in every user's repo. The seed is bound to the UI tier's mock copy by
 `tests/unit/default-swimlanes-seed-parity.test.ts`.
 
-Two default actions are created:
+**No automations are seeded either, and no actions or transitions.** A fresh board starts with an
+empty automations list on every column, which is also how the old seed behaved: each of the three
+rows it created was a no-op or a duplicate of the move path. Kill Session found no active session
+at Priority 4, and Start Planning Agent carried exactly the prompt template the fallback spawn
+already uses. `seedActionsAndTransitions` and `seedDefaultActions` are gone with them.
 
-- **Start Planning Agent** (`spawn_agent`) -- wired to transitions into the Planning column.
-- **Kill Session** (`kill_session`) -- wired to transitions into the Done column.
-
-Default transitions:
-
-- **`* → Planning`** -- Kill Session (execution_order 0), Start Planning Agent (execution_order 1)
-- **`* → Done`** -- Kill Session (execution_order 0)
+Planning still opens its agent in plan mode. That comes from the column's own `permission_mode`,
+not from a seeded row.

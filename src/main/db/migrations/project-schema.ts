@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import { seedDefaultSwimlanes, seedDefaultActions } from './default-data';
+import { seedDefaultSwimlanes } from './default-data';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
+import { runAutomationsMigration } from './automations-migration';
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { SWIMLANE_ROLES } from '../../../shared/types';
 
@@ -1447,9 +1448,86 @@ export function runProjectMigrations(db: Database.Database): void {
     seedDefaultSwimlanes(db);
   }
 
-  // For existing projects: seed default actions if the actions table is empty
-  const actionCount = db.prepare('SELECT COUNT(*) as c FROM actions').get() as { c: number };
-  if (actionCount.c === 0 && laneCount.c > 0) {
-    seedDefaultActions(db);
-  }
+  // Nothing seeds actions or transitions any more. Every seeded row was either
+  // a no-op (`* -> Planning: Kill Session` suspends a session the task does not
+  // have at Priority 4) or a duplicate of the fallback spawn (`Start Planning
+  // Agent` carries the very template the fallback uses). A fresh board now
+  // starts with no automations at all, which is also what it behaved like.
+
+  // === Column automations ===
+  //
+  // A key/value table for data-migration flags. The automations migration is
+  // one-way and leaves its source rows in place for an older build to read, so
+  // "have I run" cannot be answered from the data itself.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
+  // A real foreign key with a cascade, unlike `swimlane_transitions`, whose FK
+  // on `from_swimlane_id` had to be dropped to allow the `'*'` wildcard source.
+  // An automation belongs to exactly one column and there is no wildcard, so
+  // the constraint is genuine (and `foreign_keys = ON` is set in database.ts).
+  // The repository cascades too, explicitly, rather than resting on a pragma.
+  //
+  // `config_json` is a blob rather than a column per field on purpose: a type
+  // declares its own fields in AUTOMATION_MANIFEST, so a typed column would
+  // fight the registry and turn every new type into a migration.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS column_automations (
+      id TEXT PRIMARY KEY,
+      swimlane_id TEXT NOT NULL REFERENCES swimlanes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      trigger TEXT NOT NULL DEFAULT 'enter',
+      position INTEGER NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_column_automations_lookup ON column_automations(swimlane_id, trigger, position)',
+  );
+
+  // The durable record of every execution. `automation_name` and `type` are
+  // denormalized and there is deliberately NO foreign key to
+  // `column_automations`: a run log that empties itself when you rename or
+  // delete the automation is not a log.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id TEXT PRIMARY KEY,
+      automation_id TEXT NOT NULL,
+      automation_name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      swimlane_id TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      status TEXT NOT NULL,
+      detail TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL,
+      finished_at TEXT
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_automation_runs_task ON automation_runs(task_id, started_at DESC)');
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_automation_runs_automation ON automation_runs(automation_id, started_at DESC)',
+  );
+
+  // Runs BEFORE the unique name index below, because it is what makes names
+  // unique per column in the first place: a board with two actions of the same
+  // name on one destination would fail the index outright.
+  runAutomationsMigration(db);
+
+  // NOCASE folds ASCII only, while the dialog's own check folds with
+  // JavaScript's `toLowerCase`, so the dialog rejects a superset of what this
+  // rejects. That is the safe direction: the index can never refuse a name the
+  // UI accepted.
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_column_automations_name ON column_automations(swimlane_id, name COLLATE NOCASE)',
+  );
 }

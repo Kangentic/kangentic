@@ -796,6 +796,179 @@ export interface SwimlaneTransition {
   execution_order: number;
 }
 
+// === Column Automations ===
+
+/**
+ * An automation type id. Each one is an adapter under `src/main/automations/`,
+ * declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`).
+ *
+ * `spawn_agent` is the ONE legacy id: it is never offered for a new automation,
+ * but a migrated row carrying a custom `promptTemplate` still runs, because a
+ * custom prompt has no other home. The three other retired action types
+ * (`kill_session`, `create_worktree`, `cleanup_worktree`) are not here at all -
+ * each was a no-op or a duplicate of the move path, so the migration drops
+ * their rows rather than keeping an adapter alive for them.
+ */
+export type AutomationType =
+  | 'send_message'
+  | 'run_script'
+  | 'webhook'
+  | 'notify'
+  | 'spawn_agent';
+
+/**
+ * When an automation runs, relative to the column that owns it. There is
+ * deliberately no 'both': every both-ends workflow needs different settings per
+ * direction, so it is two automations, and without it a column's two group
+ * counts always sum to its total.
+ */
+export type AutomationTrigger = 'enter' | 'exit';
+
+/**
+ * An automation's per-type payload. Keys are declared by the adapter's manifest
+ * `fields`; anything the chosen type does not declare is dropped on save. Keys
+ * may be shared across types on purpose (`body` is both the webhook payload and
+ * the notification text), so switching a draft's type and back keeps what was
+ * typed.
+ */
+export interface AutomationConfig {
+  // send_message
+  message?: string;
+  mode?: AutoCommandMode;
+  /** Legacy `send_command` key, read on migration as the message. Never written. */
+  command?: string;
+
+  // run_script
+  script?: string;
+  /** Per-automation budget. Exit rows are additionally capped by the group cap. */
+  timeoutMinutes?: number;
+  /** Legacy key. A script now always runs task-relative; ignored and dropped on save. */
+  workingDir?: 'worktree' | 'project';
+
+  // webhook
+  url?: string;
+  method?: 'GET' | 'POST' | 'PUT';
+  headers?: Record<string, string>;
+
+  // notify
+  title?: string;
+
+  /** webhook payload, and the notification's body. */
+  body?: string;
+
+  // legacy spawn_agent
+  agent?: string;
+  promptTemplate?: string;
+  nonInteractive?: boolean;
+}
+
+/** One automation on one column. An automation belongs to exactly one column. */
+export interface ColumnAutomation {
+  id: string;
+  swimlane_id: string;
+  name: string;
+  type: AutomationType;
+  trigger: AutomationTrigger;
+  /** 0..n WITHIN (swimlane_id, trigger), so the two groups never interleave. */
+  position: number;
+  enabled: boolean;
+  config: AutomationConfig;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the renderer sends when saving a column's list. `id` is kept when supplied. */
+export interface AutomationWriteInput {
+  id?: string;
+  name: string;
+  type: AutomationType;
+  trigger: AutomationTrigger;
+  enabled: boolean;
+  config: AutomationConfig;
+}
+
+/**
+ * The rationed interruption when an automation fails or is interrupted.
+ *
+ * Mirrors `auto-command-outcome.ts`: the DB row is the durable record and this
+ * push is the interruption, so nothing is sent on success and a failure is
+ * cooled down per project. Carries what a toast needs to name the thing and
+ * offer to run it again.
+ */
+export interface AutomationRunFailure {
+  runId: string;
+  automationId: string;
+  automationName: string;
+  columnName: string;
+  taskId: string;
+  taskTitle: string;
+  projectId: string;
+  status: 'failed' | 'interrupted';
+  detail: string | null;
+}
+
+/**
+ * Terminal state of one automation execution.
+ *
+ * `interrupted` is not a failure the automation caused: the shutdown path is
+ * synchronous by rule (`.claude/rules/synchronous-shutdown.md`), so an in-flight
+ * run cannot be drained on quit. A row left `running` is a known orphan, and the
+ * project-open sweep marks it interrupted so "did this run" always has an answer.
+ */
+export type AutomationRunStatus = 'running' | 'succeeded' | 'failed' | 'skipped' | 'interrupted';
+
+/**
+ * The durable record of one execution. `automation_name` and `type` are
+ * DENORMALIZED and there is no foreign key to `column_automations` on purpose:
+ * a run log that empties itself when you rename or delete the automation is not
+ * a log.
+ */
+export interface AutomationRun {
+  id: string;
+  automation_id: string;
+  automation_name: string;
+  type: AutomationType;
+  task_id: string;
+  swimlane_id: string;
+  trigger: AutomationTrigger;
+  status: AutomationRunStatus;
+  /** The skip reason, the error, or a one-line success ("HTTP 204", "exit 0"). */
+  detail: string | null;
+  attempts: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/**
+ * What `IPC.AUTOMATION_RUN_AGAIN` answers.
+ *
+ * A discriminated result rather than a throw, because both callers report it to
+ * a person: the toast's Run again action and the MCP tool. `ok: false` means the
+ * run never started (a deleted automation, a closed project); a run that STARTED
+ * and failed is `ok: true` with `status: 'failed'`, because the run row exists
+ * and the detail is the automation's own.
+ */
+export type AutomationRunAgainResult =
+  | {
+      ok: true;
+      runId: string;
+      automationName: string;
+      columnName: string;
+      status: AutomationRunStatus;
+      detail: string | null;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Payload of `IPC.AUTOMATION_RUNS_INTERRUPTED`: the project-open sweep's count
+ * of runs a quit left mid-flight. One notice per project open, never one per
+ * row, and only when the count is above zero.
+ */
+export interface AutomationInterruptedSummary {
+  projectId: string;
+  count: number;
+}
+
 // === Session Management ===
 
 export type SessionStatus = 'running' | 'queued' | 'exited' | 'suspended';
@@ -4795,9 +4968,23 @@ export interface BoardColumnConfig {
   permissionMode?: PermissionMode | null;
   planExitTarget?: string; // name of target column
   archived?: boolean;
+  /**
+   * LEGACY. The column's message to its agent, before automations existed.
+   * Read on apply and converted into a `send_message` automation on the column's
+   * On enter group; never written any more. See `columns[].automations`.
+   */
   autoCommand?: string | null;
-  /** When the auto-command fires (see AutoCommandMode). Omitted means 'immediate'. */
+  /** LEGACY companion to `autoCommand`. Read on apply, never written. */
   autoCommandMode?: AutoCommandMode;
+  /**
+   * What happens when a task enters or leaves this column.
+   *
+   * Two named arrays rather than one list with an `on` key per row: it mirrors
+   * the two groups the UI shows, array order IS each row's `position` within
+   * its group, and adding an exit automation touches only the `onExit` array in
+   * a diff. An empty group is an absent key.
+   */
+  automations?: BoardColumnAutomations;
   agentOverride?: string | null;
   /** Adapter-specific model identifier passed at spawn time (e.g. Claude `--model`). Null inherits the agent default. */
   modelOverride?: string | null;
@@ -4808,6 +4995,29 @@ export interface BoardColumnConfig {
   sessionTarget?: SessionTarget;
   /** What to do with that track on entry (see SessionSpawnStrategy). Omitted = 'create_or_resume'. */
   sessionSpawnStrategy?: SessionSpawnStrategy;
+}
+
+/**
+ * One automation as it appears in `kangentic.json`.
+ *
+ * The type's own fields sit FLAT on the row rather than under a `with` object:
+ * `{ "name": "Ping", "type": "webhook", "url": "..." }` reads better in a file
+ * a team reviews in diffs than wrapping a single field. The price is that a
+ * field key could collide with a key the row shape owns, which is why
+ * `name`, `type` and `enabled` are reserved and
+ * `tests/unit/automation-manifest-reserved-keys.test.ts` fails an adapter that
+ * declares one of them.
+ */
+export type BoardAutomationConfig = {
+  name: string;
+  type: string;
+  /** Omitted means enabled. Only `false` is ever written. */
+  enabled?: boolean;
+} & Record<string, unknown>;
+
+export interface BoardColumnAutomations {
+  onEnter?: BoardAutomationConfig[];
+  onExit?: BoardAutomationConfig[];
 }
 
 export interface BoardActionConfig {
@@ -4904,8 +5114,13 @@ export interface BoardProfile {
 export interface BoardConfig {
   version: number;
   columns: BoardColumnConfig[];
-  actions: BoardActionConfig[];
-  transitions: BoardTransitionConfig[];
+  /**
+   * LEGACY, read-only. Named actions and `from -> to` transitions, from before
+   * automations belonged to a column. Still READ on apply so a file written by
+   * an older build converts; never written again.
+   */
+  actions?: BoardActionConfig[];
+  transitions?: BoardTransitionConfig[];
   shortcuts?: ShortcutConfig[];
   /**
    * Named alternate strategy ladders (see BoardProfile). Absent / empty means
@@ -5217,18 +5432,30 @@ export interface ElectronAPI {
   };
 
   // Actions
-  actions: {
-    list: () => Promise<Action[]>;
-    create: (input: ActionCreateInput) => Promise<Action>;
-    update: (input: ActionUpdateInput) => Promise<Action>;
-    delete: (id: string) => Promise<void>;
-  };
-
-  // Transitions
-  transitions: {
-    list: () => Promise<SwimlaneTransition[]>;
-    set: (fromId: string, toId: string, actionIds: string[]) => Promise<void>;
-    getForTransition: (fromId: string, toId: string) => Promise<SwimlaneTransition[]>;
+  // Column automations. `replaceForColumn` carries an interaction-time
+  // projectId because it mutates rows; the reads do not. See
+  // .claude/rules/project-scoped-ipc.md.
+  automations: {
+    list: (projectId?: string | null) => Promise<ColumnAutomation[]>;
+    replaceForColumn: (
+      swimlaneId: string,
+      rows: AutomationWriteInput[],
+      projectId?: string | null,
+    ) => Promise<ColumnAutomation[]>;
+    runsForTask: (taskId: string, projectId?: string | null) => Promise<AutomationRun[]>;
+    /** The newest run per automation id, for the last-run line in Board setup. */
+    latestRuns: (projectId?: string | null) => Promise<Record<string, AutomationRun>>;
+    /**
+     * Re-run ONE automation against the task's CURRENT state. Mutating, so it
+     * carries the interaction-time projectId.
+     */
+    runAgain: (
+      automationId: string,
+      taskId: string,
+      projectId?: string | null,
+    ) => Promise<AutomationRunAgainResult>;
+    onRunFailed: (callback: (notice: AutomationRunFailure) => void) => () => void;
+    onRunsInterrupted: (callback: (summary: AutomationInterruptedSummary) => void) => () => void;
   };
 
   // Sessions (PTY)

@@ -6,7 +6,8 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { RemoteItemCacheRepository } from '../../db/repositories/remote-item-cache-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
-import { ActionRepository } from '../../db/repositories/action-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
@@ -177,7 +178,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const backlogRepo = new BacklogRepository(db);
     const tasks = new TaskRepository(db);
     const swimlanes = new SwimlaneRepository(db);
-    const actions = new ActionRepository(db);
+    const automations = new AutomationRepository(db);
+    const automationRuns = new AutomationRunRepository(db);
     const attachments = new AttachmentRepository(db);
 
     const backlogAttachments = new BacklogAttachmentRepository(db);
@@ -269,7 +271,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 }
 
                 const sessionRepo = new SessionRepository(db);
-                const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+                const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
                 // projectId/projectPath so the spawn preamble (override lock +
                 // agent resolution) sees the project defaults instead of null.
                 await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal, projectId, projectPath, attachments });

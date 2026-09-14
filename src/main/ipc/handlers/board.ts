@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectRepos, openAttachmentFile } from '../helpers';
+import { runAutomationAgain } from '../helpers/automation-run-again';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { propagateStrategyToLiveSessions, propagateBoardProfileChange, buildColumnStrategyChanges } from './strategy-propagation';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
-import type { BoardProfile, ShortcutConfig } from '../../../shared/types';
+import type { AutomationRunAgainResult, BoardProfile, ShortcutConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /** Trigger write-back if kangentic.json exists. */
@@ -161,48 +162,48 @@ export function registerBoardHandlers(context: IpcContext): void {
     if (projectId) context.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids });
   });
 
-  // === Actions ===
-  ipcMain.handle(IPC.ACTION_LIST, () => {
-    const { actions } = getProjectRepos(context);
-    return actions.list();
+  // === Automations ===
+  //
+  // Replaces the ACTION_* and TRANSITION_* channels, which had zero renderer
+  // callers: named actions and `from -> to` transitions were never editable in
+  // the app. An automation belongs to one column, so the write is
+  // whole-column: the dialog edits a draft list and saves it, and applying a
+  // reorder, a delete and an insert as separate statements would make the
+  // unique name index reject an intermediate state the final one does not have.
+  ipcMain.handle(IPC.AUTOMATION_LIST, (_, projectId?: string | null) => {
+    const { automations } = getProjectRepos(context, projectId);
+    return automations.listAll();
   });
 
-  ipcMain.handle(IPC.ACTION_CREATE, (_, input) => {
-    const { actions } = getProjectRepos(context);
-    const result = actions.create(input);
+  ipcMain.handle(IPC.AUTOMATION_REPLACE_FOR_COLUMN, (_, swimlaneId: string, rows, projectId?: string | null) => {
+    const { automations } = getProjectRepos(context, projectId);
+    const result = automations.replaceForColumn(swimlaneId, rows);
     triggerWriteBack(context);
     return result;
   });
 
-  ipcMain.handle(IPC.ACTION_UPDATE, (_, input) => {
-    const { actions } = getProjectRepos(context);
-    const result = actions.update(input);
-    triggerWriteBack(context);
-    return result;
+  ipcMain.handle(IPC.AUTOMATION_RUNS_FOR_TASK, (_, taskId: string, projectId?: string | null) => {
+    const { automationRuns } = getProjectRepos(context, projectId);
+    return automationRuns.listForTask(taskId);
   });
 
-  ipcMain.handle(IPC.ACTION_DELETE, (_, id) => {
-    const { actions } = getProjectRepos(context);
-    actions.delete(id);
-    triggerWriteBack(context);
+  ipcMain.handle(IPC.AUTOMATION_LATEST_RUNS, (_, projectId?: string | null) => {
+    const { automationRuns } = getProjectRepos(context, projectId);
+    return Object.fromEntries(automationRuns.latestByAutomation());
   });
 
-  // === Transitions ===
-  ipcMain.handle(IPC.TRANSITION_LIST, () => {
-    const { actions } = getProjectRepos(context);
-    return actions.listTransitions();
-  });
-
-  ipcMain.handle(IPC.TRANSITION_SET, (_, fromId, toId, actionIds) => {
-    const { actions } = getProjectRepos(context);
-    actions.setTransitions(fromId, toId, actionIds);
-    triggerWriteBack(context);
-  });
-
-  ipcMain.handle(IPC.TRANSITION_GET_FOR, (_, fromId, toId) => {
-    const { actions } = getProjectRepos(context);
-    return actions.getTransitionsFor(fromId, toId);
-  });
+  // Re-runs ONE automation against the task's CURRENT state. Resolving the
+  // project explicitly rather than through `getProjectRepos`' fallback: the
+  // shared helper opens its own repositories and takes the task lock, and a
+  // null project there would act on whichever board happens to be focused.
+  ipcMain.handle(
+    IPC.AUTOMATION_RUN_AGAIN,
+    async (_, automationId: string, taskId: string, projectId?: string | null): Promise<AutomationRunAgainResult> => {
+      const resolvedProjectId = projectId ?? context.currentProjectId;
+      if (!resolvedProjectId) return { ok: false, error: 'No project is open.' };
+      return runAutomationAgain(context, resolvedProjectId, taskId, automationId);
+    },
+  );
 
   // === Board Config ===
   ipcMain.handle(IPC.BOARD_CONFIG_EXISTS, () => {

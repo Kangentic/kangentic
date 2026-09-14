@@ -1,6 +1,5 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../../shared/task-template-vars';
 
 /**
  * The seeded default board. Exported (not just function-local) so the
@@ -40,65 +39,24 @@ export function seedDefaultSwimlanes(db: Database.Database): void {
 
     // Set Planning's plan_exit_target_id to Executing (index 1 -> index 2)
     db.prepare('UPDATE swimlanes SET plan_exit_target_id = ? WHERE id = ?').run(laneIds[2], laneIds[1]);
-
-    // Seed default actions and transitions
-    seedActionsAndTransitions(db, now);
   });
   tx();
 }
 
 /**
- * Seed default actions and transitions for an existing project that
- * has swimlanes but no actions (e.g. upgraded from pre-actions schema).
+ * Nothing seeds actions, transitions, or automations any more, and a fresh
+ * board is not missing anything as a result.
+ *
+ * The two rows this used to write were both dead weight. `* -> Planning: Kill
+ * Session` ran at Priority 4, where the task has no active session, so
+ * `executeKillSession` found nothing to suspend and did nothing at all. `Start
+ * Planning Agent` carried `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which is exactly
+ * what the fallback spawn uses when no action supplies a prompt, so it
+ * duplicated behavior the column's own "Start an agent here" setting already
+ * produces.
+ *
+ * Seeding them also taught the wrong model: it made starting an agent look like
+ * an automation a user could reorder or delete, when it is a column setting. A
+ * new board now shows an empty automations list, which is both true and the
+ * right blank page to start from.
  */
-export function seedDefaultActions(db: Database.Database): void {
-  const now = new Date().toISOString();
-  const tx = db.transaction(() => {
-    seedActionsAndTransitions(db, now);
-  });
-  tx();
-}
-
-function seedActionsAndTransitions(db: Database.Database, now: string): void {
-  // Build role -> lane ID map from the DB so we don't rely on array indices
-  const lanes = db.prepare('SELECT id, role FROM swimlanes WHERE role IS NOT NULL').all() as Array<{ id: string; role: string }>;
-  const byRole: Record<string, string> = {};
-  for (const lane of lanes) byRole[lane.role] = lane.id;
-
-  // Find plan-mode column (no longer a system role - uses permission_mode)
-  const planLane = db.prepare("SELECT id FROM swimlanes WHERE permission_mode = 'plan' LIMIT 1").get() as { id: string } | undefined;
-
-  const insertAction = db.prepare(
-    'INSERT INTO actions (id, name, type, config_json, created_at) VALUES (?, ?, ?, ?, ?)'
-  );
-
-  // Planning agent: launches the project's default agent (or column override)
-  const planActionId = uuidv4();
-  insertAction.run(
-    planActionId,
-    'Start Planning Agent',
-    'spawn_agent',
-    JSON.stringify({
-      promptTemplate: DEFAULT_SPAWN_PROMPT_TEMPLATE,
-    }),
-    now,
-  );
-
-  // Kill session action
-  const killActionId = uuidv4();
-  insertAction.run(killActionId, 'Kill Session', 'kill_session', '{}', now);
-
-  const insertTransition = db.prepare(
-    'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'
-  );
-
-  // * -> Planning: kill any existing session, then spawn planning agent
-  if (planLane) {
-    insertTransition.run(uuidv4(), '*', planLane.id, killActionId, 0);
-    insertTransition.run(uuidv4(), '*', planLane.id, planActionId, 1);
-  }
-  // * -> Done: kill session
-  if (byRole.done) {
-    insertTransition.run(uuidv4(), '*', byRole.done, killActionId, 0);
-  }
-}

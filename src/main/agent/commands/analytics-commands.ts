@@ -4,6 +4,8 @@ import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
 import { ConversationUsageStore } from '../../retrieval/conversation/conversation-usage-store';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
@@ -636,10 +638,22 @@ export const handleGetColumnDetail: CommandHandler = (
   ];
   if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
   if (matched.description) lines.push(`  Description: ${matched.description}`);
-  if (matched.auto_command) lines.push(`  Auto-command: ${matched.auto_command}`);
-  // Only alongside a command: the mode is inert without one, and printing it on
-  // every column would read as a setting that does something here.
-  if (matched.auto_command) lines.push(`  Auto-command timing: ${matched.auto_command_mode === 'deferred' ? 'deferred (wait for the current turn)' : 'immediate'}`);
+
+  // The column's automations, which is where its message to the agent now
+  // lives. Reported as the list rather than one command: a column can have four
+  // of these, and reporting only the message would describe a quarter of what
+  // happens when a task lands here.
+  const automations = new AutomationRepository(db).listForColumn(matched.id);
+  const columnMessage = resolveColumnMessage(automations)?.message ?? null;
+  if (columnMessage) lines.push(`  Message to agent: ${columnMessage}`);
+  for (const trigger of ['enter', 'exit'] as const) {
+    const group = automations.filter((row) => row.trigger === trigger).sort((left, right) => left.position - right.position);
+    if (group.length === 0) continue;
+    lines.push(`  On ${trigger}:`);
+    for (const row of group) {
+      lines.push(`    ${row.position + 1}. ${row.name} (${row.type})${row.enabled ? '' : ' [off]'}`);
+    }
+  }
   if (matched.agent_override) lines.push(`  Agent override: ${matched.agent_override}`);
   if (matched.model_override) lines.push(`  Model override: ${matched.model_override}`);
   if (matched.effort_override) lines.push(`  Effort override: ${matched.effort_override}`);
@@ -683,8 +697,16 @@ export const handleGetColumnDetail: CommandHandler = (
       taskOrder,
       autoSpawn: matched.auto_spawn,
       permissionMode: matched.permission_mode,
-      autoCommand: matched.auto_command,
-      autoCommandMode: matched.auto_command_mode,
+      autoCommand: columnMessage,
+      automations: automations.map((row) => ({
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        trigger: row.trigger,
+        position: row.position,
+        enabled: row.enabled,
+        config: row.config,
+      })),
       agentOverride: matched.agent_override,
       modelOverride: matched.model_override,
       effortOverride: matched.effort_override,

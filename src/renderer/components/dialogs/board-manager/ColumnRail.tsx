@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, GripVertical, LayoutGrid, Bot, Split, Trash2 } from 'lucide-react';
+import { Plus, GripVertical, LayoutGrid, Bot, Split, Trash2, Zap } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -37,6 +37,15 @@ export interface RailRow {
   /** Display label of the column's agent override, or null when none. */
   agentOverrideLabel: string | null;
   isolated: boolean;
+  /**
+   * How many of the column's automations would actually RUN, enter and exit
+   * together. Hidden at zero, which is why a column whose only row is switched
+   * off or blocked shows nothing rather than a dimmed count.
+   *
+   * The same number the board header glyph and the All columns cells report,
+   * deliberately: a column cannot read 5 here and 3 there.
+   */
+  automationCount: number;
 }
 
 interface ColumnRailProps {
@@ -143,6 +152,16 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
         {row.isolated && (
           <span title="Isolated session" className="flex-shrink-0 text-fg-faint">
             <Split size={12} strokeWidth={2} />
+          </span>
+        )}
+        {row.automationCount > 0 && (
+          <span
+            data-testid="board-manager-tab-automation-count"
+            title={`${row.automationCount} automation${row.automationCount === 1 ? '' : 's'} run here`}
+            className="flex flex-shrink-0 items-center gap-0.5 text-[11px] tabular-nums text-fg-faint"
+          >
+            <Zap size={11} strokeWidth={2} />
+            {row.automationCount}
           </span>
         )}
         {row.dirty && (

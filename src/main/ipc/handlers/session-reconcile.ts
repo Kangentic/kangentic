@@ -106,7 +106,7 @@ export async function restartSessionForSettingsChange(
   } = {},
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
-    const { tasks, swimlanes, actions, attachments } = getProjectRepos(context, projectId);
+    const { tasks, swimlanes, automations, automationRuns, attachments } = getProjectRepos(context, projectId);
     const task = tasks.getById(taskId);
     // Nothing live to restart. The persisted override is picked up on the next
     // spawn/resume via prepare-spawn, so this is a benign no-op, not a failure.
@@ -142,7 +142,7 @@ export async function restartSessionForSettingsChange(
 
     const sessionRepo = new SessionRepository(getProjectDb(projectId));
     const engine = createTransitionEngine(
-      context, actions, tasks, sessionRepo, attachments, projectId, projectPath,
+      context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath,
     );
 
     try {

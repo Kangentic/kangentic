@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -193,17 +193,30 @@ const api: ElectronAPI = {
     },
   },
 
-  actions: {
-    list: () => ipcRenderer.invoke(IPC.ACTION_LIST),
-    create: (input) => ipcRenderer.invoke(IPC.ACTION_CREATE, input),
-    update: (input) => ipcRenderer.invoke(IPC.ACTION_UPDATE, input),
-    delete: (id) => ipcRenderer.invoke(IPC.ACTION_DELETE, id),
-  },
-
-  transitions: {
-    list: () => ipcRenderer.invoke(IPC.TRANSITION_LIST),
-    set: (fromId, toId, actionIds) => ipcRenderer.invoke(IPC.TRANSITION_SET, fromId, toId, actionIds),
-    getForTransition: (fromId, toId) => ipcRenderer.invoke(IPC.TRANSITION_GET_FOR, fromId, toId),
+  automations: {
+    list: (projectId) => ipcRenderer.invoke(IPC.AUTOMATION_LIST, projectId),
+    // projectId is stamped at interaction time per project-scoped-ipc.md: this
+    // mutates a column's rows, and a project switch between the click and the
+    // handler would otherwise write them into the wrong project's database.
+    replaceForColumn: (swimlaneId, rows, projectId) =>
+      ipcRenderer.invoke(IPC.AUTOMATION_REPLACE_FOR_COLUMN, swimlaneId, rows, projectId),
+    runsForTask: (taskId, projectId) => ipcRenderer.invoke(IPC.AUTOMATION_RUNS_FOR_TASK, taskId, projectId),
+    latestRuns: (projectId) => ipcRenderer.invoke(IPC.AUTOMATION_LATEST_RUNS, projectId),
+    // Mutating, so it carries the interaction-time projectId too: the toast
+    // outlives a project switch, and Run again must not fire against the board
+    // the user has since moved to.
+    runAgain: (automationId, taskId, projectId) =>
+      ipcRenderer.invoke(IPC.AUTOMATION_RUN_AGAIN, automationId, taskId, projectId),
+    onRunFailed: (callback) => {
+      const handler = (_: unknown, notice: AutomationRunFailure) => callback(notice);
+      ipcRenderer.on(IPC.AUTOMATION_RUN_FAILED, handler);
+      return () => ipcRenderer.removeListener(IPC.AUTOMATION_RUN_FAILED, handler);
+    },
+    onRunsInterrupted: (callback) => {
+      const handler = (_: unknown, summary: AutomationInterruptedSummary) => callback(summary);
+      ipcRenderer.on(IPC.AUTOMATION_RUNS_INTERRUPTED, handler);
+      return () => ipcRenderer.removeListener(IPC.AUTOMATION_RUNS_INTERRUPTED, handler);
+    },
   },
 
   sessions: {

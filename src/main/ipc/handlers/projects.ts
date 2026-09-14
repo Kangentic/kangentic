@@ -8,6 +8,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../transition-engine/session-startup';
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
@@ -411,6 +412,24 @@ async function pruneOrphanedTasksAndNotify(
 }
 
 /**
+ * Tell the renderer that a quit left automation runs mid-flight.
+ *
+ * ONE notice for the whole project open, never one per row: the shutdown path
+ * is synchronous by rule, so this is the expected state after any quit during a
+ * move, and a per-row storm would turn an honest signal into noise. The run
+ * rows themselves already say `interrupted`, which is the durable half.
+ *
+ * Built as a callback per call site rather than read off a return value because
+ * the sweep runs inside a fire-and-forget tail; there is nothing to await.
+ */
+function notifyRunsInterrupted(context: IpcContext, projectId: string): (count: number) => void {
+  return (count) => {
+    if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
+    context.mainWindow.webContents.send(IPC.AUTOMATION_RUNS_INTERRUPTED, { projectId, count });
+  };
+}
+
+/**
  * Defer the board-config reconcile + kangentic.json export off the open/switch
  * critical path. Guarded against rapid project switching: if the user has
  * already switched again by the time the deferred tick runs, the
@@ -536,6 +555,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const taskRepo = new TaskRepository(db);
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
+    const automationRunRepo = new AutomationRunRepository(db);
 
     // Ordering contract (see pruneOrphanedWorktreeTasks): the prune completes
     // before session recovery reads the DB, but the whole chain runs off the
@@ -547,7 +567,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     runWithProjectLogContext(project.name, () =>
       pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, sessionRepo)
         .then(() => {
-          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path));
         })
@@ -644,13 +664,14 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
+      const automationRunRepo = new AutomationRunRepository(db);
 
       // See openProjectByPath for rationale: the awaited prune ensures
       // recovery reads a clean DB; the slow async passes run in the
       // background and may still be in flight when activateAllProjects
       // resolves.
       await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id))
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
@@ -787,12 +808,13 @@ export function registerProjectHandlers(context: IpcContext): void {
           const taskRepo = new TaskRepository(db);
           const sessionRepo = new SessionRepository(db);
           const swimlaneRepo = new SwimlaneRepository(db);
+          const automationRunRepo = new AutomationRunRepository(db);
 
           // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
           // completes before session recovery reads the DB; the slow
           // filesystem passes are fired without awaiting.
           await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
 
           await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))

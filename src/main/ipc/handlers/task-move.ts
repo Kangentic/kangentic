@@ -17,8 +17,10 @@ import {
   cleanupTaskResources,
   deleteTaskWorktree,
   reapSessionLeftovers,
+  reportAutomationFailures,
   spawnAgent,
 } from '../helpers';
+import { showDesktopNotification } from './system';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
@@ -40,11 +42,13 @@ import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../transition-engine/injection-plan';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
-import { resolveEffectiveAutoCommand, applyProfileToLane } from '../../transition-engine/column-strategy';
+import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
+import { deliverExitMessage } from '../helpers/exit-message-delivery';
+import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { restartSessionForSettingsChange } from './session-reconcile';
-import type { Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
+import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 
 /**
  * Per-task AbortController to cancel in-flight moves when a newer move
@@ -314,6 +318,19 @@ export async function handleTaskMove(
   // so on the common paths there is no task in scope by the time we announce.
   let moveCommitted = false;
   let movedTaskTitle = '';
+  /**
+   * The destination column's enter rows, on a move Phase 1 fully handles.
+   *
+   * Set inside the lock by the branches that keep or suspend a session and then
+   * return, and RUN after the lock releases. Outside, deliberately: this is the
+   * SHORT lock, and the group carries the adapters' own budgets, up to the five
+   * minutes a `run_script` row can ask for. Running it inside would hold that
+   * task's lock for the whole of it, which is the exact defect the run_script
+   * rewrite removed, reached through a different door. Capping the group to the
+   * exit budget instead was the other option and is worse: a script would then
+   * mean one thing on a cold entry and another on a warm one.
+   */
+  let runEnterAutomations: (() => Promise<void>) | null = null;
   const runMove = async (): Promise<void> => {
   try {
     // === Phase 1 (locked, short) ===
@@ -437,9 +454,172 @@ export async function handleTaskMove(
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
 
+      // === Exit automations ===
+      //
+      // The SOURCE column's exit rows, here in Phase 1, inside the short lock,
+      // after the DB write and the `board:changed` emit above and BEFORE the
+      // Priority branches below. The position is load-bearing in both
+      // directions: Priority 1 (To Do) kills the session, so an exit row that
+      // needs the agent has to find it still attached; and the commit point is
+      // already past, so a slow row cannot hold up the card the user dragged.
+      //
+      // An exit row NEVER aborts the move. The rollback at the end of this
+      // handler reverts Phase 2 and Phase 3 only, which is why the announce
+      // fires on `moveCommitted` rather than on success. Running rows here
+      // after the commit point is safe precisely because the runner isolates
+      // every row: a throw, a timeout, or the whole group failing records and
+      // the move proceeds. Hence its own try/catch rather than joining the
+      // surrounding one.
+      //
+      // The group is capped at EXIT_GROUP_BUDGET_MS in aggregate (the runner
+      // applies it from the trigger), whatever the adapters declare, because
+      // this is the SHORT lock and holding it is what wedges that task's next
+      // move. That cap is a product statement, not a fudge: exit is for quick
+      // handoffs, and long work belongs on enter, where Phase 3 already holds
+      // the lock across the spawn and has a progress spinner to show for it.
+      if (fromLane) {
+        try {
+          const exitRepos = getProjectRepos(context, resolvedProjectId);
+          const exitSessionRepo = new SessionRepository(getProjectDb(resolvedProjectId));
+          const exitEngine = createTransitionEngine(
+            context,
+            exitRepos.automations,
+            exitRepos.automationRuns,
+            exitRepos.tasks,
+            exitSessionRepo,
+            exitRepos.attachments,
+            resolvedProjectId,
+            resolvedProjectPath,
+          );
+          const exitSummary = await exitEngine.executeTransition(task, fromLane, 'exit', {
+            signal,
+            // No `startAgent`: on exit there is nothing to start. A row that
+            // needs the agent and finds no session skips with that reason,
+            // which the runner records.
+            // AWAITED, unlike the enter path's, and the Priority branches
+            // below are the reason: each opens with
+            // `terminalSubmitScheduler.cancel(task.id)` before it kills,
+            // suspends or re-points the session, so a burst merely SCHEDULED
+            // here is cancelled mid-flight by this same move. See
+            // `deliverExitMessage` for what that looked like in a preview.
+            deliverToAgent: async (message, mode, runSignal) => {
+              const liveSession = task.session_id;
+              // The runner already skips an agent-needing row when the task
+              // has no session, so reaching here without one means the row
+              // does not need the agent. Nothing to deliver into.
+              if (!liveSession) return;
+              await deliverExitMessage(
+                context,
+                task.id,
+                liveSession,
+                message,
+                mode,
+                resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
+                runSignal,
+              );
+            },
+            showNotification: (notification) => showDesktopNotification(context, notification),
+            // The card names the row that is running. Without it a 60s exit
+            // group looked like a card that simply took a long time to move.
+            onProgress: createProgressCallback(context.mainWindow, task.id),
+            fromColumn: fromLane,
+            toColumn: toLane ?? null,
+          });
+          reportAutomationFailures(context, exitSummary, task, resolvedProjectId);
+
+        } catch (exitError) {
+          // Reaching here means the LIST could not run at all (a repository
+          // read failed), not that a row failed. Either way the move goes on.
+          console.error(`[TASK_MOVE] Exit automations failed for task ${input.taskId.slice(0, 8)}:`, exitError);
+        } finally {
+          // The exit group's own label, cleared by the group that set it.
+          // Phase 3 has its own clear, but a move that returns from a Priority
+          // branch never reaches Phase 3, so relying on it would strand the
+          // last exit row's name on the card until the 120s TTL swept it.
+          clearSpawnProgress(context.mainWindow, task.id);
+        }
+      }
+
+
       const db = getProjectDb(resolvedProjectId);
       const sessionRepo = new SessionRepository(db);
       const usageHistoryRepo = new UsageHistoryRepository(db);
+
+      /**
+       * Arm the DESTINATION column's enter rows for a move Phase 1 finishes.
+       *
+       * Every branch below that keeps or suspends a session returns straight out
+       * of Phase 1, so without this the On enter group never ran on those moves
+       * at all: only the cold spawn path (Priority 4, through `agent-spawn.ts`)
+       * ever executed it. Measured in a preview: a task with a live session
+       * moved into a column holding one enabled `notify` enter row produced NO
+       * run record and no notification. A script or a webhook was equally dead.
+       * The column's first message survived only because the live injection
+       * delivers that one itself, which is exactly why its row is passed as
+       * `alreadyDelivered` rather than sent twice.
+       *
+       * ARMED here, RUN after the lock releases. See `runEnterAutomations`.
+       *
+       * Message delivery inside it is fire and forget, unlike the exit hook's:
+       * nothing after this point cancels the scheduler (Priority 3's own
+       * `cancel` already ran, above the injection), and a message queues behind
+       * that burst rather than racing it.
+       *
+       * No `startAgent`: on the keep-alive branches the session is live by
+       * construction, and on the suspending one the column cannot hold a row
+       * that needs an agent (`canColumnRun` blocks `send_message` wherever
+       * "Start an agent here" is off).
+       */
+      const armEnterAutomations = (deliveredMessageId: string | null): void => {
+        runEnterAutomations = async (): Promise<void> => {
+        if (!toLane) return;
+        try {
+          const enterRepos = getProjectRepos(context, resolvedProjectId);
+          const enterEngine = createTransitionEngine(
+            context,
+            enterRepos.automations,
+            enterRepos.automationRuns,
+            enterRepos.tasks,
+            sessionRepo,
+            enterRepos.attachments,
+            resolvedProjectId,
+            resolvedProjectPath,
+          );
+          const enterSummary = await enterEngine.executeTransition(task, toLane, 'enter', {
+            signal,
+            alreadyDelivered: deliveredMessageId ? new Set([deliveredMessageId]) : undefined,
+            deliverToAgent: async (message, mode) => {
+              const liveSession = task.session_id;
+              if (!liveSession) return;
+              context.terminalSubmitScheduler.scheduleKeystrokes(
+                task.id,
+                liveSession,
+                [{ text: message, verify: 'submitted' }],
+                {
+                  mode,
+                  verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
+                  onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
+                },
+              );
+            },
+            showNotification: (notification) => showDesktopNotification(context, notification),
+            onProgress: createProgressCallback(context.mainWindow, task.id),
+            fromColumn: fromLane ?? null,
+            toColumn: toLane,
+          });
+          reportAutomationFailures(context, enterSummary, task, resolvedProjectId);
+        } catch (enterError) {
+          // The LIST could not run at all. The move is already committed and
+          // the session is untouched, so it goes on, as on exit.
+          console.error(`[TASK_MOVE] Enter automations failed for task ${input.taskId.slice(0, 8)}:`, enterError);
+        } finally {
+          // This group runs on the WARM path only, which by definition has no
+          // spawn behind it, so Phase 3's clear never fires for it. Without
+          // this the card kept the last row's name until the TTL.
+          clearSpawnProgress(context.mainWindow, task.id);
+        }
+        };
+      };
       // Resolved once per move and threaded into every git-churn capture site
       // below so they all resolve the base branch identically.
       const effectiveDefaultBranch = resolveDefaultBaseBranch(context, resolvedProjectPath);
@@ -641,6 +821,13 @@ export async function handleTaskMove(
           tasks.update({ id: task.id, session_id: null });
           console.log(`[TASK_MOVE] Suspended session for task ${task.id.slice(0, 8)} (target column has auto_spawn=false)`);
         }
+        // A non-spawning column still runs its enter rows. Only `send_message`
+        // needs the agent, and `canColumnRun` already blocks that type wherever
+        // "Start an agent here" is off, so nothing here can try to talk to the
+        // session this branch just suspended. A notify, a script or a webhook
+        // on a column the user deliberately keeps agent-free is a real and
+        // legal thing to build, and it silently never fired.
+        armEnterAutomations(null);
         return null;
       }
 
@@ -800,7 +987,14 @@ export async function handleTaskMove(
           // dropped a task's own auto_command on this path while the spawn path
           // honored it, so the same task behaved differently on a cold spawn
           // than on a warm move into a column with a live session.
-          const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, toLane?.auto_command);
+          // The column's message now lives in its first enabled `send_message`
+          // enter automation rather than in `swimlanes.auto_command`. Read
+          // through the same resolver the spawn paths use, so a warm move and a
+          // cold spawn cannot disagree about what the column sends.
+          const columnMessage = toLane
+            ? resolveColumnMessage(getProjectRepos(context, resolvedProjectId).automations.listForColumn(toLane.id))
+            : null;
+          const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, columnMessage?.message);
           const interpolatedAuto = effectiveAutoCommand?.trim()
             ? interpolateTaskTemplate(effectiveAutoCommand, resolveTaskTemplateVars({
                 task,
@@ -808,8 +1002,27 @@ export async function handleTaskMove(
                 attachmentPaths: attachments.getPathsForTask(task.id),
                 devPort: getDevPortForTask(task.id),
                 projectPath: resolvedProjectPath,
+                projectName: context.projectRepo.getById(resolvedProjectId)?.name ?? null,
+                // A real move, so the move keywords resolve. The column here is
+                // the DESTINATION: this is the message that column sends on
+                // entry, injected into a session that is already live.
+                move: toLane
+                  ? { column: toLane.name, fromColumn: fromLane?.name ?? null, toColumn: toLane.name, trigger: 'enter' }
+                  : null,
               }))
             : '';
+          // Whether the burst below actually carries the COLUMN's message, as
+          // opposed to the task's own pin or nothing at all. Two things read it:
+          // the delivery mode, and the runner's skip list.
+          const deliveredColumnMessage = columnMessage !== null
+            && Boolean(interpolatedAuto)
+            && effectiveAutoCommand === columnMessage.message;
+          // The mode belongs to the row that supplied the message, never to
+          // `swimlanes.auto_command_mode`. The automations migration resets that
+          // field, so reading it here delivered every deferred column message
+          // immediately on a warm move while the cold spawn honored the row's
+          // own mode. A task-tier pin has no row and keeps the default.
+          const injectionMode: AutoCommandMode = deliveredColumnMessage ? columnMessage.mode : 'immediate';
           // Read ONCE and share with the 2b fallback below, so the plan and the
           // respawn decision cannot straddle a status update and disagree about
           // what the session is running at.
@@ -866,7 +1079,7 @@ export async function handleTaskMove(
             const injectedSessionId = task.session_id;
             context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
               verifier: plan.verifier,
-              mode: toLane?.auto_command_mode ?? 'immediate',
+              mode: injectionMode,
               // Rung 3 of the delivery ladder. Routed through the allowlisted
               // in-place restart rather than a new spawn call, so this adds no
               // spawn entry point (see spawn-entry-point-parity.md).
@@ -900,6 +1113,13 @@ export async function handleTaskMove(
               + ` into running session${plan.verifier ? ' (with command verification)' : ''}: `
               + `${plan.sequence.map((command) => command.text).join(' | ')}`,
             );
+            // Name the row the burst above actually carried, so it is not sent
+            // a second time, and let the rest of the group run after the lock.
+            // `deliveredColumnMessage` is `resolveEffectiveAutoCommand`'s own
+            // answer read back rather than re-derived: a task's MCP-set
+            // `auto_command` outranks the column, and in that case the column's
+            // row has NOT been delivered and must still run.
+            armEnterAutomations(deliveredColumnMessage ? columnMessage.id : null);
             return null;
           }
 
@@ -961,6 +1181,9 @@ export async function handleTaskMove(
             `[TASK_MOVE] Task ${task.id.slice(0, 8)} keeping active session alive`
             + ` (no model change; permission-only or no delta, same agent).`,
           );
+          // Nothing was injected on this branch, so nothing is pre-delivered:
+          // the whole enter group runs, message row included.
+          armEnterAutomations(null);
           return null;
         }
       }
@@ -1022,7 +1245,14 @@ export async function handleTaskMove(
       };
     });
 
-    if (!plan) return; // Phase 1 fully handled the move
+    if (!plan) {
+      // Phase 1 fully handled the move. The destination's enter rows run HERE,
+      // after the lock, so a five-minute `run_script` row does not hold that
+      // task's lock for five minutes. Skipped on shutdown for the same reason
+      // Phase 2 is: the DB is closing.
+      if (runEnterAutomations && !isShuttingDown()) await runEnterAutomations();
+      return;
+    }
 
     const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
 
@@ -1172,7 +1402,7 @@ export async function handleTaskMove(
           // try/finally still calls clearSpawnProgress to clean the renderer UI.
           if (isShuttingDown()) return;
           signal.throwIfAborted();
-          const { tasks: tasksPhase3, actions: actionsPhase3, attachments: attachmentsPhase3 } = getProjectRepos(context, resolvedProjectId);
+          const { tasks: tasksPhase3, automations: automationsPhase3, automationRuns: automationRunsPhase3, attachments: attachmentsPhase3 } = getProjectRepos(context, resolvedProjectId);
           const current = tasksPhase3.getById(task.id);
           if (!current) {
             console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} was deleted during Phase 2 - skipping spawn`);
@@ -1191,7 +1421,7 @@ export async function handleTaskMove(
           emitSpawnProgress(context.mainWindow, task.id, 'starting-agent');
           const dbPhase3 = getProjectDb(resolvedProjectId);
           const sessionRepoPhase3 = new SessionRepository(dbPhase3);
-          const engine = createTransitionEngine(context, actionsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
+          const engine = createTransitionEngine(context, automationsPhase3, automationRunsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
           if (toLane) {
             await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null, attachments: attachmentsPhase3 });
           }

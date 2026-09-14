@@ -64,6 +64,17 @@ const ENGINE_SINK_FILES: Record<string, string> = {
   'src/main/ipc/handlers/session-reconcile.ts':
     'restartSessionForSettingsChange: suspend-and-respawn in place to apply CLI flags to an EXISTING '
     + 'session; not a first-spawn entry point',
+  'src/main/ipc/handlers/task-move.ts':
+    "Phase 1's automation hooks, and neither is a spawn of any kind. One runs the SOURCE column's "
+    + "exit rows as the task leaves; the other runs the DESTINATION column's enter rows on a WARM "
+    + 'move, where the session is already live and Priority 3 would otherwise return without running '
+    + 'them at all. Neither passes startAgent: on exit the runner cannot start one, and on the warm '
+    + 'path the session exists by construction. The shape is pinned below, so this entry cannot '
+    + 'quietly widen into a real spawn path',
+  'src/main/ipc/helpers/automation-run-again.ts':
+    'AUTOMATION_RUN_AGAIN: re-runs ONE existing automation against the task\'s current state. Not a '
+    + 'spawn either, and it cannot become one: executeSingleAutomation passes no startAgent, so a row '
+    + 'that needs an agent and finds no session skips with that reason',
 };
 
 /**
@@ -73,7 +84,9 @@ const ENGINE_SINK_FILES: Record<string, string> = {
  */
 const PTY_SINK_FILES: Record<string, string> = {
   'src/main/transition-engine/transition-engine.ts':
-    'executeSpawnAgent (the engine sink every board-driven spawn funnels into) and the run_script action',
+    'executeSpawnAgent: the engine sink every board-driven spawn funnels into. The retired run_script '
+    + 'ACTION used to spawn here too; the automation adapter that replaced it runs an ordinary child '
+    + 'process, because an interactive shell never exits and its script could not be awaited',
   'src/main/transition-engine/session-startup/auto-spawn.ts':
     'startup reconcile; prepares every spawn via prepareAgentSpawn (asserted below)',
   'src/main/transition-engine/session-startup/resume-suspended.ts':
@@ -163,11 +176,17 @@ function collectReceiverCalls(methodName: string): ReceiverCall[] {
   return calls;
 }
 
-const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession)\s*\(/;
+// `executeSingleAutomation` is in here with the two spawn sinks even though it
+// cannot spawn. It reaches the same engine from outside it, so leaving it
+// unscanned would mean a second public entry point growing its own callers
+// with no test watching, which is the exact shape this scan exists to stop.
+const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession|executeSingleAutomation)\s*\(/;
+/** The same names, global, for counting every occurrence in one file. */
+const ENGINE_SINK_PATTERN_GLOBAL = new RegExp(ENGINE_SINK_PATTERN.source, 'g');
 const PTY_SINK_PATTERN = /sessionManager\.spawn\s*\(/;
 
 describe('spawn entry-point parity: engine sinks', () => {
-  it('every direct engine.executeTransition / engine.resumeSuspendedSession call site is classified', () => {
+  it('every direct engine.executeTransition / resumeSuspendedSession / executeSingleAutomation call site is classified', () => {
     const unclassified = collectSinkCalls(ENGINE_SINK_PATTERN)
       .filter((call) => !(call.relativePath in ENGINE_SINK_FILES))
       .map((call) => call.location);
@@ -179,6 +198,31 @@ describe('spawn entry-point parity: engine sinks', () => {
         + `Either route through spawnAgent / prepareAgentSpawn, or add a justified ENGINE_SINK_FILES `
         + `entry here and update ${RULE_FILE}.`,
     ).toEqual([]);
+  });
+});
+
+describe("spawn entry-point parity: task-move's allowlisted engine calls never spawn", () => {
+  // The allowlist is per FILE, so admitting task-move.ts would otherwise let a
+  // future direct spawn call slip in beside the automation hooks with no test to
+  // say so. Pin the shape instead: exactly two engine calls, one per trigger,
+  // with no startAgent anywhere near either.
+  const source = fs.readFileSync(path.join(REPO_ROOT, 'src/main/ipc/handlers/task-move.ts'), 'utf-8');
+
+  it('makes exactly two engine calls, one per trigger', () => {
+    const calls = source.match(ENGINE_SINK_PATTERN_GLOBAL) ?? [];
+    expect(calls).toHaveLength(2);
+    // The source column as the task leaves, and the destination column as it
+    // arrives on a warm move. A third call, or either of these turning into a
+    // `resumeSuspendedSession`, fails here.
+    expect(source).toMatch(/executeTransition\(\s*task,\s*fromLane,\s*'exit'/);
+    expect(source).toMatch(/executeTransition\(\s*task,\s*toLane,\s*'enter'/);
+  });
+
+  it('passes no startAgent on either, so neither can become a spawn path', () => {
+    // The PROPERTY, not the word: the call sites carry comments saying there is
+    // no startAgent, and a bare-word scan fails on its own explanation.
+    // Matches both `startAgent:` and the `startAgent,` shorthand.
+    expect(source).not.toMatch(/startAgent\s*[:,]/);
   });
 });
 

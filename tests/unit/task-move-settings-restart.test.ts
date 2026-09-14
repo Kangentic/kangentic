@@ -228,6 +228,11 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     tasks: taskRepo,
     swimlanes: swimlaneRepo,
     actions: { getTransitionsFor: vi.fn(() => []) },
+    // The column's message lives in its automations now, so the live-inject
+    // branch reads them through `resolveColumnMessage`. An empty list is the
+    // right default here: these cases drive model/effort deltas, not messages.
+    automations: { listForColumn: vi.fn(() => []), getForTrigger: vi.fn(() => []) },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
     // getPathsForTask is required by the live-inject branch (resolveTaskTemplateVars'
     // attachmentPaths); real code always has this from getProjectRepos.
     attachments: { deleteByTaskId: vi.fn(), getPathsForTask: vi.fn(() => []) },
@@ -238,6 +243,51 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
 const PLANNING_LANE_ID = 'lane-planning';
 const EXECUTING_LANE_ID = 'lane-executing';
 const DONE_LANE_ID = 'lane-done';
+
+/**
+ * The destination column's message to its agent.
+ *
+ * It lives in a `send_message` enter automation now rather than in
+ * `swimlanes.auto_command`, and the live-injection path reads it through
+ * `resolveColumnMessage`. The cases below are about INTERPOLATING that message,
+ * so they seed the row the path actually reads.
+ */
+function messageAutomation(message: string) {
+  return [{
+    id: 'row-message',
+    swimlane_id: EXECUTING_LANE_ID,
+    name: 'Message',
+    type: 'send_message',
+    trigger: 'enter',
+    position: 0,
+    enabled: true,
+    config: { message },
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }];
+}
+
+/** Re-point the repos mock with a seeded column message, keeping the rest. */
+function seedColumnMessage(
+  taskRepo: unknown,
+  swimlaneRepo: unknown,
+  message: string,
+  getPathsForTask: () => string[] = () => [],
+): void {
+  mockGetProjectRepos.mockReturnValue({
+    tasks: taskRepo,
+    swimlanes: swimlaneRepo,
+    actions: { getTransitionsFor: vi.fn(() => []) },
+    automations: {
+      listForColumn: vi.fn(() => messageAutomation(message)),
+      // Empty: the ENTER GROUP runs separately from the message the injection
+      // burst carries, and these cases are about the burst.
+      getForTrigger: vi.fn(() => []),
+    },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
+    attachments: { deleteByTaskId: vi.fn(), getPathsForTask },
+  });
+}
 
 function makeLanes(executingOverrides: Partial<Swimlane> = {}) {
   const planningLane = makeSwimlane(PLANNING_LANE_ID, { permission_mode: 'plan' });
@@ -818,13 +868,11 @@ describe('handleTaskMove live-inject: template variable resolution ({{baseBranch
     // effective project default ('main', from configManager.getEffectiveConfig
     // in makeContext) via the real interpolateTaskTemplate drop-and-collapse
     // semantics: '/merge-back main'.
-    const { swimlaneRepo } = makeLanes({
-      permission_mode: null,
-      auto_command: '/merge-back {{baseBranch}}',
-    });
+    const { swimlaneRepo } = makeLanes({ permission_mode: null });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
+    seedColumnMessage(taskRepo, swimlaneRepo, '/merge-back {{baseBranch}}');
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001',
@@ -841,20 +889,12 @@ describe('handleTaskMove live-inject: template variable resolution ({{baseBranch
   });
 
   it('threads the task attachments repo into {{attachments}} resolution via getPathsForTask', async () => {
-    const { swimlaneRepo } = makeLanes({
-      permission_mode: null,
-      auto_command: '/code-review {{attachments}}',
-    });
+    const { swimlaneRepo } = makeLanes({ permission_mode: null });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
     const getPathsForTask = vi.fn(() => ['/mock/project/screenshot.png']);
-    mockGetProjectRepos.mockReturnValue({
-      tasks: taskRepo,
-      swimlanes: swimlaneRepo,
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      attachments: { deleteByTaskId: vi.fn(), getPathsForTask },
-    });
+    seedColumnMessage(taskRepo, swimlaneRepo, '/code-review {{attachments}}', getPathsForTask);
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001',
@@ -889,13 +929,11 @@ describe('handleTaskMove live-inject: template variable resolution ({{baseBranch
   // the other two, or dropped the field (resolving ''), cannot pass this
   // assertion vacuously.
   it('interpolates {{projectPath}} to the resolved project path, never the ambient currentProjectPath or task.worktree_path', async () => {
-    const { swimlaneRepo } = makeLanes({
-      permission_mode: null,
-      auto_command: '/code-review {{projectPath}}',
-    });
+    const { swimlaneRepo } = makeLanes({ permission_mode: null });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
+    seedColumnMessage(taskRepo, swimlaneRepo, '/code-review {{projectPath}}');
 
     await handleTaskMove(context as never, {
       taskId: 'task-aaa00001',

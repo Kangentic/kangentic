@@ -38,8 +38,20 @@ contract was kept in sync across three files by prose comments alone.
   lane). When that lane is unknowable (create, promote, MCP create, unarchive), the destination
   the user chose is the fallback - never a lane no dialog ever showed.
 - In-place restarts of an EXISTING session (`SESSION_RESUME` in `handlers/sessions.ts`,
-  `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are the only allowlisted
-  direct engine calls; they are not first-spawn entry points.
+  `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are allowlisted direct
+  engine calls; they are not first-spawn entry points.
+- **A column's EXIT automations** (`handlers/task-move.ts`, Phase 1) are the third allowlisted
+  direct engine call, and the only one that is not a spawn at all. They run the SOURCE column's
+  exit rows as a task leaves, pass no `startAgent`, and the runner cannot start an agent on exit:
+  a row that needs one and finds no session skips with that reason. Because the allowlist is per
+  FILE, the test additionally pins that `task-move.ts` makes exactly ONE engine call, on `'exit'`,
+  with no `startAgent` in the file, so this entry cannot quietly widen into a real spawn path.
+- **Re-running ONE automation** (`helpers/automation-run-again.ts`, the `AUTOMATION_RUN_AGAIN`
+  handler's shared path) is the fourth allowlisted direct engine call, and also not a spawn. It
+  calls `executeSingleAutomation`, which passes no `startAgent`, so a row needing an agent and
+  finding no session skips with that reason. That method is scanned alongside the two spawn sinks
+  even though it cannot spawn: it is a second public way into the engine, and an unscanned one
+  would grow callers with no test watching.
 - Every file that calls `<receiver>.buildCommand(` calls `<receiver>.ensureTrust(cwd)` on that
   same receiver first. That is the adapter's pre-spawn global-config step (trust entries; for
   Claude also the `~/.claude.json` diff-panel write in `adapters/claude/diff-panel.ts`), and it
@@ -61,8 +73,8 @@ contract was kept in sync across three files by prose comments alone.
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/spawn-entry-point-parity.test.ts` statically scans `src/main` and fails
-  on (a) any `executeTransition` / `resumeSuspendedSession` call site outside the classified
-  files, (b) any `sessionManager.spawn(` call site outside the classified spawn sinks, (c) a
+  on (a) any `executeTransition` / `resumeSuspendedSession` / `executeSingleAutomation` call site
+  outside the classified files, (b) any `sessionManager.spawn(` call site outside the classified spawn sinks, (c) a
   chokepoint that stops calling `runSpawnPreamble` / `resolveEffectivePermissionMode`, (d)
   any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`, (e) any
   `<receiver>.buildCommand(` call site with no earlier `<receiver>.ensureTrust(` on that same

@@ -5,6 +5,8 @@ import { getProjectDb } from '../../db/database';
 import type { BoardConfig, SwimlaneRole } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
+import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { configDeclaresAutomations, planColumnAutomations } from './apply-automations';
 
 /**
  * Apply a BoardConfig (already loaded + merged from kangentic.json and
@@ -45,6 +47,7 @@ export function applyBoardConfigToDb(
   const db = getProjectDb(projectId);
   const swimlaneRepo = new SwimlaneRepository(db);
   const actionRepo = new ActionRepository(db);
+  const automationRepo = new AutomationRepository(db);
 
   if (config.version > CURRENT_VERSION) {
     warnings.push(`kangentic.json uses version ${config.version}. Some features may not be supported.`);
@@ -157,10 +160,10 @@ export function applyBoardConfigToDb(
           // disk, which is often not the focused one, making an automatic spawn
           // from here materially riskier than one from a deliberate user edit.
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
-          auto_command: columnConfig.autoCommand ?? existing.auto_command,
-          // Mirrors auto_command's lack of an (isTodo || isDone) guard: the two
-          // travel together, and a mode without its command is inert anyway.
-          auto_command_mode: columnConfig.autoCommandMode ?? existing.auto_command_mode,
+          // auto_command / auto_command_mode are NOT written from the config
+          // any more. The column's message is a `send_message` automation now,
+          // applied below; writing the legacy fields here would put the message
+          // somewhere nothing reads, which is precisely how it went quiet.
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? existing.agent_override),
           model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? existing.model_override),
           effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? existing.effort_override),
@@ -180,8 +183,8 @@ export function applyBoardConfigToDb(
           is_ghost: false,
           permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? null),
           auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? true),
-          auto_command: columnConfig.autoCommand ?? null,
-          auto_command_mode: columnConfig.autoCommandMode ?? 'immediate',
+          auto_command: null,
+          auto_command_mode: 'immediate',
           agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? null),
           model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? null),
           effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? null),
@@ -190,6 +193,27 @@ export function applyBoardConfigToDb(
           session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? 'create_or_resume'),
           position: index,
         });
+      }
+    }
+
+    // --- Reconcile automations ---
+    //
+    // Runs against the post-reconcile lanes, matched by NAME, because a
+    // hand-written config may carry no column ids at all and the create above
+    // has just minted them.
+    //
+    // Only when the config declares automations anywhere: the same
+    // additive-vs-destructive rule the columns and actions above use. A
+    // hand-written file that has never mentioned automations must not silently
+    // delete the ones a user built in the app.
+    if (configDeclaresAutomations(config.columns)) {
+      const lanesByName = new Map(swimlaneRepo.list().map((lane) => [lane.name, lane]));
+      for (const columnConfig of config.columns) {
+        const lane = lanesByName.get(columnConfig.name);
+        if (!lane) continue;
+        const plan = planColumnAutomations(columnConfig);
+        warnings.push(...plan.warnings);
+        automationRepo.replaceForColumn(lane.id, plan.rows);
       }
     }
 

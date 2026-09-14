@@ -11,6 +11,15 @@
   let swimlanes = [];
   let archivedTasks = [];
   let actions = [];
+  // Column automations. Nothing is seeded: a fresh board has none, which is
+  // what the app now does too (the seeded actions that used to become them were
+  // each a no-op or a duplicate of the fallback spawn).
+  let automations = [];
+  // Run records. Seedable through `__mockPreConfigure` so a spec can drive the
+  // last-run line without executing anything; `runAgain` appends to it.
+  let automationRuns = [];
+  let automationFailureListeners = [];
+  let automationInterruptedListeners = [];
   let sessions = [];
   let attachments = [];
   let backlogTasks = [];
@@ -550,6 +559,8 @@
           swimlanes = [];
           archivedTasks = [];
           actions = [];
+          automations = [];
+          automationRuns = [];
           sessions = [];
           attachments = [];
         }
@@ -1699,39 +1710,110 @@
       },
     },
 
-    actions: {
+    automations: {
       list: async function () {
-        return actions;
+        // A sorted COPY: the store holds what this returns, and handing out the
+        // live array would let a renderer mutation reach the mock's state.
+        return automations
+          .slice()
+          .sort(function (left, right) {
+            if (left.swimlane_id !== right.swimlane_id) return left.swimlane_id < right.swimlane_id ? -1 : 1;
+            if (left.trigger !== right.trigger) return left.trigger === 'enter' ? -1 : 1;
+            return left.position - right.position;
+          })
+          .map(function (row) {
+            return Object.assign({}, row, { config: Object.assign({}, row.config) });
+          });
       },
-      create: async function (input) {
-        var action = Object.assign({ id: uuid(), created_at: now() }, input);
-        actions.push(action);
-        return action;
-      },
-      update: async function (input) {
-        var idx = actions.findIndex(function (a) {
-          return a.id === input.id;
+      replaceForColumn: async function (swimlaneId, rows) {
+        // Mirrors the repository: whole-column delete-and-insert, with position
+        // assigned PER TRIGGER so the two groups never interleave.
+        automations = automations.filter(function (row) {
+          return row.swimlane_id !== swimlaneId;
         });
-        if (idx >= 0) {
-          actions[idx] = Object.assign({}, actions[idx], input);
-          return actions[idx];
+        var nextPosition = { enter: 0, exit: 0 };
+        (rows || []).forEach(function (row) {
+          var trigger = row.trigger === 'exit' ? 'exit' : 'enter';
+          automations.push({
+            id: row.id || uuid(),
+            swimlane_id: swimlaneId,
+            name: row.name,
+            type: row.type,
+            trigger: trigger,
+            position: nextPosition[trigger],
+            enabled: row.enabled !== false,
+            config: Object.assign({}, row.config),
+            created_at: now(),
+            updated_at: now(),
+          });
+          nextPosition[trigger] += 1;
+        });
+        return automations.filter(function (row) {
+          return row.swimlane_id === swimlaneId;
+        });
+      },
+      runsForTask: async function (taskId) {
+        return automationRuns
+          .filter(function (run) { return run.task_id === taskId; })
+          .slice()
+          .sort(function (left, right) { return left.started_at < right.started_at ? 1 : -1; })
+          .map(function (run) { return Object.assign({}, run); });
+      },
+      latestRuns: async function () {
+        // Newest per automation id, mirroring `latestByAutomation()`.
+        var newest = {};
+        automationRuns.forEach(function (run) {
+          var current = newest[run.automation_id];
+          if (!current || current.started_at < run.started_at) newest[run.automation_id] = run;
+        });
+        return Object.keys(newest).reduce(function (out, key) {
+          out[key] = Object.assign({}, newest[key]);
+          return out;
+        }, {});
+      },
+      runAgain: async function (automationId, taskId) {
+        var automation = automations.find(function (row) { return row.id === automationId; });
+        if (!automation) {
+          return { ok: false, error: 'That automation no longer exists. It was probably deleted or renamed in the Column Manager.' };
         }
-        throw new Error('Action not found: ' + input.id);
+        var lane = swimlanes.find(function (row) { return row.id === automation.swimlane_id; });
+        // A fresh run row, which is the half the spec asserts: a re-run must be
+        // visible in the log rather than only in the toast.
+        var run = {
+          id: uuid(),
+          automation_id: automation.id,
+          automation_name: automation.name,
+          type: automation.type,
+          task_id: taskId,
+          swimlane_id: automation.swimlane_id,
+          trigger: automation.trigger,
+          status: 'succeeded',
+          detail: 'Ran again.',
+          attempts: 1,
+          started_at: now(),
+          finished_at: now(),
+        };
+        automationRuns.push(run);
+        return {
+          ok: true,
+          runId: run.id,
+          automationName: automation.name,
+          columnName: lane ? lane.name : '',
+          status: 'succeeded',
+          detail: run.detail,
+        };
       },
-      delete: async function (id) {
-        actions = actions.filter(function (a) {
-          return a.id !== id;
-        });
+      onRunFailed: function (callback) {
+        automationFailureListeners.push(callback);
+        return function () {
+          automationFailureListeners = automationFailureListeners.filter(function (entry) { return entry !== callback; });
+        };
       },
-    },
-
-    transitions: {
-      list: async function () {
-        return [];
-      },
-      set: async function () {},
-      getForTransition: async function () {
-        return [];
+      onRunsInterrupted: function (callback) {
+        automationInterruptedListeners.push(callback);
+        return function () {
+          automationInterruptedListeners = automationInterruptedListeners.filter(function (entry) { return entry !== callback; });
+        };
       },
     },
 
@@ -4359,6 +4441,8 @@
       tasks: tasks,
       archivedTasks: archivedTasks,
       swimlanes: swimlanes,
+      automations: automations,
+      automationRuns: automationRuns,
       sessions: sessions,
       backlogTasks: backlogTasks,
       activityCache: activityCache,

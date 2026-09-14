@@ -224,7 +224,7 @@ in Opus xhigh and Merge in Sonnet high while another runs the same board more ch
 *identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
 only strategy is profile-scoped.
 
-Profiles are authored in the Board Manager (Edit Columns) and stored under a `profiles` key in
+Profiles are authored in the Column Manager and stored under a `profiles` key in
 `kangentic.json`. Unlike shortcuts they are **team-only** - never `kangentic.local.json` - because
 `tasks.profile_id` is resolved on every machine that opens the board, so a personal-only profile
 would leave teammates with tasks pointing at an id they cannot resolve. Boards with no profiles omit
@@ -494,8 +494,8 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `description` | string \| null | null | Free-form description of the column's purpose. Shown as a header tooltip and round-trips through `kangentic.json`. |
 | `permission_mode` | PermissionMode \| null | null | Permission mode override for this column |
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
-| `auto_command` | string \| null | null | Command injected into running session on task arrival |
-| `auto_command_mode` | `'immediate'` \| `'deferred'` | `'immediate'` | Whether the auto-command interrupts the agent's current turn or waits for it to finish |
+| `auto_command` | string \| null | null | RETIRED. The column's message to its agent is a `send_message` automation now, in `column_automations`. The migration moved every existing value into one and nulled this field; nothing reads it. See [Column automations](#column-automations). |
+| `auto_command_mode` | `'immediate'` \| `'deferred'` | `'immediate'` | RETIRED with `auto_command`, and reset by the same migration. The delivery choice is the `send_message` automation's own `mode` field. |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
 | `agent_override` | string \| null | null | Agent CLI override for sessions spawned in this column |
 | `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`). Live-applied via `/model` slash on column transition when supported. |
@@ -503,6 +503,36 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `handoff_context` | boolean | false | When enabled, cross-agent transitions package prior session context for the target agent |
 | `session_target` | `'main'` \| `'isolated'` | `'main'` | Which session track a task runs on in this column. `main` = the task's shared main conversation; `isolated` = this column's own context-isolated session (keyed by the swimlane id). See `SessionTarget` in `src/shared/types.ts`. |
 | `session_spawn_strategy` | `'create_or_resume'` \| `'always_spawn_new'` | `'create_or_resume'` | What to do with that session track on column entry. `create_or_resume` resumes the track's session if one exists, else spawns; `always_spawn_new` always spawns fresh, retiring the prior session. The isolated-means-fresh pairing is applied by the WRITERS, not by `resolveForceFresh`: this column is NOT NULL with a literal default, so the resolver's context-aware fallback never fires for a stored column. In the Column Manager and over MCP, setting `sessionTarget` to `isolated` carries this to `always_spawn_new` (and back), via `snapSpawnStrategyToTarget`. **Editing this file by hand does not**: `apply-config.ts` applies each key as written, so name both keys or an isolated column resumes one long session instead of running a fresh pass per entry. See `SessionSpawnStrategy`. |
+
+## Column automations
+
+What a column does when a task enters or leaves it. Each column owns one ordered list, split into
+two groups, **On enter** and **On exit**, and each row has its own switch. They are edited in the
+**Column Manager** (click a column header on the board), and they round-trip through
+`kangentic.json` under the column that owns them.
+
+Four types ship. Each is an adapter under `src/main/automations/adapters/`, declared once in
+`AUTOMATION_MANIFEST`, which is also what the editor renders its fields from.
+
+| Type | What it does | Fields |
+|------|--------------|--------|
+| `send_message` | Types a message at the column's agent | `message`, `mode` (`immediate` \| `deferred`) |
+| `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (default 5) |
+| `webhook` | Calls a URL, retrying a transport error, 429 or 5xx up to 3 times | `url`, `method`, `body`, `headers` |
+| `notify` | Raises one desktop notification | `title`, `body` |
+
+A fifth, `spawn_agent`, is legacy: it survives on boards that already had a `spawn_agent` row
+carrying a custom prompt, and cannot be created. `kill_session`, `create_worktree` and
+`cleanup_worktree` are gone entirely, rows and all, because each was a no-op or a duplicate of
+what the move path already does.
+
+A name is required and unique within its column, ignoring case. That is enforced by a unique
+index in the schema, not only by the editor, so a hand-edited file or an MCP write cannot break
+it.
+
+Every text field takes the template variables listed in
+[transition-engine.md](transition-engine.md), which is also where the per-field escaping and the
+`KANGENTIC_*` environment variables a script receives are documented.
 
 ## Board Configuration
 
@@ -513,7 +543,7 @@ Kangentic supports shareable board configuration via JSON files in the project r
 - **`kangentic.json`** -- the team file. Committed to git and shared with all collaborators. Contains the canonical board layout.
 - **`kangentic.local.json`** -- the personal overrides file. Auto-added to `.gitignore`. Contains per-user customizations (colors, icons, extra columns) that merge on top of the team file.
 
-When both files exist, `kangentic.local.json` is merged over `kangentic.json` by matching columns, actions, and transitions by ID. Unmatched local entries are appended.
+When both files exist, `kangentic.local.json` is merged over `kangentic.json` by matching columns by ID. Unmatched local entries are appended. A column's automations merge as a WHOLE list, not row by row: a local column that declares `automations` replaces the team file's list for that column outright, because an ordered list has no stable key to merge a row against once names can change.
 
 ### Board Config Sync (kangentic.json)
 
@@ -612,8 +642,6 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       "color": "#10b981",
       "autoSpawn": true,
       "permissionMode": "default",
-      "autoCommand": null,
-      "autoCommandMode": "immediate",
       "planExitTarget": null,
       "agentOverride": null,
       "modelOverride": null,
@@ -621,7 +649,16 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       "handoffContext": false,
       "sessionTarget": "main",
       "sessionSpawnStrategy": "create_or_resume",
-      "archived": false
+      "archived": false,
+      "automations": {
+        "onEnter": [
+          { "name": "Review", "type": "send_message", "message": "/code-review {{baseBranch}}" },
+          { "name": "Ping the channel", "type": "webhook", "url": "https://hooks.example.com/abc" }
+        ],
+        "onExit": [
+          { "name": "Archive the log", "type": "run_script", "enabled": false, "script": "scripts/archive.sh" }
+        ]
+      }
     }
   ],
   "defaultBaseBranch": "main",
@@ -635,24 +672,30 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       }
     }
   ],
-  "actions": [
-    {
-      "id": "uuid",
-      "name": "Start Agent",
-      "type": "spawn_agent",
-      "config": { "promptTemplate": "{{task_xml}}{{attachments}}" }
-    }
-  ],
-  "transitions": [
-    {
-      "from": "*",
-      "to": "uuid",
-      "actions": ["uuid"]
-    }
-  ],
   "_modifiedBy": "device-id"
 }
 ```
+
+**Automations nest under the column that owns them, as two named arrays.** Array order IS the
+run order within its group, an empty group is an absent key, and the type's own fields sit flat
+on the row beside `name`, `type` and `enabled` rather than under a `with` object. Those three
+keys are reserved: `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a
+field colliding with one, which is what keeps the flat shape safe as the reserved set grows.
+
+`enabled` is omitted when true, so a switched-off row is the only one that carries it. `on` is
+not written either, because the array a row sits in already says it; a hand-written `"on":
+"enter"` or `"on": "exit"` is accepted on read, and so is `"on": "both"`, which is split into two
+automations with the second's name suffixed to stay unique.
+
+**The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
+and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
+rules the one-time migration used, so an older file still opens. None of them is written any
+more. The first save after upgrading therefore rewrites `kangentic.json` and drops them, which
+is a real diff in a tracked file: see the release notes.
+
+A `type` outside the registry, an empty name, or a duplicate name within a column is a
+validation error. A RETIRED type (`kill_session`, `create_worktree`, `cleanup_worktree`) is
+warned and skipped instead, matching what the migration did to the same row in the database.
 
 The `defaultBaseBranch` field sets the team-shared default base branch for worktree creation. When present, it takes precedence over the per-user `git.defaultBaseBranch` in `AppConfig`. Individual users can override it via `kangentic.local.json`.
 
