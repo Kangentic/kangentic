@@ -96,21 +96,24 @@ function mapState(item: GhPrListItem): PRState {
  * report it. The check rollup splits them (see `classifyRollup`), and a check
  * in flight wins over a required review on purpose, so the chip tracks CI while
  * it runs and flips to `blocked` when only the review remains. A failed check
- * never yields to a running one.
+ * never yields to a running one. BEHIND takes the same branch, for the reason
+ * `isBypassClearableMergeState` gives: it is the value GitHub reports INSTEAD
+ * of BLOCKED once the base moves, so reading the rollup for one and not the
+ * other would make the chip flip on a merge somebody else did.
  *
  * `bypass` is what the viewer's own merge-bypass probe answered (see
  * `bypassFor`), and the verdict is read for the VIEWER: the board's Merge
  * column merges a green PR past its missing review with `gh pr merge --admin`,
  * so for a viewer who can do that the literal promise is `ready`. It folds at
- * BOTH sites where a required review alone would block (the BLOCKED branch and
- * the `ready` downgrade) and only there, under the conditions
- * `bypassClearsTheBlock` names. BEHIND, DRAFT, and DIRTY never fold. Azure
- * DevOps has no counterpart: its bypass is a security-namespace permission,
- * out of scope.
+ * BOTH sites where branch protection alone would block (the
+ * `isBypassClearableMergeState` branch and the `ready` downgrade) and only
+ * there, under the conditions `bypassClearsTheBlock` names. DRAFT and DIRTY
+ * never fold. Azure DevOps has no counterpart: its bypass is a
+ * security-namespace permission, out of scope.
  */
 function mapMergeReadiness(item: GhPrListItem, bypass: GhMergeBypass | null): PRMergeReadiness | undefined {
   if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
-  if (item.mergeStateStatus === 'BLOCKED') {
+  if (isBypassClearableMergeState(item.mergeStateStatus)) {
     const rollup = classifyRollup(item.statusCheckRollup);
     if (rollup === 'running' || rollup === 'queued') return rollup;
     return bypassClearsTheBlock(item, bypass) ? 'ready' : 'blocked';
@@ -122,31 +125,58 @@ function mapMergeReadiness(item: GhPrListItem, bypass: GhMergeBypass | null): PR
 
 /**
  * Whether the viewer's bypass would really merge this PR right now: they can
- * bypass, the required review is the only block this code can see
- * (`isBlockedOnlyByReview`), and every check branch protection REQUIRES has
+ * bypass, every block this code can see is one branch protection imposes
+ * (`isBlockedOnlyByProtection`), and every check branch protection REQUIRES has
  * reported green (`requiredChecksReported`). All three, because the bypass is
  * a capability rather than a state - it reads `true` on a red PR too.
  */
 function bypassClearsTheBlock(item: GhPrListItem, bypass: GhMergeBypass | null): boolean {
   if (bypass?.viewerCanMergeAsAdmin !== true) return false;
-  if (!isBlockedOnlyByReview(item)) return false;
+  if (!isBlockedOnlyByProtection(item)) return false;
   return requiredChecksReported(item.statusCheckRollup, bypass.requiredStatusCheckContexts);
 }
 
 /**
- * Whether the required review is the ONLY block the PR's own fields can show:
- * the review is still required, the merge state is one a review alone blocks
- * (BLOCKED, or a `ready` state the downgrade would catch), and every check in
- * the rollup has settled green. Shared by the fold and by the probe gate, so
- * the two cannot drift apart.
+ * Whether every block the PR's own fields can show is one branch protection
+ * imposes and `--admin` lifts: the review is still required, the merge state is
+ * one the bypass clears (`isBypassClearableMergeState`, or a `ready` state the
+ * downgrade would catch), and every check in the rollup has settled green.
+ * Shared by the fold and by the probe gate, so the two cannot drift apart.
+ *
+ * Named for protection rather than for the review because BEHIND carries a
+ * second block, a base the branch fell behind, and the same bypass clears it.
  *
  * Not sufficient on its own, which is what `requiredChecksReported` adds: a
  * `passing` rollup is "nothing here failed", not "everything required ran".
  */
-function isBlockedOnlyByReview(item: GhPrListItem): boolean {
+function isBlockedOnlyByProtection(item: GhPrListItem): boolean {
   if (item.reviewDecision !== 'REVIEW_REQUIRED') return false;
-  if (item.mergeStateStatus !== 'BLOCKED' && mapMergeStateStatus(item.mergeStateStatus) !== 'ready') return false;
+  if (!isBypassClearableMergeState(item.mergeStateStatus) && mapMergeStateStatus(item.mergeStateStatus) !== 'ready') return false;
   return classifyRollup(item.statusCheckRollup) === 'passing';
+}
+
+/**
+ * The merge states `gh pr merge --admin` clears, and so the only two the bypass
+ * fold may act on. Both name a condition branch protection imposes: BLOCKED is
+ * a required review or check outstanding, BEHIND is a base the branch fell
+ * behind where protection requires branches to be up to date.
+ *
+ * They are ONE predicate because GitHub reports a single `mergeStateStatus` for
+ * a PR that is in both conditions at once, and which one it names is decided by
+ * whether a sibling PR landed: a green, review-required PR reads BLOCKED until
+ * one does and BEHIND immediately after. Splitting them made the chip flip
+ * `ready` to `blocked` because somebody else merged, with nothing about the PR
+ * itself changing, which is the bug this exists to fix.
+ *
+ * DRAFT is the author's own switch, not protection, and DIRTY is a real
+ * conflict no permission resolves, so neither ever folds. There is deliberately
+ * no "does the base require up-to-date branches" condition: GitHub only reports
+ * BEHIND where it does, so the condition would be a no-op, and where it somehow
+ * did not, being behind would not block the merge at all - which makes folding
+ * more obviously right, not less.
+ */
+function isBypassClearableMergeState(mergeStateStatus: GhMergeStateStatus | undefined): boolean {
+  return mergeStateStatus === 'BLOCKED' || mergeStateStatus === 'BEHIND';
 }
 
 /**
@@ -286,19 +316,30 @@ function classifyRollup(rollup: GhStatusCheckRollupItem[] | undefined): RollupVe
 
 /**
  * Whether the bypass probe can change this item's verdict at all, which is
- * the gate `git.prBypassCountsAsReady` opens. Only an open, non-draft PR whose
- * ONLY block is the required review is worth the GraphQL call: a draft never
- * renders readiness, a merged or closed PR never changes, a failed or in-flight
- * check keeps `blocked` whatever the bypass says, and a green PR with no review
- * outstanding is blocked by something the bypass is not being asked about.
+ * the gate `git.prBypassCountsAsReady` opens. Only an open, non-draft PR still
+ * waiting on a required review is worth the GraphQL call: a draft never renders
+ * readiness, a merged or closed PR never changes, a failed or in-flight check
+ * keeps `blocked` whatever the bypass says, and a green PR with no review
+ * outstanding is blocked by something the bypass is not being asked about -
+ * which is why an already-approved BEHIND PR does not fold either.
+ *
  * Never one probe per open PR per sweep, which is why the setting can default
- * on where `prEvaluateBranchPolicies` defaults off.
+ * on where `prEvaluateBranchPolicies` defaults off. What bounds it is the
+ * review-plus-green gate, NOT the merge-state value: admitting BEHIND beside
+ * BLOCKED does not add a population, it stops the same PRs dropping out of the
+ * gate each time a sibling lands. The probe is uncached, so the cost is one
+ * `gh api graphql` per qualifying linked PR per sweep
+ * (`git.prRefreshIntervalMinutes`, default 5; the 60 s `RESOLVE_TTL_MS`
+ * coalesce is shorter than any selectable interval, so it does not lower that
+ * rate). If that rate ever matters, the mitigation is a per-base-ref memo of
+ * `requiredStatusCheckContexts`; `viewerCanMergeAsAdmin` is per-PR and would
+ * still cost a call.
  */
 function needsBypassProbe(item: GhPrListItem, options: PRResolveOptions | undefined): boolean {
   return options?.bypassCountsAsReady === true
     && item.state === 'OPEN'
     && !item.isDraft
-    && isBlockedOnlyByReview(item);
+    && isBlockedOnlyByProtection(item);
 }
 
 /**
@@ -320,8 +361,15 @@ async function bypassFor(
 }
 
 /**
- * BLOCKED is deliberately absent: `mapMergeReadiness` folds it through the
- * check rollup before this switch runs, so a case here would be unreachable.
+ * The un-folded meaning of each state, and only that: `mapMergeReadiness` sends
+ * both of `isBypassClearableMergeState`'s values through the check rollup before
+ * this switch runs, so neither reaches it from either caller.
+ *
+ * BLOCKED has no case because it has no meaning on its own - a running check, a
+ * failed check, and a required review all report it. BEHIND keeps its case even
+ * though the fold now covers it too: unlike BLOCKED it means one definite thing,
+ * and dropping it would leave a future caller falling through to `mapMergeable`
+ * and answering `unknown` for a PR that is plainly blocked.
  */
 function mapMergeStateStatus(mergeStateStatus: GhMergeStateStatus | undefined): PRMergeReadiness | undefined {
   switch (mergeStateStatus) {

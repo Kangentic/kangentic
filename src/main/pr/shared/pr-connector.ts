@@ -70,7 +70,8 @@ export interface PRResolveOptions {
   /**
    * Count the viewer's own merge bypass as `ready`. `git.prBypassCountsAsReady`,
    * default on. GitHub is the connector that pays for it: one `gh api graphql`
-   * probe per PR whose ONLY block is a missing required review (every check
+   * probe per PR still waiting on a required review, whether GitHub calls that
+   * `BLOCKED` or `BEHIND` (every check
    * settled green), never one per open PR per sweep, and the answer folds that
    * PR to `ready`. The same probe reads the base branch's required checks, so a
    * failed, in-flight, or not-yet-reported one still reads `blocked` whatever

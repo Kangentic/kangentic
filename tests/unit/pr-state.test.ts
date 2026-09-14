@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { prStatePresentation, prMergeReadinessTooltip } from '../../src/renderer/lib/pr-state';
+import { PR_MERGE_READINESS_VALUES } from '../../src/shared/types';
 import type { PRMergeReadiness, PRState } from '../../src/shared/types';
 
 describe('prStatePresentation', () => {
@@ -126,8 +127,13 @@ describe('prStatePresentation', () => {
  * ignored outright.
  */
 describe('prStatePresentation with merge readiness', () => {
+  // Derived from the runtime list, not retyped, so a value added to
+  // `PRMergeReadiness` reaches the loops below without anyone remembering to
+  // extend a literal. Those loops assert shape and the ignore-on-non-open rule,
+  // which a `default:` fallthrough satisfies, so they exercise a new value
+  // rather than judge it; the last test in this block is what judges it.
   const EVERY_READINESS: Array<PRMergeReadiness | null | undefined> = [
-    'ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown', null, undefined,
+    ...PR_MERGE_READINESS_VALUES, null, undefined,
   ];
 
   it('open + ready keeps the open hue and relabels the chip', () => {
@@ -188,6 +194,25 @@ describe('prStatePresentation with merge readiness', () => {
   it('keeps the exact label + badgeClass key shape for every open verdict', () => {
     for (const readiness of EVERY_READINESS) {
       expect(Object.keys(prStatePresentation('open', readiness)).sort()).toEqual(['badgeClass', 'label']);
+    }
+  });
+
+  /**
+   * The guard for a widened union, and the reason the list above is derived.
+   * Both switches in `pr-state.ts` end in `default:`, so a value added to
+   * `PRMergeReadiness` and not handled there compiles clean, renders as the
+   * plain `open` chip, and carries no tooltip - a chip word that never lights
+   * up, with nothing mechanical to notice. Every verdict the union declares
+   * must therefore look different from bare `open` and name itself in a
+   * tooltip. `unknown` is the one deliberate pass-through: the platform was
+   * asked and has no verdict, which IS the plain open chip.
+   */
+  it('gives every declared verdict but `unknown` its own chip and tooltip', () => {
+    const plainOpen = prStatePresentation('open');
+    for (const readiness of PR_MERGE_READINESS_VALUES) {
+      if (readiness === 'unknown') continue;
+      expect(prStatePresentation('open', readiness), `chip for ${readiness}`).not.toEqual(plainOpen);
+      expect(prMergeReadinessTooltip('open', readiness), `tooltip for ${readiness}`).toBeTruthy();
     }
   });
 });
