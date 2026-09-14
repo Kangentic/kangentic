@@ -206,3 +206,69 @@ describe('handleBoardSummary - label vocabulary wiring', () => {
     expect(result.message).toContain('Active sessions: 1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// handleBoardSummary - the done lane's presentation
+//
+// listBoardColumns (not listActiveSwimlanes) is what makes the done lane show
+// up in this summary at all: it is persisted `is_archived = 1` by
+// construction, so an active-only filter drops it silently. Once it is
+// included, it gets a different line and a different columnData shape than
+// every other lane, because it holds no live tasks by construction - see the
+// isDoneLane branch in handleBoardSummary.
+//
+// This describe block has its own beforeEach: the "label vocabulary wiring"
+// block above scopes its beforeEach to its own describe, so
+// mockSessionListAllSummaries / mockBacklogList / mockTaskListArchived are
+// never armed for a sibling block.
+// ---------------------------------------------------------------------------
+
+describe('handleBoardSummary - done lane presentation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSessionListAllSummaries.mockReturnValue({});
+    mockBacklogList.mockReturnValue([]);
+  });
+
+  it('lists the done lane at all, prints its own "N completed" line, and carries completedCount only on its own columnData entry', () => {
+    mockSwimlaneList.mockReturnValue([
+      { id: 'lane-todo', name: 'To Do', role: 'todo', is_archived: 0 },
+      { id: 'lane-done', name: 'Done', role: 'done', is_archived: 1 },
+    ]);
+    // clearAllMocks does not touch a prior mockImplementation, and this file's
+    // shared beforeEach never re-arms mockTaskList itself (each test in the
+    // sibling block sets it directly) - reset first so this test does not
+    // depend on execution order.
+    mockTaskList.mockReset();
+    mockTaskList.mockImplementation((swimlaneId: string) =>
+      swimlaneId === 'lane-todo' ? [{ id: 't1', session_id: null, labels: [] }] : [],
+    );
+    mockTaskListArchived.mockReturnValue([{ id: 't2', labels: [] }, { id: 't3', labels: [] }]);
+
+    const result = handleBoardSummary({}, makeContext());
+
+    expect(result.success).toBe(true);
+
+    // Part 1: the done lane appears in the summary at all. A revert to
+    // listActiveSwimlanes filters it out of allSwimlanes entirely (it is
+    // persisted is_archived = 1), so this line would vanish along with it -
+    // this is the regression tests/unit/column-archived-filter-single-source.test.ts
+    // cannot see, since it is a static scan for hand-rolled `!is_archived`
+    // filters, not for which resolver function got called.
+    expect(result.message).toContain('Done: 2 completed');
+    // Part 2: it does NOT get the normal "N task(s)" treatment a lane with
+    // zero live tasks would otherwise print.
+    expect(result.message).not.toContain('Done: 0 task(s)');
+
+    // Part 3: completedCount is set only on the done lane's columnData entry.
+    const columns = (result.data as {
+      columns: Array<{ name: string; role: string | null; taskCount: number; completedCount?: number }>;
+    }).columns;
+    const doneColumn = columns.find((column) => column.name === 'Done');
+    const todoColumn = columns.find((column) => column.name === 'To Do');
+    expect(doneColumn).toBeDefined();
+    expect(doneColumn?.completedCount).toBe(2);
+    expect(todoColumn).toBeDefined();
+    expect(todoColumn && 'completedCount' in todoColumn).toBe(false);
+  });
+});
