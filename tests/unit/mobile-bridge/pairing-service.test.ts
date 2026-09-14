@@ -23,7 +23,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   CAPABILITY_VERBS,
   createPairingInitiatorHandshake,
-  deriveShortAuthenticationString,
   generateX25519KeyPair,
   randomBytes,
   bytesToHex,
