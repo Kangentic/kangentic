@@ -508,12 +508,16 @@ export class BridgeSession extends EventEmitter {
     }
     if (opened.tag === FrameTag.Final) {
       // An explicit goodbye is unambiguous, so it skips the probe budget the
-      // silent case has to spend. `streams` is deliberately left intact: this
-      // side's send stream is independent, and clearing it would change push
-      // presence suppression and the send path (see the class doc). The
-      // service escalates 'remoteClosed' to a full device drop - a Final is
-      // only ever a deliberate unpair - but that is its decision; the
-      // session-level contract here stays presence-only.
+      // silent case has to spend. `streams` is deliberately left intact:
+      // this side's send stream is independent of the peer's goodbye, and
+      // clearing it would break the send path for no benefit - markPeerAbsent
+      // already moves connectionState to 'offline' regardless of isEstablished,
+      // so push presence (which reads connectionState, not the raw
+      // isEstablished flag - see push-notifier.ts's collectConnectedDeviceIds)
+      // is unaffected either way. The service escalates 'remoteClosed' to a
+      // full device drop - a Final is only ever a deliberate unpair - but
+      // that is its decision; the session-level contract here stays
+      // presence-only.
       this.markPeerAbsent();
       this.emit('remoteClosed');
       return;

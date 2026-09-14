@@ -3,21 +3,31 @@
  *
  * Covered: the trigger mappings (permission -> input-required,
  * settled thinking->idle turn-complete, unintentional-exit
- * session-failed), presence suppression for established devices,
- * per-device category preference filtering, the 30s per (device,
- * session, category) cooldown, the 2s permission debounce with its
- * cleared-meanwhile skip, the 45s idle settle window and every way it
- * gets cancelled, the platform split on the OS-visible placeholder
- * (Android data-only, iOS keeps title/body), the envelope-only privacy
- * property (no plaintext field value anywhere in the POST body), the
- * DeviceNotRegistered registration drop, and mutableContent on the
- * outgoing Expo message.
+ * session-failed), presence suppression for connected devices (driven
+ * through the real collectConnectedDeviceIds predicate over a fake
+ * session map, not a stub Set, so a regression back to the raw
+ * isEstablished flag is actually caught), per-device category
+ * preference filtering, the 30s per (device, session, category)
+ * cooldown, the 2s permission debounce with its cleared-meanwhile skip,
+ * the 45s idle settle window and every way it gets cancelled, the
+ * platform split on the OS-visible placeholder (Android data-only, iOS
+ * keeps title/body), the envelope-only privacy property (no plaintext
+ * field value anywhere in the POST body), the DeviceNotRegistered
+ * registration drop, mutableContent on the outgoing Expo message, that a
+ * non-delivered send (a thrown error or a send-failed result) is logged
+ * rather than silently swallowed, that the logged detail has any Expo
+ * push token redacted out of it, that the device-not-registered branch
+ * returns before the generic-failure handling, and that a stale in-flight
+ * failure releases only the cooldown stamp it made rather than a fresher
+ * one written for the same key meanwhile.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { PushNotifier, type PushNotifierOptions } from '../../../src/main/mobile-bridge/push/push-notifier';
+import { collectConnectedDeviceIds, PushNotifier, type PushNotifierOptions } from '../../../src/main/mobile-bridge/push/push-notifier';
 import type { PushRegistrationStore } from '../../../src/main/mobile-bridge/push/push-registration-store';
 import type { FetchLike } from '../../../src/main/mobile-bridge/push/expo-push-client';
+import type { WakeResult } from '../../../src/main/mobile-bridge/push/wake-channel';
+import type { MobileDeviceConnectionState } from '../../../src/shared/types';
 
 /** Both debounces re-check this at fire time, so both fields matter. */
 interface FakeStatsSnapshot {
@@ -54,14 +64,22 @@ describe('PushNotifier', () => {
   let listRegistrations: ReturnType<typeof vi.fn>;
   let removeRegistration: ReturnType<typeof vi.fn>;
   let sealSpy: ReturnType<typeof vi.fn>;
-  let establishedDeviceIds: Set<string>;
+  /**
+   * Fake bridge sessions keyed by deviceId, mirroring the real
+   * MobileBridgeService.sessions map's shape (just enough of it -
+   * connectionState only). Passed through the real
+   * collectConnectedDeviceIds predicate rather than stubbed as a plain
+   * Set, so a regression back to the raw isEstablished flag is caught by
+   * the tests below instead of silently passing.
+   */
+  let fakeSessions: Map<string, { connectionState: MobileDeviceConnectionState }>;
   let notifier: PushNotifier;
 
   function buildNotifier(overrides: Partial<PushNotifierOptions> = {}): void {
     notifier = new PushNotifier({
       sessionManager: sessionManager as unknown as PushNotifierOptions['sessionManager'],
       registrationStore: { list: listRegistrations, remove: removeRegistration } as unknown as PushRegistrationStore,
-      getEstablishedDeviceIds: () => establishedDeviceIds,
+      getConnectedDeviceIds: () => collectConnectedDeviceIds(fakeSessions),
       resolveTaskContext: () => ({ ...TASK_CONTEXT }),
       resolveTaskContextByTaskId: () => ({ ...TASK_CONTEXT }),
       getDeviceStaticPublicKey: () => new Uint8Array(32).fill(9),
@@ -100,7 +118,7 @@ describe('PushNotifier', () => {
     listRegistrations = vi.fn(() => [REGISTRATION]);
     removeRegistration = vi.fn();
     sealSpy = vi.fn(() => 'sealed-blob');
-    establishedDeviceIds = new Set<string>();
+    fakeSessions = new Map();
   });
 
   afterEach(() => {
@@ -296,13 +314,30 @@ describe('PushNotifier', () => {
     expect(sealedCategories()).toEqual(['session-failed', 'session-failed']);
   });
 
-  it('presence suppression: an established device is never pinged', async () => {
-    establishedDeviceIds = new Set(['device-1']);
+  it('presence suppression: a connected device is never pinged', async () => {
+    fakeSessions.set('device-1', { connectionState: 'connected' });
     buildNotifier();
     await settleTurn();
     sessionManager.emit('exit', 'sess-1', 1, false);
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(sealSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The falsifying case for presence suppression. On a silent phone death nothing
+   * nulls the bridge session's streams, so isEstablished stays true for
+   * the whole relay keepalive sweep even though connectionState has
+   * already concluded 'offline'. A device in that state must still be
+   * pinged - collectConnectedDeviceIds never reads isEstablished at all,
+   * only connectionState, so reverting to the raw established flag would
+   * turn this red.
+   */
+  it('presence suppression reads connectionState, not raw isEstablished: an offline device is still pinged', async () => {
+    fakeSessions.set('device-1', { connectionState: 'offline' });
+    buildNotifier();
+    await settleTurn();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sealedCategories()).toEqual(['turn-complete']);
   });
 
   it('a category the device did not opt into is filtered before sealing', async () => {
@@ -393,6 +428,185 @@ describe('PushNotifier', () => {
     await settleTurn();
     await vi.advanceTimersByTimeAsync(0); // let the async delivery settle
     expect(removeRegistration).toHaveBeenCalledWith('device-1');
+  });
+
+  /**
+   * The early return on result.reason === 'device-not-registered'. deliver()
+   * deliberately stops there, before either the cooldown release or the
+   * generic-failure console.warn a few lines below - the test above only
+   * asserts removeRegistration was called, so falling through into the
+   * release-and-second-warn block would still pass it.
+   */
+  it('the device-not-registered branch warns exactly once and never falls through to the generic-failure warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const notRegisteredWakeChannel = {
+      send: vi.fn(() => Promise.resolve<WakeResult>({ delivered: false, reason: 'device-not-registered' })),
+    };
+    buildNotifier({ wakeChannel: notRegisteredWakeChannel });
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    await vi.advanceTimersByTimeAsync(0); // let the delivery settle
+
+    expect(removeRegistration).toHaveBeenCalledWith('device-1');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const loggedText = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(loggedText).toContain('no longer registered');
+    expect(loggedText).not.toContain('failed:'); // the generic-failure line's wording, never reached
+
+    // The early return skips releaseCooldownIfUnclaimed too, so the stamp
+    // this call made is still live: an immediate retrigger of the same
+    // (device, session, category) key stays suppressed by it rather than
+    // by a missing registration (the fake store's list() is untouched by
+    // removeRegistration and still returns it).
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(notRegisteredWakeChannel.send).toHaveBeenCalledTimes(1);
+
+    warnSpy.mockRestore();
+  });
+
+  /**
+   * The blind spot the logging closes. sendExpoPush never throws for a
+   * network failure or a non-2xx response - it catches internally and
+   * RETURNS { delivered: false, reason: 'send-failed', detail } - so this
+   * result, not the deliver() catch block, is the branch a real Expo
+   * outage takes. Before the fix it fell off the end of deliver()'s if
+   * with no trace anywhere.
+   */
+  it('logs a send-failed result instead of swallowing it, and does not drop the registration', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchImpl = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }));
+    buildNotifier();
+    await settleTurn();
+    await vi.advanceTimersByTimeAsync(0); // let the async delivery settle
+
+    expect(warnSpy).toHaveBeenCalled();
+    const loggedText = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(loggedText).toContain('send-failed');
+    expect(loggedText).toContain('503');
+    expect(loggedText).not.toContain(REGISTRATION.expoPushToken);
+    expect(loggedText).not.toContain('sealed-blob');
+    expect(removeRegistration).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  /**
+   * redactPushTokens on the send-failed detail. result.detail on this path
+   * is Expo's own ticket message (see expo-push-client.ts's
+   * ticket.status === 'error' branch) - vendor text this repo does not
+   * author - and Expo does quote the device's own push token back inside
+   * it, as its documented not-registered message shows. The ticket shape
+   * below is a stand-in for any such message reaching this branch.
+   * Logging it verbatim would put a live push capability in the desktop
+   * log, which is what the notifier's header promises it never does.
+   */
+  it('redacts the device token out of an Expo rate-limit ticket message before logging it, keeping the diagnostic text', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rateLimitMessage = `You are sending messages too frequently to device ${REGISTRATION.expoPushToken}. Slow down.`;
+    fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { status: 'error', message: rateLimitMessage, details: { error: 'MessageRateExceeded' } } }),
+    }));
+    buildNotifier();
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    await vi.advanceTimersByTimeAsync(0); // let the delivery settle
+
+    expect(warnSpy).toHaveBeenCalled();
+    const loggedText = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(loggedText).not.toContain(REGISTRATION.expoPushToken);
+    expect(loggedText).toContain('ExponentPushToken[redacted]');
+    expect(loggedText).toContain('too frequently'); // the diagnostic half survives the redaction
+
+    warnSpy.mockRestore();
+  });
+
+  it('logs a thrown wakeChannel error instead of swallowing it', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const throwingWakeChannel = { send: vi.fn(() => Promise.reject(new Error('socket reset'))) };
+    buildNotifier({ wakeChannel: throwingWakeChannel });
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    await vi.advanceTimersByTimeAsync(0); // let the rejected promise settle
+
+    expect(warnSpy).toHaveBeenCalled();
+    const loggedText = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(loggedText).toContain('socket reset');
+    expect(removeRegistration).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  /**
+   * The cooldown is stamped BEFORE the send (notifyWithContext), so a
+   * synchronous burst of the same category never double-sends. But a
+   * genuine failure means the phone never actually saw a notification, so
+   * that stamp must not cost it the whole 30s retry window: the failure
+   * path releases the cooldown it set, and a later recurrence within the
+   * original window still goes out.
+   */
+  it('a failed send releases its cooldown, so a later recurrence within 30s still notifies', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { status: 'ok' } }) });
+    buildNotifier();
+    sessionManager.emit('exit', 'sess-1', 1, false); // fails
+    await vi.advanceTimersByTimeAsync(0); // let the failed delivery release the cooldown
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    // Well inside the 30s window - a fresh stamp here would suppress this.
+    await vi.advanceTimersByTimeAsync(5000);
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // the retry actually went out
+
+    warnSpy.mockRestore();
+  });
+
+  /**
+   * The compare-and-clear guard inside releaseCooldownIfUnclaimed. The test
+   * above is fully sequential - the failing send resolves before the
+   * second trigger fires - so the `=== stampedAt` comparison the guard
+   * performs is never actually exercised: a bare
+   * `this.cooldowns.delete(cooldownKey)` would pass it too. Here send #1
+   * is left unresolved while a later trigger of the identical (device,
+   * session, category) key writes a fresher stamp and succeeds; only once
+   * that fresher stamp exists does send #1 resolve as a failure. Releasing
+   * a stale stamp must never clear the fresh one another call already
+   * wrote for the same key.
+   */
+  it('a stale in-flight failure releases only its own cooldown stamp, never a fresher one written meanwhile', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let resolveFirstSend: (result: WakeResult) => void = () => {};
+    const firstSendResult = new Promise<WakeResult>((resolve) => {
+      resolveFirstSend = resolve;
+    });
+    let sendCallCount = 0;
+    const sendSpy = vi.fn(() => {
+      sendCallCount += 1;
+      return sendCallCount === 1 ? firstSendResult : Promise.resolve<WakeResult>({ delivered: true });
+    });
+    buildNotifier({ wakeChannel: { send: sendSpy } });
+
+    // Send #1: stamps the cooldown for (device-1, sess-1, session-failed) and stays in flight.
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    // Past the 30s cooldown the identical key notifies again: a fresher
+    // stamp is written and send #2 goes out and succeeds.
+    await vi.advanceTimersByTimeAsync(30_000);
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(0); // let send #2 settle
+
+    // Only now does send #1 resolve, as a failure.
+    resolveFirstSend({ delivered: false, reason: 'send-failed', detail: 'boom' });
+    await vi.advanceTimersByTimeAsync(0); // let the stale failure settle
+
+    // Well inside the fresh stamp's own 30s window: a bare `delete` in
+    // releaseCooldownIfUnclaimed would have wiped that fresh stamp above,
+    // and this trigger would send a third time.
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    warnSpy.mockRestore();
   });
 
   it('a device without a resolvable roster public key is skipped, not crashed on', async () => {

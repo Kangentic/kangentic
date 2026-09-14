@@ -942,6 +942,44 @@ describe('BridgeSession.connectionState', () => {
     }
   });
 
+  /**
+   * The exact mirror of the test above: a phone that dies silently rather
+   * than one that keeps serving. Nothing sends a Final frame and no
+   * application traffic arrives, so the desktop's `streams` are never
+   * nulled - only the presence probe budget (spent over the dropped rekey)
+   * concludes the peer is gone. This is the precondition the push
+   * presence-suppression fix depends on: connectionState must reach
+   * 'offline' here even though isEstablished stays true.
+   */
+  it('reports "offline" once a rekey goes unanswered and the phone sends nothing back (a silent death)', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, device } = createReconnectableLoopback();
+      const responder = new ReestablishingResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, device);
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(session.connectionState).toBe('connected');
+
+      // From here the phone is gone: the relay swallows the rekey and
+      // nothing ever answers or sends again.
+      responder.dropHandshakes = true;
+      vi.advanceTimersByTime(2 * 60 * 1000); // the rekey tick fires and arms the probe
+      vi.advanceTimersByTime(15 * 1000); // past both 5s probe failures (10s) with margin
+
+      expect(session.connectionState).toBe('offline');
+      expect(session.transportState).toBe('connected');
+      // The streams are still held - nothing on this path nulls them, which
+      // is exactly the window push presence suppression must not read as
+      // "still watching".
+      expect(session.isEstablished).toBe(true);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports "offline" immediately on an explicit remote close', () => {
     vi.useFakeTimers();
     try {
@@ -959,6 +997,13 @@ describe('BridgeSession.connectionState', () => {
       device.send(wrapSessionFrame(SessionFrameKind.Application, responderStreams.send.seal(new Uint8Array(0), FrameTag.Final)));
 
       expect(session.connectionState).toBe('offline');
+      // The streams are left intact by markPeerAbsent (see the class doc):
+      // clearing them here would break the independent send path for no
+      // benefit, since connectionState already moved to 'offline' on
+      // peerPresence alone. This is exactly the window push presence
+      // suppression must read connectionState rather than this raw flag
+      // to avoid treating the device as still watching.
+      expect(session.isEstablished).toBe(true);
 
       session.dispose();
     } finally {
