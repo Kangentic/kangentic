@@ -764,7 +764,7 @@ Operates on a per-project DB.
 | `listArchived()` | All archived tasks ordered by `archived_at` DESC |
 | `listArchivedPreview(limit)` | The newest `limit` archived tasks plus the total archived count; cheap hydration for the Done column (full list loads lazily via `listArchived`) |
 | `countAll()` | Bare `COUNT(*)` over every task, active and archived. For a caller that needs only the number: `list()` materializes every row plus the attachment-count join just to take `.length` |
-| `countArchived()` | Bare `COUNT(*)` over archived tasks, the `listArchived()` counterpart of `countAll()`. The MCP read tools (`kangentic_list_columns`, `kangentic_board_summary`, `kangentic_get_column_detail`) report it as the done column's completed count. That substitution holds only because every archiving path lands the task in the `role = 'done'` swimlane first, so the project-wide count is that lane's count |
+| `countArchived()` | Bare `COUNT(*)` over archived tasks, the `listArchived()` counterpart of `countAll()`. `kangentic_list_columns` and `kangentic_get_column_detail` call it to report the done column's completed count (`kangentic_board_summary` prints the same number from the `listArchived()` it already loads for its label tally). A project-wide count stands in for one lane's because `archive()` has a single caller, the move-to-Done branch in `ipc/handlers/task-move.ts`, which runs only once the task's `swimlane_id` is the `role = 'done'` lane |
 | `delete(id)` | Hard delete with position shift in the owning swimlane |
 
 ### SwimlaneRepository
