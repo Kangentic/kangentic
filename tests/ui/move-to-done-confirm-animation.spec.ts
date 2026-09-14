@@ -205,7 +205,6 @@ async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: str
   // Drop outcome (dialog appearance) is asserted by the caller.
 }
 
-
 test.describe('Move to Done - confirm dialog animated path', () => {
   test('clicking Move after the confirm dialog releases the gate and archives the task', async () => {
     // Under the new model: on drop, setCompletingTask fires synchronously

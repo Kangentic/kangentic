@@ -148,8 +148,14 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    every one of those in about a second.
 
    Confirm the green is a real green, not a green-via-retry. CI runs UI and E2E with `retries: 1`,
-   so a flake hides inside a passing check. `gh run view <runId> --repo Kangentic/kangentic --log`
-   filtered for `flaky` must come back empty. A hit is a flake, and the project's standing
+   so a flake hides inside a passing check. Run
+   `gh run view <runId> --repo Kangentic/kangentic --log` as ONE command and read `flaky` out of
+   the output it returns. Do not pipe it into a filter and do not redirect it to a file:
+   `bash-single-command.md` forbids both, the guard hook denies the pipe outright, and an agent
+   that hits that wall mid-release may skip the check instead of working around it. If the
+   combined log comes back truncated, re-run it one job at a time with
+   `gh run view --job <jobId> --repo Kangentic/kangentic --log`; `gh run view <runId>
+   --repo Kangentic/kangentic` lists the job ids. A hit is a flake, and the project's standing
    never-leave-a-flake rule makes an unresolved one a blocker: fix it, rewrite it
    deterministically, or remove it with a justification before releasing. Do not ask whether to
    release around it.

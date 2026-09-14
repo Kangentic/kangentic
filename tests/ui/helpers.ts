@@ -103,38 +103,53 @@ export async function pressResizeHandle(
  * `settles` is the caller's proof the click took effect, usually the dialog
  * going `hidden` or `detached`. The helper returns on the first settle, so a
  * click that lands the first time costs nothing beyond the wait the caller
- * needed anyway. It deliberately does NOT throw when the attempts run out: the
- * caller keeps its own assertion, so a genuinely broken handler still fails the
- * spec on that assertion instead of being retried into a false pass.
+ * needed anyway.
+ *
+ * The budget is sized against the `ui` project's 15s per-test timeout, not
+ * against the race. Three attempts is already far past what the mechanism
+ * needs. The first retry waits a full settle, 30 times the 50 ms removal timer;
+ * if that timer has not fired by then, the main thread was blocked for the
+ * whole window, and a fourth click does not fix that either. What the budget
+ * has to leave room for is the caller, which runs a drag before this and an
+ * assertion after. An exhausted budget CONSUMES the enclosing test's timeout,
+ * so a caller that adds waits of its own must size them against what is left.
+ *
+ * Exhausting the attempts on a click that kept landing returns normally rather
+ * than throwing. The caller keeps its own assertion, and a genuinely broken
+ * handler should fail on that named assertion rather than on a retry. A click
+ * that never landed is a different case. A strict-mode violation, a selector
+ * that never resolves, and a click an overlay is blocking are all test bugs, so
+ * the last attempt rethrows that error to name itself here. The settle check
+ * runs before that rethrow, so a target that detached because an EARLIER click
+ * did take effect still returns cleanly instead of failing on the teardown it
+ * caused.
  *
  * Verified in `node_modules/@dnd-kit/core/dist/core.cjs.development.js`
  * (`handleStart` adds the listener, `detach` removes it on the 50 ms timer).
  */
+const DRAG_SWALLOW_ATTEMPTS = 3;
+const DRAG_SWALLOW_CLICK_TIMEOUT_MS = 1500;
+const DRAG_SWALLOW_SETTLE_TIMEOUT_MS = 1500;
+
 export async function clickPastDragSwallow(
   target: Locator,
   settles: Locator,
   state: 'hidden' | 'detached' | 'visible' | 'attached' = 'hidden',
-  options: { attempts?: number; settleTimeoutMs?: number } = {},
 ): Promise<void> {
-  const attempts = options.attempts ?? 4;
-  const settleTimeoutMs = options.settleTimeoutMs ?? 1500;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const isLastAttempt = attempt === attempts - 1;
+  for (let attempt = 0; attempt < DRAG_SWALLOW_ATTEMPTS; attempt += 1) {
+    const isLastAttempt = attempt === DRAG_SWALLOW_ATTEMPTS - 1;
+    let clickError: unknown;
     try {
-      await target.click({ timeout: 2000 });
+      await target.click({ timeout: DRAG_SWALLOW_CLICK_TIMEOUT_MS });
     } catch (error) {
-      // Usually the control is already gone, meaning an earlier click did take
-      // effect and the surface is tearing down, so fall through to the settle
-      // wait. But this also catches a strict-mode violation, a selector that
-      // never resolves, and a click an overlay is blocking, which are all test
-      // bugs. Let the last attempt's error escape so it names itself here
-      // instead of resurfacing as the caller's settle assertion seconds later.
-      if (isLastAttempt) throw error;
+      clickError = error;
     }
-    const settled = await settles.waitFor({ state, timeout: settleTimeoutMs })
+    const settled = await settles
+      .waitFor({ state, timeout: DRAG_SWALLOW_SETTLE_TIMEOUT_MS })
       .then(() => true)
       .catch(() => false);
     if (settled) return;
+    if (isLastAttempt && clickError) throw clickError;
   }
 }
 
