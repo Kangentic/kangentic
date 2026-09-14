@@ -294,7 +294,9 @@ export const handleCreateTask: CommandHandler = async (
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
 
-  const resolution = resolveColumn(db, columnName);
+  const resolution = resolveColumn(db, columnName, 'todo', {
+    refuseDone: 'a task cannot be created there',
+  });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
@@ -1003,7 +1005,9 @@ export function handleMoveTaskToProject(
   }
 
   const targetDb = target.getProjectDb();
-  const resolution = resolveColumn(targetDb, params.column ?? null, 'todo');
+  const resolution = resolveColumn(targetDb, params.column ?? null, 'todo', {
+    refuseDone: 'a relocated task cannot land there',
+  });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }

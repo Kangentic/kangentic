@@ -1,5 +1,5 @@
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { listActiveSwimlanes } from './column-resolver';
+import { listBoardColumns } from './column-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
 export const handleListColumns: CommandHandler = (
@@ -8,12 +8,22 @@ export const handleListColumns: CommandHandler = (
 ): CommandResponse => {
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
-  const allSwimlanes = listActiveSwimlanes(db);
+  const allSwimlanes = listBoardColumns(db);
+
+  // The done lane's live count is structurally always zero - moving a task
+  // there archives it off the board - so reporting only `taskCount` would make
+  // the column read as dead. Count the archive instead, once, rather than per
+  // lane. See `TaskRepository.countArchived()` for why a project-wide count is
+  // a safe stand-in for the done lane's own.
+  const hasDoneLane = allSwimlanes.some((swimlane) => swimlane.role === 'done');
+  const completedCount = hasDoneLane ? taskRepo.countArchived() : 0;
 
   const columns = allSwimlanes.map((swimlane) => ({
     name: swimlane.name,
     role: swimlane.role,
+    // Live cards on the board, for every lane including Done.
     taskCount: taskRepo.list(swimlane.id).length,
+    ...(swimlane.role === 'done' ? { completedCount } : {}),
   }));
 
   return { success: true, data: columns };
@@ -27,7 +37,11 @@ export const handleListTasks: CommandHandler = (
 
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
-  const allSwimlanes = listActiveSwimlanes(db);
+  // Done is resolvable here because kangentic_list_columns advertises it. A
+  // narrower list would answer `Column "Done" not found` for a name this tool's
+  // own sibling just printed. It has no live tasks to return (moving a task
+  // there archives it); completed tasks are kangentic_search_tasks' job.
+  const allSwimlanes = listBoardColumns(db);
 
   let targetSwimlanes = allSwimlanes;
   if (columnName) {

@@ -145,7 +145,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('Task description. Supports markdown.'),
-        column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
+        column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. The done-role column is not a valid target here (creating a task there would archive it off the board immediately); create it on the board and move it with kangentic_move_task. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
         priority: z.number().int().min(0).max(4).optional().describe('Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items.'),
         labels: z.array(z.union([
           z.string(),
@@ -295,7 +295,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_list_columns',
     {
-      description: 'List all columns (swimlanes) on the Kangentic board. Returns column names, roles, and task counts. Pass `project` to list columns from a different project.',
+      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. Pass `project` to list columns from a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -306,10 +306,15 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list columns: ${response.error}` }], isError: true };
       }
-      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number }>;
+      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number }>;
       const lines = columns.map((column) => {
         const roleTag = column.role ? ` (${column.role})` : '';
-        return `- ${column.name}${roleTag}: ${column.taskCount} task(s)`;
+        // The done column breaks the "N task(s)" shape deliberately: its live
+        // count is structurally zero, so printing it reads as an empty column.
+        const count = column.completedCount !== undefined
+          ? `${column.completedCount} completed`
+          : `${column.taskCount} task(s)`;
+        return `- ${column.name}${roleTag}: ${count}`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),
@@ -744,7 +749,7 @@ export function registerTaskTools(
     {
       description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
       inputSchema: z.object({
-        column: z.string().describe('Column name to update (case-insensitive, e.g. "Review").'),
+        column: z.string().describe('Column name to update (case-insensitive, e.g. "Review"). The role columns (To Do, Done) can be renamed and restyled here like any other; their role itself is structural and not settable.'),
         name: z.string().max(100).optional().describe('New column name.'),
         description: z.string().max(1000).nullable().optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json. Null to clear.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a").'),

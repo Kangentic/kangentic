@@ -67,9 +67,10 @@ function makeSwimlaneRow(overrides: Partial<MockSwimlaneRow> = {}): MockSwimlane
 //   - getById(): SELECT * FROM swimlanes WHERE id = ?
 //   - update() : UPDATE swimlanes SET ...
 //   - tasks    : SELECT ... FROM tasks ... swimlane_id = ? ...
+//   - archive  : SELECT COUNT(*) ... FROM tasks WHERE archived_at IS NOT NULL
 // ---------------------------------------------------------------------------
 
-function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] = []) {
+function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] = [], archivedCount = 0) {
   return {
     prepare: vi.fn((sql: string) => {
       // SwimlaneRepository.list() - also used by listActiveSwimlanes (resolveColumn)
@@ -97,6 +98,14 @@ function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] 
         return {
           all: vi.fn(() => taskRows),
           get: vi.fn(() => undefined),
+        };
+      }
+      // TaskRepository.countArchived() - the done column's Completed line
+      if (sql.includes('COUNT(*)') && sql.includes('archived_at IS NOT NULL')) {
+        return {
+          get: vi.fn(() => ({ count: archivedCount })),
+          all: vi.fn(() => []),
+          run: vi.fn(),
         };
       }
       // Fallback for any unexpected prepare call
@@ -318,6 +327,69 @@ describe('handleGetColumnDetail - description field', () => {
 
     expect(result.success).toBe(true);
     expect((result.data as Record<string, unknown>).description).toBe('case test');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleGetColumnDetail - the Done column
+//
+// Done is persisted `is_archived = 1` by construction, so a bare !is_archived
+// filter drops it. That is what hid it from kangentic_list_columns and sent a
+// finished task into Merge (task #642). Both surfaces here carry the same risk:
+// the not-found suggestion list, and the `Tasks: 0` that a done column always
+// reports because moving a task there archives it off the board.
+// ---------------------------------------------------------------------------
+
+describe('the Done column, across the column handlers', () => {
+  const TODO_ROW = makeSwimlaneRow({ id: 'lane-todo', name: 'To Do', role: 'todo' });
+  const DONE_ROW = makeSwimlaneRow({ id: 'lane-done', name: 'Done', role: 'done', is_archived: 1 });
+  const HIDDEN_ROW = makeSwimlaneRow({ id: 'lane-hidden', name: 'Icebox', role: null, is_archived: 1 });
+
+  it('lets handleUpdateColumn edit Done, which the Board Manager already allows', () => {
+    // Done resolved as "not found" for update_column, so MCP could not rename or
+    // recolor a column a human edits in the Board Manager. Nothing here can
+    // damage it: the handler writes neither `role` nor `is_archived`.
+    const db = createMockDb([TODO_ROW, DONE_ROW]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'Done', color: '#123456' }, context);
+
+    expect(result.success).toBe(true);
+    expect(context.onSwimlaneUpdated).toHaveBeenCalled();
+  });
+
+  it('names Done in the Available list on a miss, and never a user-archived lane', () => {
+    const db = createMockDb([TODO_ROW, DONE_ROW, HIDDEN_ROW]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'Nonexistent Column' }, context);
+
+    expect(result.success).toBe(false);
+    const available = (result.error ?? '').split('Available: ')[1];
+    expect(available).toBe('To Do, Done');
+  });
+
+  it('reports the archive size so Tasks: 0 does not read as an empty column', () => {
+    const db = createMockDb([TODO_ROW, DONE_ROW], [], 584);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'Done' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Tasks: 0');
+    expect(result.message).toContain('Completed: 584');
+    expect((result.data as Record<string, unknown>).completedCount).toBe(584);
+  });
+
+  it('omits the Completed line for a column that is not the done role', () => {
+    const db = createMockDb([TODO_ROW, DONE_ROW], [], 584);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).not.toContain('Completed:');
+    expect((result.data as Record<string, unknown>).completedCount).toBeNull();
   });
 });
 

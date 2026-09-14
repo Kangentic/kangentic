@@ -40,7 +40,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
 | Usage Tools | `src/main/agent/mcp-http/usage-tools.ts` | Aggregated usage statistics (`kangentic_get_usage_stats`): tokens, cost, burn rate, and by-model / by-agent / by-effort breakdowns, per project or app-wide, over the shared time ranges. Reads the same usage-stats service as the in-app dashboard. |
 | Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
-| Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
+| Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers, and the single place that decides how the done column is treated: `listActiveSwimlanes` (move targets, Done excluded), `listBoardColumns` / `isBoardColumn` (read tools, Done included), and `resolveColumn`'s `includeArchivedDone` and `refuseDone` options. |
 | Task Ordering | `src/main/agent/commands/task-ordering.ts` | Pure ordinal-slot arithmetic shared by `handleMoveTask`'s same-column reposition and `handleReorderTasks`: slot clamping, prefix-merge reordering, and ordinal-to-raw-position translation. |
 | MCP Config Delivery | Per-adapter, under `src/main/agent/adapters/<agent>/` | Each adapter delivers the per-launch URL + token through its own CLI's mechanism. See the [Discovery](#discovery) table. |
 | Trust Managers | `adapters/claude/trust-manager.ts`, `adapters/codex/trust-manager.ts`, `adapters/gemini/trust-manager.ts`, `adapters/qwen-code/trust-manager.ts`, `adapters/grok/trust-manager.ts`, `adapters/antigravity/trust-manager.ts` | Pre-approve the spawn directory so the session is not blocked at startup: Claude in `~/.claude.json`, Codex via `[projects.'<path>'] trust_level` in `~/.codex/config.toml`, Gemini and Qwen via `trustedFolders.json`, Grok via `[folders.'<path>']` in `~/.grok/trusted_folders.toml` (an untrusted folder disables every configured MCP server; Grok's trust cascades to subdirectories, so only worktrees under an undecided root get their own entry), Antigravity via `trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json` (exact-path entries only - agy does not inherit ancestor trust, and an untrusted workspace disables hook execution). All six leave an explicit user decision alone, in either direction. |
@@ -129,6 +129,8 @@ the browser capability tiers are annotated mutating.
 
 Create a task on the board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead of a board task. With no `column`, the task always lands in the active board's To Do column - never the backlog.
 
+The done-role column is refused. A task created there would be archived off the board the moment it existed, so the error says that and points at [kangentic_move_task](#kangentic_move_task), rather than reporting the column as missing. [kangentic_promote_backlog](#kangentic_promote_backlog) and [kangentic_move_task_to_project](#kangentic_move_task_to_project) refuse it the same way, for the same reason.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `title` | string | Yes | Task title (max 200 chars) |
@@ -183,9 +185,18 @@ Runaway-loop safeguard: a single Kangentic launch can create at most 500 tasks v
 
 ### kangentic_list_columns
 
-List all non-archived columns with task counts.
+List every column on the board, in board order, with names, roles, and task counts.
 
-No parameters. Returns column names, roles, and current task counts.
+No parameters beyond the optional `project` selector.
+
+**The done-role column is included, and it is the one an agent most needs.** It reports a completed
+count rather than a live task count, because moving a task there archives it off the board, so its
+live count is structurally zero. Read the roles rather than assuming the last column in the list is
+the finish line: on the default board the last non-done column is Merge, which auto-spawns
+`/merge-pull-request`.
+
+A column a *user* archived deliberately stays hidden. The carve-out is the `done` role alone, not
+"any archived column".
 
 ### Board Profiles
 
@@ -300,6 +311,10 @@ List tasks, optionally filtered by column. Tasks come back in board order (top t
 |-----------|------|----------|-------------|
 | `column` | string | No | Filter by column name. If omitted, returns all tasks. |
 
+This lists tasks on the board. Filtering by the done column resolves and returns nothing, since a
+task moved there is archived off the board; reach completed tasks with
+[kangentic_search_tasks](#kangentic_search_tasks) at `status: "completed"`.
+
 Each task reports a `position`: its zero-based ordinal slot within its own column, counting only
 non-archived tasks. This is the same slot vocabulary
 [kangentic_move_task](#kangentic_move_task)'s `position` and
@@ -357,6 +372,10 @@ At least one parameter is required. Returns the same task fields as `kangentic_f
 Get a high-level board overview: task counts per column, the board's label vocabulary, active sessions, completed tasks, and aggregate cost/token metrics.
 
 No parameters.
+
+The column list covers the whole ladder, done column included. That column reports its completed
+count rather than a live task count, for the reason given under
+[kangentic_list_columns](#kangentic_list_columns).
 
 **Label vocabulary.** The summary lists the labels already in use with their counts, most-used
 first, so a caller can reuse an existing label instead of inventing a near-duplicate and
@@ -443,6 +462,13 @@ zero-based ordinal slot described under [kangentic_list_tasks](#kangentic_list_t
 this a complete read-before-write call for
 [kangentic_reorder_tasks](#kangentic_reorder_tasks). The rendered message caps the listing at 50
 tasks and says how many were omitted; `data.taskOrder` always carries the whole column.
+
+The done-role column reports `Tasks: 0` and an empty `taskOrder`, because a task moved there is
+archived off the board. It adds a `Completed: N` line with the size of the archive, and a
+`Status: archived` line, which is its normal persisted state rather than a warning. In `data`,
+`completedCount` carries that number and is `null` on every other column rather than absent.
+This tool resolves any column by name, including one a user archived; the `Available:` list on a
+miss names the board's columns plus the done column.
 
 ### kangentic_update_task
 
@@ -560,12 +586,14 @@ Relocate a task from the To Do column of one project's board to a different proj
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) of the To Do task in the source project |
 | `targetProject` | string | Yes | Destination project name (case-insensitive) or UUID. Must differ from the source project. |
-| `column` | string | No | Target column on the destination board (case-insensitive). Defaults to the destination board's To Do column. |
+| `column` | string | No | Target column on the destination board (case-insensitive). Defaults to the destination board's To Do column. The destination's done-role column is refused, the same way [kangentic_create_task](#kangentic_create_task) refuses it. |
 | `project` | string | No | Source project name (case-insensitive) or UUID - not the destination. Omit to target the active project. |
 
 ### kangentic_update_column
 
 Update a swimlane (column) configuration. Use `kangentic_get_column_detail` to inspect current values first.
+
+The role columns (To Do, Done) are editable here like any other: rename, describe, recolor, change the icon. Their `role` itself is structural and is not a settable field, and this tool never changes a column's archived state, so editing Done cannot dislodge it from the board.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -695,7 +723,7 @@ This tool consolidates what were previously two tools (`kangentic_search_everyth
 
 ### kangentic_promote_backlog
 
-Move backlog tasks to the board, creating tasks in the specified column.
+Move backlog tasks to the board, creating tasks in the specified column. The done-role column is refused, the same way [kangentic_create_task](#kangentic_create_task) refuses it.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

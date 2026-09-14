@@ -16,7 +16,14 @@ export const handleUpdateColumn: CommandHandler = (
   }
 
   const db = context.getProjectDb();
-  const resolution = resolveColumn(db, columnName);
+  // includeArchivedDone: Done is a real, editable column - the Board Manager
+  // lets a user rename and recolor it - and kangentic_list_columns now prints
+  // it, so resolving it as "not found" was both a lie and a capability the UI
+  // had and MCP did not. Nothing here can dislodge it from its structural role:
+  // this handler never writes `role` or `is_archived`, and `auto_spawn` is inert
+  // on a done lane (NEVER_AUTO_SPAWN_ROLES gates the transition engine). Renames
+  // go unchecked for name collisions here, as they do for every other column.
+  const resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
