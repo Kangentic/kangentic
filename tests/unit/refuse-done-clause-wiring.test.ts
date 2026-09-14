@@ -19,6 +19,15 @@
  * against a mocked SwimlaneRepository.list() that includes a genuine Done
  * lane, so the assertions are on the handler's actual returned refusal text,
  * not on a mock's recorded call arguments.
+ *
+ * A third handler, handleCreateTask, carries its own refuseDone clause
+ * (task-commands.ts) and is the primary one: it is the tool whose schema
+ * description names the done-role column, and the handler in the bug this
+ * whole change is about. Its only other coverage is
+ * mcp-move-task-to-done.test.ts, which is describe.runIf(CAN_RUN) against a
+ * real better-sqlite3 DB and skips on this machine (the ABI does not load
+ * under vitest), so without a test here a dropped `{ refuseDone: ... }` at
+ * that call site stays green in every locally-runnable suite.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -96,7 +105,7 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
 // deliberately real.
 // ---------------------------------------------------------------------------
 
-import { handleMoveTaskToProject } from '../../src/main/agent/commands/task-commands';
+import { handleMoveTaskToProject, handleCreateTask } from '../../src/main/agent/commands/task-commands';
 import { handlePromoteBacklog } from '../../src/main/agent/commands/backlog-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
@@ -212,5 +221,51 @@ describe('handlePromoteBacklog refuseDone wiring', () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/^No backlog tasks found for the provided IDs\./);
     expect(result.error).not.toContain('completed column');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleCreateTask
+// ---------------------------------------------------------------------------
+
+describe('handleCreateTask refuseDone wiring', () => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSwimlaneRepoList.mockReturnValue([TODO_LANE, MERGE_LANE, DONE_LANE]);
+    context = makeContext();
+  });
+
+  it('refuses a named Done target with its own clause, not a bare "not found"', async () => {
+    const response = await handleCreateTask({ title: 'New task', column: 'Done' }, context);
+
+    expect(response.success).toBe(false);
+    if (!response.success) {
+      expect(response.error).toContain('a task cannot be created there');
+      expect(response.error).not.toContain('not found');
+      expect(response.error).toContain('kangentic_move_task');
+    }
+    // The refusal must stop the handler before it creates anything.
+    expect(mockTaskRepoCreate).not.toHaveBeenCalled();
+    expect(context.onTaskCreated).not.toHaveBeenCalled();
+  });
+
+  it('resolves a non-Done target (Merge) normally, creating the task there', async () => {
+    // Proves the refusal is Done-specific, not a blanket failure that would
+    // make the "refuses Done" test above pass for the wrong reason.
+    mockTaskRepoCreate.mockReturnValue({
+      id: 'task-3',
+      display_id: 9,
+      title: 'New task',
+      swimlane_id: 'lane-merge',
+    });
+
+    const response = await handleCreateTask({ title: 'New task', column: 'Merge' }, context);
+
+    expect(response.success).toBe(true);
+    expect(mockTaskRepoCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ swimlane_id: 'lane-merge' }),
+    );
   });
 });
