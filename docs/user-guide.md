@@ -126,6 +126,7 @@ conversation and sends the task once more.
   - "Initializing..." or "Resuming..." during session startup
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
+  - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which settings change it
 - **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that triggers an auto_command), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the auto_command name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ### Move Between Active Columns
