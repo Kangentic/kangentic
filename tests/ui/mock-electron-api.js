@@ -234,6 +234,10 @@
     // true, because the mock models an established install (like hasCompletedFirstRun
     // above) that has already crossed the single -> focused default flip.
     hasMigratedWindowLightDismissDefault: true,
+    // true for the same reason: an established install has already run the one-shot
+    // purge of seeded entries out of discoveredModelsByAgent (ConfigManager.load).
+    hasPurgedSeededDiscoveredModels: true,
+    discoveredModelsByAgent: {},
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
     restoreWindowPosition: true,
