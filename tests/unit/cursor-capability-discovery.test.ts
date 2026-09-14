@@ -250,6 +250,58 @@ describe('discoverCursorCapabilities', () => {
       expect(thirdResult.models).toContain('gpt-5.3-codex-high');
     });
   });
+
+  describe('runCursorCli platform branch', () => {
+    // Node's CVE-2024-27980 mitigation refuses to execFile a .cmd/.CMD shim
+    // without a shell, and Cursor installs as a .CMD shim, often under a path
+    // with spaces (`C:\Program Files\...`). So the win32 path must build ONE
+    // shell string with the cliPath quoted, or the shell splits the path on
+    // the space and the listing comes back empty; POSIX keeps execFile's
+    // safer argv array untouched. `process.platform` is read inside
+    // `runCursorCli` at call time (not cached at construction, unlike
+    // `GrokDetector`'s fallback paths - see grok-adapter.test.ts), so
+    // overriding it before each call is sufficient.
+    //
+    // The command-string assertion is the load-bearing one: it is falsifiable
+    // against a real failure mode (an unquoted space-containing path gets
+    // split by the shell), not against "which mock got called", which would
+    // just restate the `if`.
+
+    it('reaches a .CMD through a shell with the path quoted on win32', async () => {
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      try {
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        setCliResponses({ help: HELP_WITH_MODEL, listModels: LIST_MODELS_OUTPUT });
+        await discoverCursorCapabilities('C:\\Program Files\\cursor\\cursor-agent.CMD');
+        expect(execFileMock).not.toHaveBeenCalled();
+        // Last call is the --list-models probe (the --help probe runs first
+        // and reports supportsModelOverride, which gates this second call).
+        expect(execMock.mock.calls.at(-1)?.[0]).toBe(
+          '"C:\\Program Files\\cursor\\cursor-agent.CMD" --list-models',
+        );
+        expect(execMock.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: 10000, windowsHide: true });
+      } finally {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
+    });
+
+    it('passes an argv array to execFile on POSIX, never a shell string', async () => {
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      try {
+        Object.defineProperty(process, 'platform', { value: 'linux' });
+        setCliResponses({ help: HELP_WITH_MODEL, listModels: LIST_MODELS_OUTPUT });
+        await discoverCursorCapabilities('/usr/bin/cursor-agent');
+        expect(execMock).not.toHaveBeenCalled();
+        expect(execFileMock).toHaveBeenLastCalledWith(
+          '/usr/bin/cursor-agent',
+          ['--list-models'],
+          expect.objectContaining({ timeout: 10000, windowsHide: true }),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
+    });
+  });
 });
 
 describe('CursorAdapter.discoverCapabilities', () => {
