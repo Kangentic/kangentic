@@ -115,8 +115,15 @@ export const ViewToggle = React.memo(function ViewToggle() {
 
       <div className="w-px h-5 bg-edge/50 mx-2.5" />
 
+      {/* Keyed per view: without a `key`, React reconciles ONE
+          `ToolbarSearchFilter` instance across the view swap instead of
+          unmounting it, so its Filter button's `transition-colors` (fill
+          and border both change when `hasActiveFilters` differs between the
+          two views' independent filter sets) interpolates from the old
+          view's palette instead of painting the new one immediately. */}
       {activeView === 'board' ? (
         <ToolbarSearchFilter
+          key="board-search"
           searchValue={boardSearchQuery}
           onSearchChange={setBoardSearchQuery}
           searchPlaceholder="Search board..."
@@ -135,6 +142,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
         />
       ) : (
         <ToolbarSearchFilter
+          key="backlog-search"
           searchValue={backlogSearchQuery}
           onSearchChange={setBacklogSearchQuery}
           searchPlaceholder="Search backlog..."
@@ -152,8 +160,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
         />
       )}
 
+      {/* Keyed per view for the reason above. Here the surviving node is the
+          action button itself, so its colours cross-fade from the old view's
+          palette while its label, padding, and icon size jump instantly. */}
       {activeView === 'board' ? (
-        <div className="ml-auto flex items-center gap-2">
+        <div key="board-actions" className="ml-auto flex items-center gap-2">
           <button
             type="button"
             onClick={() => openBoardManager(null, true)}
@@ -165,7 +176,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           </button>
         </div>
       ) : (
-        <div className="ml-auto flex items-center gap-2">
+        <div key="backlog-actions" className="ml-auto flex items-center gap-2">
           <button
             type="button"
             onClick={openNewDialog}
