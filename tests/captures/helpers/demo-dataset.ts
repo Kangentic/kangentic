@@ -339,15 +339,15 @@ const DEFAULT_PERMISSION_MODE = 'acceptEdits';
 
 export const DEMO_SESSIONS: DemoSession[] = [
   { id: SESSION_WEBSOCKET, taskId: 'task-cw-websocket', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 14, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 12, contextWindowSize: 1000000, costUsd: 0.42, durationMinutes: 14, peek: ['Read src/lib/websocket.ts, src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 2, tool: 'Read', detail: 'src/lib/websocket.ts' }, { minutesAgo: 1, tool: 'Grep', detail: 'websocket' }, { minutesAgo: 0.3, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
-  { id: SESSION_MIDDLEWARE, taskId: TASK_MIDDLEWARE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', startedMinutesAgo: 47, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 53, contextWindowSize: 1000000, costUsd: 2.47, durationMinutes: 47, peek: ['Write server/middleware/auth.ts', 'Edit server/routes.ts', 'Bash npm test'], events: [{ minutesAgo: 6, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 4, tool: 'Write', detail: 'server/middleware/auth.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'server/routes.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm test' }], rateLimits: true },
-  { id: SESSION_API_CLIENT, taskId: 'task-cw-api-client', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 150000, startedMinutesAgo: 88, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 65, contextWindowSize: 1000000, costUsd: 2.87, durationMinutes: 88, peek: ['Write src/types/api.ts', 'Edit src/lib/http-client.ts', 'Bash npm run typecheck'], events: [{ minutesAgo: 4, tool: 'Write', detail: 'src/types/api.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'src/lib/http-client.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm run typecheck' }] },
-  { id: SESSION_RATE_LIMIT, taskId: 'task-cw-rate-limit', projectId: PROJECT_CONTOSO, agent: 'copilot', status: 'running', activity: 'idle', startedMinutesAgo: 130, model: COPILOT, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 51, contextWindowSize: 1000000, costUsd: 4.15, durationMinutes: 130, peek: ['Read server/rate-limit.ts', 'Edit server/rate-limit.ts', 'Bash npm test'], events: [{ minutesAgo: 24, tool: 'Read', detail: 'server/rate-limit.ts' }, { minutesAgo: 22, tool: 'Edit', detail: 'server/rate-limit.ts' }, { minutesAgo: 20, tool: 'Bash', detail: 'npm test' }], isolated: true },
-  { id: SESSION_INTEGRATION, taskId: 'task-cw-integration', projectId: PROJECT_CONTOSO, agent: 'cursor', status: 'running', activity: 'idle', startedMinutesAgo: 26, model: CURSOR, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 9, contextWindowSize: 1000000, costUsd: 0.78, durationMinutes: 26, peek: ['Read server/routes.ts', 'Write tests/auth.integration.test.ts'], events: [{ minutesAgo: 3, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 1, tool: 'Write', detail: 'tests/auth.integration.test.ts' }] },
+  { id: SESSION_MIDDLEWARE, taskId: TASK_MIDDLEWARE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', startedMinutesAgo: 47, model: OPUS, effort: 'high', permissionMode: 'acceptEdits', contextPercent: 53, contextWindowSize: 1000000, costUsd: 2.47, durationMinutes: 47, peek: ['Write server/middleware/auth.ts', 'Edit server/routes.ts', 'Bash npm test'], events: [{ minutesAgo: 6, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 4, tool: 'Write', detail: 'server/middleware/auth.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'server/routes.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm test' }], rateLimits: true },
+  { id: SESSION_API_CLIENT, taskId: 'task-cw-api-client', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 150000, startedMinutesAgo: 88, model: OPUS, effort: 'high', permissionMode: 'acceptEdits', contextPercent: 65, contextWindowSize: 1000000, costUsd: 2.87, durationMinutes: 88, peek: ['Write src/types/api.ts', 'Edit src/lib/http-client.ts', 'Bash npm run typecheck'], events: [{ minutesAgo: 4, tool: 'Write', detail: 'src/types/api.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'src/lib/http-client.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm run typecheck' }] },
+  { id: SESSION_RATE_LIMIT, taskId: 'task-cw-rate-limit', projectId: PROJECT_CONTOSO, agent: 'copilot', status: 'running', activity: 'idle', startedMinutesAgo: 130, model: COPILOT, effort: null, permissionMode: 'acceptEdits', contextPercent: 51, contextWindowSize: 1000000, costUsd: 4.15, durationMinutes: 130, peek: ['Read server/rate-limit.ts', 'Edit server/rate-limit.ts', 'Bash npm test'], events: [{ minutesAgo: 24, tool: 'Read', detail: 'server/rate-limit.ts' }, { minutesAgo: 22, tool: 'Edit', detail: 'server/rate-limit.ts' }, { minutesAgo: 20, tool: 'Bash', detail: 'npm test' }], isolated: true },
+  { id: SESSION_INTEGRATION, taskId: 'task-cw-integration', projectId: PROJECT_CONTOSO, agent: 'cursor', status: 'running', activity: 'idle', startedMinutesAgo: 26, model: CURSOR, effort: null, permissionMode: 'acceptEdits', contextPercent: 9, contextWindowSize: 1000000, costUsd: 0.78, durationMinutes: 26, peek: ['Read server/routes.ts', 'Write tests/auth.integration.test.ts'], events: [{ minutesAgo: 3, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 1, tool: 'Write', detail: 'tests/auth.integration.test.ts' }] },
   { id: SESSION_CONTOSO_TERMINAL, taskId: null, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'idle', startedMinutesAgo: 9, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 4, contextWindowSize: 1000000, costUsd: 0.06, durationMinutes: 9, peek: ['Summarize what this repository does', 'Baked for 13s'], events: [], transient: true, commandTerminalBranch: 'main' },
   { id: SESSION_EMPTY_STATES, taskId: 'task-cw-empty-states', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 98, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 16, contextWindowSize: 1000000, costUsd: 0.38, durationMinutes: 98, peek: ['Read src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 12, tool: 'Read', detail: 'src/App.tsx' }, { minutesAgo: 9, tool: 'Grep', detail: 'empty' }, { minutesAgo: 6, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
   { id: SESSION_VITE8, taskId: 'task-cw-vite8', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 51, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 31, contextWindowSize: 1000000, costUsd: 1.05, durationMinutes: 51, peek: ['Bash npx tsc --noEmit', 'Claude wants to fetch content from vitest.dev'], events: [{ minutesAgo: 14, tool: 'Read', detail: 'package.json' }, { minutesAgo: 6, tool: 'Bash', detail: 'npx tsc --noEmit' }, { minutesAgo: 2, tool: 'WebFetch', detail: 'https://vitest.dev/guide/migration.html' }] },
 
-  { id: SESSION_PETCLINIC_FLAKY, taskId: 'task-pc-flaky-tests', projectId: PROJECT_PETCLINIC, agent: 'codex', status: 'running', activity: 'thinking', startedMinutesAgo: 21, model: CODEX, effort: 'medium', permissionMode: 'bypassPermissions', contextPercent: 34, contextWindowSize: 400000, costUsd: 0.91, durationMinutes: 21, peek: ['Read PetClinicIntegrationTests.java', 'rg -n @OrderBy src/main/java'], events: [{ minutesAgo: 8, tool: 'Read', detail: 'src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java' }, { minutesAgo: 2, tool: 'Bash', detail: 'rg -n "@OrderBy\\(" src/main/java' }] },
+  { id: SESSION_PETCLINIC_FLAKY, taskId: 'task-pc-flaky-tests', projectId: PROJECT_PETCLINIC, agent: 'codex', status: 'running', activity: 'thinking', startedMinutesAgo: 21, model: CODEX, effort: 'high', permissionMode: 'bypassPermissions', contextPercent: 34, contextWindowSize: 400000, costUsd: 0.91, durationMinutes: 21, peek: ['Read PetClinicIntegrationTests.java', 'rg -n @OrderBy src/main/java'], events: [{ minutesAgo: 8, tool: 'Read', detail: 'src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java' }, { minutesAgo: 2, tool: 'Bash', detail: 'rg -n "@OrderBy\\(" src/main/java' }] },
   { id: SESSION_PETCLINIC_SEARCH, taskId: 'task-pc-owner-search', projectId: PROJECT_PETCLINIC, agent: 'gemini', status: 'running', activity: 'permission', startedMinutesAgo: 39, model: GEMINI, effort: null, permissionMode: 'default', contextPercent: 18, contextWindowSize: 1000000, costUsd: 0.33, durationMinutes: 39, peek: ['ReadFolder src/main/java/org/springframework/samples/petclinic/owner', 'Allow execution of [Shell] .\\gradlew.bat test?'], events: [{ minutesAgo: 12, tool: 'ReadFile', detail: 'src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java' }, { minutesAgo: 9, tool: 'Shell', detail: '.\\gradlew.bat test' }] },
   { id: SESSION_PETCLINIC_CACHE, taskId: 'task-pc-caffeine', projectId: PROJECT_PETCLINIC, agent: 'opencode', status: 'running', activity: 'idle', startedMinutesAgo: 58, model: OPENCODE, effort: null, permissionMode: 'acceptEdits', contextPercent: 27, contextWindowSize: 200000, costUsd: 0, durationMinutes: 58, peek: ['Read src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java', 'Grep cache'], events: [{ minutesAgo: 17, tool: 'Read', detail: 'src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java' }, { minutesAgo: 9, tool: 'Grep', detail: 'cache' }] },
   { id: SESSION_PETCLINIC_BOOT35, taskId: 'task-pc-boot-35', projectId: PROJECT_PETCLINIC, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 133, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 24, contextWindowSize: 1000000, costUsd: 0.83, durationMinutes: 133, peek: ['Edit pom.xml', 'Edit .github/workflows/maven-build.yml'], events: [{ minutesAgo: 40, tool: 'Read', detail: 'pom.xml' }, { minutesAgo: 36, tool: 'Edit', detail: 'pom.xml' }, { minutesAgo: 33, tool: 'Edit', detail: '.github/workflows/maven-build.yml' }] },
@@ -1163,25 +1163,52 @@ export function buildDemoPreConfig(options: {
         var dayMs = 24 * hourMs;
         var random = seeded(scope.kind === 'all' ? 7 : (String(scope.projectId || '').length + 11));
         var scale = scope.kind === 'all' ? 1 : 0.42;
-        var days = period === 'all' ? 30 : period === '7d' ? 7 : 14;
+        var days = period === 'all' ? 90 : period === '7d' ? 7 : 14;
         var rangeStartMs = Math.floor(now / dayMs) * dayMs - (days - 1) * dayMs;
+
+        // The stacked cost chart keys its series off the model ids the byModel breakdown returns,
+        // and that breakdown is derived from the sessions the boards actually show. So the daily
+        // split has to come from the SAME set: a hardcoded model list drew an empty chart, because
+        // none of its ids appeared in the legend the breakdown had already built.
+        var chartSessions = data.sessions.filter(function (session) {
+          return session.model && session.contextPercent !== null && (scope.kind === 'all' || session.projectId === scope.projectId);
+        });
+        var modelWeights = [];
+        chartSessions.forEach(function (session) {
+          var existing = modelWeights.filter(function (entry) { return entry.modelId === session.model.id; })[0];
+          var weight = session.contextWindowSize * session.contextPercent / 100;
+          if (existing) existing.weight += weight;
+          else modelWeights.push({ modelId: session.model.id, weight: weight });
+        });
+        var weightTotal = modelWeights.reduce(function (sum, entry) { return sum + entry.weight; }, 0) || 1;
+        modelWeights.sort(function (left, right) { return right.weight - left.weight; });
+
         var costSeries = [];
         var totalCost = 0, totalInput = 0, totalOutput = 0, sessionCount = 0;
         for (var day = 0; day < days; day++) {
           var bucketStart = rangeStartMs + day * dayMs;
           var weekend = new Date(bucketStart).getDay() % 6 === 0;
-          var cost = (weekend ? 1.2 : 6.5 + random() * 5) * scale;
-          var input = Math.round((weekend ? 40000 : 180000 + random() * 120000) * scale);
+          // Real histories have gaps and bursts rather than a smooth band, which is what the
+          // /preview seeder reproduces and what makes a 90-day chart worth looking at: roughly one
+          // day in eight is idle, and one in twelve is a push at three times the volume.
+          var dayRoll = random();
+          var idle = day < days - 1 && dayRoll < 0.12;
+          var spike = dayRoll > 0.92 ? 3 : 1;
+          var cost = idle ? 0 : (weekend ? 1.2 : 6.5 + random() * 5) * scale * spike;
+          var input = idle ? 0 : Math.round((weekend ? 40000 : 180000 + random() * 120000) * scale * spike);
           var output = Math.round(input * 0.28);
-          var sessions = weekend ? 1 : 3 + Math.floor(random() * 4);
+          var sessions = idle ? 0 : Math.max(1, Math.round((weekend ? 1 : 3 + random() * 4) * spike));
           totalCost += cost; totalInput += input; totalOutput += output; sessionCount += sessions;
+          var dayModels = modelWeights.map(function (entry) {
+            var share = entry.weight / weightTotal;
+            return {
+              modelId: entry.modelId, costUsd: cost * share,
+              inputTokens: Math.round(input * share), outputTokens: Math.round(output * share),
+            };
+          });
           costSeries.push({
             bucketStartMs: bucketStart, costUsd: cost, inputTokens: input, outputTokens: output, sessionCount: sessions,
-            byModel: [
-              { modelId: 'claude-opus-4-8', costUsd: cost * 0.62, inputTokens: Math.round(input * 0.55), outputTokens: Math.round(output * 0.55) },
-              { modelId: 'gpt-5.2-codex', costUsd: cost * 0.23, inputTokens: Math.round(input * 0.28), outputTokens: Math.round(output * 0.28) },
-              { modelId: 'gemini-3-pro', costUsd: cost * 0.15, inputTokens: Math.round(input * 0.17), outputTokens: Math.round(output * 0.17) },
-            ],
+            byModel: dayModels,
           });
         }
         var tokenSeries = [];
@@ -1209,9 +1236,7 @@ export function buildDemoPreConfig(options: {
         // The model, agent, and effort breakdowns come from the sessions the boards actually show,
         // weighted by the tokens each has used, so the dashboard names the same models the
         // terminals do.
-        var scopedSessions = data.sessions.filter(function (session) {
-          return session.model && session.contextPercent !== null && (scope.kind === 'all' || session.projectId === scope.projectId);
-        });
+        var scopedSessions = chartSessions;
         function breakdown(keyOf, labelOf) {
           var groups = {};
           var totalWeight = 0;

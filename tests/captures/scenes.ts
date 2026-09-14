@@ -47,23 +47,31 @@ export interface SceneDefinition extends DemoState {
   description: string;
 }
 
-/** One floating task-detail window at the default cascade geometry, restored on cold boot. */
-const MIDDLEWARE_WINDOW_WORKSPACE = {
-  version: 1,
-  windows: [
-    {
-      taskId: TASK_MIDDLEWARE,
-      kind: 'task-detail',
-      title: 'Extract auth middleware',
-      geometry: { x: 0.21, y: 0.15, w: 0.58, h: 0.7 },
-      restoreGeometry: null,
-      state: 'floating',
-    },
-  ],
-  tileTree: null,
-  tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
-  focusedTaskId: TASK_MIDDLEWARE,
-};
+const MIDDLEWARE_CASCADE_GEOMETRY = { x: 0.21, y: 0.15, w: 0.58, h: 0.7 };
+
+/**
+ * One task-detail window restored on cold boot. `maximized` takes the full frame and ignores the
+ * window's own geometry, so the cascade rect rides along as `restoreGeometry`: un-maximizing lands
+ * exactly where a floating window would have opened, which is what `maximizeWindow` itself stores.
+ */
+function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
+  return {
+    version: 1,
+    windows: [
+      {
+        taskId: TASK_MIDDLEWARE,
+        kind: 'task-detail',
+        title: 'Extract auth middleware',
+        geometry: MIDDLEWARE_CASCADE_GEOMETRY,
+        restoreGeometry: state === 'maximized' ? MIDDLEWARE_CASCADE_GEOMETRY : null,
+        state,
+      },
+    ],
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+    focusedTaskId: TASK_MIDDLEWARE,
+  };
+}
 
 export const SCENES: Record<string, SceneDefinition> = {
   board: {
@@ -81,13 +89,18 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'task',
     reach: 'state',
     description: 'A task-detail window open on "Extract auth middleware", its agent working in the terminal.',
-    config: { workspaceByProject: { [PROJECT_CONTOSO]: MIDDLEWARE_WINDOW_WORKSPACE } },
+    // Floating on purpose: the board around it is the point, and a terminal reads fine at this size.
+    config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
   },
   changes: {
     name: 'changes',
     reach: 'state',
-    description: 'The task-detail window with the Changes panel open on the Branch tab, server/routes.ts selected. The diff is the one the recorded session left in its working tree (seeded per task by the dataset).',
-    config: { workspaceByProject: { [PROJECT_CONTOSO]: MIDDLEWARE_WINDOW_WORKSPACE } },
+    description: 'The task-detail window maximized with the Changes panel open on the Branch tab, server/routes.ts selected. The diff is the one the recorded session left in its working tree (seeded per task by the dataset).',
+    // Maximized, unlike the `task` scene. A split diff wants three columns at once (the agent's
+    // terminal, the file tree, the hunks), and in the cascade rect at the frame's 1600x1000 the
+    // diff pane clips mid-line. The maximize control is right there in the header, so a visitor
+    // can put it back; this only picks the state the panel is legible in.
+    config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [
       {
         id: TASK_MIDDLEWARE,
