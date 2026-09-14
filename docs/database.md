@@ -763,6 +763,8 @@ Operates on a per-project DB.
 | `clearArchived(id)` | Clear `archived_at` WITHOUT moving the task. The exact inverse of `archive(id)`, used by `task-move`s move-out-of-Done path, which has already placed the row and would fight `move()`s sibling reordering if it re-ran the placement |
 | `listArchived()` | All archived tasks ordered by `archived_at` DESC |
 | `listArchivedPreview(limit)` | The newest `limit` archived tasks plus the total archived count; cheap hydration for the Done column (full list loads lazily via `listArchived`) |
+| `countAll()` | Bare `COUNT(*)` over every task, active and archived. For a caller that needs only the number: `list()` materializes every row plus the attachment-count join just to take `.length` |
+| `countArchived()` | Bare `COUNT(*)` over archived tasks, the `listArchived()` counterpart of `countAll()`. The MCP read tools (`kangentic_list_columns`, `kangentic_board_summary`, `kangentic_get_column_detail`) report it as the done column's completed count. That substitution holds only because every archiving path lands the task in the `role = 'done'` swimlane first, so the project-wide count is that lane's count |
 | `delete(id)` | Hard delete with position shift in the owning swimlane |
 
 ### SwimlaneRepository
@@ -946,7 +948,14 @@ New projects are seeded with 7 default swimlanes:
 4. **Code Review**
 5. **Testing**
 6. **Merge**
-7. **Done** (role: `done`)
+7. **Done** (role: `done`, seeded `is_archived = 1`)
+
+Done is the one lane seeded archived, and that is structural rather than a user choice: the board
+renders it as the collapsed `DoneSwimlane` instead of a normal column, and `apply-config.ts` forces
+the flag back on for the `done` role on every board-config apply. Anything that filters swimlanes on
+`is_archived` therefore drops Done unless it carves the role out, which is why the MCP read tools
+have explicit done-column handling. See
+[mcp-server.md](mcp-server.md#kangentic_list_columns).
 
 No lane is seeded with a `description` or an `auto_command`: both are left empty for the user
 to fill in (a `description` round-trips into the project's committed `kangentic.json`, so a

@@ -5,7 +5,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import { listActiveSwimlanes } from './column-resolver';
+import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
 import type { Task } from '../../../shared/types';
@@ -247,12 +247,15 @@ export const handleBoardSummary: CommandHandler = (
   context: CommandContext,
 ): CommandResponse => {
   const db = context.getProjectDb();
-  const swimlaneRepo = new SwimlaneRepository(db);
   const taskRepo = new TaskRepository(db);
   const sessionRepo = new SessionRepository(db);
   const backlogRepo = new BacklogRepository(db);
 
-  const allSwimlanes = swimlaneRepo.list().filter((swimlane) => !swimlane.is_archived);
+  // listBoardColumns, not a local !is_archived filter: this is the other board
+  // orientation tool, and hiding the done lane here has the same effect it had
+  // on kangentic_list_columns - an agent reads the ladder and takes the last
+  // column it can see as the finish line.
+  const allSwimlanes = listBoardColumns(db);
   const archivedTasks = taskRepo.listArchived();
   const allSummaries = sessionRepo.listAllSummaries();
   const backlogTasks = backlogRepo.list();
@@ -260,7 +263,7 @@ export const handleBoardSummary: CommandHandler = (
   let totalActiveTasks = 0;
   let activeSessions = 0;
   const columnLines: string[] = [];
-  const columnData: Array<{ name: string; role: string | null; taskCount: number }> = [];
+  const columnData: Array<{ name: string; role: string | null; taskCount: number; completedCount?: number }> = [];
   // Every label-bearing item on the board, gathered as we already walk each
   // source for its counts. No extra query and no new repository method.
   const labelLists: Array<readonly string[] | null | undefined> = [
@@ -275,8 +278,20 @@ export const handleBoardSummary: CommandHandler = (
     const sessionsInColumn = tasks.filter((task) => task.session_id !== null).length;
     activeSessions += sessionsInColumn;
     const sessionNote = sessionsInColumn > 0 ? ` (${sessionsInColumn} active session${sessionsInColumn > 1 ? 's' : ''})` : '';
-    columnLines.push(`  ${swimlane.name}: ${tasks.length} task(s)${sessionNote}`);
-    columnData.push({ name: swimlane.name, role: swimlane.role, taskCount: tasks.length });
+    // The done lane holds no live tasks by construction, so print the archive
+    // count there instead of a `0 task(s)` that reads as an empty column. It is
+    // the same number the `Completed tasks:` line below reports; see
+    // `TaskRepository.countArchived()` for why that stands in for the lane's own.
+    const isDoneLane = swimlane.role === 'done';
+    columnLines.push(isDoneLane
+      ? `  ${swimlane.name}: ${archivedTasks.length} completed`
+      : `  ${swimlane.name}: ${tasks.length} task(s)${sessionNote}`);
+    columnData.push({
+      name: swimlane.name,
+      role: swimlane.role,
+      taskCount: tasks.length,
+      ...(isDoneLane ? { completedCount: archivedTasks.length } : {}),
+    });
   }
 
   let totalCost = 0;
@@ -530,11 +545,19 @@ export const handleGetColumnDetail: CommandHandler = (
   );
 
   if (!matched) {
-    const available = allSwimlanes.filter((swimlane) => !swimlane.is_archived).map((swimlane) => swimlane.name).join(', ');
+    // isBoardColumn, not a bare !is_archived: the done lane is persisted
+    // archived, and a suggestion list that omits it tells an agent the board has
+    // nowhere to put finished work.
+    const available = allSwimlanes.filter(isBoardColumn).map((swimlane) => swimlane.name).join(', ');
     return { success: false, error: `Column "${columnName}" not found. Available: ${available}` };
   }
 
   const tasks = matched.is_archived ? [] : taskRepo.list(matched.id);
+  // Done always reports `Tasks: 0` - a task moved there is archived off the
+  // board - so without this the column reads as dead. See
+  // `TaskRepository.countArchived()` for why a project-wide count stands in for
+  // the lane's own.
+  const completedCount = matched.role === 'done' ? taskRepo.countArchived() : null;
 
   // Resolve plan exit target name
   let planExitTargetName: string | null = null;
@@ -550,6 +573,7 @@ export const handleGetColumnDetail: CommandHandler = (
     `  Auto-spawn: ${matched.auto_spawn ? 'yes' : 'no'}`,
     `  Permission mode: ${matched.permission_mode ?? 'default (inherited)'}`,
   ];
+  if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
   if (matched.description) lines.push(`  Description: ${matched.description}`);
   if (matched.auto_command) lines.push(`  Auto-command: ${matched.auto_command}`);
   if (matched.agent_override) lines.push(`  Agent override: ${matched.agent_override}`);
@@ -591,6 +615,7 @@ export const handleGetColumnDetail: CommandHandler = (
       description: matched.description,
       role: matched.role,
       taskCount: tasks.length,
+      completedCount,
       taskOrder,
       autoSpawn: matched.auto_spawn,
       permissionMode: matched.permission_mode,

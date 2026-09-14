@@ -586,6 +586,26 @@ export class TaskRepository {
   }
 
   /**
+   * How many tasks are archived, as a bare COUNT(*). For a caller that needs
+   * only the number: `listArchived()` materializes every archived row plus the
+   * attachment-count join just to take `.length`, which on a mature board is
+   * hundreds of rows carrying full descriptions. Mirrors `countAll()`.
+   *
+   * The MCP read tools substitute this project-wide count for the done lane's
+   * OWN count. That holds only because every archiving path lands in that lane:
+   * `archive()` has exactly one caller, `handleTaskMove`, which calls it in the
+   * same tick it moves the task into a `role === 'done'` swimlane. If a second
+   * archiving path is ever added, those callers need a swimlane_id filter
+   * instead of this method.
+   */
+  countArchived(): number {
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL')
+      .get() as { count: number };
+    return count;
+  }
+
+  /**
    * The newest `limit` archived tasks plus the total archived count. Lets the
    * board hydrate the Done column's count + inline preview without fetching the
    * whole archive (which can be many MB once hundreds of tasks accumulate). The
