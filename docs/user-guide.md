@@ -431,10 +431,14 @@ A search bar at the top of each panel filters settings by keyword. Type multiple
 
 ### Themes
 
-Choose from 10 themes in the Theme tab's dropdown (a per-project setting):
-- **Base:** Dark, Light
-- **Dark variants:** Moon, Forest, Ocean, Ember
-- **Light variants:** Sand, Mint, Sky, Peach
+Choose from 12 themes in the Theme tab's dropdown (a per-project setting):
+- **Standard:** Dark, Light
+- **Kangentic:** Kangentic Dark, Kangentic Light. The product palette, built from
+  kangentic.com's own tokens, so the app and the site read as one surface. Colour only:
+  the site's typefaces do not come with the theme, and the terminal keeps its own colour
+  scheme (see Terminal Colors below).
+- **Dark palette:** Moon, Forest, Ocean, Ember
+- **Light palette:** Sand, Mint, Sky, Peach
 
 ### Terminal Colors
 

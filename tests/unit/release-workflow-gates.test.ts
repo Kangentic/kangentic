@@ -12,9 +12,9 @@ import path from 'node:path';
 // `needs:` failed, but naming always(), cancelled(), or failure() in the `if:` replaces that
 // implied success() gate, so a job listed in `needs:` and NOT also named in the `if:` still runs
 // when its dependency FAILED. release.yml carries always() on two jobs to tolerate the conditional
-// create-tag and `!cancelled()` on the two publish jobs, which means every future `needs:` entry
-// added to any of the four has to be repeated in the `if:` by hand. The comment above
-// create-draft-release warns about this; this test is what makes the warning binding.
+// create-tag and `!cancelled()` on the two publish jobs and the demo deploy, which means every
+// future `needs:` entry added to any of the five has to be repeated in the `if:` by hand. The
+// comment above create-draft-release warns about this; this test is what makes the warning binding.
 //
 // The blunt one is a gate simply going missing: preflight-symbols exists because v0.37.0 and
 // v0.38.0 both shipped with zero sourcemaps and zero native debug files, the KANGENTIC_SENTRY_TOKEN
@@ -120,6 +120,7 @@ describe('release.yml job graph', () => {
     expect(names).toContain('create-draft-release');
     expect(names).toContain('release');
     expect(names).toContain('publish-release');
+    expect(names).toContain('deploy-demo');
   });
 
   // buildJob reads `if:` with a single-line regex, so a condition folded onto
@@ -149,11 +150,12 @@ describe('release.yml job graph', () => {
   const selfGatedJobs = jobs.filter((job) => STATUS_FUNCTION_PATTERN.test(job.condition ?? ''));
 
   // An empty or shrunken filter would turn the it.each below into zero tests, which passes. The
-  // four jobs that carry a status function are named here so dropping one from the workflow, or
+  // five jobs that carry a status function are named here so dropping one from the workflow, or
   // a parse regression that stops recognizing one, fails rather than quietly reducing coverage.
   it('selects every job whose if: replaces the implied success() gate', () => {
     expect(selfGatedJobs.map((job) => job.name).sort()).toEqual([
       'create-draft-release',
+      'deploy-demo',
       'publish-npm',
       'publish-release',
       'release',
@@ -205,6 +207,25 @@ describe('release.yml job graph', () => {
     // dropped, a missing token stops failing the build.
     expect(releaseJob?.needs).toContain('create-draft-release');
     expect(releaseJob?.condition).toContain("needs.create-draft-release.result == 'success'");
+  });
+
+  // The web demo exists to show the SHIPPED app, so deploy-demo has to build the ref the release
+  // was published from, spelled the same way publish-release spells its own checkout ref. A
+  // reusable-workflow job has no steps, so the ref reaches deploy-demo.yml only through `with:`,
+  // and a drift there (a hand-edited branch name, a bare `main`) would deploy a demo of something
+  // other than what just shipped while the run stayed green. The called file is checked to exist
+  // too: a rename would otherwise fail only at run time, after every platform build.
+  it('deploys the web demo from the same ref the release was published from', () => {
+    const deployDemo = jobs.find((job) => job.name === 'deploy-demo');
+    const publishRelease = jobs.find((job) => job.name === 'publish-release');
+    expect(deployDemo).toBeDefined();
+    expect(publishRelease).toBeDefined();
+    const usesMatch = deployDemo?.body.match(/^ {4}uses: (.+)$/m);
+    expect(usesMatch?.[1]).toBe('./.github/workflows/deploy-demo.yml');
+    expect(fs.existsSync(path.join(REPO_ROOT, '.github', 'workflows', 'deploy-demo.yml'))).toBe(true);
+    const checkoutRef = publishRelease?.body.match(/^ {10}ref: (.+)$/m)?.[1];
+    expect(checkoutRef).toBeDefined();
+    expect(deployDemo?.body).toContain(`      ref: ${checkoutRef}`);
   });
 });
 
@@ -462,7 +483,7 @@ describe.runIf(!HAS_JQ)('release.yml upgrade baseline program, executed (skipped
 // go uncollected and the file still reports green - the "reads as coverage but is not" shape this
 // whole file exists to forbid. Nothing above can catch it, because the only assertion on HAS_JQ
 // lives in the branch that runs when it is already false. This is the check that makes the
-// comment binding, for the same reason the four-job list above pins its own filter.
+// comment binding, for the same reason the five-job list above pins its own filter.
 describe.runIf(RUNNING_ON_CI)('release.yml upgrade baseline program, executed (CI invariant)', () => {
   it('finds jq on PATH, so CI never skips the executed block', () => {
     expect(HAS_JQ).toBe(true);

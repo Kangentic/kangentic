@@ -94,9 +94,11 @@
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
   // via window.__mockGitDiff, per-scope fixtures via window.__mockGitDiffByScope
-  // = { working: {...}, staged: {...}, branch: {...} }, or per-commit fixtures
+  // = { working: {...}, staged: {...}, branch: {...} }, per-commit fixtures
   // via window.__mockGitDiffByCommit = { '<oid>': {...} } (checked first, since a
-  // commit selection overrides scope).
+  // commit selection overrides scope), or per-worktree fixtures via
+  // window.__mockGitDiffByWorktree = { '<worktree folder>': { working, staged, branch } },
+  // matched on the request's worktreePath (the sample install seeds one per task).
   function resolveGitDiffFixture(request) {
     var commitOid = request && request.commitOid;
     var byCommit = (typeof window !== 'undefined' && window.__mockGitDiffByCommit) || null;
@@ -104,6 +106,26 @@
     var scope = (request && request.scope) || 'branch';
     var byScope = (typeof window !== 'undefined' && window.__mockGitDiffByScope) || null;
     if (byScope && byScope[scope]) return byScope[scope];
+    var byWorktree = (typeof window !== 'undefined' && window.__mockGitDiffByWorktree) || null;
+    var worktreePath = (request && request.worktreePath) || '';
+    if (byWorktree && worktreePath) {
+      // The keys are worktree FOLDER names and a worktree path ends in its folder, so try the
+      // path's last segment first. The substring scan below it is unanchored: it matches any key
+      // that appears anywhere in the path, so two slugs where one is a prefix of the other would
+      // resolve by Object.keys order rather than by which folder the path is actually in. Today's
+      // slugs carry random suffixes and do not collide, which is why the scan is kept as the
+      // fallback rather than replaced outright.
+      var segments = worktreePath.split(/[\\/]/);
+      var lastSegment = segments[segments.length - 1] || segments[segments.length - 2] || '';
+      if (byWorktree[lastSegment] && byWorktree[lastSegment][scope]) return byWorktree[lastSegment][scope];
+      var folders = Object.keys(byWorktree);
+      for (var folderIndex = 0; folderIndex < folders.length; folderIndex++) {
+        var folder = folders[folderIndex];
+        if (worktreePath.indexOf(folder) !== -1 && byWorktree[folder] && byWorktree[folder][scope]) {
+          return byWorktree[folder][scope];
+        }
+      }
+    }
     return (typeof window !== 'undefined' && window.__mockGitDiff) || null;
   }
 
@@ -1543,7 +1565,11 @@
 
     swimlanes: {
       list: async function () {
-        return swimlanes.slice().sort(function (a, b) {
+        // A row that carries a projectId belongs to that project only (the real DB is per
+        // project); a row without one stays global, so single-project specs are unchanged.
+        return swimlanes.filter(function (s) {
+          return !s.projectId || s.projectId === currentProjectId;
+        }).sort(function (a, b) {
           return a.position - b.position;
         });
       },
@@ -1874,8 +1900,21 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
-      onUsage: function () {
-        return noop;
+      onUsage: function (callback) {
+        // Tests can fire this via window.__mockFireUsage(sessionId, usage, projectId).
+        if (!window.__mockUsageListeners) window.__mockUsageListeners = [];
+        window.__mockUsageListeners.push(callback);
+        if (!window.__mockFireUsage) {
+          window.__mockFireUsage = function (sessionId, usage, projectId) {
+            var listeners = (window.__mockUsageListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, usage, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockUsageListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       getMessageTrails: async function () {
         return Object.assign({}, messageTrailCache);

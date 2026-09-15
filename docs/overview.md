@@ -84,7 +84,7 @@ A built-in search bar filters settings by keyword with multi-token matching, gro
 
 ### Multiple Themes
 
-Ten built-in themes: Dark, Light, Moon, Forest, Ocean, Ember, Sand, Mint, Sky, and Peach.
+Twelve built-in themes: Dark, Light, the product pair Kangentic Dark and Kangentic Light, then Moon, Forest, Ocean, Ember, Sand, Mint, Sky, and Peach.
 
 ## How It Works
 

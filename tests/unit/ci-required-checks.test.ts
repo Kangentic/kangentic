@@ -49,14 +49,20 @@ const REQUIRED_CONTEXTS_FROM_CI = [
 ];
 
 /**
- * Jobs that deliberately do NOT gate: the sharded matrices. Their names carry
- * `${{ matrix... }}` templates, so they could never be stable contexts anyway.
- * Each tier gates through its thin `needs`-gated summary job above instead.
+ * Jobs that deliberately do NOT gate. The sharded matrices carry `${{ matrix... }}`
+ * templates in their names, so they could never be stable contexts anyway; each
+ * tier gates through its thin `needs`-gated summary job above instead.
+ *
+ * The web demo job is a stable context that is simply not in main's required
+ * list yet: it landed after the 2026-08-29 snapshot above. Promoting it is the
+ * `gh api -X PATCH` in the header comment plus moving it to
+ * REQUIRED_CONTEXTS_FROM_CI, in the same change.
  */
 const DELIBERATELY_NOT_REQUIRED = [
   'Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})',
   'UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})',
   'E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})',
+  'Web demo (build + smoke)',
 ];
 
 function readWorkflow(file: string): string {

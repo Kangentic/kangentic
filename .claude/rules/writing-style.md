@@ -73,7 +73,7 @@ the one who did the thing.
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/writing-style-characters.test.ts` fails on em-dashes, en-dashes, curly
-  quotes, and emoji in a markdown heading, across `src/`, `scripts/`, `docs/`, `.claude/rules`,
+  quotes, and emoji in a markdown heading, across `src/`, `scripts/`, `docs/`, `demo/`, `.claude/rules`,
   `.claude/skills`, `.claude/agents`, `README.md`, and `CLAUDE.md`. Runs in CI via
   `npm run test:unit`.
 - **Review:** the `writing-style.md` line in `/code-review`'s Project Conventions list is checked by

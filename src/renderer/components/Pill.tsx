@@ -105,7 +105,27 @@ export const Pill = React.memo(React.forwardRef<HTMLElement, PillProps>(function
   return React.createElement(Element, elementProps, trimTextChildren(children));
 }));
 
-/** Renders a row of label pills with configured colors. Muted background, colored text. */
+/**
+ * The tint a pill that carries a user-chosen colour is painted with, mixed from the pill's own
+ * `color` so it follows whatever hex the user set without any of it being computed in JS. Every
+ * surface that renders such a pill shares these, so one label cannot look like two different
+ * things depending on whether it is on a card, in a table, or in the editor.
+ *
+ * A flat 60 percent wash of a surface token does not work here, because what it reads as depends
+ * on the token behind it: on a card it measured 1.22, and in the dialog it was 60 percent of the
+ * very token the field is painted with, so the pill vanished entirely. A tint mixed from the
+ * pill's own colour has no such dependency.
+ */
+export const TINTED_PILL_FILL = 'color-mix(in srgb, currentColor 14%, transparent)';
+export const TINTED_PILL_EDGE = 'color-mix(in srgb, currentColor 35%, transparent)';
+
+/**
+ * A label pill is tinted from its own colour: a wash of it behind, a stronger line around it, the
+ * colour itself as text. A configured label used to get a flat `surface-hover/60` behind coloured
+ * text, which measured 1.22 against the card it sits on, so the pill was invisible and the label
+ * read as a stray coloured word. An UNCONFIGURED label keeps the flat treatment, because it has no
+ * colour to tint with and its brighter muted text carries the shape on its own.
+ */
 export const LabelPills = React.memo(function LabelPills({ labels, labelColors }: { labels: string[]; labelColors: Record<string, string> }) {
   if (labels.length === 0) return null;
   return (
@@ -116,8 +136,8 @@ export const LabelPills = React.memo(function LabelPills({ labels, labelColors }
           <Pill
             key={label}
             size="sm"
-            className={color ? 'bg-surface-hover/60 font-medium' : 'bg-surface-hover/60 text-fg-muted'}
-            style={color ? { color } : undefined}
+            className={color ? 'font-medium border' : 'bg-surface-hover/60 text-fg-muted'}
+            style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
           >
             {label}
           </Pill>

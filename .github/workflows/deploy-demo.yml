@@ -1,0 +1,135 @@
+# Deploy web demo
+#
+# Builds the static web build of the renderer (`npm run build:demo`, into
+# dist/demo/) and publishes it to GitHub Pages at
+# https://kangentic.github.io/kangentic/. The release graph (release.yml's
+# deploy-demo job) calls this after the release is published, so the web demo
+# always shows the shipped app and never a ref ahead of or behind it.
+# workflow_dispatch is for a manual redeploy of a tag or branch.
+#
+# The build base is /kangentic/ because a project Pages site serves under the
+# repository name. demo/vite.config.mts defaults to /demo/ for local runs, which
+# would 404 every asset on Pages, so the base is passed on the CLI here.
+name: Deploy web demo
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The tag or branch to build the demo from
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The tag or branch to build the demo from
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time. Not cancel-in-progress: a deployment that is
+# half-way through is left to finish and the next one queues behind it, so a
+# manual redeploy racing a release deploy cannot leave the site torn.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # A release tag whose checkout carries a different package.json version is
+      # a wrong ref (a tag that moved, or a hand-typed dispatch input off by
+      # one), and a demo that claims one version while running another is worse
+      # than no demo at all. So the version gate fails rather than warns, and
+      # both branches print which way they went.
+      #
+      # release.yml hands over github.ref on a tag push, which is the FULL ref
+      # (refs/tags/vX.Y.Z), so the refs/tags/ prefix is stripped before the
+      # release-tag test. Without that strip the gate would never fire on the
+      # release path, the one it exists for, and would skip in silence.
+      #
+      # The ref reaches the script through env rather than spliced into the
+      # script text, because a dispatch input is free text and a quote in it
+      # would otherwise rewrite the script instead of failing the comparison.
+      - name: State the ref and version
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          tag="${REF#refs/tags/}"
+          version=$(node -p "require('./package.json').version")
+          echo "Building the web demo from ref '$REF'; package.json version is $version."
+          if printf '%s' "$tag" | grep -qE '^v[0-9]'; then
+            if [ "$version" != "${tag#v}" ]; then
+              echo "::error::Ref $REF is a release tag, but its package.json version is $version rather than ${tag#v}. Refusing to deploy a demo that does not match the shipped app. Check that the tag points at the release commit, or dispatch with the ref that carries $version."
+              exit 1
+            fi
+            echo "Ref $REF is a release tag and its version matches package.json; deploying version $version."
+          else
+            echo "Ref $REF is not a release tag (no v<digit> prefix), so no version match is required; deploying version $version from it."
+          fi
+
+      # --with-deps, unlike ci.yml's UI job: that job caches the browser and
+      # relies on the runner image already shipping Chromium's libraries to save
+      # about two minutes per shard. This runs once per release, so the apt
+      # install is a cheap guarantee that the smoke below can launch at all.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the web demo
+        run: npm run build:demo -- --base=/kangentic/
+
+      # The smoke runs against dist/demo as built above, so it exercises the
+      # exact bytes at the exact base path that ship, not a separate dev build.
+      - name: Smoke-test the built demo
+        run: npm run test:demo
+
+      # configure-pages is the first step to notice that Pages is not enabled
+      # for the repository, and it fails the run there. See the deploy job
+      # below for why that is the wanted outcome.
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/demo
+
+  # deploy-pages (and configure-pages above) FAILS when GitHub Pages is not
+  # enabled for the repository (Settings -> Pages -> Build and deployment ->
+  # Source: GitHub Actions). That is the wanted, loud behaviour: the default
+  # GITHUB_TOKEN cannot enable Pages itself, so a run that could not publish
+  # has to say so rather than exit green with nothing deployed.
+  #
+  # The github-pages environment that Pages creates limits deployments to the
+  # default branch by default. release.yml calls this workflow from a tag ref,
+  # so that environment needs a `v*` tag rule under Settings -> Environments ->
+  # github-pages, or deploy-pages fails here naming the protection rule. Also
+  # loud, also correct.
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: State the deployed URL
+        run: echo "Deployed the web demo to ${{ steps.deployment.outputs.page_url }}"

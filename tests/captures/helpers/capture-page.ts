@@ -75,7 +75,12 @@ export async function hideDevOnlyChrome(page: Page): Promise<void> {
 export async function launchCapturePage(options: CaptureOptions): Promise<CapturePage> {
   await waitForViteReady();
 
-  const browser = await chromium.launch({ headless: true });
+  // The device scale is forced on the browser itself, not only emulated on the context: xterm's
+  // WebGL renderer sizes its canvas from a ResizeObserver's device-pixel-content-box, which an
+  // emulated scale leaves at 1x while the renderer draws at the emulated scale, so every terminal
+  // showed the bottom 1/scale of its rows enlarged (a short frame rendered blank). A forced
+  // scale reaches the compositor, and the observer reports the same pixels a real display would.
+  const browser = await chromium.launch({ headless: true, args: [`--force-device-scale-factor=${options.resolution.scale}`] });
 
   const contextOptions: Parameters<Browser['newContext']>[0] = {
     viewport: options.resolution.viewport,
