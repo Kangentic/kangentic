@@ -37,7 +37,9 @@ list, the review-pack path, and the required return shape. Rules that always hol
   a removed line by the numbered line after it and say it was removed. `## Full file:` is the
   whole body. `## Partial file:` is every changed hunk with 20 lines of context. `## Changed
   hunks:` is every changed hunk with 3 lines of context, for a file whose body did not fit the
-  byte cap. A one-line section is a deleted, binary, renamed, mode-only, or reverted file, or a
+  byte cap, or with 0 lines of context for a file too large to read (over 1MB); the heading
+  states which, so read it before judging how much code the section puts around a citation.
+  A one-line section is a deleted, binary, renamed, mode-only, or reverted file, or a
   `## Changed hunks omitted:` stub for a hunk section over the per-file cap; stubs and binaries
   are listed under `## Not included (read on demand)`. Between windows an unchanged run is a
   marked, line-numbered gap (`..... 954 unchanged lines omitted (72-1025) .....`). Do not re-Read

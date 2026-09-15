@@ -103,6 +103,31 @@
  *     `--no-ext-diff`. Every rendered byte now derives from the one `--unified=0` merge-base
  *     parse, so a lost prefix pin would switch the WHOLE parse off, not just windowing.
  *
+ * 15. A missing or non-numeric --body-cap value exits 2 with a stderr message, from the
+ *     argv-parsing loop, before the script ever calls git.
+ *
+ * 16. A mode-only change (the executable bit flips, content unchanged) is a one-line
+ *     "## Not shown:" section naming the transition, e.g. "mode 100644 -> 100755".
+ *
+ * 17. A tracked file that stays over SINGLE_FILE_CAP_BYTES (1MB) even after its edit, with a
+ *     small parsed hunk, is packed at the hunk tier under the OTHER arm of hunkSectionFor's
+ *     "kind === 'hunks-only'" split: "## Changed hunks: <path> (over 1MB, body not read; ...)",
+ *     rendered with renderHunksOnly's 0 lines of context - not the "## Deleted file:" heading,
+ *     and not the per-file-hunk-cap stub, as long as the small edit's own rendered section
+ *     stays under that cap.
+ *
+ * 18. The stub heading's own over-cap ternary has two arms: a stub for a DELETED file whose
+ *     hunk-tier section alone exceeds PACK_HUNK_SECTION_CAP_BYTES (100KB) says "deleted file",
+ *     not "read on demand" - the heading built earlier in hunkSectionFor is fully overwritten,
+ *     never merged with the stub text.
+ *
+ * 19. A genuinely empty file gets its own two reasons under "## Not shown:": adding one is
+ *     "new file, empty" and deleting an already-empty one is "deleted, was empty". Both must be
+ *     driven as two SEPARATE diffs: git's rename detector treats any two empty (or otherwise
+ *     byte-identical) files as 100% similar, so an add and a delete of empty files in the SAME
+ *     diff pair into a rename instead ("renamed from ..., content unchanged"), never exercising
+ *     either reason - confirmed empirically against a scratch repo before this fixture was written.
+ *
  * Not covered, and why: a C-quoted path (a quote, backslash, or control character in a file
  * name) lands its raw block under "## Union diff (unparsed)". NTFS forbids those characters,
  * so the fixture cannot be created on the Windows machines this suite also runs on.
@@ -122,12 +147,11 @@ function runGit(args: string[], cwd: string): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
-function commitAll(cwd: string, message: string): void {
-  runGit(['add', '-A'], cwd);
-  // Identity AND signing are overridden for the same reason: the fixture repo must not inherit
-  // the developer's or the runner's ambient git config. A global commit.gpgsign=true would make
-  // every commit here try to sign, which fails outright in a non-interactive test run with no
-  // key or no GPG_TTY - green on one machine, red on another.
+// Identity AND signing are overridden for the same reason: the fixture repo must not inherit
+// the developer's or the runner's ambient git config. A global commit.gpgsign=true would make
+// every commit here try to sign, which fails outright in a non-interactive test run with no
+// key or no GPG_TTY - green on one machine, red on another.
+function commitStaged(cwd: string, message: string): void {
   runGit(
     [
       '-c',
@@ -145,6 +169,11 @@ function commitAll(cwd: string, message: string): void {
   );
 }
 
+function commitAll(cwd: string, message: string): void {
+  runGit(['add', '-A'], cwd);
+  commitStaged(cwd, message);
+}
+
 function runBuildScript(cwd: string, args: string[] = []): string {
   try {
     return execFileSync('node', [SCRIPT_PATH, ...args], { cwd, encoding: 'utf8', stdio: 'pipe' });
@@ -154,6 +183,24 @@ function runBuildScript(cwd: string, args: string[] = []): string {
       `build-review-pack.mjs failed.\nstdout: ${execError.stdout ?? ''}\nstderr: ${execError.stderr ?? ''}\n${execError.message}`,
     );
   }
+}
+
+// For the one path that is SUPPOSED to exit non-zero (a rejected --body-cap value):
+// execFileSync throws on any non-zero exit, so runBuildScript's happy-path helper cannot be
+// reused here - it would rethrow the exit-2 failure as an unrelated "failed" error and lose the
+// exit code and stderr text this checks. Throws itself, with a distinct message, if the script
+// exits 0 when the test expected it to reject the arguments.
+function runBuildScriptExpectingFailure(
+  cwd: string,
+  args: string[],
+): { exitCode: number | null; stderr: string } {
+  try {
+    execFileSync('node', [SCRIPT_PATH, ...args], { cwd, encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    const execError = error as { status?: number | null; stderr?: string };
+    return { exitCode: execError.status ?? null, stderr: execError.stderr ?? '' };
+  }
+  throw new Error('build-review-pack.mjs was expected to exit non-zero but exited 0');
 }
 
 function readPack(cwd: string): string {
@@ -1416,6 +1463,216 @@ describe('build-review-pack.mjs', () => {
       expect(packContent).toContain(markedLine('+', 16, 'rewritten line 15'));
       assertOneSectionPerChangedFile(packContent, changedFiles!);
       assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'rejects a missing or non-numeric --body-cap value with exit code 2 and the usage message, before touching the repo at all',
+    () => {
+      // The fixture carries a real committed-plus-uncommitted change (same shape as this
+      // file's first test) rather than an empty repo. An empty repo would make this test pass
+      // for the wrong reason: with the validation removed, an empty repo hits the "NO CHANGES"
+      // branch and exits 0 before `bodyCapBytes` is ever used, so the exit code would separate
+      // 2-from-0 (or from a git crash on a HEAD-less repo) without the mutation actually being
+      // exercised. With real changes present, removing the validation lets
+      // `bodyCapBytes = Number('-1')` (or `Number(undefined)`, both non-positive/NaN) flow
+      // straight into buildPack, which still writes a pack and exits 0 - so the red this test
+      // depends on is "the script rejected nothing", not an unrelated crash.
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+      fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
+
+      const negativeValueResult = runBuildScriptExpectingFailure(repoDirectory, [
+        '--body-cap',
+        '-1',
+      ]);
+      expect(negativeValueResult.exitCode).toBe(2);
+      expect(negativeValueResult.stderr).toContain(
+        '--body-cap needs a non-negative integer byte count',
+      );
+
+      const missingValueResult = runBuildScriptExpectingFailure(repoDirectory, ['--body-cap']);
+      expect(missingValueResult.exitCode).toBe(2);
+      expect(missingValueResult.stderr).toContain(
+        '--body-cap needs a non-negative integer byte count',
+      );
+
+      // Neither rejected run got far enough to create the output directory, let alone write
+      // into it - meaningful here specifically because the fixture has real changes that WOULD
+      // reach `mkdirSync` if the rejection did not fire first.
+      expect(fs.existsSync(path.join(repoDirectory, '.kangentic'))).toBe(false);
+    },
+    20000,
+  );
+
+  it(
+    'renders a mode-only change (the executable bit flipped, content unchanged) as a one-line "## Not shown:" section naming the mode transition',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'mode-only.txt'), 'unchanged content\n');
+      commitAll(repoDirectory, 'base commit');
+      const baseRef = runGit(['rev-parse', 'HEAD'], repoDirectory).trim();
+
+      // Both writes are needed, for two different reasons. `git update-index --chmod` stages
+      // 100755 into the index/tree directly, which is what HEAD ends up recording; committing
+      // through commitStaged (not commitAll) matters here too, since `git add -A` would re-stat
+      // the file from disk and clobber the staged mode bit back to 644 on a core.fileMode=true
+      // checkout before the commit happens. But the script renders from a base-vs-WORKING-TREE
+      // diff (`git diff <mergeBase>`, no --cached), and on a core.fileMode=true checkout (Linux,
+      // macOS) that diff reads the mode from the actual file on disk, not from HEAD's tree - so
+      // without also flipping the real permission bit, that diff would see 644 on both sides and
+      // report no mode change at all. fs.chmodSync is the one that reaches that comparison;
+      // Windows has no such bit and core.fileMode defaults false there, so the index write above
+      // is what carries the change on that platform. Both are required for one assertion to hold
+      // on every OS this suite runs on.
+      runGit(['update-index', '--chmod=+x', 'mode-only.txt'], repoDirectory);
+      fs.chmodSync(path.join(repoDirectory, 'mode-only.txt'), 0o755);
+      commitStaged(repoDirectory, 'flip the executable bit only');
+
+      runBuildScript(repoDirectory, [baseRef]);
+      const packContent = readPack(repoDirectory);
+
+      expect(packContent).toContain(
+        '## Not shown: mode-only.txt (mode 100644 -> 100755, content unchanged)',
+      );
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'a tracked file over the single-file cap with parsed hunks is packed at the hunk tier with the "over 1MB, body not read" heading and zero lines of context, not a stub',
+    () => {
+      // Every existing oversized fixture in this file is either untracked (kind 'note', no
+      // hunks) or stays under SINGLE_FILE_CAP_BYTES, so this heading - the OTHER branch of
+      // hunkSectionFor's "kind === 'hunks-only'" split - has never been produced. The file must
+      // stay well over 1MB even after the edit (readFileSafe re-checks size against the CURRENT
+      // working-tree file), and the edit itself must be small enough that its rendered hunk
+      // section stays under PACK_HUNK_SECTION_CAP_BYTES (100KB) - otherwise the stub branch
+      // (covered by a sibling test below) would fire instead and this heading would never render.
+      const HUGE_TRACKED_LINE_COUNT = 20000;
+      const hugeLines = Array.from(
+        { length: HUGE_TRACKED_LINE_COUNT },
+        (_, index) => `huge tracked line ${index} ${'z'.repeat(40)}`,
+      );
+      fs.writeFileSync(path.join(repoDirectory, 'huge-tracked.txt'), hugeLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'base commit');
+
+      // Non-vacuity guard for the ">1MB" half of this test's name: confirm the fixture is
+      // actually over the cap before relying on that to route it away from the body tier.
+      expect(
+        fs.statSync(path.join(repoDirectory, 'huge-tracked.txt')).size,
+      ).toBeGreaterThan(SINGLE_FILE_CAP_BYTES);
+
+      const editedLines = [...hugeLines];
+      editedLines[100] = `${hugeLines[100]} (edited)`;
+      fs.writeFileSync(path.join(repoDirectory, 'huge-tracked.txt'), editedLines.join('\n') + '\n');
+
+      expect(
+        fs.statSync(path.join(repoDirectory, 'huge-tracked.txt')).size,
+      ).toBeGreaterThan(SINGLE_FILE_CAP_BYTES);
+
+      runBuildScript(repoDirectory);
+      const packContent = readPack(repoDirectory);
+
+      expect(packContent).toContain(
+        '## Changed hunks: huge-tracked.txt (over 1MB, body not read; 1 hunk ' +
+          'with 0 lines of context; line numbers prefixed and exact)',
+      );
+      expect(packContent).not.toContain('## Changed hunks omitted: huge-tracked.txt');
+
+      const section = sectionBodyOf(packContent, '## Changed hunks: huge-tracked.txt');
+      // The lines this heading claims come from renderHunksOnly, not the windowed body
+      // renderer: the changed line itself, at its exact number, with NEITHER neighbouring line
+      // shown - 0 lines of context, unlike the 3 or 20 the other renderers carry.
+      expect(section).toContain(markedLine('-', null, hugeLines[100]));
+      expect(section).toContain(markedLine('+', 101, editedLines[100]));
+      expect(section).not.toContain(hugeLines[99]);
+      expect(section).not.toContain(hugeLines[101]);
+
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'a deleted file whose hunk-tier section alone is over the per-file hunk cap becomes a stub naming "deleted file", not "read on demand"',
+    () => {
+      // renderHunksOnly's stub heading is built once and then the byte check at the end of
+      // hunkSectionFor can still overwrite it: this pins the "deleted file" arm of that
+      // ternary. Every existing hunk-cap fixture in this file caps an untracked ADD, so only
+      // "read on demand" has ever been produced. The committed file's raw content must exceed
+      // PACK_HUNK_SECTION_CAP_BYTES (100KB) on its own - deleting all of it is what makes the
+      // rendered stub-candidate section (every removed line, unabridged) exceed the same cap.
+      const DELETED_LINE_COUNT = 3000;
+      const deletedLines = Array.from(
+        { length: DELETED_LINE_COUNT },
+        (_, index) => `deleted content line ${index} ${'w'.repeat(30)}`,
+      );
+      fs.writeFileSync(path.join(repoDirectory, 'big-deleted.txt'), deletedLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'base commit');
+
+      // Non-vacuity guard: the committed file itself, not just its rendered stand-in, is over
+      // the cap this test claims to exercise.
+      expect(
+        fs.statSync(path.join(repoDirectory, 'big-deleted.txt')).size,
+      ).toBeGreaterThan(100 * 1024);
+
+      runGit(['rm', '-q', 'big-deleted.txt'], repoDirectory);
+
+      const buildOutput = runBuildScript(repoDirectory);
+      const packContent = readPack(repoDirectory);
+
+      expect(packContent).not.toMatch(/^## Deleted file: big-deleted\.txt/m);
+      expect(packContent).toMatch(
+        /^## Changed hunks omitted: big-deleted\.txt \(\+0\/-3000 lines in 1 hunk; section \d+KB, over the per-file hunk cap; deleted file\)$/m,
+      );
+      expect(packContent).toContain('## Not included (read on demand)');
+      expect(packContent).toMatch(
+        /^- big-deleted\.txt \(churn \d+; changed hunks over the per-file hunk cap\)$/m,
+      );
+      expect(buildOutput).toMatch(/^ {2}omitted: big-deleted\.txt$/m);
+
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'notes the addition of a genuinely empty file as "new file, empty" and the deletion of an already-empty file as "deleted, was empty"',
+    () => {
+      // Both events must be driven as two SEPARATE diffs. Two empty files (or one empty file
+      // added and another deleted in the same diff) are byte-identical, and git's rename
+      // detector treats any two identical files as a 100% similarity match: an add and a delete
+      // of empty files together get paired into "renamed from ..., content unchanged" instead of
+      // either reason this test targets - confirmed empirically against a scratch repo before
+      // writing this fixture.
+      fs.writeFileSync(path.join(repoDirectory, 'other.txt'), 'line one\n');
+      fs.writeFileSync(path.join(repoDirectory, 'empty-existing.txt'), '');
+      commitAll(repoDirectory, 'base commit');
+
+      // Diff 1: only an addition. The new file must be STAGED, not merely present untracked -
+      // an untracked empty file never enters the parsed diff at all and takes the unrelated
+      // "new, untracked, empty" reason instead.
+      fs.writeFileSync(path.join(repoDirectory, 'empty-add.txt'), '');
+      runGit(['add', 'empty-add.txt'], repoDirectory);
+
+      runBuildScript(repoDirectory);
+      const additionPack = readPack(repoDirectory);
+      expect(additionPack).toContain('## Not shown: empty-add.txt (new file, empty)');
+      assertTocLineAccuracyAndHeaderTotal(additionPack);
+
+      // Commit the addition so the second diff below carries exactly one changed empty file
+      // (the deletion), never both at once.
+      commitAll(repoDirectory, 'commit the empty addition');
+
+      // Diff 2: only a deletion, of a file that was already empty at the base commit.
+      runGit(['rm', '-q', 'empty-existing.txt'], repoDirectory);
+
+      runBuildScript(repoDirectory);
+      const deletionPack = readPack(repoDirectory);
+      expect(deletionPack).toContain('## Not shown: empty-existing.txt (deleted, was empty)');
+      assertTocLineAccuracyAndHeaderTotal(deletionPack);
     },
     20000,
   );

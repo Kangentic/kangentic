@@ -234,7 +234,20 @@ try {
   }
 } finally {
   if (keepTemp) console.log(`temp clone kept at ${temporaryRoot}`);
-  else rmSync(temporaryRoot, { recursive: true, force: true });
+  // A failed cleanup must not swallow the run: the table below this block is the whole point of
+  // a replay that just cloned and fetched the corpus, and on Windows a freshly written tree can
+  // still be held for a moment by a scanner or a background git process. No retry ladder here on
+  // purpose. fs.rm's own maxRetries compounds per path through the recursion, measured at 668s
+  // on a locked two-directory tree, so the script names the leftover instead of grinding on it.
+  else {
+    try {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    } catch (cleanupError) {
+      const reason =
+        cleanupError instanceof Error ? cleanupError.message.split('\n')[0] : String(cleanupError);
+      console.log(`temp clone left at ${temporaryRoot} (cleanup failed: ${reason})`);
+    }
+  }
 }
 
 console.log('');
