@@ -506,6 +506,24 @@ describe('serializeAutomation', () => {
     const right = draft({ config: { method: 'POST', url: 'https://example.com' } });
     expect(serializeAutomation(left)).toBe(serializeAutomation(right));
   });
+
+  it('keeps a HIDDEN field, which is the only reason hidden differs from deleted', () => {
+    // `timeoutMinutes` is declared and not offered. Serialization prunes every
+    // key the manifest does not declare, so had the field simply been removed,
+    // opening a column in the UI and pressing Save would erase a value someone
+    // hand-wrote in kangentic.json. The declaration is what carries it through.
+    const serialized = serializeAutomation(
+      draft({ type: 'run_script', config: { script: 'npm ci', timeoutMinutes: 45 } }),
+    );
+    expect(JSON.parse(serialized).config).toEqual({ script: 'npm ci', timeoutMinutes: 45 });
+  });
+
+  it('still prunes a key no field declares', () => {
+    const serialized = serializeAutomation(
+      draft({ type: 'run_script', config: { script: 'npm ci', workingDir: 'project' } }),
+    );
+    expect(JSON.parse(serialized).config).toEqual({ script: 'npm ci' });
+  });
 });
 
 describe('describeLastRun', () => {

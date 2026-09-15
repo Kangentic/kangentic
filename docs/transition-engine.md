@@ -75,7 +75,7 @@ Runs a script as an ordinary child process, in the task's worktree when it has o
 | Field | Type | Description |
 |-------|------|-------------|
 | `script` | string | The script body, with `{{placeholders}}`. Escaping is `shell` |
-| `timeoutMinutes` | number | Give up after this long. Default 5 |
+| `timeoutMinutes` | number | Give up after this long. Default 10. Set in `kangentic.json` only, not in the Column Manager: an exit group is capped at 60 seconds in aggregate whatever this says, so the control could not tell the truth on half the rows it appeared on. The bound itself is not optional, because enter automations hold the task lock and `withTaskLock` has no timeout of its own |
 
 Not a PTY. An interactive shell runs the script and then returns to its prompt and lives forever, so completion is unobservable and the exit code unobtainable; this adapter awaits the exit and records the code. The timeout kills the process TREE, because a bare kill reaches the shell only and leaves whatever it spawned running. No retry: a half-run script is not safe to repeat.
 

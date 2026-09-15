@@ -72,6 +72,17 @@ export interface AutomationField {
    * rewrite. Required on every `number` field by the reserved-keys test.
    */
   unit?: string;
+  /**
+   * Declared, but not offered in the Edit automation dialog.
+   *
+   * The declaration is what makes the key survive a save: `serializeAutomation`
+   * prunes every config key the manifest does not declare, so dropping a field
+   * outright would silently erase a hand-written value from `kangentic.json` the
+   * next time anyone saved that column in the UI. Hiding keeps the round trip
+   * and removes the control, which is the same shape `session_spawn_strategy`
+   * already uses: still read from the file, no longer offered.
+   */
+  hidden?: boolean;
 }
 
 export interface AutomationManifestEntry {
@@ -121,7 +132,16 @@ export const RETIRED_ACTION_TYPES = ['kill_session', 'create_worktree', 'cleanup
 export const EXIT_GROUP_BUDGET_MS = 60_000;
 
 /** Default per-automation script budget, in minutes. */
-export const DEFAULT_SCRIPT_TIMEOUT_MINUTES = 5;
+/**
+ * Ten rather than five, because nothing in the UI raises it any more.
+ *
+ * The script people actually write here is `npm ci`, which is under a minute on
+ * a warm cache and several on a cold one. Five was chosen when a visible field
+ * could rescue the slow case; with the field gone the default has to cover it,
+ * and the cost of being generous is bounded - this is the ceiling on a hang, not
+ * a delay anything waits out on a healthy run.
+ */
+export const DEFAULT_SCRIPT_TIMEOUT_MINUTES = 10;
 
 const AUTO_COMMAND_MODE_FIELD_OPTIONS: readonly AutomationFieldOption[] = [
   { value: 'immediate' satisfies AutoCommandMode, label: 'Run immediately', icon: 'zap', testId: 'auto-command-mode-immediate' },
@@ -179,6 +199,19 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         hint: "Runs in the task's worktree, or the project checkout when it has none.",
       },
       {
+        // Enforced, never offered. The bound has to exist: enter automations run
+        // inside `withTaskLock`, which is a PQueue with NO timeout of its own, so
+        // a script that never exits wedges every later operation on that task
+        // until the app restarts. "The script can time itself out" assumes the
+        // script reaches its own guard, and the cases that matter are the ones
+        // where it does not - waiting on stdin, a dead registry, a wedged shell -
+        // where it also cannot kill its own process tree, which the adapter does.
+        //
+        // The CONTROL went because it could not tell the truth. An exit group is
+        // capped at EXIT_GROUP_BUDGET_MS in aggregate whatever an adapter
+        // declares, so "Give up after 5 minutes" on an On exit script meant 60
+        // seconds. A number nobody tunes, that lies on half the rows it appears
+        // on, is worse than no number.
         key: 'timeoutMinutes',
         label: 'Give up after',
         kind: 'number',
@@ -187,6 +220,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         min: 1,
         max: 120,
         defaultValue: DEFAULT_SCRIPT_TIMEOUT_MINUTES,
+        hidden: true,
       },
     ],
   },

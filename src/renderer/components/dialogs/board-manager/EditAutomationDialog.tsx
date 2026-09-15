@@ -173,7 +173,9 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           />
         </div>
 
-        {entry.fields.map((field) => (
+        {/* A hidden field is declared so its value round-trips through a save,
+            not so the dialog offers it. See `AutomationField.hidden`. */}
+        {entry.fields.filter((field) => !field.hidden).map((field) => (
           <ManifestField
             key={field.key}
             field={field}
