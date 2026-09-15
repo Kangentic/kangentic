@@ -336,8 +336,11 @@ test.describe('Column automations', () => {
   // row and then open a dialog on it, and the grip would open the editor for
   // the row someone was trying to drag.
   test('clicking the row opens the editor, and its own controls do not', async () => {
+    // A second row so the first one HAS a grip: a group of one is given none,
+    // and the last assertion here is about what a grip click does.
     await seedColumn('Executing', [
       { name: 'Row click', type: 'run_script', trigger: 'enter', config: { script: 'echo hi' } },
+      { name: 'Other', type: 'run_script', trigger: 'enter', config: { script: 'echo other' } },
     ]);
     await openColumn('Executing');
 
@@ -715,6 +718,130 @@ test.describe('Column automations', () => {
   // Asserted through the persisted rows rather than by driving dnd-kit's
   // KeyboardSensor, which is unreliable under Playwright. The mouse drag is the
   // real gesture and the store is the ground truth.
+
+  test('the drag target is the full-height strip, not just the grip glyph', async () => {
+    // Two rows, because one row in a group is deliberately given no grip at all.
+    await seedColumn('Executing', [
+      { name: 'First', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
+      { name: 'Second', type: 'run_script', trigger: 'enter', config: { script: 'echo 2' } },
+    ]);
+    await openColumn('Executing');
+
+    // Hit-testing, not the class list: what the user feels is which pixels
+    // start a drag, and `elementFromPoint` is the only thing that answers that.
+    // The glyph alone was 13 x 13 in a 50px row, so the top and bottom thirds
+    // of the gutter looked grabbable and were not.
+    const probe = await row('First').evaluate((node) => {
+      const rowBox = node.getBoundingClientRect();
+      const handle = node.querySelector('[data-drag-handle]');
+      if (!handle) throw new Error('No drag handle');
+      const handleBox = handle.getBoundingClientRect();
+      const at = (x: number, y: number): string => {
+        const hit = document.elementFromPoint(x, y);
+        if (!hit) return 'nothing';
+        if (hit.closest('[data-drag-handle]')) return 'handle';
+        if (hit.closest('[data-testid="column-automation-row"]')) return 'row';
+        return 'other';
+      };
+      // Probed against the ROW's box, deliberately. Probing the handle's own
+      // box asks whether the handle is where the handle is, which is true at
+      // any size: the small glyph passed a top-and-bottom check written that
+      // way. What the user is reaching for is the top-left of the ROW.
+      const gutterX = rowBox.left + 10;
+      return {
+        top: at(gutterX, rowBox.top + 4),
+        bottom: at(gutterX, rowBox.bottom - 4),
+        besideIt: at(handleBox.right + 4, rowBox.top + rowBox.height / 2),
+        // The row's own border is the 1px it does not cover, top and bottom.
+        coversRowHeight: Math.round(handleBox.height) >= Math.round(rowBox.height) - 2,
+        widerThanTheGlyph: handleBox.width > 20,
+      };
+    });
+
+    expect(probe.top).toBe('handle');
+    expect(probe.bottom).toBe('handle');
+    expect(probe.coversRowHeight).toBe(true);
+    expect(probe.widerThanTheGlyph).toBe(true);
+    // The rest of the row still opens the editor, which is the thing the bigger
+    // handle could have eaten.
+    expect(probe.besideIt).toBe('row');
+
+    // Size alone does not tell anyone where the zone ENDS, which was the other
+    // half of the complaint. Hovering the row paints the strip, so the boundary
+    // is visible before the drag rather than discovered by missing it.
+    const handle = row('First').locator('[data-drag-handle]');
+    const background = () => handle.evaluate((node) => getComputedStyle(node).backgroundColor);
+    expect(await background()).toBe('rgba(0, 0, 0, 0)');
+    await row('First').hover();
+    await expect.poll(background).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
+  test('a lone row in a group has no grip, and still lines up with the group above', async () => {
+    await seedColumn('Executing', [
+      { name: 'First', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
+      { name: 'Second', type: 'run_script', trigger: 'enter', config: { script: 'echo 2' } },
+      { name: 'Only', type: 'run_script', trigger: 'exit', config: { script: 'echo 3' } },
+    ]);
+    await openColumn('Executing');
+
+    const group = (trigger: string) =>
+      dialog().locator(`[data-testid="column-automation-group"][data-trigger="${trigger}"]`);
+
+    // Two rows can be ordered against each other, so both keep a grip.
+    await expect(group('enter').locator('[data-drag-handle]')).toHaveCount(2);
+    // One row has nothing to reorder against, so the affordance would be a lie.
+    await expect(group('exit').locator('[data-drag-handle]')).toHaveCount(0);
+
+    // The gutter survives the grip, or the lone row's text slides left of every
+    // row above it. Both groups sit in one card, so that edge is read straight
+    // down and a 13px step in it is obvious.
+    const labelLeft = (name: string) =>
+      row(name).locator('[data-testid="column-automation-row-label"]')
+        .evaluate((node) => Math.round(node.getBoundingClientRect().left));
+    expect(await labelLeft('Only')).toBe(await labelLeft('First'));
+  });
+
+  test('dragging a row down cannot scroll the pane into empty space', async () => {
+    test.slow();
+    await seedColumn('Executing', [
+      { name: 'First', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
+      { name: 'Second', type: 'run_script', trigger: 'enter', config: { script: 'echo 2' } },
+    ]);
+    await openColumn('Executing');
+
+    const scroller = dialog().locator('[data-testid="column-automations-scroller"]');
+    const metrics = () => scroller.evaluate((node) => ({
+      scrollTop: node.scrollTop,
+      overflow: node.scrollHeight - node.clientHeight,
+    }));
+
+    // The pane fits its rows, so it has nothing to scroll before the drag.
+    expect(await metrics()).toEqual({ scrollTop: 0, overflow: 0 });
+
+    const handleBox = await row('First').locator('[data-drag-handle]').boundingBox();
+    const scrollerBox = await scroller.boundingBox();
+    if (!handleBox || !scrollerBox) throw new Error('Pane did not lay out');
+
+    // Hold the row well past the bottom of the pane. A transformed element still
+    // counts toward its ancestor's scrollable overflow, so an unclamped drag
+    // MAKES the pane scrollable, auto-scroll then chases the pointer into the
+    // space it just created, and the row rides off the bottom of the card.
+    const startX = handleBox.x + handleBox.width / 2;
+    const startY = handleBox.y + handleBox.height / 2;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX, startY + 8, { steps: 3 });
+    await page.mouse.move(startX, scrollerBox.y + scrollerBox.height + 300, { steps: 20 });
+    // Long enough for auto-scroll to have run away if it were going to: it
+    // accelerates while the pointer is held past the edge.
+    await page.waitForTimeout(600);
+
+    const held = await metrics();
+    await page.mouse.up();
+    await page.mouse.move(10, 10);
+
+    expect(held).toEqual({ scrollTop: 0, overflow: 0 });
+  });
 
   test('dragging a row above another persists the new order', async () => {
     // Headroom, not a fix. The gesture is 23 synthetic pointer events plus a
