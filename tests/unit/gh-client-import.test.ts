@@ -89,6 +89,25 @@ describe('GitHubImporter.mapToExternalIssues - stateCategory bucketing', () => {
   });
 });
 
+describe('GitHubImporter.mapProjectItemsToExternalIssues - stateCategory bucketing', () => {
+  it('always buckets a project item as open, regardless of its freeform status column', () => {
+    // GitHub Projects statuses are freeform columns, not an open/closed axis, and
+    // the Import dialog hides the state toggle for projects (see the comment on
+    // mapProjectItemsToExternalIssues in gh-client.ts), so every item must stay
+    // in the 'open' bucket no matter what its status says.
+    const importer = new GitHubImporter();
+    const [inProgress, done] = importer.mapProjectItemsToExternalIssues(
+      [
+        { id: 'item-1', title: 'In progress item', status: 'In Progress' },
+        { id: 'item-2', title: 'Done item', status: 'Done' },
+      ],
+      new Set(),
+    );
+    expect(inProgress.stateCategory).toBe('open');
+    expect(done.stateCategory).toBe('open');
+  });
+});
+
 describe('GitHubImporter.fetchIssues - since query param', () => {
   it('includes since=<iso> in the request URL when since is passed', async () => {
     const importer = new GitHubImporter();
