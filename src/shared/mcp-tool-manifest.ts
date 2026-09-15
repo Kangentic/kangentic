@@ -75,7 +75,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_update_board_profile', label: 'Update Board Profile', blurb: 'rename a profile or retune its per-column settings, across projects', category: 'board' },
   { name: 'kangentic_delete_board_profile', label: 'Delete Board Profile', blurb: 'remove a profile; tasks riding it fall back to each column\'s own settings', category: 'board' },
   { name: 'kangentic_board_summary', label: 'Board Summary', blurb: 'counts, label vocabulary, active sessions, and aggregate cost across the board', category: 'board' },
-  { name: 'kangentic_get_usage_stats', label: 'Usage Stats', blurb: 'tokens, cost, burn rate, and by-model / by-agent / by-subagent-type usage for a project or all projects over a time range', category: 'board' },
+  { name: 'kangentic_get_usage_stats', label: 'Usage Stats', blurb: 'tokens, cost, burn rate, and by-model / by-agent / by-effort / by-subagent-type usage for a project or all projects over a time range', category: 'board' },
   { name: 'kangentic_list_backlog', label: 'List Backlog', blurb: 'see items staged in the backlog', category: 'board' },
   { name: 'kangentic_promote_backlog', label: 'Promote Backlog', blurb: 'move backlog items onto the board as tasks', category: 'board' },
   { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, labels, or attachments', category: 'board' },

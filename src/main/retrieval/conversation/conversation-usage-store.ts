@@ -343,8 +343,10 @@ export class ConversationUsageStore {
    * Reports NO cost. `usage_history.total_cost_usd` already covers the whole
    * session tree, so pricing these tokens and adding them would double count.
    *
-   * Pass `taskId` for the per-task breakdown (uses idx_turn_usage_task), or null
-   * with a `ts` window for the project-wide one (uses idx_turn_usage_agent_type).
+   * Pass `taskId` for the per-task breakdown, which is selective on
+   * idx_turn_usage_task, or null with a `ts` window for the project-wide one.
+   * That one gets only its GROUP BY ordering from idx_turn_usage_agent_type;
+   * `subagent_id` is in no index, so the row filter still runs per row.
    * A null window means all time. Turns with a NULL `ts` are included only in the
    * unbounded case, matching `getGroupedUsageSince`, which cannot place them on a
    * time axis.

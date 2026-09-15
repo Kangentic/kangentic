@@ -367,7 +367,7 @@ export function KpiTiles({
             ? `${kpis.subagentCount} agent(s), ${formatTokenCount(kpis.subagentCacheReadTokens)} cached`
             : undefined}
           title={kpis && kpis.subagentTurnCount > 0
-            ? `Fresh + output tokens across ${kpis.subagentTurnCount.toLocaleString()} subagent turn(s). Additive to Total Tokens, which is the main thread; the cost is already in Cost.`
+            ? `Fresh + output tokens from ${kpis.subagentTurnCount.toLocaleString()} subagent turn(s), additive to Total Tokens and already counted in Cost.`
             : 'No subagent (Task-tool) turns recorded in this range'}
           delta={kpis && kpis.subagentTurnCount > 0 ? subagentDelta : null}
           deltaBaseline={deltaBaseline}

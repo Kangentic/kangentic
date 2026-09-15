@@ -937,7 +937,7 @@ export function runProjectMigrations(db: Database.Database): void {
   // subagent back to the spawning turn already in the ledger, and `spawn_depth`
   // covers nesting (observed at 1 and 2).
   const turnUsageColumns = new Set(
-    (db.pragma('table_info(conversation_turn_usage)') as Array<{ name: string }>).map((col) => col.name),
+    (db.pragma('table_info(conversation_turn_usage)') as Array<{ name: string }>).map((column) => column.name),
   );
   const subagentColumns: Array<[string, string]> = [
     ['subagent_id', 'TEXT DEFAULT NULL'],
@@ -950,9 +950,13 @@ export function runProjectMigrations(db: Database.Database): void {
       db.exec(`ALTER TABLE conversation_turn_usage ADD COLUMN ${columnName} ${columnDef}`);
     }
   }
-  // Serves the project-wide windowed breakdown (WHERE subagent_id IS NOT NULL,
-  // ts window, GROUP BY agent_type). The per-task breakdown rides
-  // idx_turn_usage_task, which already exists.
+  // Gives the project-wide windowed breakdown its GROUP BY agent_type ordering
+  // without a sort. It does NOT prune on subagent_id: that column is not in the
+  // index, so the leading `subagent_id IS NOT NULL` predicate is still applied
+  // per row. A partial index (WHERE subagent_id IS NOT NULL) would serve the
+  // predicate too, but it needs its own name or a DROP, because CREATE INDEX IF
+  // NOT EXISTS is a no-op against the shape already created here. The per-task
+  // breakdown rides idx_turn_usage_task, which already exists and IS selective.
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_agent_type ON conversation_turn_usage(agent_type, ts)');
 
   // Durable activity-disposition-interval ledger: one row per continuous span
