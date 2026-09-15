@@ -762,7 +762,7 @@ Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift
 - **Scope** - the current project, or an app-wide rollup across every registered project (with a per-project comparison table).
 - **Metric** - toggle between cost and tokens.
 - **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
-- **Breakdowns** - by model, by agent, and by reasoning effort, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, burn rate) with "vs previous period" deltas.
+- **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, burn rate, subagent tokens) with "vs previous period" deltas.
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
 
