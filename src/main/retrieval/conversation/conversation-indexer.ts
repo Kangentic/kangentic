@@ -80,6 +80,7 @@ interface AdapterLike {
     cwd: string,
     startByte: number,
     maxBytes: number,
+    attributedMessageIds?: Set<string>,
   ) => Promise<ParsedTranscriptWindow>;
   locateSessionHistoryFile?: (agentSessionId: string, cwd: string) => Promise<string | null>;
   statSubagentTranscripts?: (
@@ -447,12 +448,28 @@ export class ConversationIndexer {
 
     if (adapter.parseTranscriptWindow) {
       let offset = 0;
+      // Usage-attribution carry, created OUTSIDE the loop and never reset per
+      // window. An agent reports one API message's tokens on several transcript
+      // lines; the adapter attributes them to the first line it emits, and a
+      // per-window dedupe would attribute them AGAIN on the far side of a seam.
+      // Chunking never reads usage so it would not notice, but every usage
+      // record below carries its own line uuid and `turn_uuid` is the ledger's
+      // primary key, so the two attributions become two rows and the message is
+      // counted twice.
+      //
+      // Resetting this per window is the subtle way to reintroduce that: a
+      // window can legitimately attribute nothing (one parallel-tool batch's
+      // tool_result lines can fill it), and the carry has to survive that
+      // window to reach the message's remaining lines. The adapter prunes it, so
+      // it costs a handful of ids against a `usageRecords` array that is already
+      // O(turns in the file).
+      const attributedMessageIds = new Set<string>();
       // Bounds the walk against a pathological file or an adapter that fails to
       // advance. At INDEX_WINDOW_BYTES per window this still covers far more
       // than any real transcript.
       for (let windowIndex = 0; windowIndex < 4096; windowIndex += 1) {
         const window = await adapter.parseTranscriptWindow(
-          agentSessionId, cwd, offset, INDEX_WINDOW_BYTES,
+          agentSessionId, cwd, offset, INDEX_WINDOW_BYTES, attributedMessageIds,
         );
         sourcePath = window.sourcePath ?? sourcePath;
         collect(window.entries);
