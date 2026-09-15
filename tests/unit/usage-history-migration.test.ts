@@ -243,6 +243,71 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history agent/effort migra
   });
 });
 
+/**
+ * The subagent-attribution columns on conversation_turn_usage.
+ *
+ * `subagent_id` is the discriminator the whole feature rests on: NULL means a
+ * main-thread turn, which is also the correct value for every row written
+ * before subagent capture existed. So the migration must be a plain additive
+ * ALTER that leaves existing rows alone.
+ */
+describe.runIf(CAN_RUN)('runProjectMigrations - conversation_turn_usage subagent columns', () => {
+  let db: InstanceType<typeof DatabaseType>;
+
+  beforeEach(() => {
+    if (!Database) return;
+    db = new Database(':memory:');
+    runProjectMigrations(db);
+  });
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  it('adds the four subagent columns and the by-type index', () => {
+    const columns = (db.pragma('table_info(conversation_turn_usage)') as ColumnInfo[]).map((c) => c.name);
+    expect(columns).toEqual(expect.arrayContaining([
+      'subagent_id', 'agent_type', 'spawn_depth', 'parent_tool_use_id',
+    ]));
+
+    const indexes = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'conversation_turn_usage'",
+    ).all() as Array<{ name: string }>).map((row) => row.name);
+    expect(indexes).toContain('idx_turn_usage_agent_type');
+  });
+
+  it('leaves a pre-existing row as a main-thread turn (all four columns NULL)', () => {
+    // A row written before the migration: the ledger's whole history looks like
+    // this, and it is all main-thread by construction.
+    db.prepare(`
+      INSERT INTO conversation_turn_usage
+        (turn_uuid, session_id, task_id, model, ts, input_tokens, output_tokens,
+         cache_creation_input_tokens, cache_read_input_tokens, recorded_at)
+      VALUES ('legacy-turn', 'session-1', 'task-1', 'model-x', 1000, 10, 5, 1, 2, '2026-01-01T00:00:00.000Z')
+    `).run();
+
+    expect(() => runProjectMigrations(db)).not.toThrow();
+
+    const row = db.prepare(
+      'SELECT subagent_id, agent_type, spawn_depth, parent_tool_use_id FROM conversation_turn_usage WHERE turn_uuid = ?',
+    ).get('legacy-turn') as Record<string, unknown>;
+    expect(row).toEqual({
+      subagent_id: null, agent_type: null, spawn_depth: null, parent_tool_use_id: null,
+    });
+  });
+
+  it('is idempotent: a second run adds no duplicate column', () => {
+    // Without the pragma guard SQLite throws "duplicate column name", and
+    // runProjectMigrations runs on every project DB open.
+    expect(() => runProjectMigrations(db)).not.toThrow();
+
+    const columns = (db.pragma('table_info(conversation_turn_usage)') as ColumnInfo[]).map((c) => c.name);
+    for (const name of ['subagent_id', 'agent_type', 'spawn_depth', 'parent_tool_use_id']) {
+      expect(columns.filter((column) => column === name)).toHaveLength(1);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Skip-notice for environments where better-sqlite3 cannot load.
 // ---------------------------------------------------------------------------

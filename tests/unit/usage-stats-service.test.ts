@@ -24,7 +24,7 @@ import type {
   UsageWindowTotals,
 } from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
-import type { LiveSessionRow } from '../../src/shared/types';
+import type { LiveSessionRow, SubagentUsageTotals } from '../../src/shared/types';
 
 /** Plain fixture row mirroring one usage_history row. */
 interface FixtureRow {
@@ -241,18 +241,30 @@ function allocateGroups(
   return [...byBucket.values()].sort((first, second) => first.bucketStartMs - second.bucketStartMs);
 }
 
+/** One subagent-type rollup row, plus the ts the fake reader windows it on
+ *  (the real query windows on each turn's ts; the fixture collapses that to one
+ *  timestamp per rollup row, which is all the service's use of it needs). */
+type FixtureSubagentRow = SubagentUsageTotals & { tsMs: number | null };
+
 interface FakeProject {
   id: string;
   name: string;
   exists?: boolean;
   rows?: FixtureRow[];
   groups?: FixtureGroup[];
+  subagents?: FixtureSubagentRow[];
   throws?: boolean;
 }
 
 interface ReaderCall {
   projectId: string;
-  method: 'getUsageTotals' | 'listUsageRollup' | 'listUsageCostGroups' | 'listTurnGroups' | 'countSessionsRepresented';
+  method:
+    | 'getUsageTotals'
+    | 'listUsageRollup'
+    | 'listUsageCostGroups'
+    | 'listTurnGroups'
+    | 'countSessionsRepresented'
+    | 'listSubagentTotals';
   sinceIso?: string | null;
   untilIso?: string | null;
   sinceMs?: number | null;
@@ -296,6 +308,16 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
           allRows.filter((row) => inWindow(row, sinceIso, untilIso)).map((row) => row.sessionRecordId),
         );
         return sessionRecordIds.filter((recordId) => windowedIds.has(recordId)).length;
+      },
+      listSubagentTotals: (sinceMs, untilMs) => {
+        readerCalls.push({ projectId, method: 'listSubagentTotals', sinceMs, untilMs });
+        // Windowed on the fixture's own ts, mirroring the SQL. Rows with no ts
+        // survive only the unbounded query, as in getSubagentTotalsByType.
+        return (project.subagents ?? [])
+          .filter((row) =>
+            (sinceMs === null || (row.tsMs !== null && row.tsMs >= sinceMs))
+            && (untilMs === null || (row.tsMs !== null && row.tsMs < untilMs)))
+          .map(({ tsMs: _tsMs, ...totals }) => totals);
       },
     };
   });
@@ -511,11 +533,13 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(previousDayCall?.untilIso).toBe(new Date(dayStartMs).toISOString());
   });
 
-  it('the previous window reads totals + turn groups ONLY (previousKpis has no breakdowns or series)', () => {
+  it('the previous window reads KPI inputs only (previousKpis has no breakdowns or series)', () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One', rows: [makeRow()] }]);
     service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     const currentSinceIso = computePeriodCutoff('today');
+    // Of the ISO-windowed reads, only the usage_history totals repeat for the
+    // previous window: no rollup (breakdowns) and no cost groups (series).
     const previousCalls = readerCalls.filter((call) => call.sinceIso !== undefined && call.sinceIso !== currentSinceIso);
     expect(previousCalls.length).toBeGreaterThan(0);
     expect(previousCalls.every((call) => call.method === 'getUsageTotals')).toBe(true);
@@ -523,6 +547,112 @@ describe('usage-stats service: app-wide rollup', () => {
       (call) => call.method === 'listTurnGroups' && call.costSinceIso !== currentSinceIso,
     );
     expect(previousGroupCalls).toHaveLength(1);
+  });
+
+  it('reads subagent totals for the PREVIOUS window too, so its KPI fields are not zero', () => {
+    // Regression guard: every subagent* field lives on UsageKpis, which is also
+    // the shape of previousKpis. Wiring the new read into the current-window
+    // branch alone leaves them 0 there, and the tiles diff against
+    // previousKpis - so a genuine "fan-out grew 20%" would render as a full-size
+    // delta against nothing on every single load. The UI tier cannot catch this:
+    // it renders whatever __dashboardStatsFixture supplies.
+    const nowMs = Date.now();
+    // The 'today' previous window is [local yesterday midnight, local today
+    // midnight). Anchored to yesterday NOON so the fixture lands inside it at
+    // whatever local time the suite happens to run - a fixed hour offset from
+    // now falls out of the window when run near midnight.
+    const yesterdayNoon = new Date(nowMs);
+    yesterdayNoon.setDate(yesterdayNoon.getDate() - 1);
+    yesterdayNoon.setHours(12, 0, 0, 0);
+    const previousMs = yesterdayNoon.getTime();
+    const { service, readerCalls } = makeService([{
+      id: 'p1',
+      name: 'One',
+      rows: [
+        makeRow({ sessionRecordId: 'today', sessionStartedAt: new Date(nowMs).toISOString() }),
+        makeRow({ sessionRecordId: 'yesterday', sessionStartedAt: new Date(previousMs).toISOString() }),
+      ],
+      subagents: [
+        { tsMs: nowMs, agentType: 'review-finder', inputTokens: 300, outputTokens: 120, cacheCreationTokens: 40, cacheReadTokens: 9000, turnCount: 12, subagentCount: 3 },
+        { tsMs: previousMs, agentType: 'review-finder', inputTokens: 100, outputTokens: 50, cacheCreationTokens: 20, cacheReadTokens: 4000, turnCount: 5, subagentCount: 2 },
+      ],
+    }]);
+
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.kpis.subagentInputTokens).toBe(300);
+    expect(stats.kpis.subagentOutputTokens).toBe(120);
+    expect(stats.kpis.subagentCount).toBe(3);
+    expect(stats.previousKpis).not.toBeNull();
+    expect(stats.previousKpis!.subagentInputTokens).toBe(100);
+    expect(stats.previousKpis!.subagentOutputTokens).toBe(50);
+    expect(stats.previousKpis!.subagentCount).toBe(2);
+    // Two windows, two reads.
+    expect(readerCalls.filter((call) => call.method === 'listSubagentTotals')).toHaveLength(2);
+  });
+
+  it('keeps subagent tokens OUT of the main-thread KPI fields and series', () => {
+    const nowMs = Date.now();
+    const { service } = makeService([{
+      id: 'p1',
+      name: 'One',
+      rows: [makeRow()],
+      groups: [{ bucketStartMs: nowMs - 60_000, inputTokens: 200, outputTokens: 100, cacheCreationTokens: 10, cacheReadTokens: 1000, turnCount: 2, sessionRecordId: 'session-1' }],
+      // A realistic fan-out: an order of magnitude more than the driver.
+      subagents: [
+        { tsMs: nowMs - 60_000, agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4 },
+      ],
+    }]);
+
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    // The four turn fields and the token series are the MAIN THREAD, which is
+    // what makes them comparable back through the whole history.
+    expect(stats.kpis.turnInputTokens).toBe(200);
+    expect(stats.kpis.turnOutputTokens).toBe(100);
+    expect(stats.kpis.cacheReadTokens).toBe(1000);
+    expect(stats.tokenSeries.reduce((total, point) => total + point.inputTokens, 0)).toBe(200);
+    // Additive, in their own fields.
+    expect(stats.kpis.subagentInputTokens).toBe(9000);
+    expect(stats.kpis.subagentCacheReadTokens).toBe(2_400_000);
+    expect(stats.bySubagentType).toEqual([
+      { agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4 },
+    ]);
+  });
+
+  it('merges one subagent type across projects in an app-wide rollup', () => {
+    const nowMs = Date.now();
+    const { service } = makeService([
+      {
+        id: 'p1',
+        name: 'One',
+        rows: [makeRow()],
+        subagents: [
+          { tsMs: nowMs, agentType: 'review-finder', inputTokens: 100, outputTokens: 10, cacheCreationTokens: 1, cacheReadTokens: 500, turnCount: 4, subagentCount: 2 },
+          { tsMs: nowMs, agentType: null, inputTokens: 7, outputTokens: 3, cacheCreationTokens: 0, cacheReadTokens: 9, turnCount: 1, subagentCount: 1 },
+        ],
+      },
+      {
+        id: 'p2',
+        name: 'Two',
+        rows: [makeRow({ sessionRecordId: 'session-2' })],
+        subagents: [
+          { tsMs: nowMs, agentType: 'review-finder', inputTokens: 50, outputTokens: 5, cacheCreationTokens: 2, cacheReadTokens: 900, turnCount: 3, subagentCount: 1 },
+        ],
+      },
+    ]);
+
+    const stats = service.getDashboardStats({ kind: 'all' }, 'today');
+
+    // SQL groups within one project DB, so the same type arrives once per
+    // project and has to be merged here. Heaviest cache read leads.
+    expect(stats.bySubagentType).toEqual([
+      { agentType: 'review-finder', inputTokens: 150, outputTokens: 15, cacheCreationTokens: 3, cacheReadTokens: 1400, turnCount: 7, subagentCount: 3 },
+      // A null type is a real bucket (no sidecar, no inline attribution), not a
+      // row to drop.
+      { agentType: null, inputTokens: 7, outputTokens: 3, cacheCreationTokens: 0, cacheReadTokens: 9, turnCount: 1, subagentCount: 1 },
+    ]);
+    expect(stats.kpis.subagentCount).toBe(4);
   });
 
   it('a custom month window bounds both reads, buckets daily, and compares against the preceding same-length window', () => {

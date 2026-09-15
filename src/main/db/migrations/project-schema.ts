@@ -921,6 +921,40 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON conversation_turn_usage(session_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_ts ON conversation_turn_usage(ts)');
 
+  // Migration: subagent attribution on the turn-usage ledger.
+  //
+  // A fan-out task's subagents (Task-tool spawns) write their own transcripts,
+  // which the ledger never saw - measured at 83% of the turns and 71% of the
+  // cache-read tokens on a real /code-review session. `subagent_id` is the
+  // DISCRIMINATOR: it is NULL for every main-thread turn, so a reader that means
+  // "the driver" (which is what every reader meant by construction before these
+  // columns existed) says `subagent_id IS NULL` and keeps its historical series
+  // comparable. Without it, inserting subagent rows would silently redefine every
+  // existing query with no marker in the series where the change happened.
+  //
+  // `agent_type` is the subagent's declared type ('review-finder', 'test-builder',
+  // ...), which makes per-finder attribution free. `parent_tool_use_id` ties a
+  // subagent back to the spawning turn already in the ledger, and `spawn_depth`
+  // covers nesting (observed at 1 and 2).
+  const turnUsageColumns = new Set(
+    (db.pragma('table_info(conversation_turn_usage)') as Array<{ name: string }>).map((col) => col.name),
+  );
+  const subagentColumns: Array<[string, string]> = [
+    ['subagent_id', 'TEXT DEFAULT NULL'],
+    ['agent_type', 'TEXT DEFAULT NULL'],
+    ['spawn_depth', 'INTEGER DEFAULT NULL'],
+    ['parent_tool_use_id', 'TEXT DEFAULT NULL'],
+  ];
+  for (const [columnName, columnDef] of subagentColumns) {
+    if (!turnUsageColumns.has(columnName)) {
+      db.exec(`ALTER TABLE conversation_turn_usage ADD COLUMN ${columnName} ${columnDef}`);
+    }
+  }
+  // Serves the project-wide windowed breakdown (WHERE subagent_id IS NOT NULL,
+  // ts window, GROUP BY agent_type). The per-task breakdown rides
+  // idx_turn_usage_task, which already exists.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_agent_type ON conversation_turn_usage(agent_type, ts)');
+
   // Durable activity-disposition-interval ledger: one row per continuous span
   // a session spent in one `ActivityDisposition` bucket ('idle' - needing the
   // user, covering both ActivityState idle and permission - or 'active' -

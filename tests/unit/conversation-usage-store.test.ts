@@ -31,6 +31,10 @@ interface FakeUsageRow {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
   recorded_at: string;
+  subagent_id: string | null;
+  agent_type: string | null;
+  spawn_depth: number | null;
+  parent_tool_use_id: string | null;
 }
 
 function tsKey(row: FakeUsageRow): number {
@@ -54,6 +58,10 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
           cacheCreation,
           cacheRead,
           recordedAt,
+          subagentId,
+          agentType,
+          spawnDepth,
+          parentToolUseId,
         ] = args;
         // ON CONFLICT(turn_uuid) DO UPDATE == Map.set (last write wins).
         table.set(String(turnUuid), {
@@ -68,6 +76,10 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
           cache_creation_input_tokens: Number(cacheCreation),
           cache_read_input_tokens: Number(cacheRead),
           recorded_at: String(recordedAt),
+          subagent_id: (subagentId as string | null) ?? null,
+          agent_type: (agentType as string | null) ?? null,
+          spawn_depth: (spawnDepth as number | null) ?? null,
+          parent_tool_use_id: (parentToolUseId as string | null) ?? null,
         });
         return { changes: 1, lastInsertRowid: 0 };
       }
@@ -75,15 +87,50 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
     },
     all: (...args: unknown[]) => {
       const rows = [...table.values()];
+      // The subagent breakdown - checked FIRST because its WHERE clause also
+      // mentions task_id, and it is the only reader that wants subagent rows.
+      if (sql.includes('GROUP BY agent_type')) {
+        const params = [...args];
+        const taskId = sql.includes('task_id = ?') ? String(params.shift()) : null;
+        const sinceMs = sql.includes('ts >= ?') ? Number(params.shift()) : null;
+        const untilMs = sql.includes('ts < ?') ? Number(params.shift()) : null;
+        const matching = rows.filter((row) =>
+          row.subagent_id !== null
+          && (taskId === null || row.task_id === taskId)
+          && (sinceMs === null || (row.ts !== null && row.ts >= sinceMs))
+          && (untilMs === null || (row.ts !== null && row.ts < untilMs)));
+        const byType = new Map<string | null, { agentType: string | null; inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number; turnCount: number; subagents: Set<string> }>();
+        for (const row of matching) {
+          const key = row.agent_type;
+          const bucket = byType.get(key) ?? {
+            agentType: row.agent_type, inputTokens: 0, outputTokens: 0,
+            cacheCreationTokens: 0, cacheReadTokens: 0, turnCount: 0, subagents: new Set<string>(),
+          };
+          bucket.inputTokens += row.input_tokens;
+          bucket.outputTokens += row.output_tokens;
+          bucket.cacheCreationTokens += row.cache_creation_input_tokens;
+          bucket.cacheReadTokens += row.cache_read_input_tokens;
+          bucket.turnCount += 1;
+          bucket.subagents.add(String(row.subagent_id));
+          byType.set(key, bucket);
+        }
+        return [...byType.values()]
+          .map(({ subagents, ...totals }) => ({ ...totals, subagentCount: subagents.size }))
+          .sort((a, b) => b.cacheReadTokens - a.cacheReadTokens || b.outputTokens - a.outputTokens);
+      }
+      // Every reader below means the MAIN THREAD, which the real SQL spells
+      // `subagent_id IS NULL`. Mirrored here rather than assumed, so a reader
+      // that lost the clause fails this tier instead of only the real-DB one.
+      const mainThread = rows.filter((row) => !sql.includes('subagent_id IS NULL') || row.subagent_id === null);
       if (sql.includes('WHERE task_id = ?')) {
-        return rows.filter((row) => row.task_id === args[0]).sort((a, b) => tsKey(a) - tsKey(b));
+        return mainThread.filter((row) => row.task_id === args[0]).sort((a, b) => tsKey(a) - tsKey(b));
       }
       if (sql.includes('WHERE session_id = ?')) {
-        return rows.filter((row) => row.session_id === args[0]).sort((a, b) => tsKey(a) - tsKey(b));
+        return mainThread.filter((row) => row.session_id === args[0]).sort((a, b) => tsKey(a) - tsKey(b));
       }
       if (sql.includes('WHERE turn_uuid IN')) {
         const wanted = new Set(args.map((value) => String(value)));
-        return rows.filter((row) => wanted.has(row.turn_uuid));
+        return mainThread.filter((row) => wanted.has(row.turn_uuid));
       }
       if (sql.includes('GROUP BY bucketStartMs')) {
         // The grouped burn-rate read, bucket-only output. Mirrors the real
@@ -110,7 +157,7 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
           turnCount: number;
           allocatedCostUsd: number;
         }>();
-        for (const row of rows) {
+        for (const row of mainThread) {
           if (row.ts === null) continue;
           if (sinceMs !== null && row.ts < sinceMs) continue;
           if (untilMs !== null && row.ts >= untilMs) continue;
@@ -284,6 +331,103 @@ describe('ConversationUsageStore.recordTurns', () => {
     const picked = store.getForTurns(['a1', 'a3']).map((record) => record.turnUuid).sort();
     expect(picked).toEqual(['a1', 'a3']);
     expect(store.getForTurns([])).toEqual([]);
+  });
+
+  it('round-trips the subagent columns, and leaves them null for a main-thread turn', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(
+      owner,
+      [
+        { turnUuid: 'driver-1', ts: 1, model: 'm', usage: usage() },
+        {
+          turnUuid: 'sub:agent-a1:msg_01', ts: 2, model: 'm', usage: usage(),
+          subagentId: 'agent-a1', agentType: 'review-finder', spawnDepth: 1, parentToolUseId: 'toolu_01AAA',
+        },
+      ],
+      now,
+    );
+
+    // The driver row's NULLs are what keep every pre-existing reader meaning
+    // exactly what it meant before these columns existed.
+    const [driver] = store.getForTask('task-1');
+    expect(driver.turnUuid).toBe('driver-1');
+    expect(driver.subagentId).toBeNull();
+    expect(driver.agentType).toBeNull();
+    expect(driver.spawnDepth).toBeNull();
+    expect(driver.parentToolUseId).toBeNull();
+
+    const [subagent] = store.getSubagentTotalsByType(null, null, 'task-1');
+    expect(subagent.agentType).toBe('review-finder');
+    expect(subagent.turnCount).toBe(1);
+    expect(subagent.subagentCount).toBe(1);
+  });
+});
+
+describe('ConversationUsageStore subagent-vs-main-thread split', () => {
+  const owner = { agentSessionId: 'agent-1', sessionId: 'session-1', taskId: 'task-1' };
+  const now = '2026-07-01T00:00:00Z';
+
+  function seed() {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(
+      owner,
+      [
+        { turnUuid: 'driver-1', ts: 10, model: 'm', usage: { inputTokens: 100, outputTokens: 40, cacheCreationInputTokens: 5, cacheReadInputTokens: 900 } },
+        { turnUuid: 'driver-2', ts: 20, model: 'm', usage: { inputTokens: 60, outputTokens: 20, cacheCreationInputTokens: 3, cacheReadInputTokens: 700 } },
+        {
+          turnUuid: 'sub:agent-a1:msg_01', ts: 11, model: 'm',
+          usage: { inputTokens: 5000, outputTokens: 2000, cacheCreationInputTokens: 300, cacheReadInputTokens: 900_000 },
+          subagentId: 'agent-a1', agentType: 'review-finder', spawnDepth: 1, parentToolUseId: 'toolu_01AAA',
+        },
+        {
+          turnUuid: 'sub:agent-a2:msg_02', ts: 12, model: 'm',
+          usage: { inputTokens: 4000, outputTokens: 1500, cacheCreationInputTokens: 200, cacheReadInputTokens: 1_500_000 },
+          subagentId: 'agent-a2', agentType: 'review-finder', spawnDepth: 1, parentToolUseId: 'toolu_01BBB',
+        },
+        {
+          turnUuid: 'sub:agent-b1:msg_03', ts: 13, model: 'm',
+          usage: { inputTokens: 700, outputTokens: 200, cacheCreationInputTokens: 50, cacheReadInputTokens: 60_000 },
+          subagentId: 'agent-b1', agentType: 'test-builder', spawnDepth: 2, parentToolUseId: 'toolu_01CCC',
+        },
+      ],
+      now,
+    );
+    return store;
+  }
+
+  it('excludes subagent rows from every main-thread reader', () => {
+    const store = seed();
+    // Each of these meant "the driver" by construction before subagent rows
+    // existed; they have to keep meaning it, or the history stops being
+    // comparable with no marker where it changed.
+    expect(store.getForTask('task-1').map((row) => row.turnUuid)).toEqual(['driver-1', 'driver-2']);
+    expect(store.getForSession('session-1').map((row) => row.turnUuid)).toEqual(['driver-1', 'driver-2']);
+    expect(store.getForTurns(['driver-1', 'sub:agent-a1:msg_01']).map((row) => row.turnUuid)).toEqual(['driver-1']);
+  });
+
+  it('groups subagent rows by type, counting distinct subagents', () => {
+    const store = seed();
+
+    const breakdown = store.getSubagentTotalsByType(null, null, 'task-1');
+
+    expect(breakdown).toEqual([
+      // Heaviest cache read first: that is the number fan-out tuning turns on.
+      { agentType: 'review-finder', inputTokens: 9000, outputTokens: 3500, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 2, subagentCount: 2 },
+      { agentType: 'test-builder', inputTokens: 700, outputTokens: 200, cacheCreationTokens: 50, cacheReadTokens: 60_000, turnCount: 1, subagentCount: 1 },
+    ]);
+  });
+
+  it('windows the breakdown on ts', () => {
+    const store = seed();
+    expect(store.getSubagentTotalsByType(13, null, 'task-1').map((row) => row.agentType)).toEqual(['test-builder']);
+    expect(store.getSubagentTotalsByType(null, 13, 'task-1').map((row) => row.agentType)).toEqual(['review-finder']);
+  });
+
+  it('reports nothing for a task with no fan-out, rather than a zero row', () => {
+    const store = seed();
+    expect(store.getSubagentTotalsByType(null, null, 'task-other')).toEqual([]);
   });
 });
 

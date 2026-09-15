@@ -35,10 +35,15 @@ vi.mock('../../src/main/retrieval/vec-extension', () => ({
 
 const conversationIndexerMock = vi.hoisted(() => ({
   indexSession: vi.fn(async () => ({})),
+  // The finalize hook also walks subagent usage (the live turn-boundary path
+  // deliberately does not - see scheduleLiveIndex). Mocked here so the chained
+  // job completes and reaches markDirty.
+  indexSubagentUsage: vi.fn(async () => 'indexed'),
 }));
 vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
   ConversationIndexer: class {
     indexSession = conversationIndexerMock.indexSession;
+    indexSubagentUsage = conversationIndexerMock.indexSubagentUsage;
   },
 }));
 

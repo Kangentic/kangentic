@@ -272,6 +272,10 @@ export interface StatsDerivedData {
   byModelSlices: DonutSlice[];
   byAgentSlices: DonutSlice[];
   byEffortSlices: DonutSlice[];
+  /** Per-subagent-type slices. Empty when the range has no subagent turns, which
+   *  is what a pre-fan-out range and a range predating subagent capture both
+   *  look like. Token-valued only: these rows carry no cost of their own. */
+  bySubagentSlices: DonutSlice[];
 }
 
 /** Select the active payload and derive all chart series, memoized per payload. */
@@ -294,6 +298,7 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         byModelSlices: [],
         byAgentSlices: [],
         byEffortSlices: [],
+        bySubagentSlices: [],
       };
     }
     const byModelSlices = foldBreakdownForDonut(
@@ -344,6 +349,20 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
           inputTokens: effort.inputTokens,
           outputTokens: effort.outputTokens,
           costUsd: effort.costUsd,
+        })),
+      ),
+      // costUsd is 0 for every slice, and that is the truth rather than missing
+      // data: the session's reported cost already covers its whole subagent
+      // tree, so attributing dollars per subagent here would double count. The
+      // card is rendered with costKnown={false} so it stays on tokens in both
+      // metric modes instead of showing an all-zero cost donut.
+      bySubagentSlices: foldBreakdownForDonut(
+        (payload.bySubagentType ?? []).map((row) => ({
+          id: row.agentType,
+          label: row.agentType,
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          costUsd: 0,
         })),
       ),
     };

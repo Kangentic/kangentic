@@ -10,6 +10,7 @@ import type {
   SubmissionVerifier,
   AgentCapabilities,
   TranscriptEntry,
+  TranscriptTurnUsage,
   TranscriptUsage,
   TranscriptToolCounts,
   AgentRemoteExecutionInfo,
@@ -44,6 +45,59 @@ export interface ParsedTranscriptWindow {
   sourcePath: string | null;
   nextByteOffset: number;
   totalBytes: number;
+}
+
+/**
+ * One subagent turn's token usage, already folded to exactly one entry per API
+ * message by the adapter. Agent-agnostic: the indexer writes these to the
+ * turn-usage ledger without knowing where they came from or how the agent
+ * spells a subagent.
+ */
+export interface SubagentUsageTurn {
+  /** Stable, collision-free ledger key. Must be reproducible across re-walks of
+   *  an appended transcript and disjoint from main-thread turn uuids. */
+  turnUuid: string;
+  /** Identifies the subagent within its session. Non-null by construction: this
+   *  is the discriminator that marks the ledger row as not-main-thread. */
+  subagentId: string;
+  /** The subagent's declared type, or null when the agent recorded none. */
+  agentType: string | null;
+  spawnDepth: number | null;
+  /** Tool-use id of the spawning turn, tying this back to a main-thread row. */
+  parentToolUseId: string | null;
+  /** Epoch ms, or null when the agent reported no timestamp. */
+  ts: number | null;
+  model: string | null;
+  usage: TranscriptTurnUsage;
+}
+
+/**
+ * Cheap staleness signature for a session's subagent transcripts, computed
+ * without parsing them. A subagent's bytes go to its own file, so the MAIN
+ * transcript's mtime and size do not move while a subagent runs: the subagent
+ * side needs its own signature or a fan-out's turns are never seen as stale.
+ */
+export interface SubagentTranscriptSignature {
+  fileCount: number;
+  totalSize: number;
+  maxMtimeMs: number;
+}
+
+/**
+ * Result of `AgentAdapter.parseSubagentUsage`.
+ *
+ * `directoryPresent: false` means the agent has no subagent transcripts for this
+ * session (pruned, or it never fanned out) and is recorded as a coverage gap, so
+ * a missing history is never mistaken for a quiet period. `complete: false`
+ * means at least one transcript could not be read through to the end; the turns
+ * returned are still valid and idempotent, but the caller must not mark the
+ * session indexed or it will never retry.
+ */
+export interface ParsedSubagentUsage {
+  directoryPresent: boolean;
+  complete: boolean;
+  sourcePath: string;
+  turns: SubagentUsageTurn[];
 }
 
 /**
@@ -339,6 +393,34 @@ export interface AgentAdapter {
     startByte: number,
     maxBytes: number,
   ): Promise<ParsedTranscriptWindow>;
+
+  /**
+   * Optional: the cheap staleness signature of this session's subagent
+   * transcripts, or null when the agent keeps none for it.
+   *
+   * Separate from the main transcript's signature on purpose. A subagent writes
+   * to its own file, so the main transcript's mtime and size are unchanged while
+   * a fan-out runs: an indexer that only watched the main signature would never
+   * see the subagent turns at all.
+   */
+  statSubagentTranscripts?(agentSessionId: string, cwd: string): SubagentTranscriptSignature | null;
+
+  /**
+   * Optional: parse this session's subagent (sub-conversation) token usage into
+   * agent-agnostic turns for the durable turn-usage ledger.
+   *
+   * The adapter owns ALL format and location knowledge, including how one API
+   * message's repeated records fold into a single turn. That fold is not
+   * shareable with the main-transcript parser: Claude's subagent files re-emit a
+   * message mid-stream, so the main path's first-record-wins rule undercounts
+   * subagent output by 30% while remaining exactly right for the main thread.
+   *
+   * Must NOT throw on a missing, partial, or corrupt history: report it through
+   * `directoryPresent` / `complete` so the caller can record a coverage gap or
+   * retry later. Adapters with no subagent concept omit this; the ledger then
+   * simply carries main-thread rows for that agent, as it always has.
+   */
+  parseSubagentUsage?(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage>;
 
   /**
    * Optional: parse CUMULATIVE lifetime token usage for a session from the

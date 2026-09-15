@@ -3,7 +3,12 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import type { ParsedTranscript, ParsedTranscriptWindow } from '../../agent/agent-adapter';
+import type {
+  ParsedSubagentUsage,
+  ParsedTranscript,
+  ParsedTranscriptWindow,
+  SubagentTranscriptSignature,
+} from '../../agent/agent-adapter';
 import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 import { RetrievalStore } from '../retrieval-store';
 import type { ChunkInput, IndexStateRow } from '../types';
@@ -21,6 +26,25 @@ const CHUNKER_VERSION_KEY = 'chunker_version';
  *  so tests can assert the cap by the real value rather than a copied-in
  *  literal that could silently drift from it. */
 export const MAX_SESSIONS_PER_SWEEP = 25;
+/**
+ * Max sessions whose SUBAGENT transcripts are walked per sweep. Higher than the
+ * main cap because the work is not comparable: the subagent pass never chunks or
+ * embeds, it only folds token counts, measured at 57ms for a 13-subagent /
+ * 11MB review session. A dogfooding machine carries ~301 sessions with subagent
+ * files, so this fills the backlog in about three project opens instead of
+ * twelve while staying bounded and yielding between sessions.
+ */
+export const MAX_SUBAGENT_SESSIONS_PER_SWEEP = 100;
+/**
+ * Suffix distinguishing a session's SUBAGENT index-state row from its main one.
+ * `memory_index_state` is keyed `(corpus, doc_id)` with a free-form doc id, so
+ * the two advance independently with no schema change - which is the whole
+ * point: a running subagent writes to its own file, leaving the main
+ * transcript's mtime and size untouched, so one shared signature would either
+ * never see subagent turns or force a full re-chunk of the main transcript on
+ * every subagent write.
+ */
+export const SUBAGENT_DOC_SUFFIX = '#subagents';
 
 /** Cheap staleness signature: the source file's path/mtime/size, without
  *  parsing it. */
@@ -58,6 +82,11 @@ interface AdapterLike {
     maxBytes: number,
   ) => Promise<ParsedTranscriptWindow>;
   locateSessionHistoryFile?: (agentSessionId: string, cwd: string) => Promise<string | null>;
+  statSubagentTranscripts?: (
+    agentSessionId: string,
+    cwd: string,
+  ) => SubagentTranscriptSignature | null;
+  parseSubagentUsage?: (agentSessionId: string, cwd: string) => Promise<ParsedSubagentUsage>;
 }
 
 /**
@@ -147,6 +176,7 @@ export class ConversationIndexer {
     status: IndexStateRow['status'],
     entryCount: number,
     chunkCount: number,
+    docSuffix = '',
   ): void {
     store.setIndexState({
       corpus: CORPUS,
@@ -158,7 +188,11 @@ export class ConversationIndexer {
       // re-point chunk ownership back onto the stale suspended session. The
       // sessionId column below stays record.id so the session-delete trigger and
       // the ownership re-point track the live session.
-      docId: record.agent_session_id ?? record.id,
+      // `docSuffix` splits the subagent walk onto its own row (see
+      // SUBAGENT_DOC_SUFFIX). It stays keyed to record.id, so
+      // trg_sessions_delete_memory cleans it up with the main one; the ledger
+      // rows it produced survive by design (no cascade).
+      docId: `${record.agent_session_id ?? record.id}${docSuffix}`,
       sessionId: record.id,
       sourcePath: signature.path,
       sourceMtimeMs: signature.mtimeMs,
@@ -272,6 +306,100 @@ export class ConversationIndexer {
   }
 
   /**
+   * Index one session's SUBAGENT token usage into the turn-usage ledger.
+   *
+   * Deliberately a SEPARATE method from `indexSession`, not an option on it. The
+   * live turn-boundary re-index (`scheduleLiveIndex`) calls `indexSession` after
+   * every settled turn, and stays cheap only because an unchanged transcript
+   * makes it a no-op. That assumption does not hold here: during a fan-out,
+   * thirteen subagents append continuously, so the directory signature changes on
+   * every driver turn and each one would pay a full re-walk (measured 57ms) on
+   * the main thread - a recurring stall in exactly the workload this feature
+   * exists to measure. A separate method means opting in is explicit, and only
+   * finalize and the project-open sweep do. Subagent tokens land when the driver
+   * finishes, which is when anyone reads them.
+   *
+   * Never throws. Returns 'skipped' when the signature is unchanged or the agent
+   * has no subagent concept, 'missing-source' when the directory is gone (the
+   * agent pruned it), and 'error' on a partial read so a later sweep retries.
+   */
+  async indexSubagentUsage(projectId: string, sessionId: string): Promise<IndexOutcome> {
+    let db: Database.Database;
+    try {
+      db = this.deps.getDb(projectId);
+    } catch {
+      return 'error';
+    }
+    const record = new SessionRepository(db).findByAnyId(sessionId);
+    if (!record?.agent_session_id) return 'skipped';
+
+    const adapter = this.deps.getAdapter(record.session_type);
+    // No subagent concept for this agent. Terminal, and cheap: no state row is
+    // written, so this costs one map lookup per sweep forever.
+    if (!adapter?.parseSubagentUsage || !adapter.statSubagentTranscripts) return 'skipped';
+
+    const store = new RetrievalStore(db);
+    const docId = `${record.agent_session_id}${SUBAGENT_DOC_SUFFIX}`;
+    const state = store.getIndexState(CORPUS, docId);
+
+    let signature: SourceSignature;
+    try {
+      const stats = adapter.statSubagentTranscripts(record.agent_session_id, record.cwd);
+      // Fold the directory to the same three fields `needsIndex` already
+      // compares. fileCount rides in `path` because a new subagent adds a file
+      // without necessarily moving the largest mtime within one millisecond.
+      signature = stats
+        ? { path: `${docId}:${stats.fileCount}`, mtimeMs: stats.maxMtimeMs, size: stats.totalSize }
+        : { path: null, mtimeMs: null, size: null };
+    } catch {
+      signature = { path: null, mtimeMs: null, size: null };
+    }
+    if (!needsIndex(state, signature)) return 'skipped';
+
+    let parsed: ParsedSubagentUsage;
+    try {
+      parsed = await adapter.parseSubagentUsage(record.agent_session_id, record.cwd);
+    } catch {
+      this.writeState(store, record, signature, 'error', 0, 0, SUBAGENT_DOC_SUFFIX);
+      return 'error';
+    }
+
+    // No directory at all: the agent pruned its transcripts (or never fanned
+    // out). Recorded rather than left blank, so a reader can tell a GAP in
+    // coverage from a genuinely quiet session.
+    if (!parsed.directoryPresent) {
+      this.writeState(store, record, signature, 'missing-source', 0, 0, SUBAGENT_DOC_SUFFIX);
+      return 'missing-source';
+    }
+
+    try {
+      new ConversationUsageStore(db).recordTurns(
+        {
+          agentSessionId: record.agent_session_id,
+          sessionId: record.id,
+          taskId: record.task_id,
+        },
+        parsed.turns,
+        this.deps.now(),
+      );
+    } catch (error) {
+      console.warn(`[retrieval] subagent usage record failed for session ${record.id}:`, error);
+      this.writeState(store, record, signature, 'error', 0, 0, SUBAGENT_DOC_SUFFIX);
+      return 'error';
+    }
+
+    // A truncated read wrote real rows (they are idempotent by turn uuid, so a
+    // later walk completes them), but must NOT be stamped 'ok': the signature
+    // would then look current and the missing tail would never be picked up.
+    if (!parsed.complete) {
+      this.writeState(store, record, signature, 'error', parsed.turns.length, 0, SUBAGENT_DOC_SUFFIX);
+      return 'error';
+    }
+    this.writeState(store, record, signature, 'ok', parsed.turns.length, 0, SUBAGENT_DOC_SUFFIX);
+    return 'indexed';
+  }
+
+  /**
    * Read a session's whole transcript and reduce it to chunks + usage records,
    * WITHOUT ever holding the whole thing.
    *
@@ -375,20 +503,40 @@ export class ConversationIndexer {
         .all() as Array<{ id: string }>
     ).map((row) => row.id);
 
+    // TWO independent budgets over one session list. The main transcript pass
+    // chunks and feeds embedding, so it stays at 25; the subagent pass only
+    // folds token counts (no chunking, no embedding, measured 57ms for a
+    // 13-subagent review) and gets its own, higher cap. The loop runs until BOTH
+    // are spent, so a backlog of already-chunked sessions still gets its
+    // subagent history filled in rather than being gated behind the main cap.
     let parsedThisSweep = 0;
+    let subagentParsedThisSweep = 0;
     for (const sessionId of sessionIds) {
       if (!shouldContinue()) return;
-      if (parsedThisSweep >= MAX_SESSIONS_PER_SWEEP) return;
-      const outcome = await this.indexSession(projectId, sessionId);
-      // Count every outcome that actually PARSED, not just the ones that
-      // produced chunks. The cap previously incremented on 'indexed' alone,
-      // while the driving query has no LIMIT - so sessions that parsed and then
-      // returned 'error' or 'missing-source' were free, and one sweep could run
-      // an unbounded number of full transcript reads. 'skipped' (signature
-      // unchanged) and 'unsupported' (no parser) do no file reading and stay
-      // free, which is what keeps the steady-state sweep cheap.
-      if (outcome === 'indexed' || outcome === 'error' || outcome === 'missing-source') {
-        parsedThisSweep += 1;
+      const mainBudgetLeft = parsedThisSweep < MAX_SESSIONS_PER_SWEEP;
+      const subagentBudgetLeft = subagentParsedThisSweep < MAX_SUBAGENT_SESSIONS_PER_SWEEP;
+      if (!mainBudgetLeft && !subagentBudgetLeft) return;
+
+      if (mainBudgetLeft) {
+        const outcome = await this.indexSession(projectId, sessionId);
+        // Count every outcome that actually PARSED, not just the ones that
+        // produced chunks. The cap previously incremented on 'indexed' alone,
+        // while the driving query has no LIMIT - so sessions that parsed and then
+        // returned 'error' or 'missing-source' were free, and one sweep could run
+        // an unbounded number of full transcript reads. 'skipped' (signature
+        // unchanged) and 'unsupported' (no parser) do no file reading and stay
+        // free, which is what keeps the steady-state sweep cheap.
+        if (outcome === 'indexed' || outcome === 'error' || outcome === 'missing-source') {
+          parsedThisSweep += 1;
+        }
+      }
+      if (subagentBudgetLeft) {
+        // Same accounting rule: 'skipped' reads nothing (unchanged signature, or
+        // an agent with no subagent concept) and stays free.
+        const outcome = await this.indexSubagentUsage(projectId, sessionId);
+        if (outcome === 'indexed' || outcome === 'error' || outcome === 'missing-source') {
+          subagentParsedThisSweep += 1;
+        }
       }
       // Yield between sessions so a large sweep never blocks the event loop.
       await new Promise((resolve) => setImmediate(resolve));

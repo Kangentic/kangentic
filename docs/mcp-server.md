@@ -402,10 +402,20 @@ read it there.
 
 Aggregated agent-usage statistics for one project or rolled up across every registered
 project: tokens in/out, cost, burn rate ($/hr approximate + tokens/hr), sessions, tool
-calls, line churn, compactions, and by-model / by-agent / by-effort breakdowns (a null
-effort means the agent default; a session that switches effort mid-run attributes all
-its usage to the last-applied value). This is the same data the in-app usage dashboard
-shows, over the same time ranges.
+calls, line churn, compactions, and by-model / by-agent / by-effort / by-subagent-type
+breakdowns (a null effort means the agent default; a session that switches effort
+mid-run attributes all its usage to the last-applied value). This is the same data the
+in-app usage dashboard shows, over the same time ranges.
+
+`bySubagentType` and the `subagent*` KPI fields cover Task-tool subagents: the finders a
+`/code-review` fans out, the agents a `/test` spawns. They answer which subagent costs
+the most, rather than only what a review cost in total. They are ADDITIVE to the turn
+token fields and to both time series, which are the main thread by construction and stay
+that way so the historical series remains comparable. Subagent rows carry no cost of
+their own, because `totalCostUsd` already covers the whole session tree; summing prices
+for them would double count. `byAgent` is a different axis: that is the CLI that ran the
+session (Claude vs Codex), not a subagent inside one. For ONE task's fan-out, use
+`kangentic_get_task_stats` with a `taskId`.
 
 Reads the durable usage ledgers (`usage_history` per-session totals and
 `conversation_turn_usage` per-turn time series), so totals survive task and session
@@ -427,9 +437,17 @@ tokens but no cost.
 
 Get session metrics for a specific task or across all tasks.
 
+With a `taskId`, the response also carries `bySubagentType`: the task's Task-tool
+subagent fan-out from `conversation_turn_usage`, one row per subagent type with its
+token counts, turn count and distinct-subagent count. On a `/code-review` or `/test`
+task that is usually most of the traffic, and it is the only place the board can say
+which subagent was expensive. It reports no cost of its own: the task's reported cost
+already covers the whole session tree. The rows are absent for a task with no fan-out,
+and for one whose subagent transcripts the agent pruned before they were indexed.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `taskId` | string | No | Specific task ID. If omitted, returns aggregate stats. |
+| `taskId` | string | No | Specific task ID. If omitted, returns aggregate stats (no subagent breakdown). |
 | `query` | string | No | Filter tasks by keyword before aggregating |
 | `sortBy` | string | No | Sort metric: "tokens", "cost", "duration", "toolCalls", "linesChanged" |
 

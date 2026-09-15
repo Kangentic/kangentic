@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type {
   LiveSessionRow,
   ProjectUsageSummary,
+  SubagentUsageTotals,
   UsageCustomWindow,
   UsageDashboardStats,
   UsageDayDrill,
@@ -30,6 +31,7 @@ import {
   computeKpis,
   foldCostSeries,
   foldTokenSeries,
+  mergeSubagentTotals,
   mergeUsageTotals,
   resolveAllTimeBucketKinds,
   resolveBucketing,
@@ -102,6 +104,13 @@ export interface ProjectUsageReader {
   ): GroupedTurnUsageRow[];
   /** COUNT of the given live session record ids already in the window's ledger. */
   countSessionsRepresented(sinceIso: string | null, untilIso: string | null, sessionRecordIds: string[]): number;
+  /**
+   * Subagent turn usage in the window, grouped by subagent type. Additive to
+   * `listTurnGroups`, which is main-thread only: on a fan-out task this is most
+   * of the traffic. Carries no cost - the session's reported cost already covers
+   * the whole tree, so pricing these separately would double count.
+   */
+  listSubagentTotals(sinceMs: number | null, untilMs: number | null): SubagentUsageTotals[];
 }
 
 export interface UsageStatsDeps {
@@ -238,6 +247,8 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     const combinedGroups: GroupedTurnUsageRow[] = [];
     const previousTotalsList: UsageWindowTotals[] = [];
     const previousGroups: GroupedTurnUsageRow[] = [];
+    const subagentTotalsList: SubagentUsageTotals[][] = [];
+    const previousSubagentTotalsList: SubagentUsageTotals[][] = [];
     const perProject: ProjectUsageSummary[] = [];
     const skippedProjects: Array<{ projectId: string; projectName: string }> = [];
     let liveSessionCountTotal = 0;
@@ -257,6 +268,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
         combinedRollup.push(...rollup);
         combinedCostGroups.push(...costGroups);
         combinedGroups.push(...groups);
+        subagentTotalsList.push(reader.listSubagentTotals(sinceMs, untilMs));
         if (previousWindow) {
           // The previous window feeds previousKpis only (no breakdowns or
           // series), so totals + turn groups suffice.
@@ -265,6 +277,13 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
             previousWindow.sinceMs, turnGroupMs, previousWindow.untilMs,
             previousWindow.sinceIso, previousWindow.untilIso,
           ));
+          // Subagent totals too, not just the main-thread ones. `previousKpis`
+          // is what the hero/compact tiles diff against, so a subagent field
+          // left at 0 here would render as a full-size delta on every load
+          // rather than the real period-over-period change.
+          previousSubagentTotalsList.push(
+            reader.listSubagentTotals(previousWindow.sinceMs, previousWindow.untilMs),
+          );
         }
         const liveForProject = liveSessions.filter((live) => live.projectId === project.id);
         // Live-session dedup: a running session already snapshotted into the
@@ -325,7 +344,8 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     // but a drill or custom window bounds its own range - keep those.
     const costStarts = period === 'live' && !drill && !customWindow ? [] : buildBucketStarts(rangeStartMs, rangeEndMs, costBucketKind);
 
-    const kpis = computeKpis(mergedTotals, combinedGroups, rangeEndMs - rangeStartMs);
+    const bySubagentType = mergeSubagentTotals(subagentTotalsList);
+    const kpis = computeKpis(mergedTotals, combinedGroups, rangeEndMs - rangeStartMs, bySubagentType);
     // See the file-level JSDoc: live sessions are added to sessionCount only,
     // never to cost/tokens (those get instant client-side live layering from
     // KpiTiles' own sessionUsage overlay, which this would otherwise double).
@@ -345,13 +365,18 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
             mergeUsageTotals(previousTotalsList),
             previousGroups,
             previousWindow.untilMs - previousWindow.sinceMs,
+            mergeSubagentTotals(previousSubagentTotalsList),
           )
         : null,
+      // Main-thread only, by construction and deliberately: see the UsageKpis
+      // JSDoc. Subagent traffic is reported additively in the kpis' subagent*
+      // fields and broken out below, never folded into these series.
       tokenSeries: foldTokenSeries(combinedGroups, tokenStarts, tokenBucketKind),
       costSeries: foldCostSeries(combinedCostGroups, costStarts, costBucketKind),
       byModel: buildModelBreakdown(combinedRollup),
       byAgent: buildAgentBreakdown(combinedRollup),
       byEffort: buildEffortBreakdown(combinedRollup),
+      bySubagentType,
     };
     if (scope.kind === 'all') {
       stats.perProject = perProject;
@@ -377,6 +402,7 @@ export const usageStatsService = createUsageStatsService({
         turnUsage.getGroupedUsageSince(sinceMs, groupMs, untilMs, costSinceIso, costUntilIso),
       countSessionsRepresented: (sinceIso, untilIso, sessionRecordIds) =>
         usageHistory.countSessionsRepresented(sinceIso, untilIso, sessionRecordIds),
+      listSubagentTotals: (sinceMs, untilMs) => turnUsage.getSubagentTotalsByType(sinceMs, untilMs),
     };
   },
   listProjects: () => new ProjectRepository().list().map((project) => ({ id: project.id, name: project.name })),

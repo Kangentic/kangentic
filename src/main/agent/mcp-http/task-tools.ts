@@ -432,7 +432,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_get_task_stats',
     {
-      description: 'Get session metrics and statistics for tasks. Returns token usage, cost, duration, tool calls, and lines changed. Can query a specific task or get a summary across all completed tasks, optionally filtered by keyword. Pass `project` to query a different project.',
+      description: 'Get session metrics and statistics for tasks. Returns token usage, cost, duration, tool calls, and lines changed. For a specific taskId it also breaks the task down by subagent type (which Task-tool subagent burned what on a fan-out task such as a code review), whose cost is already inside the reported total. Can query a specific task or get a summary across all completed tasks, optionally filtered by keyword. Pass `project` to query a different project.',
       inputSchema: z.object({
         taskId: z.string().optional().describe('Task ID (numeric display ID like "42" or full UUID). If omitted, returns aggregate stats across completed tasks.'),
         query: z.string().optional().describe('Filter completed tasks by keyword in title/description before aggregating stats.'),

@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type {
   ConversationTurnUsageRecord,
+  SubagentUsageTotals,
   TranscriptEntry,
   TranscriptTurnUsage,
 } from '../../../shared/types';
@@ -12,6 +13,16 @@ export interface TurnUsageInput {
   ts: number | null;
   model: string | null;
   usage: TranscriptTurnUsage;
+  /**
+   * The subagent that ran this turn. Absent/null marks a MAIN-THREAD turn, which
+   * is what every row written before subagent capture existed is, and what every
+   * reader of this table meant by construction. Set it and the row is excluded
+   * from the driver-only readers below.
+   */
+  subagentId?: string | null;
+  agentType?: string | null;
+  spawnDepth?: number | null;
+  parentToolUseId?: string | null;
 }
 
 /** The owning session shared by every turn in one recordTurns batch. */
@@ -62,7 +73,19 @@ interface TurnUsageRow {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
   recorded_at: string;
+  subagent_id: string | null;
+  agent_type: string | null;
+  spawn_depth: number | null;
+  parent_tool_use_id: string | null;
 }
+
+/**
+ * The clause that keeps a reader meaning what it has always meant: the main
+ * thread. Subagent rows arrived later, so every pre-existing query would have
+ * silently changed meaning without it, with no marker in the series where the
+ * change happened.
+ */
+const MAIN_THREAD_ONLY = 'subagent_id IS NULL';
 
 function toRecord(row: TurnUsageRow): ConversationTurnUsageRecord {
   return {
@@ -79,6 +102,10 @@ function toRecord(row: TurnUsageRow): ConversationTurnUsageRecord {
       cacheReadInputTokens: row.cache_read_input_tokens,
     },
     recordedAt: row.recorded_at,
+    subagentId: row.subagent_id ?? null,
+    agentType: row.agent_type ?? null,
+    spawnDepth: row.spawn_depth ?? null,
+    parentToolUseId: row.parent_tool_use_id ?? null,
   };
 }
 
@@ -130,8 +157,9 @@ export class ConversationUsageStore {
         `INSERT INTO conversation_turn_usage
            (turn_uuid, agent_session_id, session_id, task_id, model, ts,
             input_tokens, output_tokens, cache_creation_input_tokens,
-            cache_read_input_tokens, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cache_read_input_tokens, recorded_at,
+            subagent_id, agent_type, spawn_depth, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(turn_uuid) DO UPDATE SET
            agent_session_id = excluded.agent_session_id,
            session_id = excluded.session_id,
@@ -142,7 +170,11 @@ export class ConversationUsageStore {
            output_tokens = excluded.output_tokens,
            cache_creation_input_tokens = excluded.cache_creation_input_tokens,
            cache_read_input_tokens = excluded.cache_read_input_tokens,
-           recorded_at = excluded.recorded_at`,
+           recorded_at = excluded.recorded_at,
+           subagent_id = excluded.subagent_id,
+           agent_type = excluded.agent_type,
+           spawn_depth = excluded.spawn_depth,
+           parent_tool_use_id = excluded.parent_tool_use_id`,
       );
       for (const turn of turns) {
         upsert.run(
@@ -157,31 +189,42 @@ export class ConversationUsageStore {
           turn.usage.cacheCreationInputTokens,
           turn.usage.cacheReadInputTokens,
           now,
+          turn.subagentId ?? null,
+          turn.agentType ?? null,
+          turn.spawnDepth ?? null,
+          turn.parentToolUseId ?? null,
         );
       }
     });
     run();
   }
 
-  /** A task's per-turn usage, oldest turn first (for a burn-rate-over-time read). */
+  /** A task's MAIN-THREAD per-turn usage, oldest turn first (for a
+   *  burn-rate-over-time read). Subagent rows are excluded; read them through
+   *  `getSubagentTotalsByType`, which aggregates rather than listing hundreds of
+   *  rows a caller would only have had to filter anyway. */
   getForTask(taskId: string): ConversationTurnUsageRecord[] {
     const rows = this.db
-      .prepare('SELECT * FROM conversation_turn_usage WHERE task_id = ? ORDER BY ts ASC')
+      .prepare(`SELECT * FROM conversation_turn_usage WHERE task_id = ? AND ${MAIN_THREAD_ONLY} ORDER BY ts ASC`)
       .all(taskId) as TurnUsageRow[];
     return rows.map(toRecord);
   }
 
-  /** One session's per-turn usage, oldest turn first. */
+  /** One session's MAIN-THREAD per-turn usage, oldest turn first. */
   getForSession(sessionId: string): ConversationTurnUsageRecord[] {
     const rows = this.db
-      .prepare('SELECT * FROM conversation_turn_usage WHERE session_id = ? ORDER BY ts ASC')
+      .prepare(`SELECT * FROM conversation_turn_usage WHERE session_id = ? AND ${MAIN_THREAD_ONLY} ORDER BY ts ASC`)
       .all(sessionId) as TurnUsageRow[];
     return rows.map(toRecord);
   }
 
   /**
-   * Project-wide turn usage grouped into fixed UTC buckets of `groupMs`,
-   * bucket-only output. The usage-stats service passes 5 minutes for the
+   * Project-wide MAIN-THREAD turn usage grouped into fixed UTC buckets of
+   * `groupMs`, bucket-only output. Subagent rows are excluded from both the
+   * aggregate and the cost-allocation denominator, so this series means exactly
+   * what it meant before subagent capture existed and stays comparable back
+   * through the whole history. Subagent traffic is reported additively by
+   * `getSubagentTotalsByType`. The usage-stats service passes 5 minutes for the
    * Live period (whose chart buckets sit on the 5-minute grid) and 15
    * minutes otherwise - the coarsest grid that still nests into local
    * hour/day/week chart boundaries for every real-world UTC offset. Turns
@@ -207,7 +250,14 @@ export class ConversationUsageStore {
     costSince: string | null = null,
     costUntil: string | null = null,
   ): GroupedTurnUsageRow[] {
-    const turnClauses = ['ts IS NOT NULL'];
+    // MAIN_THREAD_ONLY belongs to BOTH uses of turnWhere below, not just the
+    // outer aggregate. The `session_tokens` CTE is the DENOMINATOR of the
+    // per-turn cost allocation, so leaving subagent rows in it would grow every
+    // session's token total and redistribute that session's fixed reported cost
+    // away from the driver's buckets and into the subagents' timestamps. Window
+    // totals would still add up while the series silently changed shape, which is
+    // exactly the unmarked discontinuity these columns exist to prevent.
+    const turnClauses = [MAIN_THREAD_ONLY, 'ts IS NOT NULL'];
     const turnWindowParams: number[] = [];
     if (sinceMs !== null) {
       turnClauses.push('ts >= ?');
@@ -265,14 +315,76 @@ export class ConversationUsageStore {
     `).all(...turnWindowParams, ...costParams, groupMs, groupMs, ...turnWindowParams) as GroupedTurnUsageRow[];
   }
 
-  /** Usage for a specific set of turns - the join a conversation view uses to hang
-   *  token counts off the turns it is already showing. */
+  /** Usage for a specific set of MAIN-THREAD turns - the join a conversation view
+   *  uses to hang token counts off the turns it is already showing. Subagent rows
+   *  are keyed by a synthetic `sub:<id>:<messageId>` uuid that no displayed turn
+   *  carries, so the filter is belt-and-braces rather than load-bearing; it is
+   *  here so the reader's meaning is stated, not inferred. */
   getForTurns(turnUuids: string[]): ConversationTurnUsageRecord[] {
     if (turnUuids.length === 0) return [];
     const placeholders = turnUuids.map(() => '?').join(',');
     const rows = this.db
-      .prepare(`SELECT * FROM conversation_turn_usage WHERE turn_uuid IN (${placeholders})`)
+      .prepare(
+        `SELECT * FROM conversation_turn_usage WHERE turn_uuid IN (${placeholders}) AND ${MAIN_THREAD_ONLY}`,
+      )
       .all(...turnUuids) as TurnUsageRow[];
     return rows.map(toRecord);
+  }
+
+  /**
+   * Subagent token usage rolled up by subagent type, heaviest cache-read first.
+   *
+   * The mirror image of every other reader here: `subagent_id IS NOT NULL`. This
+   * is what answers "which reviewer costs the most" rather than only "this review
+   * cost $41.26". A null `agentType` is a real bucket (a subagent whose sidecar
+   * was missing and whose records carried no inline attribution), never a dropped
+   * row.
+   *
+   * Reports NO cost. `usage_history.total_cost_usd` already covers the whole
+   * session tree, so pricing these tokens and adding them would double count.
+   *
+   * Pass `taskId` for the per-task breakdown (uses idx_turn_usage_task), or null
+   * with a `ts` window for the project-wide one (uses idx_turn_usage_agent_type).
+   * A null window means all time. Turns with a NULL `ts` are included only in the
+   * unbounded case, matching `getGroupedUsageSince`, which cannot place them on a
+   * time axis.
+   */
+  getSubagentTotalsByType(
+    sinceMs: number | null,
+    untilMs: number | null = null,
+    taskId: string | null = null,
+  ): SubagentUsageTotals[] {
+    const clauses = ['subagent_id IS NOT NULL'];
+    const params: Array<number | string> = [];
+    if (taskId !== null) {
+      clauses.push('task_id = ?');
+      params.push(taskId);
+    }
+    if (sinceMs !== null) {
+      clauses.push('ts IS NOT NULL');
+      clauses.push('ts >= ?');
+      params.push(sinceMs);
+    }
+    if (untilMs !== null) {
+      clauses.push('ts IS NOT NULL');
+      clauses.push('ts < ?');
+      params.push(untilMs);
+    }
+    return this.db
+      .prepare(
+        `SELECT
+           agent_type AS agentType,
+           SUM(input_tokens) AS inputTokens,
+           SUM(output_tokens) AS outputTokens,
+           SUM(cache_creation_input_tokens) AS cacheCreationTokens,
+           SUM(cache_read_input_tokens) AS cacheReadTokens,
+           COUNT(*) AS turnCount,
+           COUNT(DISTINCT subagent_id) AS subagentCount
+         FROM conversation_turn_usage
+         WHERE ${clauses.join(' AND ')}
+         GROUP BY agent_type
+         ORDER BY cacheReadTokens DESC, outputTokens DESC`,
+      )
+      .all(...params) as SubagentUsageTotals[];
   }
 }

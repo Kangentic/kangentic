@@ -275,7 +275,12 @@ export function StatsDashboardBody() {
           </ChartCard>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Four columns only when there is a subagent card to fill the fourth;
+            otherwise a lone card would sit in a half-empty second row. */}
+        <div className={data.bySubagentSlices.length > 0
+          ? 'grid grid-cols-1 lg:grid-cols-4 gap-3'
+          : 'grid grid-cols-1 lg:grid-cols-3 gap-3'}
+        >
           <BreakdownCard
             title="By agent"
             slices={data.byAgentSlices}
@@ -303,6 +308,20 @@ export function StatsDashboardBody() {
             metric={effectiveMetric}
             animate={animateCharts}
           />
+          {data.bySubagentSlices.length > 0 && (
+            <BreakdownCard
+              title="By subagent"
+              slices={data.bySubagentSlices}
+              // Always false: these rows genuinely have no cost of their own, so
+              // this keeps the card on tokens even while the page metric is cost,
+              // rather than rendering an all-zero donut.
+              costKnown={false}
+              loading={coldLoading}
+              testId="breakdown-subagent"
+              metric={effectiveMetric}
+              animate={animateCharts}
+            />
+          )}
         </div>
 
         <ChartCard

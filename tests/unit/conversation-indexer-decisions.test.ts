@@ -4,6 +4,8 @@ import {
   ConversationIndexer,
   needsIndex,
   MAX_SESSIONS_PER_SWEEP,
+  MAX_SUBAGENT_SESSIONS_PER_SWEEP,
+  SUBAGENT_DOC_SUFFIX,
   type SourceSignature,
 } from '../../src/main/retrieval/conversation/conversation-indexer';
 import type { IndexStateRow, ChunkInput } from '../../src/main/retrieval/types';
@@ -834,6 +836,209 @@ function makeSweepSessionRecords(count: number, prefix: string): SessionRecord[]
   );
 }
 
+/**
+ * Subagent usage indexing.
+ *
+ * The property under test throughout: the subagent walk is INDEPENDENT of the
+ * main one. A subagent writes to its own file, so the main transcript's
+ * mtime/size never move while a fan-out runs; sharing one signature would mean
+ * either never seeing subagent turns, or re-chunking the whole main transcript
+ * on every subagent write.
+ */
+describe('ConversationIndexer.indexSubagentUsage', () => {
+  const fixedNow = '2026-06-01T12:00:00.000Z';
+
+  function makeSubagentDeps(options: {
+    record?: Partial<SessionRecord>;
+    signature?: { fileCount: number; totalSize: number; maxMtimeMs: number } | null;
+    parsed?: {
+      directoryPresent: boolean;
+      complete: boolean;
+      sourcePath: string;
+      turns: Array<Record<string, unknown>>;
+    };
+    withCapability?: boolean;
+  } = {}) {
+    const record = makeRecord({
+      id: 'sess-1',
+      agent_session_id: 'agent-1',
+      task_id: 'task-1',
+      ...options.record,
+    });
+    const state = makeSweepFakeState([record], { [SWEEP_CHUNKER_VERSION_META_KEY]: '1' });
+    const recordedTurns: unknown[][] = [];
+    const statSubagentTranscripts = vi.fn(() => options.signature ?? { fileCount: 1, totalSize: 10, maxMtimeMs: 5 });
+    const parseSubagentUsage = vi.fn(async () => options.parsed ?? {
+      directoryPresent: true,
+      complete: true,
+      sourcePath: '/subagents',
+      turns: [{
+        turnUuid: 'sub:agent-a1:msg_01',
+        subagentId: 'agent-a1',
+        agentType: 'review-finder',
+        spawnDepth: 1,
+        parentToolUseId: 'toolu_01AAA',
+        ts: 100,
+        model: 'claude-sonnet-5',
+        usage: { inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 3, cacheReadInputTokens: 4 },
+      }],
+    });
+    const adapter = options.withCapability === false
+      ? { displayName: 'Codex', parseTranscript: vi.fn() }
+      : { displayName: 'Claude', parseTranscript: vi.fn(), statSubagentTranscripts, parseSubagentUsage };
+    const db = makeSweepFakeDb(state);
+    // recordTurns reaches the DB through its own INSERT shape; capture it.
+    const originalPrepare = db.prepare.bind(db);
+    (db as unknown as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      if (sql.includes('INSERT INTO conversation_turn_usage')) {
+        return { run: (...args: unknown[]) => { recordedTurns.push(args); return { changes: 1 }; } };
+      }
+      return originalPrepare(sql);
+    };
+    const indexer = new ConversationIndexer({
+      getDb: () => db,
+      getAdapter: () => adapter,
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: () => [],
+      chunkerVersion: 1,
+    });
+    return { indexer, state, recordedTurns, statSubagentTranscripts, parseSubagentUsage };
+  }
+
+  it('writes subagent turns under their own index-state doc id, leaving the main row untouched', async () => {
+    const { indexer, state } = makeSubagentDeps();
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('indexed');
+
+    expect(state.indexStateRows.has(`conversation::agent-1${SUBAGENT_DOC_SUFFIX}`)).toBe(true);
+    // The main walk's row must not be created or advanced by the subagent pass:
+    // they are different documents with different staleness.
+    expect(state.indexStateRows.has('conversation::agent-1')).toBe(false);
+  });
+
+  it('carries the subagent discriminator and attribution onto every written row', async () => {
+    const { indexer, recordedTurns } = makeSubagentDeps();
+
+    await indexer.indexSubagentUsage('project-1', 'sess-1');
+
+    expect(recordedTurns).toHaveLength(1);
+    const args = recordedTurns[0];
+    expect(args[0]).toBe('sub:agent-a1:msg_01');
+    // Owner triple is the DRIVER's session/task: a subagent's tokens belong to
+    // the task that spawned it.
+    expect(args[2]).toBe('sess-1');
+    expect(args[3]).toBe('task-1');
+    // subagent_id, agent_type, spawn_depth, parent_tool_use_id are the last four.
+    expect(args.slice(-4)).toEqual(['agent-a1', 'review-finder', 1, 'toolu_01AAA']);
+  });
+
+  it('skips a second pass while the directory signature is unchanged', async () => {
+    const { indexer, parseSubagentUsage } = makeSubagentDeps();
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('indexed');
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('skipped');
+    expect(parseSubagentUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a pruned directory as missing-source, so a gap is not read as a quiet period', async () => {
+    const { indexer, state } = makeSubagentDeps({
+      signature: null,
+      parsed: { directoryPresent: false, complete: true, sourcePath: '/gone', turns: [] },
+    });
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('missing-source');
+    expect(state.indexStateRows.get(`conversation::agent-1${SUBAGENT_DOC_SUFFIX}`)?.status).toBe('missing-source');
+  });
+
+  it('does NOT stamp ok on a partial read, so a later sweep retries the missing tail', async () => {
+    const { indexer, state, recordedTurns } = makeSubagentDeps({
+      parsed: {
+        directoryPresent: true,
+        complete: false,
+        sourcePath: '/subagents',
+        turns: [{
+          turnUuid: 'sub:agent-a1:msg_01', subagentId: 'agent-a1', agentType: 'x', spawnDepth: 1,
+          parentToolUseId: null, ts: 1, model: 'm',
+          usage: { inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        }],
+      },
+    });
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('error');
+    // The rows it DID read are still written - they are idempotent by turn uuid,
+    // so a later walk completes rather than duplicates them.
+    expect(recordedTurns).toHaveLength(1);
+    expect(state.indexStateRows.get(`conversation::agent-1${SUBAGENT_DOC_SUFFIX}`)?.status).toBe('error');
+  });
+
+  it('is a no-op for an agent with no subagent concept, without writing a state row', async () => {
+    const { indexer, state } = makeSubagentDeps({ withCapability: false });
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('skipped');
+    expect(state.indexStateRows.size).toBe(0);
+  });
+
+  it('skips a session that has no agent_session_id yet', async () => {
+    const { indexer, parseSubagentUsage } = makeSubagentDeps({ record: { agent_session_id: null } });
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('skipped');
+    expect(parseSubagentUsage).not.toHaveBeenCalled();
+  });
+
+  it('indexSession NEVER touches subagent transcripts', async () => {
+    // The trigger split is the thing that keeps the live turn-boundary re-index
+    // cheap: during a fan-out the subagent directory changes on every driver
+    // turn, so walking it there would pay a full re-walk per turn. Pinned here
+    // because the omission is invisible - it would just be slow.
+    const { indexer, statSubagentTranscripts, parseSubagentUsage } = makeSubagentDeps();
+
+    await indexer.indexSession('project-1', 'sess-1');
+
+    expect(statSubagentTranscripts).not.toHaveBeenCalled();
+    expect(parseSubagentUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversationIndexer.sweepProject subagent budget', () => {
+  it('keeps walking subagents after the main pass has spent its smaller cap', async () => {
+    const fixedNow = '2026-06-01T12:00:00.000Z';
+    // More sessions than the main cap, fewer than the subagent cap: the point
+    // is that the subagent pass is not gated behind the main one.
+    const totalSessions = MAX_SESSIONS_PER_SWEEP + 5;
+    expect(totalSessions).toBeLessThanOrEqual(MAX_SUBAGENT_SESSIONS_PER_SWEEP);
+    const records = makeSweepSessionRecords(totalSessions, 'sweep-subagent');
+    const state = makeSweepFakeState(records, { [SWEEP_CHUNKER_VERSION_META_KEY]: '1' });
+    const parseSubagentUsage = vi.fn(async () => ({
+      directoryPresent: true, complete: true, sourcePath: '/subagents', turns: [],
+    }));
+    const indexer = new ConversationIndexer({
+      getDb: () => makeSweepFakeDb(state),
+      getAdapter: () => ({
+        displayName: 'Claude',
+        // Empty entries -> 'missing-source', which still SPENDS the main
+        // budget (it parsed) without needing the chunk-upsert SQL shapes. That
+        // is the state this test wants: the main cap exhausted 5 sessions early.
+        parseTranscript: vi.fn(async () => ({ entries: [], sourcePath: null })),
+        statSubagentTranscripts: () => ({ fileCount: 1, totalSize: 10, maxMtimeMs: 5 }),
+        parseSubagentUsage,
+      }),
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: () => [],
+      chunkerVersion: 1,
+    });
+
+    await indexer.sweepProject('project-1', () => true);
+
+    // Every session's subagents were walked, even the five past the main cap.
+    expect(parseSubagentUsage).toHaveBeenCalledTimes(totalSessions);
+    for (const record of records) {
+      expect(state.indexStateRows.has(`conversation::${record.agent_session_id}${SUBAGENT_DOC_SUFFIX}`)).toBe(true);
+    }
+  });
+});
+
 describe('ConversationIndexer.sweepProject - per-cycle cap counts every PARSED outcome', () => {
   it(
     "counts an 'error' outcome toward MAX_SESSIONS_PER_SWEEP, capping an unbounded run of failing parses " +
@@ -936,7 +1141,11 @@ describe('ConversationIndexer.sweepProject - per-cycle cap counts every PARSED o
       // session unconditionally inside `indexSession`, before the skip
       // decision. A cap that (incorrectly) counted 'skipped' would stop this
       // partway through and leave some sessions unvisited.
-      expect(getAdapter).toHaveBeenCalledTimes(totalSessions);
+      //
+      // Twice per session: the subagent pass runs its own lookup on the same
+      // loop iteration, and this adapter implements no subagent capability, so
+      // that pass returns 'skipped' after the lookup and costs nothing else.
+      expect(getAdapter).toHaveBeenCalledTimes(totalSessions * 2);
     },
   );
 });

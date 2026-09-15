@@ -2090,6 +2090,12 @@
             turnOutputTokens: 20000,
             cacheCreationTokens: 30000,
             cacheReadTokens: 900000,
+            subagentInputTokens: 180000,
+            subagentOutputTokens: 45000,
+            subagentCacheCreationTokens: 90000,
+            subagentCacheReadTokens: 5200000,
+            subagentTurnCount: 190,
+            subagentCount: 8,
             burnRateTokensPerHour: 24000,
             burnRateUsdPerHour: 1.54,
           },
@@ -2110,6 +2116,12 @@
             turnOutputTokens: 16000,
             cacheCreationTokens: 24000,
             cacheReadTokens: 700000,
+            subagentInputTokens: 150000,
+            subagentOutputTokens: 36000,
+            subagentCacheCreationTokens: 72000,
+            subagentCacheReadTokens: 4100000,
+            subagentTurnCount: 160,
+            subagentCount: 6,
             burnRateTokensPerHour: 20000,
             burnRateUsdPerHour: 1.3,
           },
@@ -2127,6 +2139,13 @@
             { effort: 'high', inputTokens: 90000, outputTokens: 26000, costUsd: 8.0, sessionCount: 3 },
             { effort: null, inputTokens: 40000, outputTokens: 10000, costUsd: 3.0, sessionCount: 3 },
             { effort: 'low', inputTokens: 20000, outputTokens: 6000, costUsd: 1.34, sessionCount: 1 },
+          ],
+          // Subagent rollup carries no cost by design: the session's reported
+          // cost already covers its whole subagent tree.
+          bySubagentType: [
+            { agentType: 'review-finder', inputTokens: 90000, outputTokens: 22000, cacheCreationTokens: 45000, cacheReadTokens: 3100000, turnCount: 96, subagentCount: 4 },
+            { agentType: 'test-builder', inputTokens: 60000, outputTokens: 15000, cacheCreationTokens: 30000, cacheReadTokens: 1500000, turnCount: 62, subagentCount: 2 },
+            { agentType: 'Explore', inputTokens: 30000, outputTokens: 8000, cacheCreationTokens: 15000, cacheReadTokens: 600000, turnCount: 32, subagentCount: 2 },
           ],
           perProject: scope.kind === 'all'
             ? [

@@ -1669,11 +1669,33 @@ export interface UsageKpis {
   filesChanged: number;
   compactionCount: number;
   totalDurationMs: number;
-  /** Turn-derived totals (conversation_turn_usage; true per-turn tokens). */
+  /**
+   * Turn-derived totals (conversation_turn_usage; true per-turn tokens).
+   *
+   * MAIN THREAD ONLY. These four, and both chart series, count the driver's
+   * turns and nothing else, exactly as they did before subagent capture existed,
+   * so the historical series stays comparable. A fan-out task's subagent traffic
+   * is reported separately in the `subagent*` fields below and in
+   * `UsageDashboardStats.bySubagentType`, never folded in here.
+   */
   turnInputTokens: number;
   turnOutputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  /**
+   * Subagent-derived totals (conversation_turn_usage rows with a non-null
+   * subagent_id). Additive to the four fields above, never included in them: on a
+   * fan-out task this is most of the traffic, so summing both is the session-tree
+   * token total. Zero when a window has no subagent rows, which is also what a
+   * window predating subagent capture reports.
+   */
+  subagentInputTokens: number;
+  subagentOutputTokens: number;
+  subagentCacheCreationTokens: number;
+  subagentCacheReadTokens: number;
+  subagentTurnCount: number;
+  /** Distinct subagents that ran in the window. */
+  subagentCount: number;
   /** Tokens per hour over the effective window (turn-derived); null when no turn data. */
   burnRateTokensPerHour: number | null;
   /** Dollars per hour via proportional allocation of each session's reported
@@ -1826,6 +1848,16 @@ export interface UsageDashboardStats {
   byModel: ModelUsageBreakdown[];
   byAgent: AgentUsageBreakdown[];
   byEffort: EffortUsageBreakdown[];
+  /**
+   * Per-subagent-type rollup over the selected range (source:
+   * conversation_turn_usage rows with a non-null subagent_id), heaviest first.
+   *
+   * Distinct from `byAgent`, which is the CLI that ran the session (Claude vs
+   * Codex vs ...). This is which Task-tool subagent burned the tokens inside one
+   * Claude session: 'review-finder', 'test-builder', 'Explore'. Empty for a range
+   * with no subagent traffic.
+   */
+  bySubagentType: SubagentUsageTotals[];
   /** Present only for scope.kind === 'all'. */
   perProject?: ProjectUsageSummary[];
   /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
@@ -4405,6 +4437,40 @@ export interface ConversationTurnUsageRecord {
   usage: TranscriptTurnUsage;
   /** When this row was last written (UTC ISO 8601). */
   recordedAt: string;
+  /**
+   * The subagent that ran this turn, or null for a main-thread (driver) turn.
+   * This is the DISCRIMINATOR the whole ledger is split on: a reader that means
+   * "the driver" says `subagent_id IS NULL`. Every row written before subagent
+   * capture existed is a main-thread turn, so NULL is also the correct historical
+   * value.
+   */
+  subagentId: string | null;
+  /** The subagent's declared type ('review-finder', 'test-builder', ...), null for
+   *  a main-thread turn or when the agent recorded none. */
+  agentType: string | null;
+  /** Nesting depth of the spawning chain (1 for a subagent the driver spawned).
+   *  Null for a main-thread turn. */
+  spawnDepth: number | null;
+  /** The tool_use id of the spawning turn, tying this subagent back to the
+   *  main-thread turn already in the ledger. Null for a main-thread turn. */
+  parentToolUseId: string | null;
+}
+
+/**
+ * One subagent type's rolled-up token usage, as returned by the ledger's
+ * `getSubagentTotalsByType`. `agentType` is null for a subagent whose type could
+ * not be determined (no meta sidecar and no inline attribution), which is a real
+ * bucket rather than a dropped row.
+ */
+export interface SubagentUsageTotals {
+  agentType: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  turnCount: number;
+  /** Distinct subagents of this type in the window. */
+  subagentCount: number;
 }
 
 /**
