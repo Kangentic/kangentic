@@ -191,6 +191,83 @@
   --kng-accent-on: #1f1a17;
 }
 
+/* ── Standard: the product theme (one light, one dark) ── */
+
+/* Kangentic's own theme, shipped as a light/dark pair so the marketing site can embed
+   the web demo in either and stay branded. Values come from kangentic.com's tokens.css
+   rather than being matched by eye.
+
+   Light: surface is the site's --panel (the tint its sections and board columns use),
+   raised a warmed --cream, inset its --card, fg its --ink, accent its --rust /
+   --rust-dark. --edge is its --hairline resolved over --panel. Three values are NOT
+   lifted straight across:
+     - raised is #faf6ee, not --cream #fdfbf7. Warmth (red minus blue) 12 against the
+       site's 6. The site puts white cards on a cream page; the app puts cards on a
+       panel-tinted board, so the same hex lands in a different role and the theme read
+       as the Light theme with a warm ground. Held above the gate's 1.25 control
+       separation at 1.29; #f9f4ea (warmth 15) drops to 1.267, too close to the floor.
+     - fg-muted is --ink-soft darkened 3 steps, which misses AA on the hover wash at 4.48.
+     - accent-fg is a step past --rust-dark, since rust-dark is the site's hover FILL and
+       has never had to carry type: it reads 4.30 on the control fill.
+   --edge-input follows the house pattern for a light theme rather than --hairline-strong,
+   which at 1.55 would be the weakest input border the app ships.
+
+   Dark: NOT the site's terminal family, which was the first attempt and the wrong one.
+   --terminal #1d1915 is deliberately near-neutral because it is a terminal (Lab chroma
+   3.6), and a ground built on it landed on Ember at deltaE 1.1, a colour nobody can tell
+   apart. Hue was not the axis to fix that: Ember already sits at 23 degrees, the same
+   family as --rust at 16. CHROMA was. This ground holds the rust hue (25 degrees) and
+   spends chroma instead, 9.8 against Ember's 3.5, which reads as walnut rather than
+   charcoal and puts deltaE at 7.4 from Ember's surface and 8.8 from its raised. The fg
+   ramp warms to match; fg-muted and accent-fg are both lifted a step, since the darker
+   versions read 4.29 on the hover wash and 4.04 as type on the control fill. A side
+   effect worth keeping: the activity tokens clear their 3.0 floor here (8.21 and 8.11),
+   which no light theme manages.
+
+   Colour only, both of them: the site's Bricolage Grotesque and Switzer do not come with
+   the theme, and the terminal keeps its own colour scheme. */
+.theme-kangentic-light {
+  --kng-surface: #f6f1e8;
+  --kng-surface-raised: #faf6ee;
+  --kng-surface-hover: #eae2d2;
+  --kng-surface-control: #e4dac6;
+  --kng-surface-inset: #ffffff;
+  --kng-fg: #24201b;
+  --kng-fg-secondary: #332e27;
+  --kng-fg-tertiary: #4f483e;
+  --kng-fg-muted: #675f52;
+  --kng-fg-faint: #8a8173;
+  --kng-fg-disabled: #a89e8a;
+  --kng-edge: #d4d0c7;
+  --kng-edge-subtle: rgba(212,208,199,0.5);
+  --kng-edge-input: #a89e8a;
+  --kng-accent: #c0562f;
+  --kng-accent-emphasis: #a5471f;
+  --kng-accent-fg: #9e421b;
+  --kng-accent-on: #ffffff;
+}
+
+.theme-kangentic-dark {
+  --kng-surface: #2d2017;
+  --kng-surface-raised: #3a2b20;
+  --kng-surface-hover: #4a382a;
+  --kng-surface-control: #52402f;
+  --kng-surface-inset: #241a12;
+  --kng-fg: #f6efe6;
+  --kng-fg-secondary: #ded4c8;
+  --kng-fg-tertiary: #beb2a5;
+  --kng-fg-muted: #b3a698;
+  --kng-fg-faint: #7f7265;
+  --kng-fg-disabled: #5e5246;
+  --kng-edge: #514336;
+  --kng-edge-subtle: rgba(81,67,54,0.5);
+  --kng-edge-input: #6b5b4a;
+  --kng-accent: #c0562f;
+  --kng-accent-emphasis: #d4703f;
+  --kng-accent-fg: #ee9c75;
+  --kng-accent-on: #ffffff;
+}
+
 /* ── Named Themes (light-base) ── */
 
 .theme-sand {
@@ -279,12 +356,17 @@
 
 /* Light-base themes share the light-surface categorical steps. Validated
    2026-07-10 with the dataviz palette validator against every theme's raised
-   surface: all 10 pass. Known WARNs rely on the relief rule (the dashboard's
+   surface: all 10 pass. Kangentic Light joined on 2026-09-14 and was measured
+   rather than assumed: its warmed #faf6ee card is the DARKEST raised surface of
+   the set, so every slot reads a little lower there than on any other light theme
+   (4.10 / 2.61 / 2.01 / 4.59 / 7.94 / 3.67) - the family's spread is 0.13 at the
+   widest, and the two sub-3:1 slots are the same two.
+   Known WARNs rely on the relief rule (the dashboard's
    donuts always render a visible value list): slots 2/3 sit below 3:1 on the
    light surfaces (inherent to the reference light set) and slot 4 is at
    2.87-2.96:1 on moon/forest. Do NOT brighten slot 4 to fix that - it
    collapses protan separation from slot 3 (measured dE 0.4). */
-.theme-light, .theme-sand, .theme-mint, .theme-sky, .theme-peach {
+.theme-light, .theme-kangentic-light, .theme-sand, .theme-mint, .theme-sky, .theme-peach {
   --kng-chart-1: #2a78d6;
   --kng-chart-2: #1baf7a;
   --kng-chart-3: #eda100;

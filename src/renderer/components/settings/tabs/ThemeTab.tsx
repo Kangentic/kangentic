@@ -15,13 +15,18 @@ export function ThemeTab({ config }: { config: AppConfig }) {
           <option value="dark">Dark</option>
           <option value="light">Light</option>
         </optgroup>
+        <optgroup label="Kangentic">
+          {NAMED_THEMES.filter(theme => theme.group === 'kangentic').map(theme => (
+            <option key={theme.id} value={theme.id}>{theme.label}</option>
+          ))}
+        </optgroup>
         <optgroup label="Dark Palette">
-          {NAMED_THEMES.filter(theme => theme.base === 'dark').map(theme => (
+          {NAMED_THEMES.filter(theme => theme.base === 'dark' && !theme.group).map(theme => (
             <option key={theme.id} value={theme.id}>{theme.label}</option>
           ))}
         </optgroup>
         <optgroup label="Light Palette">
-          {NAMED_THEMES.filter(theme => theme.base === 'light').map(theme => (
+          {NAMED_THEMES.filter(theme => theme.base === 'light' && !theme.group).map(theme => (
             <option key={theme.id} value={theme.id}>{theme.label}</option>
           ))}
         </optgroup>

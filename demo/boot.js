@@ -32,8 +32,13 @@
 (function () {
   'use strict';
 
-  var APP_THEMES = ['dark', 'light', 'moon', 'forest', 'ocean', 'ember', 'sand', 'mint', 'sky', 'peach'];
-  var THEME_ALIASES = { night: 'dark' };
+  // Hand-maintained mirror of ThemeMode in src/shared/types.ts. Nothing ties the two
+  // together, so a theme added there has to be added here or ?theme=<id> is refused.
+  var APP_THEMES = ['dark', 'light', 'kangentic-light', 'kangentic-dark',
+    'moon', 'forest', 'ocean', 'ember', 'sand', 'mint', 'sky', 'peach'];
+  // The site embeds this frame by URL, so a spelling it may already have written keeps
+  // resolving rather than hitting the error card.
+  var THEME_ALIASES = { night: 'dark', kangentic: 'kangentic-light' };
   var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
   var BOOT_TIMEOUT_MS = 10000;
 
