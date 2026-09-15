@@ -301,6 +301,87 @@ test.describe('usage dashboard', () => {
     }
   });
 
+  test('the Subagents tile and By-subagent card report fan-out without changing the main-thread totals', async () => {
+    // Task-tool subagent tokens are ADDITIVE: the headline Total Tokens tile
+    // and both series stay main-thread, so the historical series remains
+    // comparable, and the fan-out shows up in its own tile and card.
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      // Off the default Live period: in Live the hero Total Tokens tile shows
+      // the client-side live overlay only (0 with no running session), so the
+      // ledger comparison below needs a ledger-backed range.
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      const subagentTile = page.locator('[data-testid="kpi-subagents"]');
+      // 180000 + 45000 fresh + output from the mock's subagent rollup.
+      await expect(subagentTile).toContainText('225k', { timeout: 10000 });
+      await expect(subagentTile).toContainText('8 agent(s), 5.2M cached');
+      // A real period-over-period delta, which only appears when the previous
+      // window is read for the subagent fields too (225k against 186k = +21%).
+      await expect(subagentTile).toContainText('+21%');
+
+      // Unchanged: the mock's own totalInputTokens + totalOutputTokens, which
+      // never absorb the subagent traffic above.
+      await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('192k');
+
+      const card = page.locator('[data-testid="breakdown-subagent"]');
+      await expect(card).toBeVisible();
+      await expect(card).toContainText('review-finder');
+      await expect(card).toContainText('test-builder');
+      await expect(card).toContainText('Explore');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('hides the By-subagent card entirely for a range with no fan-out', async () => {
+    // A range that predates subagent capture, and one where nothing fanned out,
+    // look identical and neither should leave an empty card on the page.
+    const emptySubagentFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          return {
+            scope: scope, period: period,
+            rangeStartMs: now - 3600000, rangeEndMs: now,
+            bucketSizeMs: 3600000, costBucketSizeMs: 86400000, generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 5, costKnown: true,
+              totalInputTokens: 1000, totalOutputTokens: 200, totalTokens: 1200,
+              sessionCount: 1, toolCallCount: 3,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 1000,
+              turnInputTokens: 900, turnOutputTokens: 150,
+              cacheCreationTokens: 10, cacheReadTokens: 50,
+              subagentInputTokens: 0, subagentOutputTokens: 0,
+              subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
+              subagentTurnCount: 0, subagentCount: 0,
+              burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
+            },
+            previousKpis: null,
+            tokenSeries: [], costSeries: [],
+            byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + emptySubagentFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      // The other three breakdown cards still render, so this is "the subagent
+      // card is absent", not "the dashboard failed to load".
+      await expect(page.locator('[data-testid="breakdown-model"]')).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('[data-testid="breakdown-subagent"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="kpi-subagents"]')).toContainText('-');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the custom month-window picker applies a bounded range, survives scope cycling, and clears via the period pills', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {

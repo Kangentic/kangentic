@@ -167,6 +167,12 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
     if (!projectId) return;
     chain(async () => {
       await indexer.indexSession(projectId, sessionId);
+      // Subagent token usage is walked HERE and in the project-open sweep, never
+      // on the live turn-boundary path: a running fan-out rewrites its subagent
+      // directory on every driver turn, so doing it there would re-walk on each
+      // one. The session has just finished, so this is the walk that actually
+      // captures the whole fan-out.
+      await indexer.indexSubagentUsage(projectId, sessionId);
       // Flag the project dirty; embedEngine's own drain loop embeds the
       // freshly indexed chunks in the background, duty-cycle throttled. This
       // does NOT embed inline - that is the whole point of the split.
@@ -188,6 +194,12 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
  * cheap because `indexSession` diff-upserts (an unchanged transcript is a
  * no-op) and embedding the new chunks happens later, in the background, via
  * embedEngine's own duty-cycle-throttled drain loop - never inline here.
+ *
+ * Deliberately does NOT walk subagent usage. That no-op property is what makes
+ * this path cheap, and it does not hold for a live fan-out: the subagents write
+ * to their own files continuously, so their directory signature changes on every
+ * driver turn and each one would pay a full re-walk. Finalize and the sweep own
+ * that walk.
  */
 function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;

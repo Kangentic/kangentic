@@ -43,6 +43,17 @@ function formatUsageMessage(stats: UsageDashboardStats): string {
   const topEfforts = stats.byEffort.slice(0, 3)
     .map((effort) => `${effort.effort ?? '(default)'} (${formatTokens(effort.inputTokens + effort.outputTokens)} tokens, $${effort.costUsd.toFixed(2)})`);
   if (topEfforts.length > 0) lines.push(`  By effort: ${topEfforts.join(', ')}`);
+  // Subagent traffic, reported separately from the turn tokens above because
+  // those are the main thread by definition. On a fan-out range this is usually
+  // the larger half, and it is what "this review cost $41.26" never showed.
+  if (kpis.subagentTurnCount > 0) {
+    lines.push(
+      `  Subagents: ${kpis.subagentCount} across ${formatTokens(kpis.subagentTurnCount)} turn(s) - ${formatTokens(kpis.subagentInputTokens)} fresh input, ${formatTokens(kpis.subagentOutputTokens)} output, ${formatTokens(kpis.subagentCacheReadTokens)} cache read (additive to the turn tokens above; the session cost already covers them)`,
+    );
+    const topSubagents = stats.bySubagentType.slice(0, 3)
+      .map((row) => `${row.agentType ?? '(unknown)'} (${formatTokens(row.inputTokens + row.outputTokens)} tokens, ${formatTokens(row.cacheReadTokens)} cache read, ${row.turnCount} turn(s))`);
+    if (topSubagents.length > 0) lines.push(`  Top subagent types: ${topSubagents.join(', ')}`);
+  }
   if (stats.perProject) {
     const skipped = stats.skippedProjects?.length ?? 0;
     lines.push(`  Projects aggregated: ${stats.perProject.length}${skipped > 0 ? ` (${skipped} skipped, unreadable DB)` : ''}`);

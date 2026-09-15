@@ -193,6 +193,67 @@ describe.runIf(CAN_RUN)('ConversationUsageStore.getGroupedUsageSince cost alloca
     expect(full[0].allocatedCostUsd).toBeCloseTo(1, 12);
     expect(full[1].allocatedCostUsd).toBeCloseTo(3, 12);
   });
+
+  // -------------------------------------------------------------------------
+  // Subagent rows must not reach this query at all. This is the guard for the
+  // failure mode the discriminator column exists to prevent: the series is
+  // comparable back through the whole history only while it means "the main
+  // thread", and subagent rows share a session_id with the driver's turns.
+  // -------------------------------------------------------------------------
+
+  function insertSubagentTurn(turnUuid: string, sessionId: string, ts: number, inputTokens: number, outputTokens: number): void {
+    db.prepare(`
+      INSERT INTO conversation_turn_usage (turn_uuid, session_id, model, ts,
+        input_tokens, output_tokens, cache_creation_input_tokens,
+        cache_read_input_tokens, recorded_at,
+        subagent_id, agent_type, spawn_depth, parent_tool_use_id)
+      VALUES (?, ?, 'model-x', ?, ?, ?, 0, 0, '2026-01-05T00:00:00.000Z',
+        'agent-a1', 'review-finder', 1, 'toolu_01AAA')
+    `).run(turnUuid, sessionId, ts, inputTokens, outputTokens);
+  }
+
+  it('returns byte-identical groups whether or not subagent rows exist under the same session', () => {
+    insertLedgerRow('sess-1', '2026-01-02T09:00:00.000Z', 1.5);
+    insertTurn('t1', 'sess-1', T0 + 60_000, 200, 100, 10, 1000);
+    insertTurn('t2', 'sess-1', T0 + 6 * 60_000, 80, 20, 5, 500);
+
+    const before = store.getGroupedUsageSince(
+      Date.parse(SINCE_ISO), TURN_GROUP_MS, Date.parse(UNTIL_ISO), SINCE_ISO, UNTIL_ISO,
+    );
+
+    // A realistic fan-out: far MORE tokens than the driver, landing in the same
+    // buckets and under the same session.
+    insertSubagentTurn('sub:agent-a1:msg_01', 'sess-1', T0 + 90_000, 5000, 2000);
+    insertSubagentTurn('sub:agent-a1:msg_02', 'sess-1', T0 + 7 * 60_000, 9000, 3000);
+
+    const after = store.getGroupedUsageSince(
+      Date.parse(SINCE_ISO), TURN_GROUP_MS, Date.parse(UNTIL_ISO), SINCE_ISO, UNTIL_ISO,
+    );
+
+    // Not just the totals: the whole shape. A filter applied to the outer
+    // aggregate but forgotten in the session_tokens CTE keeps these token sums
+    // right while silently moving allocatedCostUsd between buckets, which is why
+    // this compares the full rows rather than a sum.
+    expect(after).toEqual(before);
+  });
+
+  it('keeps each bucket allocated cost unchanged when a subagent burns tokens in a bucket the driver never touched', () => {
+    insertLedgerRow('sess-1', '2026-01-02T09:00:00.000Z', 4);
+    insertTurn('t1', 'sess-1', T0, 100, 0);
+
+    const before = store.getGroupedUsageSince(T0, TURN_GROUP_MS, T0 + 4 * TURN_GROUP_MS, null, null);
+    expect(before).toHaveLength(1);
+    expect(before[0].allocatedCostUsd).toBeCloseTo(4, 12);
+
+    // The sharpest version of the CTE bug: an unfiltered denominator would both
+    // dilute the driver's bucket AND mint a new bucket carrying most of the
+    // session's cost at a time the driver was not running.
+    insertSubagentTurn('sub:agent-a1:msg_01', 'sess-1', T0 + 2 * TURN_GROUP_MS, 900, 0);
+
+    const after = store.getGroupedUsageSince(T0, TURN_GROUP_MS, T0 + 4 * TURN_GROUP_MS, null, null);
+
+    expect(after).toEqual(before);
+  });
 });
 
 // ---------------------------------------------------------------------------

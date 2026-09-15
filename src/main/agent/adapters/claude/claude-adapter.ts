@@ -9,6 +9,11 @@ import {
   parseClaudeTranscriptUsage,
   parseClaudeTranscriptToolCounts,
 } from './transcript-parser';
+import {
+  locateClaudeSubagentDir,
+  parseClaudeSubagentUsage,
+  statClaudeSubagentDir,
+} from './subagent-usage-parser';
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
@@ -28,6 +33,8 @@ import type {
   SettingsChangeSpec,
   ParsedTranscript,
   ParsedTranscriptWindow,
+  ParsedSubagentUsage,
+  SubagentTranscriptSignature,
 } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -236,6 +243,21 @@ export class ClaudeAdapter implements AgentAdapter {
     const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
     const window = await parseClaudeTranscriptWindow(filePath, startByte, maxBytes);
     return { ...window, sourcePath: filePath };
+  }
+
+  /**
+   * Staleness signature for the session's `subagents/` directory. Its own
+   * signature, because a running subagent moves no byte of the main transcript.
+   */
+  statSubagentTranscripts(agentSessionId: string, cwd: string): SubagentTranscriptSignature | null {
+    return statClaudeSubagentDir(locateClaudeSubagentDir(agentSessionId, cwd));
+  }
+
+  /** Every Task-tool subagent's tokens for this session, folded to one turn per
+   *  API message. See `subagent-usage-parser.ts` for why the fold rule differs
+   *  from the main transcript's. */
+  async parseSubagentUsage(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage> {
+    return parseClaudeSubagentUsage(agentSessionId, cwd);
   }
 
   /**

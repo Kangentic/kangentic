@@ -581,7 +581,7 @@ Key/value bookkeeping for the project itself, distinct from `memory_meta` (which
 
 ### conversation_turn_usage table
 
-Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`, plus `getGroupedUsageSince`, the UTC-bucketed project-wide read behind the usage dashboard's burn-rate and token-trend charts - 5-minute buckets for the Live period, 15-minute otherwise, bucket-only output so the payload is O(active buckets) rather than O(sessions x buckets); each bucket carries a SQL-computed `allocatedCostUsd` (per-turn shares of each owning session's `usage_history` cost), windowed by the same `session_started_at` bounds the dashboard's other reads use).
+Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`, plus `getGroupedUsageSince`, the UTC-bucketed project-wide read behind the usage dashboard's burn-rate and token-trend charts - 5-minute buckets for the Live period, 15-minute otherwise, bucket-only output so the payload is O(active buckets) rather than O(sessions x buckets); each bucket carries a SQL-computed `allocatedCostUsd` (per-turn shares of each owning session's `usage_history` cost), windowed by the same `session_started_at` bounds the dashboard's other reads use). All four are main-thread only (`subagent_id IS NULL`); `getSubagentTotalsByType` is the one reader of the subagent rows. See "Main-thread and subagent rows" below.
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -596,8 +596,20 @@ Durable per-turn token-usage ledger. One row per assistant turn that reported us
 | cache_creation_input_tokens | INTEGER | NOT NULL | 0 |
 | cache_read_input_tokens | INTEGER | NOT NULL | 0 |
 | recorded_at | TEXT | NOT NULL | |
+| subagent_id | TEXT | | NULL |
+| agent_type | TEXT | | NULL |
+| spawn_depth | INTEGER | | NULL |
+| parent_tool_use_id | TEXT | | NULL |
 
-Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
+Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts), `idx_turn_usage_agent_type` (agent_type, ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
+
+#### Main-thread and subagent rows
+
+`subagent_id` is the discriminator. It is NULL for a main-thread (driver) turn and set for a turn a Task-tool subagent ran, along with `agent_type` (`review-finder`, `test-builder`, `Explore`, ...), `spawn_depth`, and `parent_tool_use_id` (the tool-use id of the spawning turn, which links back to a main-thread row). Every row written before subagent capture existed is a main-thread turn, so NULL is also the right historical value.
+
+Every driver-facing reader spells `subagent_id IS NULL`: `getForTask`, `getForSession`, `getForTurns`, and `getGroupedUsageSince`. In `getGroupedUsageSince` the clause appears in BOTH the outer aggregate and the `session_tokens` CTE, because that CTE is the denominator of the per-turn cost allocation: filtering only the outer query leaves every token count correct while silently redistributing a session's cost into the subagents' time buckets. `getSubagentTotalsByType` is the one reader that wants the other set (`subagent_id IS NOT NULL`, grouped by `agent_type`); it reports no cost, because `usage_history.total_cost_usd` already covers the whole session tree and pricing these tokens again would double count.
+
+Subagent rows are written by `ConversationIndexer.indexSubagentUsage` from the Claude adapter's `parseSubagentUsage`, which reads `~/.claude/projects/<slug>/<agentSessionId>/subagents/agent-<id>.jsonl` plus its `.meta.json` sidecar. That walk has its own `memory_index_state` row (doc id `<agentSessionId>#subagents`) because a running subagent moves no byte of the main transcript, and it runs on session finalize and the project-open sweep only, never on the live turn-boundary re-index. A `turn_uuid` there is `sub:<subagentId>:<message.id>` - stable across re-walks and disjoint from the main path's JSONL record uuids. Usage is folded field-wise max per `message.id`, not first-record-wins: subagent transcripts re-emit a message as its output grows, and taking the first record undercounts output by about 30%.
 
 Module: `src/main/retrieval/` (store `RetrievalStore`, usage ledger `ConversationUsageStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`).
 

@@ -3,6 +3,7 @@ import type {
   CostSeriesPoint,
   EffortUsageBreakdown,
   ModelUsageBreakdown,
+  SubagentUsageTotals,
   TokenSeriesPoint,
   UsageKpis,
   UsageTimePeriod,
@@ -390,6 +391,7 @@ export function computeKpis(
   totals: UsageWindowTotals,
   groups: GroupedTurnUsageRow[],
   elapsedMs: number,
+  subagentTotals: SubagentUsageTotals[] = [],
 ): UsageKpis {
   const costKnown = totals.costKnownCount > 0;
 
@@ -407,8 +409,30 @@ export function computeKpis(
   }
   const turnTokens = turnInputTokens + turnOutputTokens;
 
+  // Subagent totals are summed but kept in their OWN fields, never folded into
+  // the four above. Those four (and both chart series) are the main thread by
+  // definition, and their history is only comparable as long as that stays true.
+  let subagentInputTokens = 0;
+  let subagentOutputTokens = 0;
+  let subagentCacheCreationTokens = 0;
+  let subagentCacheReadTokens = 0;
+  let subagentTurnCount = 0;
+  let subagentCount = 0;
+  for (const row of subagentTotals) {
+    subagentInputTokens += row.inputTokens;
+    subagentOutputTokens += row.outputTokens;
+    subagentCacheCreationTokens += row.cacheCreationTokens;
+    subagentCacheReadTokens += row.cacheReadTokens;
+    subagentTurnCount += row.turnCount;
+    subagentCount += row.subagentCount;
+  }
+
   // Burn rates average over the elapsed window (floored at one minute so a
-  // just-started range cannot produce absurd rates).
+  // just-started range cannot produce absurd rates). Main-thread only, matching
+  // the turn fields they derive from: subagent tokens have no cost allocation of
+  // their own (the session's reported cost already covers the whole tree), so
+  // folding them in would change the token rate without the dollar rate and the
+  // two would stop describing the same thing.
   const elapsedHours = Math.max(elapsedMs, 60_000) / HOUR_MS;
   const burnRateTokensPerHour = groups.length > 0 ? turnTokens / elapsedHours : null;
   const burnRateUsdPerHour = groups.length > 0 && costKnown ? allocatedCostUsd / elapsedHours : null;
@@ -430,9 +454,51 @@ export function computeKpis(
     turnOutputTokens,
     cacheCreationTokens,
     cacheReadTokens,
+    subagentInputTokens,
+    subagentOutputTokens,
+    subagentCacheCreationTokens,
+    subagentCacheReadTokens,
+    subagentTurnCount,
+    subagentCount,
     burnRateTokensPerHour,
     burnRateUsdPerHour,
   };
+}
+
+/**
+ * Merge per-project subagent rollups into one project-agnostic breakdown,
+ * heaviest cache-read first.
+ *
+ * Needed because the SQL groups within ONE project DB; an app-wide scope reads N
+ * of them and the same subagent type appears in each. A null `agentType` is a
+ * real bucket (no sidecar, no inline attribution) and merges with its own kind.
+ */
+export function mergeSubagentTotals(perProject: SubagentUsageTotals[][]): SubagentUsageTotals[] {
+  // Keyed on `string | null` directly rather than on a string sentinel: a Map
+  // takes null as a key, and any sentinel string is one an agent type could
+  // theoretically spell.
+  const byType = new Map<string | null, SubagentUsageTotals>();
+  for (const rows of perProject) {
+    for (const row of rows) {
+      const key = row.agentType;
+      const existing = byType.get(key);
+      if (!existing) {
+        // Copy rather than store the caller's row: the branch below mutates the
+        // stored object in place, and the caller re-reads its own perProject rows.
+        byType.set(key, { ...row });
+        continue;
+      }
+      existing.inputTokens += row.inputTokens;
+      existing.outputTokens += row.outputTokens;
+      existing.cacheCreationTokens += row.cacheCreationTokens;
+      existing.cacheReadTokens += row.cacheReadTokens;
+      existing.turnCount += row.turnCount;
+      existing.subagentCount += row.subagentCount;
+    }
+  }
+  return Array.from(byType.values()).sort(
+    (left, right) => right.cacheReadTokens - left.cacheReadTokens || right.outputTokens - left.outputTokens,
+  );
 }
 
 /**

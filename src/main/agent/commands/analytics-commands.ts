@@ -5,6 +5,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { agentRegistry } from '../../agent/agent-registry';
+import { ConversationUsageStore } from '../../retrieval/conversation/conversation-usage-store';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
@@ -39,19 +40,40 @@ export const handleGetTaskStats: CommandHandler = (
       };
     }
 
+    // Subagent fan-out for this task, from the durable turn-usage ledger. It is
+    // a different measurement from `summary` above (which reads the sessions
+    // rollup's context-window snapshots) and reports NO cost: the session's
+    // total_cost_usd already covers the whole session tree, so pricing these
+    // tokens again would double count. On a /code-review or /test task this is
+    // most of the traffic, and it is the only place the board can answer which
+    // subagent was expensive.
+    const bySubagentType = new ConversationUsageStore(db).getSubagentTotalsByType(null, null, task.id);
+    const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
+
+    const lines = [
+      `Stats for "${task.title}":`,
+      `  Tokens: ${summary.totalInputTokens.toLocaleString()} input + ${summary.totalOutputTokens.toLocaleString()} output = ${(summary.totalInputTokens + summary.totalOutputTokens).toLocaleString()} total`,
+      `  Cost: $${summary.totalCostUsd.toFixed(4)}`,
+      `  Duration: ${Math.round(summary.durationMs / 1000)}s`,
+      `  Tool calls: ${summary.toolCallCount}`,
+      `  Sessions compacted: ${summary.compactionCount}`,
+      `  Lines: +${summary.linesAdded} / -${summary.linesRemoved} across ${summary.filesChanged} file(s)`,
+      `  Model: ${summary.modelDisplayName}`,
+    ];
+    if (subagentTurns > 0) {
+      const subagentCount = bySubagentType.reduce((total, row) => total + row.subagentCount, 0);
+      lines.push(`  Subagents: ${subagentCount} across ${subagentTurns.toLocaleString()} turn(s) (cost already included above)`);
+      for (const row of bySubagentType) {
+        lines.push(
+          `    ${row.agentType ?? '(unknown)'}: ${row.subagentCount} x ${row.turnCount} turn(s), ${(row.inputTokens + row.outputTokens).toLocaleString()} fresh tokens, ${row.cacheReadTokens.toLocaleString()} cache read`,
+        );
+      }
+    }
+
     return {
       success: true,
-      message: [
-        `Stats for "${task.title}":`,
-        `  Tokens: ${summary.totalInputTokens.toLocaleString()} input + ${summary.totalOutputTokens.toLocaleString()} output = ${(summary.totalInputTokens + summary.totalOutputTokens).toLocaleString()} total`,
-        `  Cost: $${summary.totalCostUsd.toFixed(4)}`,
-        `  Duration: ${Math.round(summary.durationMs / 1000)}s`,
-        `  Tool calls: ${summary.toolCallCount}`,
-        `  Sessions compacted: ${summary.compactionCount}`,
-        `  Lines: +${summary.linesAdded} / -${summary.linesRemoved} across ${summary.filesChanged} file(s)`,
-        `  Model: ${summary.modelDisplayName}`,
-      ].join('\n'),
-      data: summary,
+      message: lines.join('\n'),
+      data: { ...summary, bySubagentType },
     };
   }
 

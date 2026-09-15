@@ -6,6 +6,7 @@ import {
   FileDiff,
   Files,
   Flame,
+  GitFork,
   Layers,
   SquareTerminal,
   Timer,
@@ -235,6 +236,15 @@ export function KpiTiles({
   );
   const filesDelta = deltaPercent(kpis?.filesChanged ?? 0, previous?.filesChanged);
   const compactionsDelta = deltaPercent(kpis?.compactionCount ?? 0, previous?.compactionCount);
+  // Subagent tile: fresh + output, the same "tokens" the hero tile means, so the
+  // two read on one scale. Cache reads go in the subtitle instead of the total
+  // because they dwarf everything else on a fan-out range (52.3M against 279k on
+  // a real review) and would make the tile unreadable against its neighbours.
+  const subagentTokens = (kpis?.subagentInputTokens ?? 0) + (kpis?.subagentOutputTokens ?? 0);
+  const subagentDelta = deltaPercent(
+    subagentTokens,
+    previous ? previous.subagentInputTokens + previous.subagentOutputTokens : null,
+  );
   const avgSessionDelta = deltaPercent(
     kpis && kpis.sessionCount > 0 ? kpis.totalDurationMs / kpis.sessionCount : 0,
     previous && previous.sessionCount > 0 ? previous.totalDurationMs / previous.sessionCount : null,
@@ -294,7 +304,7 @@ export function KpiTiles({
 
       {/* Secondary stats: discrete cards in the same grid rhythm as the hero
           row above - every surface on the page shares one card chrome. */}
-      <div className="grid grid-cols-7 gap-2" data-testid="kpi-compact-strip">
+      <div className="grid grid-cols-8 gap-2" data-testid="kpi-compact-strip">
         <CompactTile
           label="Sessions"
           icon={<SquareTerminal size={14} />}
@@ -348,6 +358,21 @@ export function KpiTiles({
             : 'Not reported by these agents in this range'}
           resetKey={resetKey}
           testId="kpi-cache"
+        />
+        <CompactTile
+          label="Subagents"
+          icon={<GitFork size={14} />}
+          value={kpis && kpis.subagentTurnCount > 0 ? formatTokenCount(subagentTokens) : '-'}
+          sub={kpis && kpis.subagentTurnCount > 0
+            ? `${kpis.subagentCount} agent(s), ${formatTokenCount(kpis.subagentCacheReadTokens)} cached`
+            : undefined}
+          title={kpis && kpis.subagentTurnCount > 0
+            ? `Fresh + output tokens across ${kpis.subagentTurnCount.toLocaleString()} subagent turn(s). Additive to Total Tokens, which is the main thread; the cost is already in Cost.`
+            : 'No subagent (Task-tool) turns recorded in this range'}
+          delta={kpis && kpis.subagentTurnCount > 0 ? subagentDelta : null}
+          deltaBaseline={deltaBaseline}
+          resetKey={resetKey}
+          testId="kpi-subagents"
         />
         <CompactTile
           label="Compactions"
