@@ -265,7 +265,7 @@ function MonitorFullCard({
   const cardPreview = useConfigStore((state) => state.config.cardPreview);
   const messageTrail = useSessionStore(
     useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) => s.sessionMessageTrails[row.sessionId],
+      (state: ReturnType<typeof useSessionStore.getState>) => state.sessionMessageTrails[row.sessionId],
       [row.sessionId],
     ),
   );

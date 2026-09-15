@@ -34,7 +34,18 @@ import { getCachedTranscript } from './transcript-cache';
  *
  * Retention: a trail outlives its session (a paused or exited card keeps what
  * its agent last said) until the session leaves the registry or the map hits
- * `MESSAGE_TRAIL_MAX_SESSIONS`.
+ * `MESSAGE_TRAIL_MAX_SESSIONS`. Both prunes are lazy, not event-driven: a
+ * departed session's state is dropped by the next `snapshot()`, which diffs the
+ * map against the registry, and nothing else watches for a removal. So a state
+ * can outlive its session until the next boot, reload, or project switch calls
+ * `syncSessions`. That is bounded by the session cap and costs one idle map
+ * entry, which is why it is not worth an eager listener.
+ *
+ * Unlike `MonitorPeekTracker`, this tracker is not subscribe-gated. The peek
+ * tracker taps live PTY output, so it stays off until a monitor names the
+ * sessions it draws; this one reads a bounded file tail on a hook the agent
+ * already fired, and the board is mounted whenever the app is, so there is no
+ * "nobody is looking" state to gate on.
  */
 
 /** Lines kept per session: the comfortable card's clamp. */
@@ -253,7 +264,14 @@ export class MessageTrailTracker extends EventEmitter {
       state.readInFlight = false;
       if (state.rereadRequested) {
         state.rereadRequested = false;
-        this.armTrailingRead(sessionId, state, this.minIntervalFor(state));
+        // Only re-arm while this state is still the tracked one. An eviction in
+        // `stateFor`, or a prune in `snapshot()`, can drop a session whose read
+        // is still in flight; re-arming then would leave a timer on an orphaned
+        // state that `dispose()` cannot reach, and that would go on emitting
+        // against a session id `stateFor` has since re-created.
+        if (this.states.get(sessionId) === state) {
+          this.armTrailingRead(sessionId, state, this.minIntervalFor(state));
+        }
       }
     }
   }

@@ -721,7 +721,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   },
 
   updateMessageTrail: (sessionId, entries) => {
-    set((s) => ({ sessionMessageTrails: { ...s.sessionMessageTrails, [sessionId]: entries } }));
+    set((state) => ({ sessionMessageTrails: { ...state.sessionMessageTrails, [sessionId]: entries } }));
   },
 
   addEvent: (sessionId, event) => {

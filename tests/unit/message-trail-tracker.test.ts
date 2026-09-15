@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +7,7 @@ import { parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claud
 import {
   MESSAGE_TRAIL_ENTRY_MAX_CHARS,
   MESSAGE_TRAIL_MAX_ENTRIES,
+  MESSAGE_TRAIL_MAX_SESSIONS,
   MESSAGE_TRAIL_TAIL_BYTES,
   MessageTrailTracker,
   type MessageTrailAdapter,
@@ -308,5 +309,147 @@ describe('MessageTrailTracker', () => {
     manager.emit('agent-session-id', 's1', 'task-s1', 'proj-1', 'agent-forked');
     await waitUntil(() => pushes.length === 2);
     expect(texts(pushes[1].entries)).toEqual(['from the first file', 'from the forked file']);
+  });
+
+  describe('MESSAGE_TRAIL_MAX_SESSIONS eviction', () => {
+    it('evicts the oldest tracked session once the cap is hit, clearing its trailing timer', async () => {
+      const adapter: MessageTrailAdapter = {
+        parseTranscript: async (agentSessionId) => ({
+          entries: [
+            { kind: 'assistant', uuid: `${agentSessionId}-1`, ts: 1, blocks: [{ type: 'text', text: `said by ${agentSessionId}` }] },
+          ],
+          sourcePath: null,
+        }),
+      };
+      const evictionPushes: string[] = [];
+      const evictionTracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: (sessionId) => ({ sessionType: 'fake-agent', agentSessionId: sessionId, cwd: '/mock/project' }),
+        resolveAdapter: () => adapter,
+        // Large enough that the trailing timer armed below can never fire
+        // mid-test: every step from here to the eviction is synchronous JS
+        // (no await), so Node's single-threaded event loop cannot run a
+        // setTimeout callback in between regardless of the value - a
+        // generous interval just keeps that intent obvious.
+        minIntervalMs: 5000,
+        fallbackMinIntervalMs: 5000,
+      });
+      evictionTracker.on('trail', (sessionId: string) => evictionPushes.push(sessionId));
+      tracker = evictionTracker;
+
+      manager.sessions.set('s0', fakeSession('s0'));
+      evictionTracker.schedule('s0');
+      await waitUntil(() => evictionPushes.includes('s0'));
+      // s0 has a real, non-empty trail before the cap is ever hit, so its
+      // disappearance from snapshot() below is a genuine eviction signal,
+      // not just an untouched empty entry.
+      expect(evictionTracker.snapshot()['s0']).toBeDefined();
+
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+      // Fill up to the cap with 199 more distinct sessions: s0..s199 is 200
+      // tracked states, exactly MESSAGE_TRAIL_MAX_SESSIONS. No eviction yet.
+      for (let index = 1; index < MESSAGE_TRAIL_MAX_SESSIONS; index += 1) {
+        const sessionId = `s${index}`;
+        manager.sessions.set(sessionId, fakeSession(sessionId));
+        evictionTracker.schedule(sessionId);
+      }
+      expect(evictionTracker.snapshot()['s0']).toBeDefined();
+      expect(clearTimeoutSpy).not.toHaveBeenCalled();
+
+      // The 201st distinct session pushes the map over the cap: s0, the
+      // oldest by insertion order, is evicted.
+      manager.sessions.set('s200', fakeSession('s200'));
+      evictionTracker.schedule('s200');
+
+      expect(evictionTracker.snapshot()['s0']).toBeUndefined();
+      // dropState() is the tracker's only caller of clearTimeout, so one call
+      // here is direct evidence s0's trailing timer was cleared, not merely
+      // abandoned still-pending.
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+
+      clearTimeoutSpy.mockRestore();
+    });
+  });
+
+  describe('read()-in-flight vs. eviction race', () => {
+    it('does not re-arm a trailing read for a session evicted while its read was in flight', async () => {
+      let releaseGate: (() => void) | null = null;
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      let s0CallCount = 0;
+      const adapter: MessageTrailAdapter = {
+        parseTranscript: async (agentSessionId) => {
+          if (agentSessionId !== 's0') {
+            return {
+              entries: [{ kind: 'assistant', uuid: `${agentSessionId}-1`, ts: 1, blocks: [{ type: 'text', text: `said by ${agentSessionId}` }] }],
+              sourcePath: null,
+            };
+          }
+          s0CallCount += 1;
+          const callNumber = s0CallCount;
+          // Only the FIRST call - the in-flight read this test races against
+          // eviction - is gated. A later phantom re-read (the bug) resolves
+          // at once and must carry a genuinely NEW uuid so merge() cannot
+          // dedupe it away and mask the bug.
+          if (callNumber === 1) await gate;
+          return {
+            entries: [{ kind: 'assistant', uuid: `s0-call-${callNumber}`, ts: callNumber, blocks: [{ type: 'text', text: `said by s0, call ${callNumber}` }] }],
+            sourcePath: null,
+          };
+        },
+      };
+
+      const racePushes: string[] = [];
+      const raceTracker = new MessageTrailTracker({
+        sessionManager: manager,
+        resolveSessionFacts: (sessionId) => ({ sessionType: 'fake-agent', agentSessionId: sessionId, cwd: '/mock/project' }),
+        resolveAdapter: () => adapter,
+        minIntervalMs: MIN_INTERVAL_MS,
+        fallbackMinIntervalMs: MIN_INTERVAL_MS,
+      });
+      raceTracker.on('trail', (sessionId: string) => racePushes.push(sessionId));
+      tracker = raceTracker;
+
+      manager.sessions.set('s0', fakeSession('s0'));
+      // Kicks off the gated, in-flight read: readInFlight becomes true
+      // synchronously, before this call even returns.
+      raceTracker.schedule('s0');
+      // A second trigger while the read is in flight sets rereadRequested,
+      // exactly like a hook event landing mid-read.
+      raceTracker.schedule('s0');
+
+      // Fill to the cap (200 states: s0..s199), then push one more: s0, the
+      // oldest, is evicted WHILE its read is still stuck on the gate. All of
+      // this is synchronous JS, so it cannot race the gated read itself.
+      for (let index = 1; index < MESSAGE_TRAIL_MAX_SESSIONS; index += 1) {
+        const sessionId = `s${index}`;
+        manager.sessions.set(sessionId, fakeSession(sessionId));
+        raceTracker.schedule(sessionId);
+      }
+      manager.sessions.set('s200', fakeSession('s200'));
+      raceTracker.schedule('s200');
+      expect(raceTracker.snapshot()['s0']).toBeUndefined();
+
+      // Let the original in-flight read complete. It still emits its own
+      // trail push - that read was legitimate; only the finally block's
+      // RE-ARM is what needs guarding - so this is unconditional either way.
+      releaseGate?.();
+      await waitUntil(() => racePushes.includes('s0'));
+      expect(racePushes.filter((id) => id === 's0')).toHaveLength(1);
+
+      raceTracker.dispose();
+
+      // Intentional fixed wait: this asserts a NON-occurrence (no second
+      // read), which cannot be polled for. Without the
+      // `this.states.get(sessionId) === state` guard in read()'s finally
+      // block, completing the gated read with rereadRequested still true
+      // re-arms a trailing timer on the now-orphaned state. dispose() cannot
+      // reach it (it only walks the live `states` map), so it fires anyway
+      // after minIntervalMs and reads again, producing a second,
+      // distinguishable ('s0-call-2') push for a session that is already gone.
+      await settle(MIN_INTERVAL_MS * 6);
+      expect(racePushes.filter((id) => id === 's0')).toHaveLength(1);
+    });
   });
 });

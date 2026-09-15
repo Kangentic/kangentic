@@ -60,10 +60,10 @@ const preConfig = `
     });
 
     var laneIds = {};
-    state.DEFAULT_SWIMLANES.forEach(function (s, i) {
-      var id = 'lane-trail-' + s.name.toLowerCase().replace(/\\s+/g, '-');
-      laneIds[s.name] = id;
-      state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: timestamp }));
+    state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+      var id = 'lane-trail-' + swimlane.name.toLowerCase().replace(/\\s+/g, '-');
+      laneIds[swimlane.name] = id;
+      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: timestamp }));
     });
 
     state.sessions.push({
@@ -250,6 +250,20 @@ test.describe('cardPreview: agent message trail on the board card', () => {
     await updateConfig(page, { cardDensity: 'compact' });
     await expect(trail).toHaveAttribute('data-lines', '1');
     await expect(trail.locator('> div')).toHaveText([FIFTH_LINE.text]);
+
+    // The 'agent-messages' fallback is mode-agnostic too: a task with no
+    // session still prints its description under this mode as well. Asserted
+    // here, while cardPreview is still 'agent-messages', because by the time
+    // the standalone no-session case below runs, this test has already reset
+    // cardPreview to 'agent-latest-message' and would never exercise this
+    // combination. The mode check pins that precondition: the idle card's
+    // description also renders correctly under 'agent-latest-message', so
+    // without it this case would pass even if the mode were not actually
+    // 'agent-messages' at this point.
+    await expect(trail).toHaveAttribute('data-mode', 'lines');
+    const idleCard = page.locator(`[data-task-id="${IDLE_TASK_ID}"]`);
+    await expect(idleCard.getByTestId('task-card-description')).toHaveText(IDLE_DESCRIPTION);
+    await expect(idleCard.getByTestId('task-card-trail')).toHaveCount(0);
 
     await updateConfig(page, { cardDensity: 'default' });
     await updateConfig(page, { cardPreview: 'agent-latest-message' });
