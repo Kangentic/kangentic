@@ -311,9 +311,11 @@ export interface AgentAdapter {
    * spawn. Returns `null` (or omits the method entirely) when the adapter
    * needs no env injection. Used by adapters whose CLI has no flag-based
    * MCP wiring and must deliver the Kangentic MCP server config via env
-   * (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`). Adapters that wire MCP
-   * via a CLI flag (Claude `--mcp-config`) or settings file (Codex hooks)
-   * do not implement this.
+   * (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`), or whose native
+   * permission/autonomy control is an env var rather than a flag (e.g.
+   * Goose's `GOOSE_MODE`). Adapters that wire MCP via a CLI flag (Claude
+   * `--mcp-config`) or settings file (Codex hooks), and whose permission
+   * modes map to CLI flags, do not implement this.
    */
   buildEnv?(options: SpawnCommandOptions): Record<string, string> | null;
 
@@ -565,11 +567,12 @@ export interface AgentAdapter {
    *     ESCALATE is a separate declaration - see
    *     `canEscalateOnVerificationFailure`.
    *
-   * Example (Gemini, Droid, Cursor, Warp, Ollama):
+   * Example (Gemini, Droid, Cursor, Warp, Ollama, Goose):
    *   - Both contexts: returns null. For the first three that is a MEASURED
    *     verdict - their history flushes at turn-end or too variably to bound a
    *     ~2s delivery budget (numbers in `docs/command-injection.md`) - not an
-   *     unexplored gap. Warp and Ollama expose no usable history at all.
+   *     unexplored gap. Warp and Ollama expose no usable history at all, and
+   *     Goose parses none.
    */
   getSubmissionVerifier?(contextType: SubmissionContextType): SubmissionVerifier | null;
 
