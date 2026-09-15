@@ -265,7 +265,7 @@ describe.runIf(CAN_RUN)('runProjectMigrations - conversation_turn_usage subagent
   });
 
   it('adds the four subagent columns and the by-type index', () => {
-    const columns = (db.pragma('table_info(conversation_turn_usage)') as ColumnInfo[]).map((c) => c.name);
+    const columns = (db.pragma('table_info(conversation_turn_usage)') as ColumnInfo[]).map((column) => column.name);
     expect(columns).toEqual(expect.arrayContaining([
       'subagent_id', 'agent_type', 'spawn_depth', 'parent_tool_use_id',
     ]));
@@ -301,7 +301,7 @@ describe.runIf(CAN_RUN)('runProjectMigrations - conversation_turn_usage subagent
     // runProjectMigrations runs on every project DB open.
     expect(() => runProjectMigrations(db)).not.toThrow();
 
-    const columns = (db.pragma('table_info(conversation_turn_usage)') as ColumnInfo[]).map((c) => c.name);
+    const columns = (db.pragma('table_info(conversation_turn_usage)') as ColumnInfo[]).map((column) => column.name);
     for (const name of ['subagent_id', 'agent_type', 'spawn_depth', 'parent_tool_use_id']) {
       expect(columns.filter((column) => column === name)).toHaveLength(1);
     }

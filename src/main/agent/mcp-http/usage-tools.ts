@@ -9,8 +9,8 @@ import type { CommandContext, CommandResponse } from '../commands';
 /**
  * Usage-statistics MCP tools. One read-only tool exposing the same
  * usage-stats service the in-app dashboard reads (tokens, cost, burn rate,
- * by-model / by-agent / by-effort breakdowns, per-project or app-wide, over
- * the shared Live/Today/Week/Month/All time ranges).
+ * by-model / by-agent / by-effort / by-subagent-type breakdowns, per-project or
+ * app-wide, over the shared Live/Today/Week/Month/All time ranges).
  */
 
 function toToolResult(response: CommandResponse): McpToolResult {

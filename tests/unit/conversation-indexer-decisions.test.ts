@@ -858,6 +858,11 @@ describe('ConversationIndexer.indexSubagentUsage', () => {
       turns: Array<Record<string, unknown>>;
     };
     withCapability?: boolean;
+    /** Make `adapter.parseSubagentUsage` reject, for the first catch block. */
+    parseRejects?: boolean;
+    /** Make `ConversationUsageStore.recordTurns`'s underlying INSERT throw,
+     *  for the second catch block (a successful parse whose write fails). */
+    recordTurnsThrows?: boolean;
   } = {}) {
     const record = makeRecord({
       id: 'sess-1',
@@ -868,20 +873,23 @@ describe('ConversationIndexer.indexSubagentUsage', () => {
     const state = makeSweepFakeState([record], { [SWEEP_CHUNKER_VERSION_META_KEY]: '1' });
     const recordedTurns: unknown[][] = [];
     const statSubagentTranscripts = vi.fn(() => options.signature ?? { fileCount: 1, totalSize: 10, maxMtimeMs: 5 });
-    const parseSubagentUsage = vi.fn(async () => options.parsed ?? {
-      directoryPresent: true,
-      complete: true,
-      sourcePath: '/subagents',
-      turns: [{
-        turnUuid: 'sub:agent-a1:msg_01',
-        subagentId: 'agent-a1',
-        agentType: 'review-finder',
-        spawnDepth: 1,
-        parentToolUseId: 'toolu_01AAA',
-        ts: 100,
-        model: 'claude-sonnet-5',
-        usage: { inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 3, cacheReadInputTokens: 4 },
-      }],
+    const parseSubagentUsage = vi.fn(async () => {
+      if (options.parseRejects) throw new Error('parseSubagentUsage boom');
+      return options.parsed ?? {
+        directoryPresent: true,
+        complete: true,
+        sourcePath: '/subagents',
+        turns: [{
+          turnUuid: 'sub:agent-a1:msg_01',
+          subagentId: 'agent-a1',
+          agentType: 'review-finder',
+          spawnDepth: 1,
+          parentToolUseId: 'toolu_01AAA',
+          ts: 100,
+          model: 'claude-sonnet-5',
+          usage: { inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 3, cacheReadInputTokens: 4 },
+        }],
+      };
     });
     const adapter = options.withCapability === false
       ? { displayName: 'Codex', parseTranscript: vi.fn() }
@@ -891,7 +899,13 @@ describe('ConversationIndexer.indexSubagentUsage', () => {
     const originalPrepare = db.prepare.bind(db);
     (db as unknown as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
       if (sql.includes('INSERT INTO conversation_turn_usage')) {
-        return { run: (...args: unknown[]) => { recordedTurns.push(args); return { changes: 1 }; } };
+        return {
+          run: (...args: unknown[]) => {
+            if (options.recordTurnsThrows) throw new Error('recordTurns boom');
+            recordedTurns.push(args);
+            return { changes: 1 };
+          },
+        };
       }
       return originalPrepare(sql);
     };
@@ -970,6 +984,31 @@ describe('ConversationIndexer.indexSubagentUsage', () => {
     // so a later walk completes rather than duplicates them.
     expect(recordedTurns).toHaveLength(1);
     expect(state.indexStateRows.get(`conversation::agent-1${SUBAGENT_DOC_SUFFIX}`)?.status).toBe('error');
+  });
+
+  it('catches a rejecting parseSubagentUsage, stamping error so the session stays retryable', async () => {
+    const { indexer, state, parseSubagentUsage } = makeSubagentDeps({ parseRejects: true });
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('error');
+    expect(parseSubagentUsage).toHaveBeenCalledOnce();
+    const written = state.indexStateRows.get(`conversation::agent-1${SUBAGENT_DOC_SUFFIX}`);
+    expect(written?.status).toBe('error');
+    expect(written?.entry_count).toBe(0);
+    expect(written?.chunk_count).toBe(0);
+  });
+
+  it('catches a throwing recordTurns after a successful parse, stamping error so the session stays retryable', async () => {
+    const { indexer, state, recordedTurns } = makeSubagentDeps({ recordTurnsThrows: true });
+
+    expect(await indexer.indexSubagentUsage('project-1', 'sess-1')).toBe('error');
+    // The write attempt reached the INSERT and blew up there - nothing durably
+    // recorded, unlike the partial-read case above which keeps the rows it
+    // parsed before the incompleteness was discovered.
+    expect(recordedTurns).toHaveLength(0);
+    const written = state.indexStateRows.get(`conversation::agent-1${SUBAGENT_DOC_SUFFIX}`);
+    expect(written?.status).toBe('error');
+    expect(written?.entry_count).toBe(0);
+    expect(written?.chunk_count).toBe(0);
   });
 
   it('is a no-op for an agent with no subagent concept, without writing a state row', async () => {
