@@ -454,7 +454,10 @@ function noteReasonFor(entry) {
   if (untracked) return 'new, untracked, empty';
   // No reason may contain " (": a heading names its file up to the last " (", and a nested
   // parenthesis would move that boundary into the reason.
-  if (unparsedBlocks.length > 0) return 'no parsed hunks; its raw diff block is at the end of the pack';
+  // Which file an unparsed block belongs to is exactly what could not be read, so no entry can be
+  // attributed to one. This is a global test, not a per-file fact: name both possibilities rather
+  // than send a finder to the end of the pack for a block that is not this file's.
+  if (unparsedBlocks.length > 0) return 'no net change against the merge base, or one of the unparsed raw diff blocks at the end of the pack is this file';
   return 'no net change against the merge base; changed in a commit and reverted in the working tree';
 }
 
@@ -502,9 +505,10 @@ function describeChangedFile(relPath, churn) {
 
 const entries = ranked.map(({ relPath, churn }) => describeChangedFile(relPath, churn));
 
-// The hunk-tier rendering of a file is a cap-independent fact about it, so it is computed once
-// and shared by every pack built from these entries (the full pack never renders it for a file it
-// admits to the body tier).
+// The hunk-tier rendering of a file is a cap-independent fact about it, so the result is memoized
+// on the entry. Today that guard never fires: buildPack runs once per invocation and visits each
+// entry once, and the replay script's arms are separate processes. It is what makes a second
+// buildPack over the same entries cheap, not something the shipped path relies on.
 function hunkSectionFor(entry) {
   if (entry.hunkSectionCache) return entry.hunkSectionCache;
   const hunkCount = entry.hunks.length;
@@ -644,7 +648,9 @@ function buildPack(packEntries, capBytes) {
   // trailing section - including the omitted-files list - must be counted.
   const tailText = bodyParts.join('\n');
   const totalLines = 2 + tailText.split('\n').length;
-  const kindSentence = capBytes > 0
+  // Keyed on what was actually admitted, not on the cap: a cap below the cheapest file's plain
+  // cost admits nothing and so produces a light pack, whatever number was asked for.
+  const kindSentence = bodiesPacked > 0
     ? `Full pack (bodies at ${WINDOW_CONTEXT_LINES} lines of context, other files at ${HUNK_CONTEXT_LINES}).`
     : `Light pack (every file at ${HUNK_CONTEXT_LINES} lines of context).`;
   const legend =
