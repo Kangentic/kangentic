@@ -239,9 +239,9 @@ describe('parseClaudeTranscript', () => {
 
   it('preserves non-empty thinking blocks but drops the empty signature-only blocks Claude actually persists', async () => {
     tmpFile = writeFixture([
-      // Realistic shape: real Claude Code session JSONL only stores
-      // signature-encrypted thinking, never plaintext. The empty-thinking
-      // assistant entry must NOT produce a stray empty assistant turn.
+      // Signature-only shape: the thinking text is absent and only an
+      // encrypted `signature` is persisted. The empty-thinking assistant
+      // entry must NOT produce a stray empty assistant turn.
       {
         type: 'assistant',
         uuid: 'a1',
@@ -251,11 +251,11 @@ describe('parseClaudeTranscript', () => {
           content: [{ type: 'thinking', thinking: '', signature: 'ErcCCmIIDB...' }],
         },
       },
-      // Forward-compat coverage: real Claude Code 2.1.x never produces
-      // this shape (it always emits empty `thinking` with a signature),
-      // but the parser branch exists so that if a future version starts
-      // persisting plaintext thinking we will capture it. DO NOT delete
-      // this case as "unrealistic" - it locks in the contract.
+      // Text-bearing shape: Claude Code persists thinking text on some
+      // turns and only an encrypted `signature` on others, so both forms
+      // are live and this branch is load-bearing rather than speculative.
+      // DO NOT delete this case as "unrealistic" - it locks in the
+      // contract.
       {
         type: 'assistant',
         uuid: 'a2',
