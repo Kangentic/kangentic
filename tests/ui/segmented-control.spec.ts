@@ -104,6 +104,48 @@ test.describe('SegmentedControl', () => {
     await expect(boardOption()).toHaveAttribute('aria-checked', 'true');
   });
 
+  test('a control mounted inside an animating dialog still measures itself', async () => {
+    // The ViewToggle above never animates, so every other thumb assertion here
+    // is blind to the defect this covers. A dialog enters at scale(0.96)
+    // (`dialog-content-in`), `getBoundingClientRect` reports TRANSFORMED
+    // geometry, and the component's only correction is a ResizeObserver, which
+    // reports the LAYOUT box and therefore never fires when a transform ends.
+    // A thumb measured mid-entrance stayed 2.84px narrow for the life of the
+    // dialog. It looked intermittent because what varies is whether the layout
+    // effect lands before or during the animation's first frame.
+    // Planning, not To Do: To Do collapses its Conversation card to an
+    // explanation, so it has no Session control to measure.
+    await page.locator('[data-swimlane-name="Planning"]').locator('text=Planning').click();
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+
+    const control = dialog.locator('[data-testid="column-session-target"]');
+    await expect(control).toBeVisible();
+
+    // Polled, because the entrance takes ~150ms and the correction runs across
+    // it. The defect does not settle at all, so a poll cannot paper over it.
+    await expect.poll(async () => {
+      const drift = await control.evaluate((node) => {
+        const row = node.firstElementChild;
+        const thumb = row?.querySelector('.kng-segmented-thumb');
+        const active = row?.querySelector('[data-selected="true"]');
+        if (!thumb || !active) return null;
+        const thumbBox = thumb.getBoundingClientRect();
+        const activeBox = active.getBoundingClientRect();
+        return Math.max(
+          Math.abs(thumbBox.width - activeBox.width),
+          Math.abs(thumbBox.left - activeBox.left),
+        );
+      });
+      // Half a pixel: the scale correction reads an unrounded computed width, so
+      // what is left is float noise, not a rounding budget. The defect is 2.84.
+      return drift === null ? 99 : drift < 0.5;
+    }, { timeout: 5000 }).toBe(true);
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await dialog.waitFor({ state: 'detached', timeout: 2000 });
+  });
+
   test('slides the thumb onto the selected option', async () => {
     const thumb = group().locator('.kng-segmented-thumb');
     await expect(thumb).toBeAttached();

@@ -130,6 +130,8 @@ export function SegmentedControl<T extends string>({
   const trackRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  /** Pending re-measure while an ancestor transform is still running. */
+  const retryRef = useRef<number | null>(null);
   const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null);
 
   const activeIndex = Math.max(0, options.findIndex((option) => option.value === value));
@@ -145,6 +147,27 @@ export function SegmentedControl<T extends string>({
    * The row is the positioning context and carries no border or padding, so its
    * border box, padding box, and content box coincide: the thumb's containing
    * block origin is exactly `rowRect.left`, with no correction term.
+   *
+   * The catch, and the bug this exists to stop: `getBoundingClientRect` reports
+   * TRANSFORMED geometry, and every dialog in the app enters at `scale(0.96)`
+   * (`dialog-content-in`). A measurement taken during that animation sizes the
+   * thumb 4% small, and NOTHING ever corrects it, because the only correction
+   * here is a ResizeObserver and ResizeObserver reports the LAYOUT box, which a
+   * transform does not change - so no callback fires when the animation ends.
+   * The wrong thumb is permanent for the life of the dialog.
+   *
+   * Measured in a preview: a When control sampled 67.89 against an
+   * `offsetWidth` of 71, a ratio of 0.9562, and stayed 2.84px narrow. It looked
+   * intermittent because what varies is whether the layout effect lands before
+   * or during the animation's first frame.
+   *
+   * The untransformed width comes from `getComputedStyle`, so the ratio between
+   * it and the rect IS the ancestor scale, and dividing it out makes the
+   * measurement scale-invariant. `offsetWidth` was tried for this and is not
+   * good enough: it rounds to an integer, so on a 142px row it cannot see a
+   * scale closer to 1 than about 0.35%, which left the thumb 0.31px narrow when
+   * the retry below stopped a frame early. The computed width is fractional and
+   * exact, so the loop can run until the transform is genuinely gone.
    */
   const measure = useCallback(() => {
     const active = optionRefs.current[activeIndex];
@@ -152,10 +175,29 @@ export function SegmentedControl<T extends string>({
     if (!active || !row) return;
     const rowRect = row.getBoundingClientRect();
     const activeRect = active.getBoundingClientRect();
-    const next = { left: activeRect.left - rowRect.left, width: activeRect.width };
+
+    // `width` resolves against `box-sizing`, and the row sets no border or
+    // padding, so this is its border-box width with no transform applied. It is
+    // `auto` (NaN here) only when the row is not being rendered, which is the
+    // one case with nothing to measure anyway.
+    const layoutWidth = Number.parseFloat(getComputedStyle(row).width);
+    const transformed = layoutWidth > 0 && Math.abs(rowRect.width - layoutWidth) > 0.05;
+    const divisor = transformed ? rowRect.width / layoutWidth : 1;
+    const next = {
+      left: (activeRect.left - rowRect.left) / divisor,
+      width: activeRect.width / divisor,
+    };
     setThumb((current) =>
       current && current.left === next.left && current.width === next.width ? current : next,
     );
+
+    // The correction is exact at every frame, but the LAYOUT it corrects is not
+    // final until the animation is: a mid-animation reflow would leave the thumb
+    // on a stale option width. So keep re-measuring until the transform is gone.
+    // Self-terminating, the entrance is ~150ms, and at rest the branch is dead.
+    if (transformed) {
+      retryRef.current = requestAnimationFrame(measure);
+    }
   }, [activeIndex]);
 
   useLayoutEffect(() => {
@@ -169,7 +211,12 @@ export function SegmentedControl<T extends string>({
     for (const option of optionRefs.current) {
       if (option) observer.observe(option);
     }
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      // The pending frame closes over the activeIndex that scheduled it, so it
+      // must not outlive this effect.
+      if (retryRef.current !== null) cancelAnimationFrame(retryRef.current);
+    };
   }, [measure, options]);
 
   const focusOption = (index: number) => {
