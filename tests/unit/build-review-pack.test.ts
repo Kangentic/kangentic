@@ -1269,6 +1269,10 @@ describe('build-review-pack.mjs', () => {
       // At 20 lines of context the four windows merge into one span over the whole 57-line
       // file, so the body tier renders it whole.
       expect(fullPack).toContain('## Full file: markers.txt (57 lines; line numbers prefixed)');
+      // The legend describes the pack's SHAPE, and it keys on what was admitted rather than on
+      // the cap's value, so a run that admits bodies says so. The zero-bodies half of that
+      // predicate is pinned by the section-kinds test, which admits none under the default cap.
+      expect(fullPack.split('\n')[1].startsWith('Full pack (bodies at 20 lines of context, other files at 3).')).toBe(true);
       const fullSection = sectionBodyOf(fullPack, '## Full file: markers.txt (57 lines; line numbers prefixed)\n');
 
       // Deletion at the top of the file: the removed lines come first, before line 1.
@@ -1411,6 +1415,13 @@ describe('build-review-pack.mjs', () => {
       expect(buildOutput).toMatch(
         /bodies packed 0 \(0 windowed, 0KB written of 0KB budgeted\), omitted 1; hunk sections 1 \(0 over per-file hunk cap\)/,
       );
+
+      // The legend keys on what was ADMITTED, not on the cap's value: this run uses the default
+      // 200KB cap, and nothing here qualifies for a body, so the pack is light-shaped and says so.
+      // Keying on the cap instead would print "Full pack" above a pack with no body in it. Both
+      // halves of that predicate are now pinned - the markers test covers the bodies-admitted
+      // half - because the shared TOC helper accepts either string and would not notice a flip.
+      expect(packContent.split('\n')[1].startsWith('Light pack (every file at 3 lines of context).')).toBe(true);
     },
     20000,
   );

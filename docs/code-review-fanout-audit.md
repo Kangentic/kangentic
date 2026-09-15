@@ -639,6 +639,14 @@ review artifact than honouring a personal diff preference.
 `tests/unit/build-review-pack.test.ts` pins the whole family by asserting a byte-identical pack
 under each hostile setting.
 
+One boundary escapes that claim, and it is the operating system rather than git config. The 1MB
+`SINGLE_FILE_CAP_BYTES` check measures the file's raw on-disk size, before the CRLF normalization
+every body goes through, so a file within a few KB of 1MB whose working copy has CRLF endings can
+land over the cap on Windows and under it on Linux, and be a one-line section on one machine and a
+body on the other. Measuring after normalization would mean reading the file to decide whether it
+is too large to read, which is the cost the cap exists to avoid. The hole is left open and named
+here rather than closed: it needs a file sized within about 0.1% of the cap to appear at all.
+
 ### 13.6 Stated limitations
 
 - Replay uses landed commits as a proxy for the reviewed tree, which carried uncommitted work: the
@@ -761,6 +769,7 @@ shapes; the `--body-cap` knob and the replay script are what measures it.
   whether that removes the reads is unmeasured until a review runs on a diff of that shape. Every
   finder now ends its report with its reads beyond the pack, and the review Summary carries the
   tally beside the pack's size and stub count, so the number accrues per review without a study.
+  14.5 is where the rows land.
 - Replay uses landed commits as a proxy for the reviewed tree (13.6, first bullet).
 - The per-file cap's value is checked only against how often the corpus hits it, which is never.
   Its first real firing will be a lockfile or fixture diff.
@@ -769,3 +778,23 @@ shapes; the `--body-cap` knob and the replay script are what measures it.
   contract risk the A/B exists to measure.
 - The replay's control arm ran first on each PR, so its build times include a cold object cache;
   the treatment's advantage is the two dropped spawns, not the cache.
+
+### 14.5 Per-review record
+
+The corpus replay measures bytes. The two things it cannot measure are whether finders re-read a
+file the pack already carried, and what the per-file cap stubs when it fires, and both need real
+reviews. Every finder now ends its report with its reads beyond the pack, and the driver puts the
+tally in the review Summary beside the pack's shape, so each review contributes a row here at no
+extra cost. Read the "reads" column against the "hunk sections" column: a read count that climbs
+with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too narrow.
+
+| Review | shape | pack | bodies (windowed) | hunk sections | stubbed | finders | reads beyond pack | findings raised/kept |
+|---|---|---|---|---|---|---|---|---|
+| #650 (this change) | 6f +1450 | 219KB, 3175 lines | 4 (1) | 2 | 0 | 7 | 0 of 6 pack-carrying | 11 / 6 |
+
+Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
+files were body tier, so the finders were mostly reading whole bodies. The integration finder is
+excluded from the reads column throughout, since it deliberately receives no pack. What the row
+does establish is that the reporting works end to end on its first run, and that the driver
+refuted five of eleven candidates, which is the falsifiable-finding contract doing its job on a
+pack whose every line number it then verified (2682 of them, zero mismatched).
