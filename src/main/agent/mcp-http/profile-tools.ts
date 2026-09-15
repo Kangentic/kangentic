@@ -22,6 +22,7 @@ const PROFILE_ENTRY_SCHEMA = z.object({
   effortOverride: z.string().max(50).nullable().optional().describe('Effort/reasoning level for this column (e.g. "xhigh", "high"). Valid values are agent-specific.'),
   permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for this column.'),
   autoCommand: z.string().max(4000).nullable().optional().describe('Slash command run when the agent spawns in this column (e.g. "/code-review").'),
+  autoCommandMode: z.enum(['immediate', 'deferred']).nullable().optional().describe('When that command reaches the agent: "immediate" interrupts a turn in progress, "deferred" waits for the current turn to finish.'),
   autoSpawn: z.boolean().nullable().optional().describe('Whether moving a task into this column spawns an agent.'),
   handoffContext: z.boolean().nullable().optional().describe('Whether this column hands the previous session\'s context to the new agent.'),
   sessionTarget: z.enum(['main', 'isolated']).nullable().optional().describe('Whether this column reuses the task\'s main session or gets its own isolated one.'),

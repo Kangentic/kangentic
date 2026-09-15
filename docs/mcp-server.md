@@ -42,6 +42,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 | Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, profile (`profile-commands.ts`: the four `*_board_profile` commands plus the shared `resolveProfileSelector` used by create/update task), inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), session-files (`get_session_files`, `get_session_events`), and activity-interval (`get_activity_intervals`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers, and the single place that decides how the done column is treated: `listActiveSwimlanes` (Done excluded; search, profiles, task stats, and the post-delete remaining-columns list), `listBoardColumns` / `isBoardColumn` (Done included; the board read tools), and `resolveColumn`'s `includeArchivedDone` and `refuseDone` options, which every by-name lookup of Done goes through. |
 | Task Ordering | `src/main/agent/commands/task-ordering.ts` | Pure ordinal-slot arithmetic shared by `handleMoveTask`'s same-column reposition and `handleReorderTasks`: slot clamping, prefix-merge reordering, and ordinal-to-raw-position translation. |
+| Column Enums | `src/main/agent/commands/column-enums.ts` | The valid value sets for a column's enum fields (`COLUMN_ENUM_FIELDS`: `permissionMode`, `sessionTarget`, `sessionSpawnStrategy`, `autoCommandMode`) and the `parseEnumParam` helper that narrows them, shared by the column handlers and the profile handlers. This is the only narrowing on the mobile-bridge path, which routes into `commandHandlers` directly and validates just that `params` is an object, so none of the zod schemas above are in front of it. |
 | MCP Config Delivery | Per-adapter, under `src/main/agent/adapters/<agent>/` | Each adapter delivers the per-launch URL + token through its own CLI's mechanism. See the [Discovery](#discovery) table. |
 | Trust Managers | `adapters/claude/trust-manager.ts`, `adapters/codex/trust-manager.ts`, `adapters/gemini/trust-manager.ts`, `adapters/qwen-code/trust-manager.ts`, `adapters/grok/trust-manager.ts`, `adapters/antigravity/trust-manager.ts` | Pre-approve the spawn directory so the session is not blocked at startup: Claude in `~/.claude.json`, Codex via `[projects.'<path>'] trust_level` in `~/.codex/config.toml`, Gemini and Qwen via `trustedFolders.json`, Grok via `[folders.'<path>']` in `~/.grok/trusted_folders.toml` (an untrusted folder disables every configured MCP server; Grok's trust cascades to subdirectories, so only worktrees under an undecided root get their own entry), Antigravity via `trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json` (exact-path entries only - agy does not inherit ancestor trust, and an untrusted workspace disables hook execution). All six leave an explicit user decision alone, in either direction. |
 | Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated/backlog-changed events to renderer via IPC. |
@@ -235,7 +236,7 @@ Heavy profile into project X"*, *"what differs between project A's and B's profi
 `kangentic_list_board_profiles` calls and a diff).
 
 The per-column settings a profile may carry are `agentOverride`, `modelOverride`, `effortOverride`,
-`permissionMode`, `autoCommand`, `autoSpawn`, `handoffContext`, `sessionTarget`,
+`permissionMode`, `autoCommand`, `autoCommandMode`, `autoSpawn`, `handoffContext`, `sessionTarget`,
 `sessionSpawnStrategy`, and `planExitTarget` (a column *name*). To Do and Done columns never spawn
 agents, so entries for them have no effect.
 
@@ -482,7 +483,8 @@ Get detailed column configuration: description, auto-spawn, permission mode, ses
 `Session`, `On enter`, and `Handoff context` always print, even at their defaults. The overrides
 below them print only when set, because "no override" is the absence of a value; a session track is
 never absent, so hiding the default would leave a caller unable to tell a main-session column from a
-failed write.
+failed write. `Auto-command timing` is the one middle case: it prints only alongside an
+`autoCommand`, since it does nothing without one.
 
 Also returns `taskOrder`: the column's tasks top to bottom, each with its `position` (the
 zero-based ordinal slot described under [kangentic_list_tasks](#kangentic_list_tasks)). That makes
@@ -631,6 +633,7 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 | `icon` | string \| null | No | Lucide icon name, or `null` to clear |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. For the ACTIVE project, changing it also applies to the tasks already in the column, immediately: switching it on spawns for each task with no session (never for a user-paused one, and never in To Do or Done), switching it off suspends the live sessions there |
 | `autoCommand` | string \| null | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`). `null` clears. |
+| `autoCommandMode` | string | No | `immediate` (default) or `deferred`. When `autoCommand` reaches the agent: `immediate` injects on arrival, interrupting a turn in progress; `deferred` waits for the current turn to finish. Inert without `autoCommand`. Not nullable; pass `"immediate"` to go back to the default. |
 | `agentOverride` | string \| null | No | Force a specific agent for this column. `null` uses project default. |
 | `modelOverride` | string \| null | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`, `"claude-opus-4-7"`). `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: a model change restarts them in place with `--resume`. |
 | `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change is injected live, without a restart. |
@@ -675,6 +678,7 @@ every lane, including the archived Done lane.
 | `icon` | string | No | Lucide icon name |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. Defaults to `true`. |
 | `autoCommand` | string | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`) |
+| `autoCommandMode` | string | No | `immediate` (default) or `deferred`. Whether `autoCommand` interrupts a turn in progress or waits for it to finish. Inert without `autoCommand`. |
 | `agentOverride` | string | No | Force a specific agent for this column. Omit to use the project default. |
 | `modelOverride` | string | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`) |
 | `effortOverride` | string | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"high"`, `"xhigh"`) |

@@ -605,6 +605,9 @@ export const handleGetColumnDetail: CommandHandler = (
   if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
   if (matched.description) lines.push(`  Description: ${matched.description}`);
   if (matched.auto_command) lines.push(`  Auto-command: ${matched.auto_command}`);
+  // Only alongside a command: the mode is inert without one, and printing it on
+  // every column would read as a setting that does something here.
+  if (matched.auto_command) lines.push(`  Auto-command timing: ${matched.auto_command_mode === 'deferred' ? 'deferred (wait for the current turn)' : 'immediate'}`);
   if (matched.agent_override) lines.push(`  Agent override: ${matched.agent_override}`);
   if (matched.model_override) lines.push(`  Model override: ${matched.model_override}`);
   if (matched.effort_override) lines.push(`  Effort override: ${matched.effort_override}`);
@@ -649,6 +652,7 @@ export const handleGetColumnDetail: CommandHandler = (
       autoSpawn: matched.auto_spawn,
       permissionMode: matched.permission_mode,
       autoCommand: matched.auto_command,
+      autoCommandMode: matched.auto_command_mode,
       agentOverride: matched.agent_override,
       modelOverride: matched.model_override,
       effortOverride: matched.effort_override,

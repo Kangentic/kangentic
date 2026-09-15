@@ -2,45 +2,24 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
+import {
+  VALID_PERMISSION_MODES,
+  VALID_SESSION_TARGETS,
+  VALID_SESSION_SPAWN_STRATEGIES,
+  VALID_AUTO_COMMAND_MODES,
+  parseEnumParam,
+} from './column-enums';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type {
   SwimlaneCreateInput,
   SwimlaneUpdateInput,
-  PermissionMode,
   SessionTarget,
   SessionSpawnStrategy,
 } from '../../../shared/types';
 
-const VALID_PERMISSION_MODES: PermissionMode[] = ['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto'];
-const VALID_SESSION_TARGETS: SessionTarget[] = ['main', 'isolated'];
-const VALID_SESSION_SPAWN_STRATEGIES: SessionSpawnStrategy[] = ['create_or_resume', 'always_spawn_new'];
-
 /** The defaults a brand-new column starts at, matching the two NOT NULL column DEFAULTs. */
 const DEFAULT_SESSION_TARGET: SessionTarget = 'main';
 const DEFAULT_SESSION_SPAWN_STRATEGY: SessionSpawnStrategy = 'create_or_resume';
-
-/**
- * Narrow a raw `params` value to one of the session enums, or report the error
- * the caller sees.
- *
- * These two get real validation rather than the bare `String()` the text fields
- * around them use, and it is not belt-and-braces over the zod layer: the mobile
- * bridge routes `update_column` straight into this handler, and `board-tool.ts`
- * validates only that `params` is an object. Neither DB column carries a CHECK
- * constraint and `mapRow` ASSERTS rather than narrows on the way back out, so an
- * unrecognized value would persist and then read back as a valid union member.
- */
-function parseSessionEnum<T extends string>(
-  raw: unknown,
-  valid: readonly T[],
-  paramName: string,
-): { value: T } | { error: string } {
-  const candidate = String(raw);
-  if (!valid.includes(candidate as T)) {
-    return { error: `Invalid ${paramName} "${candidate}". Valid values: ${valid.join(', ')}.` };
-  }
-  return { value: candidate as T };
-}
 
 export const handleUpdateColumn: CommandHandler = (
   params: Record<string, unknown>,
@@ -92,6 +71,12 @@ export const handleUpdateColumn: CommandHandler = (
     updates.auto_command = params.autoCommand === null ? null : String(params.autoCommand).slice(0, 4000);
     changedFields.push('autoCommand');
   }
+  if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
+    const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    updates.auto_command_mode = parsed.value;
+    changedFields.push('autoCommandMode');
+  }
   if (params.agentOverride !== undefined) {
     updates.agent_override = params.agentOverride === null ? null : String(params.agentOverride);
     changedFields.push('agentOverride');
@@ -108,14 +93,9 @@ export const handleUpdateColumn: CommandHandler = (
     if (params.permissionMode === null) {
       updates.permission_mode = null;
     } else {
-      const mode = String(params.permissionMode);
-      if (!VALID_PERMISSION_MODES.includes(mode as PermissionMode)) {
-        return {
-          success: false,
-          error: `Invalid permissionMode "${mode}". Valid values: ${VALID_PERMISSION_MODES.join(', ')}.`,
-        };
-      }
-      updates.permission_mode = mode as PermissionMode;
+      const parsed = parseEnumParam(params.permissionMode, VALID_PERMISSION_MODES, 'permissionMode');
+      if ('error' in parsed) return { success: false, error: parsed.error };
+      updates.permission_mode = parsed.value;
     }
     changedFields.push('permissionMode');
   }
@@ -124,13 +104,13 @@ export const handleUpdateColumn: CommandHandler = (
     changedFields.push('handoffContext');
   }
   if (params.sessionTarget !== undefined && params.sessionTarget !== null) {
-    const parsed = parseSessionEnum(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
+    const parsed = parseEnumParam(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
     if ('error' in parsed) return { success: false, error: parsed.error };
     updates.session_target = parsed.value;
     changedFields.push('sessionTarget');
   }
   if (params.sessionSpawnStrategy !== undefined && params.sessionSpawnStrategy !== null) {
-    const parsed = parseSessionEnum(params.sessionSpawnStrategy, VALID_SESSION_SPAWN_STRATEGIES, 'sessionSpawnStrategy');
+    const parsed = parseEnumParam(params.sessionSpawnStrategy, VALID_SESSION_SPAWN_STRATEGIES, 'sessionSpawnStrategy');
     if ('error' in parsed) return { success: false, error: parsed.error };
     updates.session_spawn_strategy = parsed.value;
     changedFields.push('sessionSpawnStrategy');
@@ -171,7 +151,7 @@ export const handleUpdateColumn: CommandHandler = (
   if (changedFields.length === 0) {
     return {
       success: false,
-      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn.',
+      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn.',
     };
   }
 
@@ -195,6 +175,7 @@ export const handleUpdateColumn: CommandHandler = (
       role: updated.role,
       autoSpawn: updated.auto_spawn,
       autoCommand: updated.auto_command,
+      autoCommandMode: updated.auto_command_mode,
       agentOverride: updated.agent_override,
       modelOverride: updated.model_override,
       effortOverride: updated.effort_override,
@@ -247,6 +228,11 @@ export const handleCreateColumn: CommandHandler = (
   if (params.autoCommand !== undefined && params.autoCommand !== null) {
     input.auto_command = String(params.autoCommand).slice(0, 4000);
   }
+  if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
+    const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    input.auto_command_mode = parsed.value;
+  }
   if (params.agentOverride !== undefined && params.agentOverride !== null) {
     input.agent_override = String(params.agentOverride);
   }
@@ -257,25 +243,20 @@ export const handleCreateColumn: CommandHandler = (
     input.effort_override = String(params.effortOverride).slice(0, 50);
   }
   if (params.permissionMode !== undefined && params.permissionMode !== null) {
-    const mode = String(params.permissionMode);
-    if (!VALID_PERMISSION_MODES.includes(mode as PermissionMode)) {
-      return {
-        success: false,
-        error: `Invalid permissionMode "${mode}". Valid values: ${VALID_PERMISSION_MODES.join(', ')}.`,
-      };
-    }
-    input.permission_mode = mode as PermissionMode;
+    const parsed = parseEnumParam(params.permissionMode, VALID_PERMISSION_MODES, 'permissionMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    input.permission_mode = parsed.value;
   }
   if (params.handoffContext !== undefined && params.handoffContext !== null) {
     input.handoff_context = Boolean(params.handoffContext);
   }
   if (params.sessionTarget !== undefined && params.sessionTarget !== null) {
-    const parsed = parseSessionEnum(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
+    const parsed = parseEnumParam(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
     if ('error' in parsed) return { success: false, error: parsed.error };
     input.session_target = parsed.value;
   }
   if (params.sessionSpawnStrategy !== undefined && params.sessionSpawnStrategy !== null) {
-    const parsed = parseSessionEnum(params.sessionSpawnStrategy, VALID_SESSION_SPAWN_STRATEGIES, 'sessionSpawnStrategy');
+    const parsed = parseEnumParam(params.sessionSpawnStrategy, VALID_SESSION_SPAWN_STRATEGIES, 'sessionSpawnStrategy');
     if ('error' in parsed) return { success: false, error: parsed.error };
     input.session_spawn_strategy = parsed.value;
   } else if (input.session_target !== undefined) {
@@ -360,6 +341,7 @@ export const handleCreateColumn: CommandHandler = (
       position: created.position,
       autoSpawn: created.auto_spawn,
       autoCommand: created.auto_command,
+      autoCommandMode: created.auto_command_mode,
       agentOverride: created.agent_override,
       modelOverride: created.model_override,
       effortOverride: created.effort_override,
