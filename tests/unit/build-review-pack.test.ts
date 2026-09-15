@@ -1367,4 +1367,56 @@ describe('build-review-pack.mjs', () => {
     },
     20000,
   );
+
+  it(
+    'lists and renders the old path of a committed rename whose working-tree edits fell below the similarity threshold, so its deletion cannot fall between the two gathers',
+    () => {
+      // The changed-file list comes from the three-dot layer, which sees the rename as it stands
+      // at HEAD (100% similar, so it lists only the new path). The change record is parsed from
+      // the merge-base-to-working-tree diff, where the rewritten file no longer pairs with the old
+      // one, so that diff reports the old path deleted and the new one added. Before the union in
+      // the script, the deletion belonged to no listed file: it was in neither the pack nor the
+      // `paths:` line, and the new path rendered as a new file with no trace of where it came from.
+      const originalLines = Array.from({ length: 60 }, (_, index) => `rename line ${index}`);
+      fs.writeFileSync(path.join(repoDirectory, 'src.txt'), originalLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'base commit');
+      const baseRef = runGit(['rev-parse', 'HEAD'], repoDirectory).trim();
+
+      runGit(['mv', 'src.txt', 'dst.txt'], repoDirectory);
+      commitAll(repoDirectory, 'rename, content unchanged');
+
+      // Keep 15 of 60 lines: 25% similarity, below git's 50% rename threshold.
+      const rewrittenLines = originalLines.map((line, index) => (index < 15 ? line : `rewritten line ${index}`));
+      fs.writeFileSync(path.join(repoDirectory, 'dst.txt'), rewrittenLines.join('\n') + '\n');
+
+      // Precondition guards: the three-dot layer still pairs the rename, and the two-dot diff
+      // does not. Both must hold or the test passes for the wrong reason.
+      expect(runGit(['-c', 'diff.renames=true', 'diff', `${baseRef}...HEAD`, '--name-status'], repoDirectory)).toMatch(/^R100\tsrc\.txt\tdst\.txt$/m);
+      const mergeBase = runGit(['merge-base', baseRef, 'HEAD'], repoDirectory).trim();
+      expect(runGit(['-c', 'diff.renames=true', 'diff', mergeBase, '--name-status'], repoDirectory)).toMatch(/^D\tsrc\.txt$/m);
+
+      const buildOutput = runBuildScript(repoDirectory, [baseRef]);
+      const packContent = readPack(repoDirectory);
+
+      const changedFiles = parsePathsLine(buildOutput);
+      expect(changedFiles).toBeDefined();
+      expect([...changedFiles!].sort()).toEqual(['dst.txt', 'src.txt']);
+      expect(buildOutput).toMatch(/^ {2}changed files: 2 \(committed 1, uncommitted 1, untracked 0, change record only 1\)$/m);
+
+      expect(packContent).toContain(
+        [
+          '## Deleted file: src.txt (60 lines removed)',
+          markedLine('-', null, 'rename line 0'),
+        ].join('\n'),
+      );
+      expect(packContent).toContain(markedLine('-', null, 'rename line 59'));
+      expect(packContent).toContain(
+        '## Full file: dst.txt (61 lines; line numbers prefixed; new file; every line is added)',
+      );
+      expect(packContent).toContain(markedLine('+', 16, 'rewritten line 15'));
+      assertOneSectionPerChangedFile(packContent, changedFiles!);
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
 });

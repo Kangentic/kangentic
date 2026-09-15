@@ -53,4 +53,6 @@ list, the review-pack path, and the required return shape. Rules that always hol
   Critical findings also carry `triggeringInput`, `codePath`, and `testGap`. A finding you
   cannot state falsifiably is not raised. The author's intent is inadmissible evidence.
 - Return the structured findings list as your final message; if nothing, say "NO FINDINGS"
-  and name what you checked.
+  and name what you checked. End either way with `Reads beyond the pack:` followed by one line
+  per file you Read outside it (the path and the criterion that needed it), or `none`. The
+  driver tallies these lines; they are how the pack's context width gets judged.
