@@ -12,6 +12,10 @@ import { resolveTask } from './task-resolver';
 import type { Task } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
+/** Fan-out rows printed before collapsing the tail into a "+N more" line. The
+ *  rows are heaviest-first, so the cap keeps the expensive ones. */
+const MAX_FAN_OUT_LINES = 5;
+
 export const handleGetTaskStats: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -47,8 +51,14 @@ export const handleGetTaskStats: CommandHandler = (
     // tokens again would double count. On a /code-review or /test task this is
     // most of the traffic, and it is the only place the board can answer which
     // subagent was expensive.
-    const bySubagentType = new ConversationUsageStore(db).getSubagentTotalsByType(null, null, task.id);
+    const usageStore = new ConversationUsageStore(db);
+    const bySubagentType = usageStore.getSubagentTotalsByType(null, null, task.id);
     const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
+    // Grouped by the driver turn that STARTED each fan-out, which the per-type
+    // rollup above cannot express: a /code-review task spawns the same
+    // `review-finder` type from several different turns, and "what did this one
+    // fan-out cost" is the question that distinguishes them.
+    const fanOuts = subagentTurns > 0 ? usageStore.getTaskFanOuts(task.id) : [];
 
     const lines = [
       `Stats for "${task.title}":`,
@@ -62,18 +72,40 @@ export const handleGetTaskStats: CommandHandler = (
     ];
     if (subagentTurns > 0) {
       const subagentCount = bySubagentType.reduce((total, row) => total + row.subagentCount, 0);
-      lines.push(`  Subagents: ${subagentCount} across ${subagentTurns.toLocaleString()} turn(s) (cost already included above)`);
+      const nestedCount = bySubagentType.reduce((total, row) => total + row.nestedSubagentCount, 0);
+      const nestedNote = nestedCount > 0 ? `, ${nestedCount} nested` : '';
+      lines.push(`  Subagents: ${subagentCount} across ${subagentTurns.toLocaleString()} turn(s)${nestedNote} (cost already included above)`);
       for (const row of bySubagentType) {
+        const rowNested = row.nestedSubagentCount > 0 ? ` (${row.nestedSubagentCount} nested)` : '';
         lines.push(
-          `    ${row.agentType ?? '(unknown)'}: ${row.subagentCount} x ${row.turnCount} turn(s), ${(row.inputTokens + row.outputTokens).toLocaleString()} fresh tokens, ${row.cacheReadTokens.toLocaleString()} cache read`,
+          `    ${row.agentType ?? '(unknown)'}: ${row.subagentCount} x ${row.turnCount} turn(s)${rowNested}, ${(row.inputTokens + row.outputTokens).toLocaleString()} fresh tokens, ${row.cacheReadTokens.toLocaleString()} cache read`,
         );
+      }
+      // Capped: a long review fans out many times and the caller wants the
+      // expensive ones, not a transcript. The rows are already heaviest-first.
+      if (fanOuts.length > 0) {
+        lines.push(`  Fan-outs: ${fanOuts.length}`);
+        for (const fanOut of fanOuts.slice(0, MAX_FAN_OUT_LINES)) {
+          const when = fanOut.driverTurnUuid === null
+            ? '(unlinked)'
+            : fanOut.driverTs === null
+              ? '(no timestamp)'
+              : new Date(fanOut.driverTs).toISOString().slice(11, 16);
+          const types = fanOut.agentTypes.length > 0 ? fanOut.agentTypes.join(', ') : '(unknown)';
+          lines.push(
+            `    ${when} - ${types} x${fanOut.subagentCount}, ${(fanOut.inputTokens + fanOut.outputTokens).toLocaleString()} fresh tokens, ${fanOut.cacheReadTokens.toLocaleString()} cache read`,
+          );
+        }
+        if (fanOuts.length > MAX_FAN_OUT_LINES) {
+          lines.push(`    +${fanOuts.length - MAX_FAN_OUT_LINES} more`);
+        }
       }
     }
 
     return {
       success: true,
       message: lines.join('\n'),
-      data: { ...summary, bySubagentType },
+      data: { ...summary, bySubagentType, fanOuts },
     };
   }
 

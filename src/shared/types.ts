@@ -1696,6 +1696,11 @@ export interface UsageKpis {
   subagentTurnCount: number;
   /** Distinct subagents that ran in the window. */
   subagentCount: number;
+  /** Of those, how many were spawned BY another subagent rather than by the
+   *  driver. A subset of `subagentCount`, never additive: their tokens are
+   *  already inside the four `subagent*` totals above. Zero for an agent that
+   *  forbids nesting (Gemini) or reports no depth. */
+  subagentNestedCount: number;
   /** Tokens per hour over the effective window (turn-derived); null when no turn data. */
   burnRateTokensPerHour: number | null;
   /** Dollars per hour via proportional allocation of each session's reported
@@ -1858,6 +1863,18 @@ export interface UsageDashboardStats {
    * with no subagent traffic.
    */
   bySubagentType: SubagentUsageTotals[];
+  /**
+   * Agents that ran in this range and CANNOT report subagent usage, so their
+   * fan-outs are absent from `bySubagentType` rather than absent from reality.
+   *
+   * Without this the Subagents tile renders `-` for two different things: a range
+   * where nothing fanned out, and a range where the agent has no subagent capture
+   * at all. Only the Claude adapter implements it today, so a Codex or Gemini
+   * project reads `-` permanently, which looks like a measurement rather than a
+   * gap. Derived from which adapters declare the capability, never from an agent
+   * name outside the adapters.
+   */
+  subagentBlindAgents: string[];
   /** Present only for scope.kind === 'all'. */
   perProject?: ProjectUsageSummary[];
   /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
@@ -4506,8 +4523,11 @@ export interface ConversationTurnUsageRecord {
   /** Nesting depth of the spawning chain (1 for a subagent the driver spawned).
    *  Null for a main-thread turn. */
   spawnDepth: number | null;
-  /** The tool_use id of the spawning turn, tying this subagent back to the
-   *  main-thread turn already in the ledger. Null for a main-thread turn. */
+  /** The tool-use id of the call that spawned this subagent. It is NOT a key of
+   *  this table: resolve it through `turn_spawn_links`, which maps a spawning
+   *  call to the turn that emitted it. That turn is a main-thread one at depth 1
+   *  and another subagent's at greater depth, so this does not always point at
+   *  the driver. Null for a main-thread turn. */
   parentToolUseId: string | null;
 }
 
@@ -4526,6 +4546,45 @@ export interface SubagentUsageTotals {
   turnCount: number;
   /** Distinct subagents of this type in the window. */
   subagentCount: number;
+  /** Turns run at depth 2 or deeper, i.e. by a subagent another subagent spawned.
+   *  A SUBSET of `turnCount`, never additive to it. */
+  nestedTurnCount: number;
+  /** Distinct subagents of this type at depth 2 or deeper. A subset of
+   *  `subagentCount`. */
+  nestedSubagentCount: number;
+  /** Deepest nesting seen for this type, or null when no row recorded a depth
+   *  (a corrupt sidecar, or an agent that does not report one) - a real bucket,
+   *  not missing data, same as a null `agentType`. */
+  maxSpawnDepth: number | null;
+}
+
+/**
+ * One fan-out: every subagent turn that traces back to a single spawning driver
+ * turn, folded together. Returned by the ledger's `getTaskFanOuts`.
+ *
+ * Reports NO cost, for the same reason `SubagentUsageTotals` does not: the
+ * owning session's `total_cost_usd` already covers its whole subagent tree.
+ */
+export interface TaskFanOut {
+  /** The driver turn that started this fan-out, or null for the bucket of
+   *  subagents whose parent could not be resolved (a session indexed before spawn
+   *  links existed, a corrupt sidecar, or a turn lost to transcript truncation).
+   *  That bucket is reported rather than dropped, so these rows always sum to the
+   *  task's per-type totals. */
+  driverTurnUuid: string | null;
+  /** Epoch ms of the driver turn; null when it has no timestamp or no ledger row. */
+  driverTs: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  turnCount: number;
+  subagentCount: number;
+  /** Deepest nesting within this fan-out, or null when no row recorded a depth. */
+  maxSpawnDepth: number | null;
+  /** Distinct subagent types in this fan-out. A type-less subagent contributes no
+   *  entry rather than an empty one. */
+  agentTypes: string[];
 }
 
 /**

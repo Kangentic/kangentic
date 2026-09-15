@@ -1,7 +1,9 @@
 import type Database from 'better-sqlite3';
+import type { SubagentSpawnLink } from '../../agent/agent-adapter';
 import type {
   ConversationTurnUsageRecord,
   SubagentUsageTotals,
+  TaskFanOut,
   TranscriptEntry,
   TranscriptTurnUsage,
 } from '../../../shared/types';
@@ -87,6 +89,14 @@ interface TurnUsageRow {
  */
 const MAIN_THREAD_ONLY = 'subagent_id IS NULL';
 
+/**
+ * How many spawn hops `getTaskFanOuts` will walk before it gives up and leaves a
+ * subagent unresolved. Headroom, not a product limit: the deepest nesting ever
+ * measured is 2 (the subagent parser's own count, 2,238 turns at depth 1 against
+ * 50 at depth 2). It exists so a malformed or cyclic chain terminates.
+ */
+const MAX_SPAWN_CHAIN_DEPTH = 8;
+
 function toRecord(row: TurnUsageRow): ConversationTurnUsageRecord {
   return {
     turnUuid: row.turn_uuid,
@@ -127,6 +137,40 @@ export function extractTurnUsageRecords(entries: TranscriptEntry[]): TurnUsageIn
     }
   }
   return records;
+}
+
+/**
+ * Pull the subagent-spawning tool calls out of a parsed MAIN transcript: one link
+ * per `tool_use` block whose name is the agent's spawn tool.
+ *
+ * Deliberately NOT filtered on `entry.usage`, unlike `extractTurnUsageRecords`
+ * above. An assistant message bearing a `tool_use` block essentially always
+ * reports usage, but that is an assumption about the provider rather than an
+ * invariant this code controls, and the failure is silent and permanent: a link
+ * dropped here leaves its subagent resolving to nothing forever, because a
+ * re-walk drops it again. The turn it points at may simply have no ledger row,
+ * which the fan-out reader's LEFT JOIN already handles.
+ *
+ * Pure; the indexer feeds the result to `recordSpawnLinks`. Returns [] when the
+ * adapter declares no spawn tool, so an agent with no subagent concept costs one
+ * comparison and writes nothing.
+ */
+export function extractTurnSpawnLinks(
+  entries: TranscriptEntry[],
+  spawnToolName: string | undefined,
+): SubagentSpawnLink[] {
+  if (!spawnToolName) return [];
+  const links: SubagentSpawnLink[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== 'assistant') continue;
+    for (const block of entry.blocks) {
+      if (block.type !== 'tool_use') continue;
+      if (block.name !== spawnToolName) continue;
+      if (block.id.length === 0) continue;
+      links.push({ toolUseId: block.id, turnUuid: entry.uuid });
+    }
+  }
+  return links;
 }
 
 /**
@@ -194,6 +238,36 @@ export class ConversationUsageStore {
           turn.spawnDepth ?? null,
           turn.parentToolUseId ?? null,
         );
+      }
+    });
+    run();
+  }
+
+  /**
+   * Upsert the spawning tool calls a batch of turns emitted, so a subagent's
+   * `parent_tool_use_id` has a row to resolve against. Idempotent by
+   * `tool_use_id`; a re-walk rewrites the same pair.
+   *
+   * Early-returns on an empty batch, and that guard is load-bearing rather than
+   * tidy. The main-transcript call site is the LIVE turn boundary, which #649
+   * deliberately kept `indexSubagentUsage` off after measuring 57ms of main-thread
+   * stall per turn there. Most driver turns spawn nothing, so with the guard the
+   * common case prepares no statement and opens no transaction; without it, this
+   * adds a write to every settled turn in exactly the fan-out workload the ledger
+   * exists to measure.
+   */
+  recordSpawnLinks(links: SubagentSpawnLink[], now: string): void {
+    if (links.length === 0) return;
+    const run = this.db.transaction(() => {
+      const upsert = this.db.prepare(
+        `INSERT INTO turn_spawn_links (tool_use_id, turn_uuid, recorded_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(tool_use_id) DO UPDATE SET
+           turn_uuid = excluded.turn_uuid,
+           recorded_at = excluded.recorded_at`,
+      );
+      for (const link of links) {
+        upsert.run(link.toolUseId, link.turnUuid, now);
       }
     });
     run();
@@ -381,12 +455,119 @@ export class ConversationUsageStore {
            SUM(cache_creation_input_tokens) AS cacheCreationTokens,
            SUM(cache_read_input_tokens) AS cacheReadTokens,
            COUNT(*) AS turnCount,
-           COUNT(DISTINCT subagent_id) AS subagentCount
+           COUNT(DISTINCT subagent_id) AS subagentCount,
+           SUM(CASE WHEN spawn_depth >= 2 THEN 1 ELSE 0 END) AS nestedTurnCount,
+           COUNT(DISTINCT CASE WHEN spawn_depth >= 2 THEN subagent_id END) AS nestedSubagentCount,
+           MAX(spawn_depth) AS maxSpawnDepth
          FROM conversation_turn_usage
          WHERE ${clauses.join(' AND ')}
          GROUP BY agent_type
          ORDER BY cacheReadTokens DESC, outputTokens DESC`,
       )
       .all(...params) as SubagentUsageTotals[];
+  }
+
+  /**
+   * One task's subagent spend grouped by the DRIVER TURN that started each
+   * fan-out, heaviest first. Answers "what did this one fan-out cost", which the
+   * flat per-type rollup cannot: a `/code-review` task spawns the same
+   * `review-finder` type from several different turns.
+   *
+   * Resolution walks `parent_tool_use_id` through `turn_spawn_links` to the turn
+   * that emitted the spawning call. A depth-1 subagent lands on a main-thread turn
+   * and stops; a deeper one lands on another subagent's turn and inherits that
+   * subagent's root, which is what folds a nested agent's tokens into the fan-out
+   * that ultimately caused them. `level` caps the walk at `MAX_SPAWN_CHAIN_DEPTH`
+   * so a malformed chain cannot loop.
+   *
+   * `root` is collapsed to ONE row per subagent before the final join, and that
+   * GROUP BY is load-bearing rather than tidy. A subagent has exactly one spawning
+   * call, but nothing in the schema enforces it: `subagent_id` is the transcript
+   * file stem, which carries no session namespace, so two sessions of one task can
+   * write the same `subagent_id` with different `parent_tool_use_id` values. Left
+   * ungrouped, that subagent gets two `root` rows, the join multiplies every one of
+   * its usage rows into both buckets, and the sum guarantee below silently fails.
+   * Collapsing here rather than in `subagent_parent` keeps the recursive step's
+   * index probe on `turn_spawn_links(turn_uuid)`, and catches any other way the
+   * walk could ever produce two roots for one subagent.
+   *
+   * Two deliberate properties:
+   *
+   * - A subagent whose parent does not resolve is returned under
+   *   `driverTurnUuid: null` rather than dropped. Links only exist for sessions
+   *   indexed since they were introduced, so on older tasks that bucket is
+   *   everything, and silently omitting it would make these rows disagree with
+   *   `getSubagentTotalsByType` over the same task.
+   * - No cost, for the reason the per-type rollup records: `total_cost_usd`
+   *   already covers the whole session tree.
+   */
+  getTaskFanOuts(taskId: string): TaskFanOut[] {
+    return this.db
+      .prepare(
+        `WITH RECURSIVE
+         subagent_parent AS (
+           SELECT DISTINCT subagent_id, parent_tool_use_id
+           FROM conversation_turn_usage
+           WHERE task_id = ? AND subagent_id IS NOT NULL
+         ),
+         root AS (
+           SELECT sp.subagent_id AS subagent_id, parent.turn_uuid AS root_turn_uuid, 1 AS level
+           FROM subagent_parent sp
+           JOIN turn_spawn_links link ON link.tool_use_id = sp.parent_tool_use_id
+           JOIN conversation_turn_usage parent ON parent.turn_uuid = link.turn_uuid
+           WHERE parent.subagent_id IS NULL
+           UNION ALL
+           SELECT sp.subagent_id, ancestor.root_turn_uuid, ancestor.level + 1
+           FROM subagent_parent sp
+           JOIN turn_spawn_links link ON link.tool_use_id = sp.parent_tool_use_id
+           JOIN conversation_turn_usage parent ON parent.turn_uuid = link.turn_uuid
+           JOIN root ancestor ON ancestor.subagent_id = parent.subagent_id
+           WHERE parent.subagent_id IS NOT NULL AND ancestor.level < ${MAX_SPAWN_CHAIN_DEPTH}
+         )
+         SELECT
+           root.root_turn_uuid AS driverTurnUuid,
+           MIN(driver.ts) AS driverTs,
+           SUM(usage.input_tokens) AS inputTokens,
+           SUM(usage.output_tokens) AS outputTokens,
+           SUM(usage.cache_creation_input_tokens) AS cacheCreationTokens,
+           SUM(usage.cache_read_input_tokens) AS cacheReadTokens,
+           COUNT(*) AS turnCount,
+           COUNT(DISTINCT usage.subagent_id) AS subagentCount,
+           MAX(usage.spawn_depth) AS maxSpawnDepth,
+           GROUP_CONCAT(DISTINCT usage.agent_type) AS agentTypesCsv
+         FROM conversation_turn_usage usage
+         LEFT JOIN (
+           SELECT subagent_id, MIN(root_turn_uuid) AS root_turn_uuid
+           FROM root
+           GROUP BY subagent_id
+         ) root ON root.subagent_id = usage.subagent_id
+         LEFT JOIN conversation_turn_usage driver ON driver.turn_uuid = root.root_turn_uuid
+         WHERE usage.task_id = ? AND usage.subagent_id IS NOT NULL
+         GROUP BY root.root_turn_uuid
+         ORDER BY cacheReadTokens DESC, outputTokens DESC`,
+      )
+      .all(taskId, taskId)
+      .map((row) => {
+        const raw = row as Omit<TaskFanOut, 'agentTypes'> & { agentTypesCsv: string | null };
+        return {
+          driverTurnUuid: raw.driverTurnUuid,
+          driverTs: raw.driverTs,
+          inputTokens: raw.inputTokens,
+          outputTokens: raw.outputTokens,
+          cacheCreationTokens: raw.cacheCreationTokens,
+          cacheReadTokens: raw.cacheReadTokens,
+          turnCount: raw.turnCount,
+          subagentCount: raw.subagentCount,
+          maxSpawnDepth: raw.maxSpawnDepth,
+          // GROUP_CONCAT drops NULLs, so a type-less subagent leaves no empty
+          // slot. The comma split assumes an `agent_type` contains no comma:
+          // nothing enforces that (the value is whatever the sidecar's
+          // `agentType` said), so a comma would split one name into two. Left as
+          // an assumption rather than a second query because this field feeds one
+          // MCP display line and never a total, so the worst case is a cosmetic
+          // mis-split, not a wrong number.
+          agentTypes: raw.agentTypesCsv ? raw.agentTypesCsv.split(',') : [],
+        };
+      });
   }
 }

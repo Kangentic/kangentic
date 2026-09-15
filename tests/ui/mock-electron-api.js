@@ -2161,6 +2161,7 @@
             subagentCacheReadTokens: 5200000,
             subagentTurnCount: 190,
             subagentCount: 8,
+            subagentNestedCount: 2,
             burnRateTokensPerHour: 24000,
             burnRateUsdPerHour: 1.54,
           },
@@ -2187,6 +2188,7 @@
             subagentCacheReadTokens: 4100000,
             subagentTurnCount: 160,
             subagentCount: 6,
+            subagentNestedCount: 1,
             burnRateTokensPerHour: 20000,
             burnRateUsdPerHour: 1.3,
           },
@@ -2208,10 +2210,13 @@
           // Subagent rollup carries no cost by design: the session's reported
           // cost already covers its whole subagent tree.
           bySubagentType: [
-            { agentType: 'review-finder', inputTokens: 90000, outputTokens: 22000, cacheCreationTokens: 45000, cacheReadTokens: 3100000, turnCount: 96, subagentCount: 4 },
-            { agentType: 'test-builder', inputTokens: 60000, outputTokens: 15000, cacheCreationTokens: 30000, cacheReadTokens: 1500000, turnCount: 62, subagentCount: 2 },
-            { agentType: 'Explore', inputTokens: 30000, outputTokens: 8000, cacheCreationTokens: 15000, cacheReadTokens: 600000, turnCount: 32, subagentCount: 2 },
+            { agentType: 'review-finder', inputTokens: 90000, outputTokens: 22000, cacheCreationTokens: 45000, cacheReadTokens: 3100000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
+            { agentType: 'test-builder', inputTokens: 60000, outputTokens: 15000, cacheCreationTokens: 30000, cacheReadTokens: 1500000, turnCount: 62, subagentCount: 2, nestedTurnCount: 18, nestedSubagentCount: 1, maxSpawnDepth: 2 },
+            { agentType: 'Explore', inputTokens: 30000, outputTokens: 8000, cacheCreationTokens: 15000, cacheReadTokens: 600000, turnCount: 32, subagentCount: 2, nestedTurnCount: 12, nestedSubagentCount: 1, maxSpawnDepth: 2 },
           ],
+          // 'codex' is in byAgent above and reports no subagent usage, so the
+          // Subagents tile has to say so rather than render a bare dash.
+          subagentBlindAgents: ['codex'],
           perProject: scope.kind === 'all'
             ? [
                 { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },

@@ -10,6 +10,7 @@ import {
   parseClaudeTranscriptToolCounts,
 } from './transcript-parser';
 import {
+  CLAUDE_SUBAGENT_SPAWN_TOOL,
   locateClaudeSubagentDir,
   parseClaudeSubagentUsage,
   statClaudeSubagentDir,
@@ -265,6 +266,11 @@ export class ClaudeAdapter implements AgentAdapter {
   async parseSubagentUsage(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage> {
     return parseClaudeSubagentUsage(agentSessionId, cwd);
   }
+
+  /** Claude spawns a subagent with the `Task` tool, so a `Task` tool-use id is
+   *  what a subagent's `.meta.json` records as its `toolUseId`. Matching on it is
+   *  how the spawning turn is found again. */
+  readonly subagentSpawnToolName = CLAUDE_SUBAGENT_SPAWN_TOOL;
 
   /**
    * Lifetime cumulative tokens from Claude's own session JSONL. Prefers the

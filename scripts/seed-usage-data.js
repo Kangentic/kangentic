@@ -191,6 +191,17 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
     `)
       : null;
 
+    // The other half of parent_tool_use_id. Guarded on the table the same way the
+    // subagent columns are: a project DB not opened since the migration still
+    // seeds its turns, it just shows every fan-out as unlinked.
+    const hasSpawnLinks = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='turn_spawn_links'").get() !== undefined;
+    if (canSeedSubagents && !hasSpawnLinks) {
+      console.warn(`  ${project.name}: no 'turn_spawn_links' table - seeding subagents without spawn links (fan-outs will read as unlinked)`);
+    }
+    const insertSpawnLink = hasSpawnLinks
+      ? db.prepare('INSERT OR REPLACE INTO turn_spawn_links (tool_use_id, turn_uuid, recorded_at) VALUES (?, ?, ?)')
+      : null;
+
     let sessionCounter = 0;
     let turnCounter = 0;
     let subagentTurnCounter = 0;
@@ -205,6 +216,12 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
     // same two ledgers the dashboard reads.
     function insertSeededSession(sessionId, profile, startMs, turnCount) {
       const durationMs = turnCount * (30_000 + Math.floor(random() * 90_000));
+
+      // `turnCounter` is global, so a session's driver turn uuids are a
+      // contiguous slice of it. Recording where the slice starts lets the fan-out
+      // pass below name a real driver turn to hang its spawn links on, without
+      // keeping every uuid in memory.
+      const firstTurnIndex = turnCounter;
 
       let sessionInput = 0;
       let sessionOutput = 0;
@@ -253,7 +270,7 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
         pickEffort(random, profile),
       );
 
-      seededSessions.push({ sessionId, profile, startMs, durationMs });
+      seededSessions.push({ sessionId, profile, startMs, durationMs, firstTurnIndex, turnCount });
     }
 
     // Attaches a fan-out to an already-seeded session. Subagent rows carry the
@@ -263,10 +280,28 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
     // 'seed-turn-' prefix so --clean removes them with everything else.
     function insertSubagentFanOut(session) {
       const subagentCount = 2 + Math.floor(random() * 5);
+      // Tracks the last depth-1 subagent so a nested one can be linked to a real
+      // parent SUBAGENT turn rather than to the driver. That edge is the whole
+      // point of the links: without it a depth-2 row is just a number, and the
+      // fan-out rollup cannot fold it into the group it belongs to.
+      let previousDepthOneSubagentId = null;
       for (let subagentIndex = 0; subagentIndex < subagentCount; subagentIndex++) {
         const agentType = SUBAGENT_TYPES[Math.floor(random() * SUBAGENT_TYPES.length)];
         const subagentId = `seed-sub-${subagentCounter++}`;
         const spawnDepth = random() < 0.08 ? 2 : 1;
+        const toolUseId = `seed-toolu-${subagentId}`;
+        // Deterministic, so no random() call is added here and the PRNG stream
+        // (and therefore every previously-seeded value) is unchanged. Three
+        // subagents share a driver turn, which is what makes the fan-out rollup
+        // show GROUPS rather than one row per subagent.
+        const driverTurnUuid = `seed-turn-${session.sessionId}-${
+          session.firstTurnIndex + ((Math.floor(subagentIndex / 3)) % session.turnCount)
+        }`;
+        const parentTurnUuid = spawnDepth === 2 && previousDepthOneSubagentId !== null
+          ? `seed-turn-${previousDepthOneSubagentId}-0`
+          : driverTurnUuid;
+        if (insertSpawnLink) insertSpawnLink.run(toolUseId, parentTurnUuid, new Date(nowMs).toISOString());
+        if (spawnDepth === 1) previousDepthOneSubagentId = subagentId;
         const turnCount = 3 + Math.floor(random() * 25);
         for (let turnIndex = 0; turnIndex < turnCount; turnIndex++) {
           const ts = Math.min(session.startMs + Math.floor((session.durationMs * turnIndex) / turnCount), nowMs);
@@ -289,7 +324,7 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
             subagentId,
             agentType,
             spawnDepth,
-            `seed-toolu-${subagentId}`,
+            toolUseId,
           );
           subagentTurnCounter++;
         }
@@ -367,7 +402,13 @@ function cleanProject(configDir, project) {
     const sessions = db.prepare("DELETE FROM usage_history WHERE session_record_id LIKE 'seed-usage-%'").run();
     // Covers the subagent rows too: their turn_uuid carries the same prefix.
     const turns = db.prepare("DELETE FROM conversation_turn_usage WHERE turn_uuid LIKE 'seed-turn-%'").run();
-    console.log(`  cleaned ${project.name}: ${sessions.changes} sessions, ${turns.changes} turns`);
+    // Separate prefix, separate table, so it needs its own sweep. Guarded because
+    // --clean must still work against a DB predating the table.
+    const hasSpawnLinks = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='turn_spawn_links'").get() !== undefined;
+    const links = hasSpawnLinks
+      ? db.prepare("DELETE FROM turn_spawn_links WHERE tool_use_id LIKE 'seed-toolu-%'").run()
+      : { changes: 0 };
+    console.log(`  cleaned ${project.name}: ${sessions.changes} sessions, ${turns.changes} turns, ${links.changes} spawn links`);
   } finally {
     db.close();
   }

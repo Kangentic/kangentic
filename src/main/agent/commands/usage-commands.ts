@@ -47,12 +47,24 @@ function formatUsageMessage(stats: UsageDashboardStats): string {
   // those are the main thread by definition. On a fan-out range this is usually
   // the larger half, and it is what "this review cost $41.26" never showed.
   if (kpis.subagentTurnCount > 0) {
+    const nested = kpis.subagentNestedCount > 0
+      ? `, ${kpis.subagentNestedCount} of them spawned by another subagent`
+      : '';
     lines.push(
-      `  Subagents: ${kpis.subagentCount} across ${formatTokens(kpis.subagentTurnCount)} turn(s) - ${formatTokens(kpis.subagentInputTokens)} fresh input, ${formatTokens(kpis.subagentOutputTokens)} output, ${formatTokens(kpis.subagentCacheReadTokens)} cache read (additive to the turn tokens above; the session cost already covers them)`,
+      `  Subagents: ${kpis.subagentCount} across ${formatTokens(kpis.subagentTurnCount)} turn(s)${nested} - ${formatTokens(kpis.subagentInputTokens)} fresh input, ${formatTokens(kpis.subagentOutputTokens)} output, ${formatTokens(kpis.subagentCacheReadTokens)} cache read (additive to the turn tokens above; the session cost already covers them)`,
     );
     const topSubagents = stats.bySubagentType.slice(0, 3)
       .map((row) => `${row.agentType ?? '(unknown)'} (${formatTokens(row.inputTokens + row.outputTokens)} tokens, ${formatTokens(row.cacheReadTokens)} cache read, ${row.turnCount} turn(s))`);
     if (topSubagents.length > 0) lines.push(`  Top subagent types: ${topSubagents.join(', ')}`);
+  }
+  // Named explicitly so an empty breakdown is not read as a measurement. Only
+  // Claude reports subagent usage today, so a Codex or Gemini range is blind
+  // rather than quiet, and the two are indistinguishable without this line.
+  if (stats.subagentBlindAgents.length > 0) {
+    const blind = stats.subagentBlindAgents;
+    lines.push(
+      `  Not counted: ${blind.join(', ')} ${blind.length === 1 ? 'does not' : 'do not'} report subagent usage, so any fan-outs they ran are absent from the figures above`,
+    );
   }
   if (stats.perProject) {
     const skipped = stats.skippedProjects?.length ?? 0;

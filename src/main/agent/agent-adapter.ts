@@ -63,7 +63,9 @@ export interface SubagentUsageTurn {
   /** The subagent's declared type, or null when the agent recorded none. */
   agentType: string | null;
   spawnDepth: number | null;
-  /** Tool-use id of the spawning turn, tying this back to a main-thread row. */
+  /** Tool-use id of the call that spawned this subagent. Resolves to the emitting
+   *  turn through `turn_spawn_links` (see `SubagentSpawnLink`): a main-thread turn
+   *  at depth 1, another subagent's turn deeper. Null when the agent recorded none. */
   parentToolUseId: string | null;
   /** Epoch ms, or null when the agent reported no timestamp. */
   ts: number | null;
@@ -72,10 +74,37 @@ export interface SubagentUsageTurn {
 }
 
 /**
+ * One subagent-spawning tool call, mapping that call's id to the turn that
+ * emitted it. This is the other half of `SubagentUsageTurn.parentToolUseId`,
+ * which on its own names a tool-use id no row is keyed by.
+ *
+ * Collected INDEPENDENTLY of the usage fold, deliberately. Both parsers drop
+ * turns before they reach the ledger (the main path skips an entry with no
+ * `usage`, the subagent path skips a message group whose counts are all zero),
+ * and a link lost to either filter is lost for good: a re-walk reproduces the
+ * same drop, so that subtree is permanently unattributable. A link is therefore
+ * emitted whether or not its turn produced a ledger row.
+ */
+export interface SubagentSpawnLink {
+  /** The spawning call's tool-use id, as it appears in a child's
+   *  `parentToolUseId`. Unique per call; the ledger's PK dedups a re-walk. */
+  toolUseId: string;
+  /** The turn that emitted the call, in the same key space as
+   *  `conversation_turn_usage.turn_uuid`. */
+  turnUuid: string;
+}
+
+/**
  * Cheap staleness signature for a session's subagent transcripts, computed
  * without parsing them. A subagent's bytes go to its own file, so the MAIN
  * transcript's mtime and size do not move while a subagent runs: the subagent
  * side needs its own signature or a fan-out's turns are never seen as stale.
+ *
+ * Shaped around a per-SESSION directory, which is a Claude fact rather than a
+ * general one: Codex writes each thread's rollout into a date directory and
+ * Gemini writes every session, main and subagent alike, into one per-project
+ * `chats/` directory. Signing either would invalidate on any unrelated session's
+ * change. Widening this is part of adding a second agent, not a detail of it.
  */
 export interface SubagentTranscriptSignature {
   fileCount: number;
@@ -98,6 +127,10 @@ export interface ParsedSubagentUsage {
   complete: boolean;
   sourcePath: string;
   turns: SubagentUsageTurn[];
+  /** Spawning calls made BY these subagents, which is what lets a nested subagent
+   *  resolve to the subagent that spawned it rather than only to a depth number.
+   *  Empty when the agent has no nesting or recorded no spawn calls. */
+  spawnLinks: SubagentSpawnLink[];
 }
 
 /**
@@ -438,6 +471,22 @@ export interface AgentAdapter {
    * simply carries main-thread rows for that agent, as it always has.
    */
   parseSubagentUsage?(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage>;
+
+  /**
+   * Optional: the name of the tool this agent spawns a subagent with, as it
+   * appears in a transcript's `tool_use` blocks (Claude: `Task`).
+   *
+   * Declared here rather than matched inside the retrieval layer because the tool
+   * name is agent knowledge, and `agent-adapters-boundary.md` puts that in the
+   * adapter. A generic reader that hardcoded `Task` would need surgery to admit
+   * the next agent; this one only needs the string.
+   *
+   * Filtering by it is what keeps `turn_spawn_links` small: a session emits
+   * thousands of tool-use ids and only the spawning ones are ever referenced. An
+   * adapter that omits it records no links, which costs nothing and is the right
+   * answer for an agent with no subagent concept.
+   */
+  readonly subagentSpawnToolName?: string;
 
   /**
    * Optional: parse CUMULATIVE lifetime token usage for a session from the

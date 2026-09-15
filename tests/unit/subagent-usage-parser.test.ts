@@ -37,11 +37,14 @@ interface UsageFields {
 
 function assistantLine(options: {
   messageId: string;
-  usage: UsageFields;
+  usage: UsageFields | null;
   timestamp?: string;
   model?: string;
   attributionAgent?: string;
+  /** Extra content blocks beyond the default text one, e.g. a `Task` tool_use. */
+  content?: unknown[];
 }): string {
+  const usage = options.usage;
   return `${JSON.stringify({
     type: 'assistant',
     isSidechain: true,
@@ -52,15 +55,24 @@ function assistantLine(options: {
       id: options.messageId,
       model: options.model ?? 'claude-sonnet-5',
       role: 'assistant',
-      content: [{ type: 'text', text: 'work' }],
-      usage: {
-        input_tokens: options.usage.input ?? 0,
-        output_tokens: options.usage.output ?? 0,
-        cache_creation_input_tokens: options.usage.cacheWrite ?? 0,
-        cache_read_input_tokens: options.usage.cacheRead ?? 0,
-      },
+      content: options.content ?? [{ type: 'text', text: 'work' }],
+      // `null` omits the field entirely, which is the shape a record the ledger
+      // skips actually has on disk.
+      ...(usage === null ? {} : {
+        usage: {
+          input_tokens: usage.input ?? 0,
+          output_tokens: usage.output ?? 0,
+          cache_creation_input_tokens: usage.cacheWrite ?? 0,
+          cache_read_input_tokens: usage.cacheRead ?? 0,
+        },
+      }),
     },
   })}\n`;
+}
+
+/** A `Task` tool_use content block, the thing a spawn link is built from. */
+function taskToolUse(toolUseId: string): unknown {
+  return { type: 'tool_use', id: toolUseId, name: 'Task', input: { subagent_type: 'Explore' } };
 }
 
 /** Build a temp home with one session's subagents/ directory and return it. */
@@ -162,6 +174,131 @@ describe('parseClaudeSubagentUsage', () => {
     // directory, so it must be carried rather than inferred from nesting.
     expect(parsed.turns[0].spawnDepth).toBe(2);
     expect(parsed.turns[0].parentToolUseId).toBe('toolu_01TGXbLzMWBCj6YuVq8aN8LR');
+  });
+
+  it('links a nested subagent to the PARENT SUBAGENT turn that spawned it', async () => {
+    // The relationship the sidecar's toolUseId only half-expresses: `toolu_nested`
+    // names a call, and nothing said which turn made it. Here the depth-1 agent's
+    // own transcript carries that `Task` block, which is what closes the join.
+    homes.push(seedHome([
+      {
+        subagentId: 'agent-parent',
+        meta: { agentType: 'review-finder', spawnDepth: 1, toolUseId: 'toolu_from_driver' },
+        jsonl: assistantLine({
+          messageId: 'msg_parent',
+          usage: { output: 40 },
+          content: [{ type: 'text', text: 'delegating' }, taskToolUse('toolu_nested')],
+        }),
+      },
+      {
+        subagentId: 'agent-child',
+        meta: { agentType: 'Explore', spawnDepth: 2, toolUseId: 'toolu_nested' },
+        jsonl: assistantLine({ messageId: 'msg_child', usage: { output: 10 } }),
+      },
+    ]));
+
+    const parsed = await parseClaudeSubagentUsage(AGENT_SESSION_ID, CWD);
+
+    expect(parsed.spawnLinks).toEqual([
+      { toolUseId: 'toolu_nested', turnUuid: 'sub:agent-parent:msg_parent' },
+    ]);
+    // The child names that same call as its parent, so the two now resolve.
+    const child = parsed.turns.find((turn) => turn.subagentId === 'agent-child')!;
+    expect(child.parentToolUseId).toBe('toolu_nested');
+  });
+
+  it('records a spawn link from a message the ledger SKIPS for having no usage', async () => {
+    // The permanent-loss case. A link dropped here is dropped identically on
+    // every re-walk, so the subtree beneath it never becomes attributable again.
+    // Tokens are recoverable; this is not.
+    homes.push(seedHome([
+      {
+        subagentId: 'agent-parent',
+        meta: { agentType: 'review-finder', spawnDepth: 1, toolUseId: 'toolu_from_driver' },
+        jsonl:
+          assistantLine({
+            messageId: 'msg_spawn',
+            usage: null,
+            content: [taskToolUse('toolu_nested')],
+          })
+          + assistantLine({ messageId: 'msg_work', usage: { output: 25 } }),
+      },
+    ]));
+
+    const parsed = await parseClaudeSubagentUsage(AGENT_SESSION_ID, CWD);
+
+    expect(parsed.spawnLinks).toEqual([
+      { toolUseId: 'toolu_nested', turnUuid: 'sub:agent-parent:msg_spawn' },
+    ]);
+    // That message produced no ledger row, which is exactly why the link had to
+    // be collected independently of the usage fold.
+    expect(parsed.turns.map((turn) => turn.turnUuid)).toEqual(['sub:agent-parent:msg_work']);
+  });
+
+  it('records a spawn link from an all-zero-usage message group', async () => {
+    // The other filter: a group whose four counts are all zero is dropped as
+    // "not spend", which is right for tokens and wrong for links.
+    homes.push(seedHome([
+      {
+        subagentId: 'agent-parent',
+        meta: { agentType: 'review-finder', spawnDepth: 1, toolUseId: 'toolu_from_driver' },
+        jsonl: assistantLine({
+          messageId: 'msg_zero',
+          usage: { output: 0 },
+          content: [taskToolUse('toolu_nested')],
+        }),
+      },
+    ]));
+
+    const parsed = await parseClaudeSubagentUsage(AGENT_SESSION_ID, CWD);
+
+    expect(parsed.turns).toEqual([]);
+    expect(parsed.spawnLinks).toEqual([
+      { toolUseId: 'toolu_nested', turnUuid: 'sub:agent-parent:msg_zero' },
+    ]);
+  });
+
+  it('unions a re-emitted message\'s tool_use ids instead of duplicating them', async () => {
+    // Subagent transcripts re-emit a message as its output grows, which is why
+    // the usage fold exists; the links have to survive that the same way or a
+    // re-walk stops being byte-identical.
+    homes.push(seedHome([
+      {
+        subagentId: 'agent-parent',
+        meta: { agentType: 'review-finder', spawnDepth: 1, toolUseId: 'toolu_from_driver' },
+        jsonl:
+          assistantLine({ messageId: 'msg_01', usage: { output: 1 }, content: [taskToolUse('toolu_nested')] })
+          + assistantLine({ messageId: 'msg_01', usage: { output: 253 }, content: [taskToolUse('toolu_nested')] }),
+      },
+    ]));
+
+    const parsed = await parseClaudeSubagentUsage(AGENT_SESSION_ID, CWD);
+
+    expect(parsed.spawnLinks).toHaveLength(1);
+    expect(parsed.turns[0].usage.outputTokens).toBe(253);
+  });
+
+  it('ignores a tool_use that is not the spawn tool', async () => {
+    homes.push(seedHome([
+      {
+        subagentId: 'agent-parent',
+        meta: { agentType: 'review-finder', spawnDepth: 1, toolUseId: 'toolu_from_driver' },
+        jsonl: assistantLine({
+          messageId: 'msg_01',
+          usage: { output: 10 },
+          content: [
+            { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/tmp/x' } },
+            { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'ls' } },
+          ],
+        }),
+      },
+    ]));
+
+    const parsed = await parseClaudeSubagentUsage(AGENT_SESSION_ID, CWD);
+
+    // Otherwise the link table would carry every tool call in every transcript
+    // to serve the handful that are ever referenced.
+    expect(parsed.spawnLinks).toEqual([]);
   });
 
   it('falls back to the record-inline attributionAgent when the sidecar is missing', async () => {
