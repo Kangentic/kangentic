@@ -109,6 +109,15 @@
     var byWorktree = (typeof window !== 'undefined' && window.__mockGitDiffByWorktree) || null;
     var worktreePath = (request && request.worktreePath) || '';
     if (byWorktree && worktreePath) {
+      // The keys are worktree FOLDER names and a worktree path ends in its folder, so try the
+      // path's last segment first. The substring scan below it is unanchored: it matches any key
+      // that appears anywhere in the path, so two slugs where one is a prefix of the other would
+      // resolve by Object.keys order rather than by which folder the path is actually in. Today's
+      // slugs carry random suffixes and do not collide, which is why the scan is kept as the
+      // fallback rather than replaced outright.
+      var segments = worktreePath.split(/[\\/]/);
+      var lastSegment = segments[segments.length - 1] || segments[segments.length - 2] || '';
+      if (byWorktree[lastSegment] && byWorktree[lastSegment][scope]) return byWorktree[lastSegment][scope];
       var folders = Object.keys(byWorktree);
       for (var folderIndex = 0; folderIndex < folders.length; folderIndex++) {
         var folder = folders[folderIndex];

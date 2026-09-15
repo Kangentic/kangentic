@@ -21,10 +21,12 @@ import path from 'node:path';
 // the review half of the rule.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const SCAN_DIRS = ['src', 'scripts', 'docs', '.claude/rules', '.claude/skills', '.claude/agents'];
+const SCAN_DIRS = ['src', 'scripts', 'docs', 'demo', '.claude/rules', '.claude/skills', '.claude/agents'];
 const SCAN_ROOT_FILES = ['README.md', 'CLAUDE.md'];
+// .mts and .cts are here because demo/vite.config.mts is the largest config file in a scanned
+// tree and is comment-dense; without them the extension list would silently skip it.
 const TEXT_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.css', '.md', '.json', '.html',
+  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.css', '.md', '.json', '.html',
 ]);
 // Mirrors the .gitignore entries that drop agent scratch prose inside a scanned tree.
 const SKIP_DIRECTORY_NAMES = new Set(['superpowers']);

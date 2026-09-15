@@ -15,7 +15,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
-import { Pill } from '../../Pill';
+import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
@@ -320,8 +320,8 @@ function PriorityRow({
           ) : (
             <Pill
               size="sm"
-              className="bg-surface-control/60 font-medium cursor-pointer"
-              style={{ color }}
+              className="font-medium border cursor-pointer"
+              style={{ color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
             >
               {label}
             </Pill>

@@ -28,8 +28,14 @@ const FORBIDDEN_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   // The sample install is a Windows machine whose user is "dev", so C:\Users\dev\AppData\Local\Temp
   // is a legitimate path; only the capture rig's scratch root under it may never appear.
   { label: 'the capture scratch directory', pattern: /kng-demo/ },
-  { label: 'the TroyWeb client organization', pattern: /troyweb/i },
-  { label: 'a client project name', pattern: /RBDMS|OKIES|GWPC|AKWISE|NYSDOT/i },
+  // Both are anchored to word boundaries. Unanchored, the codename alternation matched any
+  // word CONTAINING one of them, and "OKIES" sits inside the ordinary word "cookies": a
+  // recording of an agent discussing session cookies (the sample repo is a JWT auth app, so
+  // that is a likely capture) would have failed this test claiming it found a client project
+  // name. A boundary still matches the real forms, which are whole tokens or hyphen-separated
+  // ("OCC-OKIES", "troyweb.com"), since neither "-" nor "." is a word character.
+  { label: 'the client organization', pattern: /\btroyweb\b/i },
+  { label: 'a client project name', pattern: /\b(?:RBDMS|OKIES|GWPC|AKWISE|NYSDOT)\b/i },
 ];
 
 function listFixtureFiles(): string[] {
@@ -46,6 +52,47 @@ function findLeak(text: string): string | null {
   }
   return null;
 }
+
+describe('FORBIDDEN_PATTERNS word-anchoring', () => {
+  // Real-world case that motivated the anchor: "cookies" embeds the literal
+  // substring "okies" (c-o-[okies]), so the unanchored codename alternation
+  // flagged any recording where an agent discussed session cookies - a near
+  // certainty, since the sample install is a JWT auth app.
+  it('does not flag ordinary text about session cookies', () => {
+    const benign = 'The auth middleware sets an HttpOnly session cookie and refreshes stale cookies on login.';
+    expect(findLeak(benign)).toBeNull();
+  });
+
+  it('does not flag another innocuous word that merely embeds a codename substring', () => {
+    // "brookies" is not a client marker; it embeds "okies" the same way
+    // "cookies" does, so it doubles as a second unanchored-regex trap.
+    expect(findLeak('the team calls their weekend hikes "brookies" trips')).toBeNull();
+  });
+
+  it('does not flag a word that embeds troyweb with no boundary on either side', () => {
+    expect(findLeak('see the introywebsite docs for details')).toBeNull();
+  });
+
+  const CODENAMES = ['RBDMS', 'OKIES', 'GWPC', 'AKWISE', 'NYSDOT'];
+
+  it.each(CODENAMES)('still flags the bare codename %s', (codename) => {
+    const leak = findLeak(`the internal doc references ${codename} directly`);
+    expect(leak).not.toBeNull();
+    expect(leak).toContain('a client project name');
+  });
+
+  it.each(CODENAMES)('still flags the hyphenated form OCC-%s', (codename) => {
+    const leak = findLeak(`ticket OCC-${codename}-142 needs review`);
+    expect(leak).not.toBeNull();
+    expect(leak).toContain('a client project name');
+  });
+
+  it('still flags troyweb.com', () => {
+    const leak = findLeak('see troyweb.com for the client portal');
+    expect(leak).not.toBeNull();
+    expect(leak).toContain('the client organization');
+  });
+});
 
 describe('demo fixtures carry no personal or machine-specific markers', () => {
   const files = [...listFixtureFiles(), ...DATASET_FILES.filter((file) => fs.existsSync(file))];

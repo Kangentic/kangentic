@@ -8,7 +8,6 @@ import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import { THEME_BASES } from '../../../../../shared/types';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
   clampDiffScrollTop,
@@ -18,7 +17,7 @@ import {
   saveDiffScroll,
 } from '../../../../utils/diff-scroll-memory';
 import { copyDiffSelection } from '../../../../utils/diff-clipboard';
-import { selectDiffAlgorithmOptions } from './diff-render-options';
+import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
 
 interface DiffViewerProps {
   original: string;
@@ -108,8 +107,7 @@ export function DiffViewer({
   showEditorBootSpinner = true,
 }: DiffViewerProps) {
   const theme = useConfigStore((state) => state.config.theme);
-  const themeBase = THEME_BASES[theme] ?? 'dark';
-  const monacoTheme = themeBase === 'dark' ? 'vs-dark' : 'vs';
+  const monacoTheme = monacoThemeForTheme(theme);
   const statusConfig = STATUS_LABELS[status];
 
   // Markdown files can flip from the Monaco diff to a rendered preview of their
