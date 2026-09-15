@@ -1,6 +1,7 @@
 import type {
   ExternalSource,
   ImportCheckCliResult,
+  ImportExecuteInput,
   ImportFetchInput,
   ImportFetchResult,
 } from '../../../../shared/types';
@@ -70,24 +71,60 @@ export class AzureDevOpsAdapter implements BoardAdapter {
     }
 
     const { items: rawItems, hasNextPage, totalCount } = await this.azure.fetchWorkItems(
-      organization, project, input.searchQuery, input.state, iterationPath,
+      organization, project, input.searchQuery, input.state, iterationPath, input.since,
     );
 
     const workItemIds = rawItems.map((item) => item.id);
     const externalIds = workItemIds.map(String);
     const alreadyImportedIds = findAlreadyImported('azure_devops', externalIds);
 
-    // Fetch comments and relations in parallel (both are independent per-item REST calls).
-    const [commentsMap, relationsMap] = await Promise.all([
-      this.azure.fetchCommentsForItems(organization, project, workItemIds),
-      this.azure.fetchWorkItemsWithRelations(organization, project, workItemIds),
-    ]);
+    // Comments are deferred to import time (hydrateForImport): fetching them here
+    // spawned one `az rest` per work item, the dominant cost of rendering the list.
+    // Only the batched, cheap relations fetch runs at list time - it powers the
+    // attachment badge and the file-attachment download at import.
+    const relationsMap = await this.azure.fetchWorkItemsWithRelations(organization, project, workItemIds);
 
     const issues = this.azure.mapToExternalIssues(
-      rawItems, organization, project, alreadyImportedIds, commentsMap, relationsMap,
+      rawItems, organization, project, alreadyImportedIds, undefined, relationsMap,
     );
 
     return { issues, totalCount, hasNextPage };
+  }
+
+  /**
+   * Fetch work item comments for the items being imported and fold them into each
+   * body, matching the pre-defer behavior for the imported backlog item. Called by
+   * BACKLOG_IMPORT_EXECUTE only, so the per-item comment cost is paid just for the
+   * selected items.
+   */
+  async hydrateForImport(
+    repository: string,
+    issues: ImportExecuteInput['issues'],
+  ): Promise<ImportExecuteInput['issues']> {
+    const [orgProject] = repository.split('::');
+    const [organization, project] = orgProject.split('/');
+    if (!organization || !project) return issues;
+
+    const numericIds = issues
+      .map((issue) => Number(issue.externalId))
+      .filter((id) => Number.isFinite(id));
+    if (numericIds.length === 0) return issues;
+
+    const sections = await this.azure.fetchCommentSectionsForItems(organization, project, numericIds);
+    return issues.map((issue) => {
+      const section = sections.get(Number(issue.externalId));
+      if (!section) return issue;
+      return { ...issue, body: issue.body ? `${issue.body}\n\n${section}` : section };
+    });
+  }
+
+  /** List every current work item id, for the reconcile's auto-prune sweep. */
+  async listExternalIds(input: { source: ExternalSource; repository: string }): Promise<string[]> {
+    const [orgProject, iterationPath] = input.repository.split('::');
+    const [organization, project] = orgProject.split('/');
+    if (!organization || !project) return [];
+    const ids = await this.azure.fetchWorkItemIds(organization, project, iterationPath);
+    return ids.map(String);
   }
 
   async downloadImages(markdownBody: string): Promise<{ attachments: DownloadedAttachment[]; skippedCount: number }> {

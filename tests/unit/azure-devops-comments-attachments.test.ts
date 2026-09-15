@@ -213,6 +213,37 @@ describe('Azure DevOps comments and attachments', () => {
     });
   });
 
+  describe('mapToExternalIssues - stateCategory bucketing', () => {
+    function withState(state: string) {
+      return {
+        id: 99,
+        fields: {
+          'System.Title': 'Bucketing test item',
+          'System.State': state,
+          'System.CreatedDate': '2026-01-01T00:00:00Z',
+          'System.ChangedDate': '2026-01-02T00:00:00Z',
+        },
+        url: 'https://dev.azure.com/org/_apis/wit/workitems/99',
+      };
+    }
+
+    it('buckets a Resolved work item as closed', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Resolved')], 'org', 'project', new Set());
+      expect(issue.state).toBe('Resolved');
+      expect(issue.stateCategory).toBe('closed');
+    });
+
+    it('buckets a Closed work item as closed', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Closed')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('closed');
+    });
+
+    it('buckets an Active work item as open', () => {
+      const [issue] = importer.mapToExternalIssues([withState('Active')], 'org', 'project', new Set());
+      expect(issue.stateCategory).toBe('open');
+    });
+  });
+
   describe('convertHtmlToMarkdown for comment content', () => {
     it('converts img tags with alt text to markdown images', () => {
       const html = '<img src="https://dev.azure.com/org/_apis/wit/attachments/abc" alt="screenshot" />';

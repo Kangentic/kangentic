@@ -3258,71 +3258,58 @@
       importCheckCli: async function (/* source */) {
         return { available: true, authenticated: true };
       },
-      importFetch: async function (input) {
-        // Track call count and last arguments for test assertions.
-        // Tests can read window.__mockImportFetchCallCount and
-        // window.__mockImportFetchLastArgs to verify fetch behavior.
+      importGetCached: async function (input) {
+        // Instant, no-network cache read. Tests seed window.__mockImportCached with
+        // { issues: [...] } (or an array), and can read window.__mockImportGetCachedCallCount
+        // / window.__mockImportGetCachedLastArgs.
         if (typeof window !== 'undefined') {
-          window.__mockImportFetchCallCount = (window.__mockImportFetchCallCount || 0) + 1;
-          window.__mockImportFetchLastArgs = input;
-          if (!window.__mockImportFetchCallLog) window.__mockImportFetchCallLog = [];
-          window.__mockImportFetchCallLog.push({ state: input && input.state, page: input && input.page });
+          window.__mockImportGetCachedCallCount = (window.__mockImportGetCachedCallCount || 0) + 1;
+          window.__mockImportGetCachedLastArgs = input;
         }
-        // Persistent forced failure: window.__mockImportFetchFailUntilCleared = true
-        // makes EVERY call reject until a test explicitly sets it back to false.
-        // A one-shot flag is unsafe here because React StrictMode double-invokes
-        // the dialog's mount effect in dev, so more than one call can be issued
-        // before the "current" (non-superseded) one settles; a persistent flag
-        // guarantees whichever call ends up current still observes the failure.
-        // Checked before the artificial delay so a test does not have to wait
-        // through it to observe the failure.
-        if (typeof window !== 'undefined' && window.__mockImportFetchFailUntilCleared) {
-          throw new Error('Mock import fetch failure');
+        var cached = (typeof window !== 'undefined' && window.__mockImportCached) || null;
+        if (Array.isArray(cached)) return { issues: cached };
+        if (cached && Array.isArray(cached.issues)) return { issues: cached.issues };
+        return { issues: [] };
+      },
+      importReconcile: async function (input) {
+        // Background reconcile. Tests read window.__mockImportReconcileCallCount /
+        // window.__mockImportReconcileLastArgs and seed window.__mockImportReconcile
+        // with { issues, added, updated, removed }.
+        if (typeof window !== 'undefined') {
+          window.__mockImportReconcileCallCount = (window.__mockImportReconcileCallCount || 0) + 1;
+          window.__mockImportReconcileLastArgs = input;
+          if (!window.__mockImportReconcileCallLog) window.__mockImportReconcileCallLog = [];
+          window.__mockImportReconcileCallLog.push({ mode: input && input.mode });
         }
-        // Optional artificial delay so tests can interact with the dialog
-        // between page N landing and page N+1 resolving (streaming races).
-        var delayMs = (typeof window !== 'undefined' && window.__mockImportFetchPageDelayMs) || 0;
+        // Persistent forced failure (StrictMode double-invoke safe, mirrors the old
+        // import-fetch flag): every call rejects until a test clears it.
+        if (typeof window !== 'undefined' && window.__mockImportReconcileFailUntilCleared) {
+          throw new Error('Mock import reconcile failure');
+        }
+        // Optional delay so a test can observe the cached paint before the reconcile
+        // resolves, and assert the fetchSequenceRef supersession.
+        var delayMs = (typeof window !== 'undefined' && window.__mockImportReconcileDelayMs) || 0;
         if (delayMs > 0) {
           await new Promise(function (resolve) { setTimeout(resolve, delayMs); });
         }
-        // Per-state multi-page preset: window.__mockImportFetchPagesByState is an
-        // object keyed by the request's state ('open' / 'closed' / 'all'), each
-        // value an array of { issues, totalCount, hasNextPage } page responses
-        // (1-indexed via input.page). Lets a test seed genuinely distinct data
-        // per state filter, so a stale in-flight page from the previous filter is
-        // distinguishable from the new filter's data.
-        var pagesByState = (typeof window !== 'undefined' && window.__mockImportFetchPagesByState) || null;
-        if (pagesByState) {
-          var stateKey = (input && input.state) || 'open';
-          var statePages = pagesByState[stateKey];
-          if (statePages) {
-            var statePageNumber = (input && input.page) || 1;
-            var stateResponse = statePages[statePageNumber - 1];
-            if (stateResponse) return stateResponse;
-          }
-          return { issues: [], totalCount: 0, hasNextPage: false };
+        var byMode = (typeof window !== 'undefined' && window.__mockImportReconcileByMode) || null;
+        if (byMode) {
+          var modeKey = (input && input.mode) || 'incremental';
+          if (byMode[modeKey]) return byMode[modeKey];
         }
-        // Multi-page preset: window.__mockImportFetchPages is an array of
-        // { issues, totalCount, hasNextPage } responses, one per page (1-indexed
-        // via input.page). Lets tests exercise the dialog's unbounded auto-paging.
-        var pages = (typeof window !== 'undefined' && window.__mockImportFetchPages) || null;
-        if (pages) {
-          var page = (input && input.page) || 1;
-          var response = pages[page - 1];
-          if (response) return response;
-          return { issues: [], totalCount: 0, hasNextPage: false };
-        }
-        var preset = (typeof window !== 'undefined' && window.__mockImportFetchPreset) || null;
+        var preset = (typeof window !== 'undefined' && window.__mockImportReconcile) || null;
         if (preset) {
-          // The single preset returns the SAME response for every page. Since the
-          // dialog auto-pages unconditionally on hasNextPage, honoring a true
-          // value past page 1 here would loop forever. Use __mockImportFetchPages
-          // (below) to test real multi-page streaming instead.
-          var presetPage = (input && input.page) || 1;
-          if (presetPage > 1) return { issues: [], totalCount: preset.totalCount || 0, hasNextPage: false };
-          return preset;
+          if (Array.isArray(preset)) return { issues: preset, added: 0, updated: 0, removed: 0 };
+          return {
+            // Pass `issues` through verbatim (including a malformed null) so a test
+            // can exercise the dialog's error path.
+            issues: ('issues' in preset) ? preset.issues : [],
+            added: preset.added || 0,
+            updated: preset.updated || 0,
+            removed: preset.removed || 0,
+          };
         }
-        return { issues: [], totalCount: 0, hasNextPage: false };
+        return { issues: [], added: 0, updated: 0, removed: 0 };
       },
       importExecute: async function (input) {
         // Capture the last call argument so tests can inspect the payload.
