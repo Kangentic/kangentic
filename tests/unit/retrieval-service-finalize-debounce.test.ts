@@ -17,6 +17,12 @@
  * EventEmitter-backed sessionManager firing 'exit' / 'session-changed', under
  * `vi.useFakeTimers()`) rather than reimplementing the debounce, so they pin
  * the shipped wiring, not a parallel model of it.
+ *
+ * Also covers the finalize-vs-live asymmetry for the subagent usage walk: the
+ * finalize path (`scheduleFinalizeIndex`) calls `indexSubagentUsage` after
+ * `indexSession`, and the live turn-boundary path (`scheduleLiveIndex`,
+ * triggered by an 'activity' event resolving to "requires user interaction")
+ * deliberately does not.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -176,5 +182,36 @@ describe('retrievalService - per-session finalize debounce', () => {
     await vi.advanceTimersByTimeAsync(10000);
 
     expect(conversationIndexerMock.indexSession).not.toHaveBeenCalled();
+  });
+
+  it('walks subagent usage for the session after a finalize (exit)', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-1', 'proj-1');
+
+    sessionManager.emit('exit', 'sess-1');
+    // Comfortably past FINALIZE_DEBOUNCE_MS; drains the scheduled timer.
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledTimes(1);
+    expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledWith('proj-1', 'sess-1');
+  });
+
+  it('does NOT walk subagent usage on the live turn-boundary (activity) path', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-1', 'proj-1');
+
+    // 'idle' resolves to requiresUserInteraction === true, which is what
+    // arms scheduleLiveIndex.
+    sessionManager.emit('activity', 'sess-1', 'idle');
+    // Comfortably past LIVE_INDEX_DEBOUNCE_MS; drains the scheduled timer.
+    await vi.advanceTimersByTimeAsync(5000);
+
+    // The positive assertion first: proves the 'activity' wiring actually
+    // fired the live-index path, so the negative assertion below cannot pass
+    // vacuously because nothing ran at all.
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
+    expect(conversationIndexerMock.indexSubagentUsage).not.toHaveBeenCalled();
   });
 });
