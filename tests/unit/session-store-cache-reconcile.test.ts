@@ -26,7 +26,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
-import type { ActivityReason, ActivityState, Session, SessionEvent, SessionUsage } from '../../src/shared/types';
+import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, Session, SessionEvent, SessionUsage } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Stub window.electronAPI before importing the store.
@@ -56,6 +56,7 @@ import type { ActivityReason, ActivityState, Session, SessionEvent, SessionUsage
       getActivityReasons: async () => ({}),
       getEventsCache: async () => ({}),
       getFirstOutput: async () => ({}),
+      getMessageTrails: async () => ({}),
     },
     tasks: {
       getSpawnProgress: async () => ({}),
@@ -89,7 +90,11 @@ function makeEvent(detail: string): SessionEvent {
   return { ts: Date.now(), type: 'idle', detail };
 }
 
-type MockableMethod = 'getActivity' | 'getActivityReasons' | 'getUsage' | 'getEventsCache' | 'getFirstOutput' | 'list';
+function makeTrail(text: string): AssistantMessageTrailEntry[] {
+  return [{ uuid: `u-${text}`, ts: Date.now(), text }];
+}
+
+type MockableMethod = 'getActivity' | 'getActivityReasons' | 'getUsage' | 'getEventsCache' | 'getFirstOutput' | 'getMessageTrails' | 'list';
 
 interface MockResults {
   getActivity?: Record<string, ActivityState>;
@@ -97,6 +102,7 @@ interface MockResults {
   getUsage?: Record<string, SessionUsage>;
   getEventsCache?: Record<string, SessionEvent[]>;
   getFirstOutput?: Record<string, boolean>;
+  getMessageTrails?: Record<string, AssistantMessageTrailEntry[]>;
   /** Override the (default empty) live session list returned by sessions.list(). */
   list?: Session[];
   /** Override the queryable spawn-progress map (tasks.getSpawnProgress). */
@@ -122,6 +128,7 @@ async function syncWithMocks(results: MockResults): Promise<void> {
     getUsage: sessions.getUsage,
     getEventsCache: sessions.getEventsCache,
     getFirstOutput: sessions.getFirstOutput,
+    getMessageTrails: sessions.getMessageTrails,
     list: sessions.list,
   };
   const originalGetSpawnProgress = tasks.getSpawnProgress;
@@ -139,6 +146,9 @@ async function syncWithMocks(results: MockResults): Promise<void> {
   }
   if (results.getFirstOutput !== undefined) {
     sessions.getFirstOutput = (async () => results.getFirstOutput) as () => unknown;
+  }
+  if (results.getMessageTrails !== undefined) {
+    sessions.getMessageTrails = (async () => results.getMessageTrails) as () => unknown;
   }
   if (results.list !== undefined) {
     sessions.list = (async () => results.list) as () => unknown;
@@ -162,6 +172,9 @@ async function syncWithMocks(results: MockResults): Promise<void> {
     if (originals.getFirstOutput !== undefined) {
       sessions.getFirstOutput = originals.getFirstOutput as () => unknown;
     }
+    if (originals.getMessageTrails !== undefined) {
+      sessions.getMessageTrails = originals.getMessageTrails as () => unknown;
+    }
     if (originals.list !== undefined) {
       sessions.list = originals.list as () => unknown;
     }
@@ -184,6 +197,7 @@ function resetStore(): void {
     sessionFirstOutput: {},
     sessionActivity: {},
     sessionActivityReason: {},
+    sessionMessageTrails: {},
     sessionEvents: {},
     seenIdleSessions: {},
     pendingCommandLabel: {},
@@ -249,6 +263,26 @@ describe('syncSessions - cache reconciliation evicts stale entries', () => {
     const reasons = useSessionStore.getState().sessionActivityReason;
     expect(Object.keys(reasons)).toEqual(['sess-a']);
     expect(reasons['sess-stale']).toBeUndefined();
+  });
+
+  it('drops a sessionMessageTrails entry that no longer exists in the cache', async () => {
+    // Regression guard: sessionMessageTrails is main-authoritative and
+    // unscoped (see the comment above its reconcile call in syncSessions),
+    // so it must use the same eviction semantics as sessionActivity /
+    // sessionActivityReason - an id the tracker no longer reports (session
+    // evicted past MESSAGE_TRAIL_MAX_SESSIONS, or pruned from the registry)
+    // must not linger in the store forever.
+    useSessionStore.setState({
+      sessionMessageTrails: { 'sess-a': makeTrail('keep'), 'sess-stale': makeTrail('drop') },
+    });
+
+    await syncWithMocks({
+      getMessageTrails: { 'sess-a': makeTrail('keep') },
+    });
+
+    const trails = useSessionStore.getState().sessionMessageTrails;
+    expect(Object.keys(trails)).toEqual(['sess-a']);
+    expect(trails['sess-stale']).toBeUndefined();
   });
 
   it('drops a sessionEvents entry that no longer exists in the cache', async () => {
@@ -337,6 +371,23 @@ describe('syncSessions - cache reconciliation preserves IPC-during-async-gap upd
     });
 
     expect(useSessionStore.getState().sessionActivityReason['sess-a']).toBe(liveReason);
+  });
+
+  it('keeps the store value for sessionMessageTrails when the id is in both maps', async () => {
+    // A push (SESSION_MESSAGE_TRAIL) delivered during the async gap between
+    // fetching the cache snapshot and applying it must win over the stale
+    // snapshot value - mirrors the same async-gap contract already pinned
+    // for sessionActivityReason above.
+    const liveTrail = makeTrail('store-side');
+    useSessionStore.setState({
+      sessionMessageTrails: { 'sess-a': liveTrail },
+    });
+
+    await syncWithMocks({
+      getMessageTrails: { 'sess-a': makeTrail('cache-side-only') },
+    });
+
+    expect(useSessionStore.getState().sessionMessageTrails['sess-a']).toBe(liveTrail);
   });
 
   it('keeps the store value for sessionEvents when the id is in both maps', async () => {
