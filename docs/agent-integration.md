@@ -1,6 +1,6 @@
 # Agent Integration
 
-Kangentic supports fourteen AI coding agents: Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, Droid, Ollama, and Grok Build. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
+Kangentic supports fifteen AI coding agents: Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, Droid, Ollama, Grok Build, and Goose CLI. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
 
 ## Agent Adapter Interface
 
@@ -27,7 +27,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`, `'grok'`, `'antigravity'`) |
+| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`, `'grok'`, `'antigravity'`, `'goose'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
@@ -43,7 +43,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `liveTelemetryUnsupported?` | `AgentLiveTelemetryUnsupported` | Set when the agent CLI has no per-session telemetry channel (no status file, session history, or stream output integration is possible). Carries the renderer-facing label and tooltip so all agent-specific copy lives with the adapter. Currently used by Droid and Antigravity. |
 | `reportsRateLimits?` | `boolean` | Set by adapters whose CLI streams account-wide rate-limit windows (plan-usage quotas). The renderer ContextBar shows its rate-limit pill for any session of such an agent, sourced from a shared global snapshot that is merged monotonically per window across sessions (within a fixed window used-percentage only rises, so a session carrying a stale cached report never regresses the displayed values, and a genuine window rollover is taken wholesale). A freshly spawned terminal shows the same limits as its siblings before it has emitted its own status line. Omit (falsy) for adapters with no rate-limit telemetry. Currently set only by Claude. |
 | `pastedImageReferenceTemplate?` | `string` | Set by adapters whose CLI does not reliably auto-attach an image from a bare file path (a typed/pasted path is read as inert text, not auto-recognized as an image). Kangentic saves a pasted-clipboard or dropped image to a temp PNG (reliable even where the CLI's own clipboard reader silently fails, e.g. Claude Code on Windows with Snipping Tool images - claude-code#26679) and injects this template instead of the bare path, so the agent reliably reads the file as an image. `{path}` is replaced with the shell-quoted absolute path; a template lacking `{path}` has the quoted path appended. Omit to inject the bare quoted path (legacy). Currently set only by Claude. |
-| `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Used for MCP config an adapter cannot pass on the command line: either because the CLI has no MCP flag at all (OpenCode's `OPENCODE_CONFIG_CONTENT`, carrying the whole config), or because the value is a secret that must not land in argv or in a repo file (Codex and Droid both pass only `KANGENTIC_MCP_TOKEN`, referenced by name from their config). Grok extends the pattern furthest: its env carries the MCP URL and token (`KANGENTIC_MCP_URL` / `KANGENTIC_MCP_TOKEN`, dereferenced by grok's `${VAR}` expansion so its `.grok/config.toml` block stays fully static) plus `KANGENTIC_EVENTS_PATH` for the hook bridge's `env:` sentinel. |
+| `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Two uses. Most implementers deliver MCP config an adapter cannot pass on the command line: either because the CLI has no MCP flag at all (OpenCode's `OPENCODE_CONFIG_CONTENT`, carrying the whole config), or because the value is a secret that must not land in argv or in a repo file (Codex and Droid both pass only `KANGENTIC_MCP_TOKEN`, referenced by name from their config). Grok extends the pattern furthest: its env carries the MCP URL and token (`KANGENTIC_MCP_URL` / `KANGENTIC_MCP_TOKEN`, dereferenced by grok's `${VAR}` expansion so its `.grok/config.toml` block stays fully static) plus `KANGENTIC_EVENTS_PATH` for the hook bridge's `env:` sentinel. Goose is the one non-MCP implementer: its native permission/autonomy control is an env var (`GOOSE_MODE`) rather than a flag, so the permission mode is delivered here. Implemented by OpenCode, Codex, Droid, Grok, and Goose. |
 | `getExitSequence?()` | `() => string[]` | Sequence of strings to write to the PTY for a graceful exit. Default is `['\x03']` (Ctrl+C only). Claude overrides with `['\x03', '/exit\r']` to flush conversation state. |
 | `attachSession?(context)` | `(SessionContext) => SessionAttachment \| void` | Per-session lifecycle hook for adapters that need work outside the declarative `runtime` strategy (out-of-band CLI queries, file watchers, etc.). The returned `dispose` is called on session end. |
 | `summarize?(prompt, cliPath, cwd)` | `(string, string, string) => Promise<string>` | One-shot summarization for the auto-name-tasks-from-prompt feature. Spawns the CLI in non-interactive `--print` mode. Antigravity is the one PTY exception: `agy -p` hangs when stdio is not a TTY (upstream google-antigravity/antigravity-cli#318), so its summarize runs the print mode through a hidden PTY in a pre-trusted scratch cwd. Adapters without a clean headless mode (Aider, Warp) omit this, as does Ollama (its headless mode is not yet wired). |
@@ -168,6 +168,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok 
 | Ollama | `ollama-adapter.ts` | `ollama` | No | No | No | Not possible (CLI has no MCP client) | No |
 | Grok Build | `grok-adapter.ts` | `grok` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl via Claude-compatible hooks; usage from `updates.jsonl` tail) | No (wholly-owned `.grok/hooks/kangentic.json` + `.grok/config.toml` sentinel block) | `[mcp_servers.kangentic]` block in `<cwd>/.grok/config.toml` with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.grok/trusted_folders.toml`, cascades from project root) |
 | Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
+| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | No (PTY-only) | No | Not wired | No |
 
 ## Agent Resolution
 
@@ -204,6 +205,7 @@ Each adapter implements `detectFirstOutput(data)` to spot the first output worth
 | Ollama | `data.length > 0` | Ollama streams output immediately (no alternate screen buffer) |
 | Grok Build | `\x1b[?25l` (cursor hide) | Rust alt-screen TUI; the cursor-hide arrives in the very first output chunk, before the alt-screen switch (verified via node-pty against grok 1.0.0) |
 | Antigravity CLI | `data.length > 0` | First paint (logo + welcome banner) arrives as one plain-text burst well under a second after spawn (verified against agy 1.1.13) |
+| Goose CLI | `data.length > 0` | Streams output immediately (no alternate screen buffer) |
 
 The `\x1b[?25l` (ANSI cursor hide) sequence usually fires after the shell prompt noise but before the TUI draws its startup banner, which keeps the shell command hidden behind the shimmer overlay.
 
@@ -236,6 +238,7 @@ Graceful exit sequences written to the PTY before a force-kill. `SessionManager.
 | Ollama | `Ctrl+C`, `/bye` | `/bye` exits the interactive REPL; harmless after a one-shot run has already exited |
 | Grok Build | `Ctrl+C`, `/quit` | `/quit` exits cleanly (probe-verified exit 0) and prints the conversation dump that transcript cleanup anchors on |
 | Antigravity CLI | `Ctrl+C`, `Ctrl+C` | First Ctrl+C prints "press ctrl+c again to exit" (or cancels a running turn); the second exits gracefully, printing the `agy --conversation=<uuid>` resume summary (the fromOutput capture source) and flushing `cache/last_conversations.json`. No `/quit` slash command exists |
+| Goose CLI | `Ctrl+C` | Interrupts and exits the interactive session |
 
 ## Session History File Location
 
@@ -257,10 +260,11 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Ollama | N/A | Returns null (no CLI-accessible session history) |
 | Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/updates.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). The attach-time `runtime.sessionHistory.locate` additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |
 | Antigravity CLI | `~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl` | Direct path computation from the conversation id, with a short existence poll (the transcript appears when the first turn starts) |
+| Goose CLI | N/A | Returns null (no transcript parsing; resume rides on the caller-supplied `--name`) |
 
 ## Auto-Name (Summarize)
 
-Always-on feature that suggests a task title from the task description, via each adapter's optional `summarize?(prompt, cliPath, cwd)` method. Adapters that omit `summarize` are gated out automatically (Aider and Warp lack a clean plain-text headless mode; Ollama's is not yet wired): the renderer hides the button and never schedules the rename toast.
+Always-on feature that suggests a task title from the task description, via each adapter's optional `summarize?(prompt, cliPath, cwd)` method. Adapters that omit `summarize` are gated out automatically (Aider and Warp lack a clean plain-text headless mode; Ollama's and Goose's are not yet wired): the renderer hides the button and never schedules the rename toast.
 
 ### Surfaces
 
@@ -286,6 +290,7 @@ Implementations live next to each adapter and call the shared `runCliPrintSummar
 | Antigravity | `agy -p "<prompt>" --output-format json` through a hidden PTY (`agy -p` hangs without a TTY, upstream #318); runs in a pre-trusted scratch cwd so it never touches the project workspace's `agy -c` mapping | flag arg |
 | Aider, Warp | (no clean plain-text headless mode yet) | n/a |
 | Ollama | (summarize not yet wired) | n/a |
+| Goose CLI | (summarize not yet wired) | n/a |
 
 ### Configuration knobs
 
@@ -1360,6 +1365,57 @@ The transcript flushes ON SUBMIT (measured: 84ms worst append latency across sho
 - Slash auto_commands are `verify: 'none'`: the TUI rejects an unregistered `/command` client-side ("Unknown command") and records nothing (`canVerifySlashSubmission` is false).
 - Handoff transcript cleanup captures the last turn only (no response marker glyph; same limitation as Gemini).
 
+## Goose CLI
+
+Goose is Block's open-source agent CLI (`goose`, https://github.com/block/goose). It is a thin integration, close to the Warp/Ollama adapters: no hooks, no structured status/event output, no trust mechanism, and no settings merging. It differs from those two by supporting session resume and by delivering its approval mode through an env var.
+
+### CLI Detection
+
+Detection uses the shared `AgentDetector` (via composition) with binary name `goose` and `standardUnixFallbackPaths('goose')`. `goose --version` prints a line containing a semver; `parseVersion` extracts the first `MAJOR.MINOR.PATCH` run rather than stripping a fixed prefix, because the surrounding wrapper text varies between builds.
+
+### Command Building
+
+`src/main/agent/adapters/goose/goose-adapter.ts`
+
+```
+goose run [-r] [-n <sessionId>] -t "<prompt>" -s    # with a prompt
+goose session [-r] [-n <sessionId>]                 # promptless / resume
+```
+
+- Goose runs in the process cwd (there is no start-in-dir flag), so the PTY's cwd set by the spawn chokepoint is authoritative and no directory flag is passed.
+- A prompt uses `goose run -t "<prompt>" -s`: process the prompt, then stay interactive (`-s` / `--interactive`) so the user can continue the session. A promptless spawn opens a bare interactive `goose session`.
+- `-n <sessionId>` names the session with the engine-generated id when one is present; `-r` is added to resume that named session. On Windows / non-unix shells, embedded double quotes in the prompt are rewritten to single quotes.
+
+### Session Resume
+
+`supportsCallerSessionId` is `true`. Goose accepts a caller-supplied session name (`--name`), so the engine hands it the id it generated on the fresh spawn and resumes with `-r -n <id>`. No transcript parsing is needed to capture an id after the fact, so `locateSessionHistoryFile` returns null.
+
+### Permission Modes
+
+Goose sets its approval mode through the `GOOSE_MODE` env var (its own default is `smart_approve`), not a spawn flag, so the permission dropdown is delivered via `buildEnv`. The mapping lives in `GOOSE_MODE_BY_PERMISSION`, a `Record` over the full `PermissionMode` union (so a new mode is a compile error rather than a silent wrong-mode spawn), and it maps all six modes below. The dropdown exposes four (`plan`, `default`, `acceptEdits`, `bypassPermissions`); `dontAsk` and `auto` are not offered there but are still mapped, so a column/lane override that forces one of them resolves to a valid `GOOSE_MODE`.
+
+| Mode | GOOSE_MODE | Goose Behavior |
+|------|-----------|----------------|
+| `plan` | `chat` | No tools or file modification (read-only) |
+| `dontAsk` | `chat` | Read-only, non-interactive (not in the dropdown) |
+| `default` | `smart_approve` | Auto-approves low-risk actions, asks on the rest |
+| `acceptEdits` | `auto` | Modify/create/delete and run tools without approval |
+| `auto` | `auto` | Same as above (not in the dropdown) |
+| `bypassPermissions` | `auto` | Same as above |
+
+`defaultPermission` is `default`. Model/provider selection is left to Goose's own `--model`/`--provider` flags and `~/.config/goose/config.yaml`; per `cli-features-over-custom-layers.md` the adapter keeps no model list and does not shadow the CLI's model control.
+
+### Activity Detection
+
+Runtime activity is PTY-only. The silence timer drives the idle transition; `detectFirstOutput` returns true on any non-empty data (no alternate screen buffer). There is no hook or status pipeline.
+
+### Limitations
+
+- No hooks, no settings merge, no trust mechanism, no MCP wiring
+- No structured status or event output - the PTY silence timer is the sole idle detection
+- No transcript parsing or capability discovery, and no `summarize` (auto-name not yet wired)
+- `locateSessionHistoryFile` returns null - resume rides on the caller-supplied `--name` instead
+
 ## Project relocation
 
 A Kangentic project relocates in one of two ways, both handled by the `project:relocate` IPC
@@ -1400,6 +1456,7 @@ same caveat the Claude adapter documents).
 | Ollama | None. | No resumable external session state; `onProjectRelocated` omitted. |
 | Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/` session dirs and `[folders.'<path>']` headers in `~/.grok/trusted_folders.toml`. | Encoded-dir rename mirrors Droid's slug rename; the trust rewrite mirrors Codex's header rewrite (backup + atomic write). |
 | Antigravity | `trustedWorkspaces` entries in `~/.gemini/antigravity-cli/settings.json` and the workspace key in `~/.gemini/antigravity-cli/cache/last_conversations.json`. | Conversation data (`conversations/<uuid>.db`, `brain/<uuid>/`) is keyed by conversation id, not path, and Kangentic resumes by explicit `--conversation <id>` (cross-directory), so only trust and the user's own `agy -c` continuity need migrating. |
+| Goose | None. | Resume rides on the caller-supplied `--name` (cwd-independent), so no path-keyed state needs migrating; `onProjectRelocated` omitted. |
 
 ## Prompt Templates
 

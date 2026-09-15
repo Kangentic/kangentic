@@ -93,6 +93,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Antigravity',
     installUrl: 'https://antigravity.google/docs/cli/getting-started',
   },
+  goose: {
+    display: 'Goose CLI',
+    short: 'Goose',
+    installUrl: 'https://github.com/block/goose',
+  },
 };
 
 /**

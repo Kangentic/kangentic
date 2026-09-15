@@ -310,6 +310,7 @@ behavior below is the resume contract.
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes |
 | Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a |
 | Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) |
+| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store (`sessions.db`), resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) |
 
 Reading the table by class:
 
@@ -317,14 +318,17 @@ Reading the table by class:
   Grok (and Claude). The resume target is a file under a directory derived from the cwd
   (basename, slug, `md5`, or Grok's `encodeURIComponent`), so moving the project to a path with
   a different cwd-derived key, or deleting that file, makes the stored id unresolvable.
-- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor, Antigravity.
+- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor, Antigravity,
+  and Goose.
   Resume resolves by session id against a global location, so the working directory does not gate it.
   Codex scans `~/.codex/sessions/` by id (`codex-rs find_thread_path_by_id_str`; the per-rollout
   cwd only filters the interactive picker, which has an `--all` escape hatch). OpenCode keys the
   shared SQLite DB by session id. Copilot and Cursor attach by id; for Copilot the saved `cwd`
   only affects *where* the resumed session reopens, not whether it attaches, and Cursor's
   per-cwd `~/.cursor/projects/<slug>/` directory holds only `repo.json` / trust metadata, not the
-  conversation, which lives in `~/.cursor/chats/<chat-id-hash>/`.
+  conversation, which lives in `~/.cursor/chats/<chat-id-hash>/`. Goose resolves by the
+  caller-supplied `--name` against Goose's own session store, so resume is cwd-independent and
+  Kangentic reads no transcript file (`locateSessionHistoryFile` returns null).
 - **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
   `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
   downgrade.
