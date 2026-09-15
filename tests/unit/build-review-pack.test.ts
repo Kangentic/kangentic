@@ -26,10 +26,15 @@
  *    which stopped advancing once the packed sections ended and never accounted for the
  *    omitted-files block - undercounting by 1 + omittedCount whenever anything was omitted.
  *
- * 2. parseNumstat resolves git's rename notation ("old => new") to the new path via
- *    resolveNumstatPath, so a renamed-and-modified committed file is ranked by its true
- *    churn instead of silently scoring 0 (its raw numstat key never matches a real path,
- *    so an unresolved lookup always misses).
+ * 2. parseNumstat resolves git's rename notation to the new path via resolveNumstatPath, in
+ *    both the arrow form ("old => new") and the brace form ("dir/{old => new}"). The symptom
+ *    that pins it is the changed-file list, not the churn ranking: committedNames is built
+ *    from the churn map's own keys, so an unresolved key becomes a bogus extra changed file
+ *    (the old path, which no longer exists) beside the new one. Ranking cannot catch it,
+ *    because churnOf falls back to the independent two-dot hunk count for any path missing
+ *    from the churn map, and that fallback lands on the same count either way. Both forms
+ *    were verified by mutating the resolver: the ranking assertion stayed green, the
+ *    changed-file assertions went red.
  *
  * 3. Every "- line N: <label>" table-of-contents entry points at the exact line where its
  *    own section heading starts, and every changed file has exactly one heading. A windowed
@@ -127,6 +132,30 @@
  *     byte-identical) files as 100% similar, so an add and a delete of empty files in the SAME
  *     diff pair into a rename instead ("renamed from ..., content unchanged"), never exercising
  *     either reason - confirmed empirically against a scratch repo before this fixture was written.
+ *
+ * 20. resolveNumstatPath's brace-notation branch ("prefix{old => new}suffix", the form git emits
+ *     for a rename with a shared path prefix or suffix, e.g. "dir/{a.txt => b.txt}") resolves to
+ *     the true new path, the same as the plain arrow form (#2) resolves for a root-level rename.
+ *     Churn RANKING cannot tell a broken brace resolution from a working one: churnOf() falls
+ *     back to the independent two-dot-parse hunk count whenever a path is missing from the
+ *     numstat-keyed churn map, and that fallback lands on the same line count either way. The
+ *     real, load-bearing symptom is in changedFiles itself: parseNumstat's churn map is keyed
+ *     directly off whatever resolveNumstatPath returns, and committedNames (which feeds
+ *     changedFileSet) is built from that map's keys - so an unresolved or wrong resolution
+ *     leaves the WRONG path (the raw brace notation, or the old pre-rename name) as its own
+ *     bogus entry in changedFiles, the "paths:" line, and the pack, in ADDITION to the correctly
+ *     detected new path (which the changeRecordOnlyNames union step rescues independently, since
+ *     the two-dot parse only ever saw the real new path). Confirmed empirically against this
+ *     script: swapping which capture group the arrow-form branch returns leaves the sibling
+ *     rename test's churn-ranking assertion green (bodies packed, ranking, and content all still
+ *     correct via the fallback) while adding a bogus extra "changed files" entry and its own
+ *     spurious "## Not shown:" section for the stale old path - the bug the count/paths
+ *     assertions below are aimed at, not ranking order.
+ *
+ * 21. An untracked file that is genuinely empty gets its own "## Not shown:" reason, "new,
+ *     untracked, empty" - distinct from a STAGED empty add's "new file, empty" (#19), which
+ *     takes a different branch of noteReasonFor (the `parsed` file record exists for a staged
+ *     file; an untracked file never has one).
  *
  * Not covered, and why: a C-quoted path (a quote, backslash, or control character in a file
  * name) lands its raw block under "## Union diff (unparsed)". NTFS forbids those characters,
@@ -492,10 +521,23 @@ describe('build-review-pack.mjs', () => {
       const numstatOutput = runGit(['diff', `${baseRef}...HEAD`, '--numstat'], repoDirectory);
       expect(numstatOutput).toContain(' => ');
 
-      runBuildScript(repoDirectory, [baseRef]);
+      const buildOutput = runBuildScript(repoDirectory, [baseRef]);
 
       const packContent = readPack(repoDirectory);
       const tocLabels = extractTocEntries(packContent).map((entry) => entry.label);
+
+      // THIS is the assertion that pins resolveNumstatPath, not the ranking one below.
+      // `committedNames` is built from the churn map's own keys, so an unresolved "old => new"
+      // key becomes a bogus extra changed file: the old path, which no longer exists, listed
+      // beside the new one that the rename union rescues separately. Ranking cannot catch that,
+      // because churnOf falls back to the independent two-dot hunk count for any path missing
+      // from the churn map, and that fallback lands on the same count either way. Verified by
+      // mutating the resolver: the ranking assertion below stayed green, this one went red.
+      const changedFiles = parsePathsLine(buildOutput);
+      expect(changedFiles).toBeDefined();
+      expect([...changedFiles!].sort()).toEqual(['mmm-renamed.txt', 'zzz-trivial.txt']);
+      expect(buildOutput).toMatch(/^ {2}changed files: 2 \(/m);
+      expect(packContent).not.toContain('aaa-original.txt (');
 
       const renamedIndex = tocLabels.indexOf('mmm-renamed.txt');
       const trivialIndex = tocLabels.indexOf('zzz-trivial.txt');
@@ -503,8 +545,8 @@ describe('build-review-pack.mjs', () => {
       expect(trivialIndex).toBeGreaterThan(-1);
 
       // Largest churn first: the renamed file's 12 appended lines must outrank the
-      // trivial file's 1-line edit, which only holds once its churn resolves under its
-      // new path rather than the unresolved "old => new" numstat key.
+      // trivial file's 1-line edit. Kept because ranking order is worth pinning on its own,
+      // but see above for why it is not the resolver's red-green.
       expect(renamedIndex).toBeLessThan(trivialIndex);
 
       // The rename survives into the section heading, and the appended lines are marked added
@@ -1479,6 +1521,67 @@ describe('build-review-pack.mjs', () => {
   );
 
   it(
+    'resolves a brace-notation rename ("dir/{old => new}") to its true new path, rather than leaving the unresolved old path as a bogus extra changed file',
+    () => {
+      // Git emits brace notation instead of the plain "old => new" arrow form (already covered
+      // by the sibling rename test above) when the rename shares a path prefix or suffix - here,
+      // the containing directory. resolveNumstatPath special-cases this shape first.
+      runGit(['config', 'diff.renames', 'true'], repoDirectory);
+
+      fs.mkdirSync(path.join(repoDirectory, 'dir'));
+      const baseLines = Array.from({ length: 100 }, (_, index) => `heavy line ${index}`);
+      fs.writeFileSync(path.join(repoDirectory, 'dir', 'a.txt'), baseLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'base commit');
+      const baseRef = runGit(['rev-parse', 'HEAD'], repoDirectory).trim();
+
+      runGit(['mv', 'dir/a.txt', 'dir/b.txt'], repoDirectory);
+      const appendedLines = baseLines.concat(
+        Array.from({ length: 12 }, (_, index) => `appended line ${index}`),
+      );
+      fs.writeFileSync(path.join(repoDirectory, 'dir', 'b.txt'), appendedLines.join('\n') + '\n');
+      commitAll(repoDirectory, 'rename within a directory and edit');
+
+      // Precondition guard: confirms git actually emitted BRACE notation for this fixture (not
+      // the plain arrow form the sibling test already covers), so a pass below reflects
+      // resolveNumstatPath's braceForm branch and not arrowForm.
+      const numstatOutput = runGit(['diff', `${baseRef}...HEAD`, '--numstat'], repoDirectory);
+      expect(numstatOutput).toContain('dir/{a.txt => b.txt}');
+
+      const buildOutput = runBuildScript(repoDirectory, [baseRef]);
+      const packContent = readPack(repoDirectory);
+
+      // Churn RANKING cannot distinguish a broken brace resolution from a working one - see
+      // pinned behavior #20 above for why. The real symptom is a bogus extra entry (the raw
+      // unresolved old path) in changedFiles, so that is what this asserts: exactly one changed
+      // file, its correct new path, and no trace of the old path or the raw brace notation
+      // anywhere in the pack.
+      const changedFiles = parsePathsLine(buildOutput);
+      expect(changedFiles).toBeDefined();
+      expect([...changedFiles!]).toEqual(['dir/b.txt']);
+      expect(buildOutput).toMatch(/^ {2}changed files: 1 \(committed 1, uncommitted 0, untracked 0\)$/m);
+      expect(packContent).not.toContain('{a.txt => b.txt}');
+      // dir/a.txt legitimately appears inside dir/b.txt's own "renamed from" suffix (asserted
+      // below); what a bogus resolution would add is a SEPARATE heading and TOC entry naming
+      // dir/a.txt as its own file, which is what this checks for directly rather than banning
+      // the substring outright.
+      expect(packContent).not.toMatch(/^## [A-Za-z ]+: dir\/a\.txt/m);
+      const tocLabels = extractTocEntries(packContent).map((entry) => entry.label);
+      expect(tocLabels).toEqual(['dir/b.txt']);
+
+      // The rename survives into the section heading, and the appended lines are marked added
+      // at their working-tree numbers, the same shape the sibling arrow-form test pins.
+      expect(packContent).toContain('## Partial file: dir/b.txt (113 lines total;');
+      expect(packContent).toMatch(/^## Partial file: dir\/b\.txt \(.*; renamed from dir\/a\.txt\)$/m);
+      expect(packContent).toContain(markedLine('+', 101, 'appended line 0'));
+      expect(packContent).toContain(markedLine(' ', 100, 'heavy line 99'));
+
+      assertOneSectionPerChangedFile(packContent, changedFiles!);
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
     'rejects a missing or non-numeric --body-cap value with exit code 2 and the usage message, before touching the repo at all',
     () => {
       // The fixture carries a real committed-plus-uncommitted change (same shape as this
@@ -1684,6 +1787,29 @@ describe('build-review-pack.mjs', () => {
       const deletionPack = readPack(repoDirectory);
       expect(deletionPack).toContain('## Not shown: empty-existing.txt (deleted, was empty)');
       assertTocLineAccuracyAndHeaderTotal(deletionPack);
+    },
+    20000,
+  );
+
+  it(
+    'notes a genuinely empty UNTRACKED file as "new, untracked, empty", distinct from a staged empty add',
+    () => {
+      // A companion tracked edit keeps the pack non-trivial: assertTocLineAccuracyAndHeaderTotal
+      // asserts at least one TOC entry, and this fixture is otherwise just the one empty file.
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+      fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
+
+      // Untracked and empty, never staged: parsed is null (untracked files never consult the
+      // two-dot parse) and lines is the single-empty-string split of '' - contentLineCount is 0,
+      // so hunks stays [] and the entry falls all the way to noteReasonFor's untracked branch.
+      fs.writeFileSync(path.join(repoDirectory, 'untracked-empty.txt'), '');
+
+      runBuildScript(repoDirectory);
+      const packContent = readPack(repoDirectory);
+
+      expect(packContent).toContain('## Not shown: untracked-empty.txt (new, untracked, empty)');
+      assertTocLineAccuracyAndHeaderTotal(packContent);
     },
     20000,
   );
