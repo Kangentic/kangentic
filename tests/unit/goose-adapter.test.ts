@@ -268,6 +268,22 @@ describe('GooseAdapter', () => {
         }));
         expect(command).toContain('"broken"');
       });
+
+      it('preserves newlines in a multi-line prompt for a unix-like shell', () => {
+        // buildCommand passes { multiline: true } to quoteArg for -t so a
+        // multi-line task envelope survives shell delivery intact. Without
+        // that option, quoteArg falls through to sanitizeForPty, which
+        // collapses \n to a space - this is the regression the option
+        // guards against (see quoteArg's docstring in src/shared/paths.ts).
+        // This adapter is not covered by the cross-adapter
+        // tests/unit/adapter-multiline-prompt.test.ts guard, so it is
+        // pinned here instead.
+        const command = adapter.buildCommand(makeOptions({
+          prompt: 'Fix the bug\nAdd a regression test',
+          shell: 'bash',
+        }));
+        expect(command).toContain('Fix the bug\nAdd a regression test');
+      });
     });
   });
 
