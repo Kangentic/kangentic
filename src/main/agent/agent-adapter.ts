@@ -385,13 +385,30 @@ export interface AgentAdapter {
    * touches every session on the machine, so retaining would evict the live
    * viewer's hot parse state in favour of one-shot indexing churn - which is
    * precisely how the incremental-state cache came to be packed with the
-   * largest transcripts on the machine.
+   * largest transcripts on the machine. `attributedMessageIds` does not bend
+   * that rule: the state is the CALLER's, threaded in and bounded, and the
+   * implementation keeps no reference to it between calls.
+   *
+   * `attributedMessageIds` exists because an agent that reports one API
+   * message's token usage on several transcript lines must attribute it once,
+   * and a per-window dedupe attributes it again on the far side of a seam. That
+   * is invisible to search chunking and wrong for the turn-usage ledger, which
+   * keys a row per line. The walker creates ONE set and passes it to every
+   * window; an implementation seeds its dedupe from it, adds the ids it
+   * attributes, and prunes it to a small bound before returning, so a window
+   * that attributes nothing passes the carry through. This is shaped on the
+   * generic capability rather than inside one adapter because the hazard is
+   * generic: any agent whose usage is per-message and whose parse is windowed
+   * has it. (`agent-adapters-boundary.md` bars branching on an agent NAME, not
+   * shaping a capability, so it does not apply.) Adapters whose usage is
+   * already one-per-line can ignore the argument.
    */
   parseTranscriptWindow?(
     agentSessionId: string,
     cwd: string,
     startByte: number,
     maxBytes: number,
+    attributedMessageIds?: Set<string>,
   ): Promise<ParsedTranscriptWindow>;
 
   /**

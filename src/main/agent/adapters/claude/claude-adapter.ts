@@ -233,15 +233,21 @@ export class ClaudeAdapter implements AgentAdapter {
     return { entries, sourcePath: filePath };
   }
 
-  /** Stateless bounded window, for the conversation indexer's whole-file walk. */
+  /** Stateless bounded window, for the conversation indexer's whole-file walk.
+   *  `attributedMessageIds` is the caller's bounded usage-attribution carry; the
+   *  parser seeds from it, adds to it, and prunes it, so a message whose lines
+   *  straddle a window seam is still counted once. */
   async parseTranscriptWindow(
     agentSessionId: string,
     cwd: string,
     startByte: number,
     maxBytes: number,
+    attributedMessageIds?: Set<string>,
   ): Promise<ParsedTranscriptWindow> {
     const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
-    const window = await parseClaudeTranscriptWindow(filePath, startByte, maxBytes);
+    const window = await parseClaudeTranscriptWindow(
+      filePath, startByte, maxBytes, attributedMessageIds,
+    );
     return { ...window, sourcePath: filePath };
   }
 

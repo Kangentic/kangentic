@@ -601,7 +601,7 @@ Durable per-turn token-usage ledger. One row per assistant turn that reported us
 | spawn_depth | INTEGER | | NULL |
 | parent_tool_use_id | TEXT | | NULL |
 
-Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts), `idx_turn_usage_agent_type` (agent_type, ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
+Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. That PK is the second of two guards, not the only one: an agent reports one API message's tokens on several transcript LINES, each with its own uuid, so the adapter attributes that usage to one line per `message.id` before any row is produced (see `parseTranscriptWindow` in [agent-integration.md](agent-integration.md)). Two lines of one message would otherwise reach this table under two different keys, which the PK cannot collapse. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts), `idx_turn_usage_agent_type` (agent_type, ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
 
 #### Main-thread and subagent rows
 

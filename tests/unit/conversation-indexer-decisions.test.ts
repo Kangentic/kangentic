@@ -220,10 +220,13 @@ describe('ConversationIndexer windowed walk', () => {
       { entries: [turn('u4'), turn('u5')], nextByteOffset: 300, totalBytes: 300 },
     ];
     const requestedOffsets: number[] = [];
+    const carries: Array<Set<string> | undefined> = [];
     const parseTranscriptWindow = vi.fn(async (
       _agentSessionId: string, _cwd: string, startByte: number,
+      _maxBytes: number, attributedMessageIds?: Set<string>,
     ) => {
       requestedOffsets.push(startByte);
+      carries.push(attributedMessageIds);
       const next = windows.shift();
       return { ...next!, sourcePath: '/transcripts/agent-abc.jsonl' };
     });
@@ -244,6 +247,17 @@ describe('ConversationIndexer windowed walk', () => {
     // walk stops on reaching totalBytes rather than looping forever.
     expect(requestedOffsets).toEqual([0, 100, 200]);
     expect(parseTranscriptWindow).toHaveBeenCalledTimes(3);
+
+    // Every window gets the SAME usage-attribution carry, created once outside
+    // the loop. An agent reports one API message's tokens on several transcript
+    // lines; a per-window dedupe attributes them again past a seam, and since
+    // each usage record carries its own line uuid (the ledger's primary key),
+    // that lands as a second row the upsert cannot collapse. Re-creating the set
+    // per window is the silent way back to that, so pin the instance, not just
+    // its presence.
+    expect(carries[0]).toBeInstanceOf(Set);
+    expect(carries[1]).toBe(carries[0]);
+    expect(carries[2]).toBe(carries[0]);
 
     // `seq` is arg index 2 of the memory_chunks INSERT, and `text` is index 7.
     const insertedSeqs = state.chunkInserts.map((args) => args[2]);
