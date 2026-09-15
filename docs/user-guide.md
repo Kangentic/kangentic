@@ -460,7 +460,7 @@ Applies to every project (Settings > Task, not a per-project override). These de
 |---------|-------------|
 | Card Density | Amount of detail shown on task cards (compact, default, comfortable) |
 | Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
-| Ticket Numbers | Show each task's `#N` number as a muted badge on its card (off by default) |
+| Ticket Numbers | Show each task's `#N` number as a muted badge on its card (on by default) |
 
 With Card Preview at its default, a card with a running agent prints that agent's newest message in place of the description, wrapped to three lines at default density, five at comfortable, one at compact. Recent agent messages prints the newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works and stays on the card after the session pauses or ends. A task with no session, or whose agent has not said anything yet, prints its description instead. The Agent Monitor's cards honor the same setting. The Task tab also holds the Context Bar toggles below.
 

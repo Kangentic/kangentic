@@ -182,7 +182,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (39 channels)
+### Sessions (41 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -239,7 +239,7 @@ is `monitor:getTaskDetail`, which names a project explicitly because it reads ON
 project that may not be the open one.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, context-window usage, and a seed of the live output peek. A Command Terminal row carries no task, so it is titled by its window slot and names its branch where a task names its column. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB. Per-project setup is memoized once per snapshot; the row build itself is one indexed task read plus one session read per monitored session. Read-only. |
+| `monitor:getSnapshot` | invoke | Cross-project snapshot of every live and recently-finished agent session: owning project, task title / ticket number / column, activity state and reason, agent, model, runtime, last event, context-window usage, the task description capped at 600 characters (what the card draws in Card Preview's description mode), and a seed of the live output peek. A Command Terminal row carries no task, so it is titled by its window slot and names its branch where a task names its column. Built by joining the process-global session registry and activity/event/usage caches against each owning project's DB. Per-project setup is memoized once per snapshot; the row build itself is one indexed task read plus one session read per monitored session. Read-only. |
 | `monitor:subscribe` | invoke | Register the calling renderer as a live monitor consumer and return a fresh snapshot in the same round trip, so a mounting monitor cannot race the next push for its first frame. Main builds and fans out `monitor:changed` only while at least one subscriber is registered; with every monitor closed, a session event costs no snapshot build at all. Main drops the registration itself when the renderer closes, crashes, or hard-reloads (the task-detail-ownership teardown trio), so a lost renderer cannot pin the pipeline on. |
 | `monitor:unsubscribe` | invoke | Explicit counterpart of `monitor:subscribe`, called when the monitor closes. |
 | `monitor:getTaskDetail` | invoke | Everything the task-detail surface needs about a task's OWN project (task row, project name/path, swimlanes, shortcuts, label colors, base branch, worktree/browser flags, and the per-agent execution map the branch hint needs to tell a local agent from a remote one), so a host that is not that project's board can render it. One bundle rather than stamping five read channels with a projectId. Returns null when the project or task is gone, so the caller closes rather than rendering a husk. Read-only. |
