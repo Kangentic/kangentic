@@ -228,7 +228,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 ### Usage Stats (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog; also merges in-flight sessions from the live `SessionManager` on top (skipped for a day drill or custom window, which are pure ledger accounting) so the SESSIONS KPI and Live view are not undercounted. Read-only; the explicit scope argument carries the project id. |
+| `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent / by-effort / by-subagent-type breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog; also merges in-flight sessions from the live `SessionManager` on top (skipped for a day drill or custom window, which are pure ledger accounting) so the SESSIONS KPI and Live view are not undercounted. Read-only; the explicit scope argument carries the project id. |
 
 ### Agent Monitor (8 channels)
 Machine-global, like the Mobile Bridge channels: the monitor aggregates live sessions across
