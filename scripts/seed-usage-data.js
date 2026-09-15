@@ -4,9 +4,12 @@
  * dashboard (title-bar chart icon / Mod+Shift+U) has something to show in a
  * /preview session without hours of real agent runs.
  *
- * Writes BOTH ledgers the dashboard reads:
+ * Writes every ledger the dashboard reads:
  *   - usage_history          (per-finalized-session totals: KPIs, cost/day, by-model, by-agent)
- *   - conversation_turn_usage (per-turn time series: burn rate, token trend, live window)
+ *   - conversation_turn_usage (per-turn time series: burn rate, token trend, live window),
+ *                            both the driver turns and a subagent fan-out on
+ *                            some sessions, which feeds the Subagents tile and
+ *                            the by-subagent breakdown
  *
  * Seeded rows carry recognizable ids (seed-usage-* / seed-turn-*) so --clean
  * removes exactly what this script created and nothing else.
@@ -125,6 +128,19 @@ function listProjects(configDir) {
   }
 }
 
+// The agent types this board's fan-out commands actually spawn. A dashboard
+// seeded with driver turns alone understates a fan-out by most of its traffic:
+// on the session measured in docs/code-review-fanout-audit.md the subagents
+// moved 2.5x the driver's cache reads and 2.8x its output.
+const SUBAGENT_TYPES = [
+  'review-finder',
+  'test-builder',
+  'doc-auditor',
+  'Explore',
+  'general-purpose',
+  'platform-guard',
+];
+
 function seedProject(configDir, project, days, sessionsPerDay, random) {
   const dbPath = path.join(configDir, 'projects', `${project.id}.db`);
   if (!fs.existsSync(dbPath)) {
@@ -138,6 +154,15 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
     if (!usageColumns.includes('agent') || !usageColumns.includes('effort')) {
       console.warn(`  skip ${project.name}: usage_history is missing the 'agent'/'effort' column(s) - open the project in the updated app once so migrations run`);
       return;
+    }
+
+    // Subagent rows need the columns task #649 added. A project DB that has
+    // not been opened since still seeds its driver turns rather than failing.
+    const turnColumns = db.prepare('SELECT name FROM pragma_table_info(?)').all('conversation_turn_usage')
+      .map((column) => column.name);
+    const canSeedSubagents = turnColumns.includes('subagent_id');
+    if (!canSeedSubagents) {
+      console.warn(`  ${project.name}: conversation_turn_usage has no 'subagent_id' column - seeding driver turns only (open the project in the updated app once so migrations run)`);
     }
 
     const insertSession = db.prepare(`
@@ -155,9 +180,24 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
          cache_read_input_tokens, recorded_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const insertSubagentTurn = canSeedSubagents
+      ? db.prepare(`
+      INSERT OR REPLACE INTO conversation_turn_usage
+        (turn_uuid, agent_session_id, session_id, task_id, model, ts,
+         input_tokens, output_tokens, cache_creation_input_tokens,
+         cache_read_input_tokens, recorded_at,
+         subagent_id, agent_type, spawn_depth, parent_tool_use_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+      : null;
 
     let sessionCounter = 0;
     let turnCounter = 0;
+    let subagentTurnCounter = 0;
+    let subagentCounter = 0;
+    // Every seeded session, so the fan-out pass below can attach subagents to
+    // some of them without re-deriving their start and duration.
+    const seededSessions = [];
     const nowMs = Date.now();
 
     // Writes one session's turns + its usage_history row. Shared by the daily
@@ -212,6 +252,48 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
         profile.agent,
         pickEffort(random, profile),
       );
+
+      seededSessions.push({ sessionId, profile, startMs, durationMs });
+    }
+
+    // Attaches a fan-out to an already-seeded session. Subagent rows carry the
+    // driver's session and model and land ONLY in conversation_turn_usage: the
+    // session's usage_history cost already covers the whole tree, so pricing
+    // these tokens again would double count. Their turn_uuid keeps the
+    // 'seed-turn-' prefix so --clean removes them with everything else.
+    function insertSubagentFanOut(session) {
+      const subagentCount = 2 + Math.floor(random() * 5);
+      for (let subagentIndex = 0; subagentIndex < subagentCount; subagentIndex++) {
+        const agentType = SUBAGENT_TYPES[Math.floor(random() * SUBAGENT_TYPES.length)];
+        const subagentId = `seed-sub-${subagentCounter++}`;
+        const spawnDepth = random() < 0.08 ? 2 : 1;
+        const turnCount = 3 + Math.floor(random() * 25);
+        for (let turnIndex = 0; turnIndex < turnCount; turnIndex++) {
+          const ts = Math.min(session.startMs + Math.floor((session.durationMs * turnIndex) / turnCount), nowMs);
+          const inputTokens = 100 + Math.floor(random() * 900);
+          const outputTokens = 300 + Math.floor(random() * 3_000);
+          insertSubagentTurn.run(
+            `seed-turn-${subagentId}-${turnIndex}`,
+            null,
+            session.sessionId,
+            null,
+            session.profile.modelId,
+            ts,
+            inputTokens,
+            outputTokens,
+            Math.floor(inputTokens * 2.5),
+            // A subagent re-reads its whole prompt cache every turn, which is
+            // why cache read dominates a fan-out.
+            20_000 + Math.floor(random() * 60_000),
+            new Date(ts).toISOString(),
+            subagentId,
+            agentType,
+            spawnDepth,
+            `seed-toolu-${subagentId}`,
+          );
+          subagentTurnCounter++;
+        }
+      }
     }
 
     db.exec('BEGIN');
@@ -256,12 +338,22 @@ function seedProject(configDir, project, days, sessionsPerDay, random) {
         insertSeededSession(sessionId, profile, startMs, turnCount);
       }
 
+      // Only some sessions fan out: /code-review, /test, and /sync-docs do, an
+      // ordinary task agent does not. Runs after both loops so it consumes the
+      // PRNG stream only at the end, leaving every previously-seeded value
+      // byte-identical.
+      if (canSeedSubagents) {
+        for (const session of seededSessions) {
+          if (random() < 0.35) insertSubagentFanOut(session);
+        }
+      }
+
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
     }
-    console.log(`  seeded ${project.name}: ${sessionCounter} sessions, ${turnCounter} turns over ${days} day(s)`);
+    console.log(`  seeded ${project.name}: ${sessionCounter} sessions, ${turnCounter} driver turns, ${subagentTurnCounter} subagent turns over ${days} day(s)`);
   } finally {
     db.close();
   }
@@ -273,6 +365,7 @@ function cleanProject(configDir, project) {
   const db = new DatabaseSync(dbPath);
   try {
     const sessions = db.prepare("DELETE FROM usage_history WHERE session_record_id LIKE 'seed-usage-%'").run();
+    // Covers the subagent rows too: their turn_uuid carries the same prefix.
     const turns = db.prepare("DELETE FROM conversation_turn_usage WHERE turn_uuid LIKE 'seed-turn-%'").run();
     console.log(`  cleaned ${project.name}: ${sessions.changes} sessions, ${turns.changes} turns`);
   } finally {
