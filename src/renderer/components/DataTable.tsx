@@ -153,7 +153,7 @@ function SortableRow<TRow, TKey extends string>({
     <tr
       ref={setNodeRef}
       style={style}
-      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer select-none' : ''}`}
       onClick={onRowClick ? () => onRowClick(row) : undefined}
       onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
       onContextMenu={onRowContextMenu ? (event) => { event.preventDefault(); onRowContextMenu(row, event); } : undefined}
@@ -324,7 +324,7 @@ export function DataTable<TRow, TKey extends string = string>({
                       key={id}
                       data-index={virtualRow.index}
                       ref={virtualizer.measureElement}
-                      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+                      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer select-none' : ''}`}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}
                       onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                       onContextMenu={onRowContextMenu ? (event) => { event.preventDefault(); onRowContextMenu(row, event); } : undefined}
@@ -388,7 +388,7 @@ export function DataTable<TRow, TKey extends string = string>({
             return (
               <tr
                 key={rowKey(row)}
-                className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+                className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer select-none' : ''}`}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
                 onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                 onContextMenu={onRowContextMenu ? (event) => { event.preventDefault(); onRowContextMenu(row, event); } : undefined}

@@ -212,7 +212,7 @@ function MonitorCardInner({
         onClick={() => onOpen(row)}
         onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
         onContextMenu={handleContextMenu}
-        className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer text-left"
+        className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer select-none text-left"
         data-testid="monitor-card"
         data-dense="true"
         data-session-id={row.sessionId}
@@ -244,7 +244,7 @@ function MonitorCardInner({
       onClick={() => onOpen(row)}
       onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
       onContextMenu={handleContextMenu}
-      className="border border-edge rounded-md bg-surface-raised p-2.5 min-w-0 flex flex-col cursor-pointer transition-colors hover:border-edge-input text-left"
+      className="border border-edge rounded-md bg-surface-raised p-2.5 min-w-0 flex flex-col cursor-pointer select-none transition-colors hover:border-edge-input text-left"
       data-testid="monitor-card"
       data-session-id={row.sessionId}
       data-project-id={row.projectId}
