@@ -36,6 +36,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
 }));
 
 import { registerProfileTools } from '../../src/main/agent/mcp-http/profile-tools';
+import { readStringUnionMembers } from './helpers/shared-type-source';
 
 // ---------------------------------------------------------------------------
 // Fake McpServer: captures each registerTool(...) call's inputSchema so the
@@ -131,11 +132,15 @@ function getProfileEntryEnumOptions(inputSchema: z.ZodType, fieldName: string): 
 }
 
 // ---------------------------------------------------------------------------
-// Single source of truth for the expected literals: a `Record<Union, true>`
-// object literal. If `SessionSpawnStrategy` (or `SessionTarget`) ever gains,
-// loses, or renames a member, this object fails `npm run typecheck` (missing
-// key or excess property) instead of relying on someone remembering to keep a
-// parallel string array in sync.
+// Expected literals, read from the union declarations in src/shared/types.ts at
+// runtime.
+//
+// This used to be a `Record<Union, true>` object literal, on the stated grounds
+// that a gained/lost/renamed member would fail `npm run typecheck`. It would
+// not: tsconfig.json includes only `src/**` and `packages/protocol/src/**`, so
+// tsc never reads this file and the annotation fired in an editor and nowhere in
+// CI. The annotations are kept for the editor; the source read is what actually
+// guards the parity.
 // ---------------------------------------------------------------------------
 
 const EXPECTED_SESSION_SPAWN_STRATEGIES: Record<SessionSpawnStrategy, true> = {
@@ -149,6 +154,17 @@ const EXPECTED_SESSION_TARGETS: Record<SessionTarget, true> = {
 };
 
 describe('PROFILE_ENTRY_SCHEMA literal parity with the shared strategy types', () => {
+  it('the expected-literal maps still match the union declarations in types.ts', () => {
+    // The guard the Record<> annotations were believed to provide. Without this,
+    // renaming a union member in types.ts leaves both the schema and these maps
+    // agreeing on a stale literal and nothing in CI notices - which is the exact
+    // shape of the 'always_create' bug this file was written for.
+    expect(Object.keys(EXPECTED_SESSION_SPAWN_STRATEGIES).sort())
+      .toEqual(readStringUnionMembers('SessionSpawnStrategy'));
+    expect(Object.keys(EXPECTED_SESSION_TARGETS).sort())
+      .toEqual(readStringUnionMembers('SessionTarget'));
+  });
+
   it('sessionSpawnStrategy accepts exactly the SessionSpawnStrategy union on create_board_profile', () => {
     const server = makeServerWithProfileTools();
     const options = getProfileEntryEnumOptions(

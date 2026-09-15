@@ -17,11 +17,12 @@
  *
  * Two deliberate mechanism choices:
  *
- * - The field list is SCANNED out of `src/shared/types.ts` at runtime rather
- *   than declared here as `Record<keyof Swimlane, ...>`. `tsconfig.json`
- *   includes only `src/**` and `packages/protocol/src/**`, so `tests/` is never
- *   typechecked by `npm run typecheck` and a type-level guard in a test file
- *   fires in an editor and nowhere in CI. Same scanning approach as
+ * - The field list is SCANNED out of `src/shared/types.ts` at runtime (via
+ *   `helpers/shared-type-source.ts`) rather than declared here as
+ *   `Record<keyof Swimlane, ...>`. `tsconfig.json` includes only `src/**` and
+ *   `packages/protocol/src/**`, so `tests/` is never typechecked by
+ *   `npm run typecheck` and a type-level guard in a test file fires in an editor
+ *   and nowhere in CI. Same scanning approach as
  *   `column-strategy-parity.test.ts` and `spawn-entry-point-parity.test.ts`.
  * - The schema side reflects the REAL zod objects captured off a live
  *   `registerTaskTools` registration (the fake-McpServer pattern from
@@ -30,8 +31,6 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
 import { z } from 'zod/v4';
 
 vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
@@ -45,9 +44,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
 }));
 
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
-
-const REPO_ROOT = path.resolve(__dirname, '../..');
-const TYPES_FILE = 'src/shared/types.ts';
+import { readInterfaceFieldNames, readStringUnionMembers } from './helpers/shared-type-source';
 
 /**
  * Column settings that are NOT reachable over MCP, each with the reason.
@@ -56,9 +53,6 @@ const TYPES_FILE = 'src/shared/types.ts';
  * "known gap" entry is honest and stays visible, which is the point.
  */
 const MCP_UNEXPOSED_COLUMN_FIELDS: Record<string, string> = {
-  auto_command_mode:
-    'Known gap, not a decision. Settable in the Board Manager and round-tripped through '
-    + 'kangentic.json, but absent from the column tools AND from PROFILE_ENTRY_SCHEMA. Its own change.',
   is_archived:
     'Deliberate. docs/mcp-server.md states that update_column never changes a column\'s archived '
     + 'state, so editing Done cannot dislodge it from the board.',
@@ -91,28 +85,7 @@ function paramNameFor(fieldName: string): string {
   return PARAM_NAME_ALIASES[fieldName] ?? toCamelCase(fieldName);
 }
 
-/**
- * The `Swimlane` interface's field names, read out of the shared types file.
- *
- * Throws rather than returning an empty list on an unexpected shape, so a
- * rename of the interface fails loudly instead of letting every assertion below
- * pass vacuously against nothing.
- */
-function readSwimlaneFieldNames(): string[] {
-  const source = fs.readFileSync(path.join(REPO_ROOT, TYPES_FILE), 'utf-8');
-  const interfaceMatch = source.match(/export interface Swimlane \{([\s\S]*?)\n\}/);
-  if (!interfaceMatch) {
-    throw new Error(`Could not find "export interface Swimlane" in ${TYPES_FILE}`);
-  }
-  const fieldNames = Array.from(
-    interfaceMatch[1].matchAll(/^\s{2}([a-z_][a-z0-9_]*)\??:/gim),
-    (match) => match[1],
-  );
-  if (fieldNames.length === 0) {
-    throw new Error(`Parsed the Swimlane interface in ${TYPES_FILE} but found no fields`);
-  }
-  return fieldNames;
-}
+const readSwimlaneFieldNames = (): string[] => readInterfaceFieldNames('Swimlane');
 
 // ---------------------------------------------------------------------------
 // Fake McpServer, capturing each registerTool(...) call's inputSchema.
@@ -210,29 +183,29 @@ describe('MCP column-field parity', () => {
     }
   });
 
-  it('the session fields accept exactly the shared unions, on both tools', () => {
+  it('the enum fields accept exactly the shared unions, on both tools', () => {
     // The literal drift that already shipped once on the profile tools:
     // sessionSpawnStrategy was declared as 'always_create', a value that exists
     // nowhere else, so the real value was rejected and the advertised one was
     // inert downstream. Read from the source unions, not a copy.
-    const source = fs.readFileSync(path.join(REPO_ROOT, TYPES_FILE), 'utf-8');
-    const readUnion = (typeName: string): string[] => {
-      const match = source.match(new RegExp(`export type ${typeName} = ([^;]+);`));
-      if (!match) throw new Error(`Could not find "export type ${typeName}" in ${TYPES_FILE}`);
-      return Array.from(match[1].matchAll(/'([^']+)'/g), (entry) => entry[1]).sort();
-    };
-
     const configs = registerAndCapture();
     for (const toolName of ['kangentic_create_column', 'kangentic_update_column']) {
       const config = configs.get(toolName);
       if (!config) throw new Error(`Tool "${toolName}" was not registered`);
-      expect(enumOptionsFor(config, 'sessionTarget', toolName)).toEqual(readUnion('SessionTarget'));
+      expect(enumOptionsFor(config, 'sessionTarget', toolName))
+        .toEqual(readStringUnionMembers('SessionTarget'));
       expect(enumOptionsFor(config, 'sessionSpawnStrategy', toolName))
-        .toEqual(readUnion('SessionSpawnStrategy'));
+        .toEqual(readStringUnionMembers('SessionSpawnStrategy'));
+      // autoCommandMode carries the same drift risk and the same consequence:
+      // mapRow collapses anything that is not 'deferred' to 'immediate', so a
+      // schema literal the union no longer has is accepted and then silently
+      // acts as the default.
+      expect(enumOptionsFor(config, 'autoCommandMode', toolName))
+        .toEqual(readStringUnionMembers('AutoCommandMode'));
     }
   });
 
-  it('neither session field is nullable, because both DB columns are NOT NULL', () => {
+  it('the enum fields are not nullable, because their DB columns are NOT NULL', () => {
     // The clearable fields beside them use `.nullable()` to mean "clear to the
     // default". There is no such state here: going back to the default is
     // passing "main" / "create_or_resume". A nullable schema would advertise a
@@ -242,7 +215,7 @@ describe('MCP column-field parity', () => {
       const config = configs.get(toolName);
       if (!config) throw new Error(`Tool "${toolName}" was not registered`);
       const shape = readZodDefinition(config.inputSchema).shape;
-      for (const fieldName of ['sessionTarget', 'sessionSpawnStrategy']) {
+      for (const fieldName of ['sessionTarget', 'sessionSpawnStrategy', 'autoCommandMode']) {
         const fieldSchema = shape?.[fieldName];
         if (!fieldSchema) throw new Error(`${toolName} has no "${fieldName}" parameter`);
         // `.optional()` is expected and unwrapped; a `nullable` anywhere in the

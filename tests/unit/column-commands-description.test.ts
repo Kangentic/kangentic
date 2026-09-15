@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleUpdateColumn } from '../../src/main/agent/commands/column-commands';
 import { handleGetColumnDetail } from '../../src/main/agent/commands/analytics-commands';
+import { COLUMN_ENUM_FIELDS } from '../../src/main/agent/commands/column-enums';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ interface MockSwimlaneRow {
   permission_mode: string | null;
   auto_spawn: number;
   auto_command: string | null;
+  auto_command_mode: string;
   plan_exit_target_id: string | null;
   agent_override: string | null;
   model_override: string | null;
@@ -46,6 +48,7 @@ function makeSwimlaneRow(overrides: Partial<MockSwimlaneRow> = {}): MockSwimlane
     permission_mode: null,
     auto_spawn: 1,
     auto_command: null,
+    auto_command_mode: 'immediate',
     plan_exit_target_id: null,
     agent_override: null,
     model_override: null,
@@ -505,5 +508,186 @@ describe('handleGetColumnDetail - taskOrder', () => {
     expect(result.message).toContain('49. #149 Task 49');
     expect(result.message).not.toContain('50. #150 Task 50');
     expect(result.message).toContain('... and 2 more (use kangentic_list_tasks for the full column)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enum narrowing in the HANDLER, which is rule 3 of
+// .claude/rules/mcp-column-field-parity.md. The mobile bridge routes
+// update_column straight into commandHandlers and board-tool.ts checks only
+// that `params` is an object, so the zod schemas are not in that path and this
+// handler is the only narrowing in front of the write.
+// ---------------------------------------------------------------------------
+
+describe('handleUpdateColumn - enum narrowing on the unvalidated path', () => {
+  // Loops the declared map rather than listing fields, so an enum field added
+  // to COLUMN_ENUM_FIELDS and wired into the schema but NOT narrowed in the
+  // handler fails here instead of persisting a value mapRow will assert over.
+  for (const [paramName, validValues] of Object.entries(COLUMN_ENUM_FIELDS)) {
+    it(`rejects an invalid ${paramName} instead of writing it`, () => {
+      const db = createMockDb([makeSwimlaneRow()]);
+      const context = createMockContext(db);
+
+      const result = handleUpdateColumn(
+        { column: 'To Do', [paramName]: 'not-a-real-value' },
+        context,
+      );
+
+      expect(result.success).toBe(false);
+      // The error has to let a calling agent self-correct, so it names both the
+      // value it sent and the set it should have chosen from.
+      expect(result.error).toContain('not-a-real-value');
+      for (const validValue of validValues) {
+        expect(result.error).toContain(validValue);
+      }
+    });
+
+    it(`rejects a non-string ${paramName} rather than coercing it`, () => {
+      const db = createMockDb([makeSwimlaneRow()]);
+      const context = createMockContext(db);
+
+      // String(['isolated']) is 'isolated', so a coercing check would accept a
+      // caller that sent an array instead of the string and write the value as
+      // though the shape had been right.
+      const result = handleUpdateColumn(
+        { column: 'To Do', [paramName]: [validValues[0]] },
+        context,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(`Invalid ${paramName}`);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// handleGetColumnDetail - auto-command timing
+// ---------------------------------------------------------------------------
+
+describe('handleGetColumnDetail - auto-command timing', () => {
+  it('reports a deferred timing alongside the command it applies to', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      auto_command: '/code-review',
+      auto_command_mode: 'deferred',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Auto-command timing: deferred (wait for the current turn)');
+    expect((result.data as Record<string, unknown>).autoCommandMode).toBe('deferred');
+  });
+
+  it('reports immediate timing when the column is at the default', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      auto_command: '/code-review',
+      auto_command_mode: 'immediate',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Auto-command timing: immediate');
+    expect((result.data as Record<string, unknown>).autoCommandMode).toBe('immediate');
+  });
+
+  it('omits the timing line entirely when the column has no auto-command', () => {
+    // The mode is inert without a command, so printing it would read as a
+    // setting that does something on this column.
+    const swimlaneRow = makeSwimlaneRow({
+      auto_command: null,
+      auto_command_mode: 'deferred',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).not.toContain('Auto-command timing');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The session-track pairing, on the mock harness.
+//
+// column-commands-create-delete.test.ts covers this against a real SQLite DB,
+// but that whole file is gated on better-sqlite3 loading under the runner's
+// Node ABI, and postinstall rebuilds better-sqlite3 for ELECTRON's ABI - so it
+// skips locally and on CI alike (see the note in vitest.config.ts). These cases
+// pin the same update-path behavior somewhere that actually executes.
+// ---------------------------------------------------------------------------
+
+describe('handleUpdateColumn - session track pairing', () => {
+  it('sends a column moving to an isolated track to a fresh session per entry', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'main',
+      session_spawn_strategy: 'create_or_resume',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'To Do', sessionTarget: 'isolated' }, context);
+
+    expect(result.success).toBe(true);
+    // The write has to be explicit: the repository update is read-modify-write
+    // off the existing row, so leaving the strategy out re-persists the old one
+    // and the isolated column resumes its own previous pass.
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('always_spawn_new');
+    expect(result.message).toContain('sessionSpawnStrategy');
+  });
+
+  it('returns a column moving back to the main track to resuming', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'isolated',
+      session_spawn_strategy: 'always_spawn_new',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'To Do', sessionTarget: 'main' }, context);
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('create_or_resume');
+  });
+
+  it('does not clobber a deliberate pairing when the target is merely restated', () => {
+    // An MCP caller can pass sessionTarget for a column that already has it,
+    // which the Column Manager's select never does. A persistent isolated track
+    // is one deliberate setting, not a value to be helpfully corrected.
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'isolated',
+      session_spawn_strategy: 'create_or_resume',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn({ column: 'To Do', sessionTarget: 'isolated' }, context);
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('create_or_resume');
+    expect(result.message).not.toContain('sessionSpawnStrategy');
+  });
+
+  it('lets an explicit strategy win over the pairing default', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      session_target: 'main',
+      session_spawn_strategy: 'create_or_resume',
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleUpdateColumn(
+      { column: 'To Do', sessionTarget: 'isolated', sessionSpawnStrategy: 'create_or_resume' },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).sessionTarget).toBe('isolated');
+    expect((result.data as Record<string, unknown>).sessionSpawnStrategy).toBe('create_or_resume');
   });
 });

@@ -32,6 +32,18 @@ const SESSION_TARGET_SCHEMA = z.enum(['main', 'isolated']);
 const SESSION_SPAWN_STRATEGY_SCHEMA = z.enum(['create_or_resume', 'always_spawn_new']);
 
 /**
+ * When the column's autoCommand reaches the agent. Same NOT NULL reasoning as
+ * the two above, so not nullable: the default is expressed by passing
+ * "immediate". Literals pinned by tests/unit/mcp-column-field-parity.test.ts.
+ */
+const AUTO_COMMAND_MODE_SCHEMA = z.enum(['immediate', 'deferred']);
+const AUTO_COMMAND_MODE_DESCRIPTION =
+  'When autoCommand is delivered to the agent. "immediate" (default) injects as soon as the task lands in '
+  + 'the column, interrupting a turn already in progress (the interruption is reported, not silent). '
+  + '"deferred" holds the command until the current turn genuinely finishes, then injects. Only meaningful '
+  + 'alongside autoCommand.';
+
+/**
  * Written to lead a caller to the right answer rather than to name the enum. An
  * agent asked to "set up a Code Review column" has only this text to tell it
  * that a reviewer sharing the task's main session IS the agent that wrote the
@@ -790,6 +802,7 @@ export function registerTaskTools(
         icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
         autoCommand: z.string().max(4000).nullable().optional().describe('Slash command template injected when an agent spawns in this column (e.g. "/review --strict"). Null to clear.'),
+        autoCommandMode: AUTO_COMMAND_MODE_SCHEMA.optional().describe(AUTO_COMMAND_MODE_DESCRIPTION),
         agentOverride: z.string().nullable().optional().describe('Force a specific agent for this column (e.g. "codex"). Null to use project default.'),
         modelOverride: z.string().max(200).nullable().optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet", "claude-opus-4-7"). Null to inherit the agent default.'),
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
@@ -802,7 +815,7 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ column, name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       description: description === undefined ? undefined : description,
@@ -810,6 +823,7 @@ export function registerTaskTools(
       icon: icon === undefined ? undefined : icon,
       autoSpawn: autoSpawn ?? undefined,
       autoCommand: autoCommand === undefined ? undefined : autoCommand,
+      autoCommandMode: autoCommandMode ?? undefined,
       agentOverride: agentOverride === undefined ? undefined : agentOverride,
       modelOverride: modelOverride === undefined ? undefined : modelOverride,
       effortOverride: effortOverride === undefined ? undefined : effortOverride,
@@ -833,6 +847,7 @@ export function registerTaskTools(
         icon: z.string().optional().describe('Lucide icon name.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent. Defaults to true.'),
         autoCommand: z.string().max(4000).optional().describe('Slash command template injected when an agent spawns in this column (e.g. "/review --strict").'),
+        autoCommandMode: AUTO_COMMAND_MODE_SCHEMA.optional().describe(AUTO_COMMAND_MODE_DESCRIPTION),
         agentOverride: z.string().optional().describe('Force a specific agent for this column (e.g. "codex"). Omit to use the project default.'),
         modelOverride: z.string().max(200).optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet"). Omit to inherit the agent default.'),
         effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),
@@ -846,13 +861,14 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
       name,
       description,
       color,
       icon,
       autoSpawn,
       autoCommand,
+      autoCommandMode,
       agentOverride,
       modelOverride,
       effortOverride,

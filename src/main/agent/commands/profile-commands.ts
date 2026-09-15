@@ -22,6 +22,7 @@
  * key, which is exactly what the storage layer means. Never collapse the two.
  */
 import { listActiveSwimlanes } from './column-resolver';
+import { COLUMN_ENUM_FIELDS, parseEnumParam } from './column-enums';
 import type { BoardProfile, BoardProfileEntry } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
@@ -32,6 +33,7 @@ const ENTRY_FIELDS = [
   'effortOverride',
   'permissionMode',
   'autoCommand',
+  'autoCommandMode',
   'autoSpawn',
   'handoffContext',
   'sessionTarget',
@@ -123,9 +125,24 @@ function translateColumnsToIds(
     for (const field of ENTRY_FIELDS) {
       // Key PRESENCE, not truthiness: an explicit null means "clear this
       // column's base pin to the agent default" and must survive.
-      if (Object.prototype.hasOwnProperty.call(rawEntry, field)) {
-        entry[field] = rawEntry[field];
+      if (!Object.prototype.hasOwnProperty.call(rawEntry, field)) continue;
+      const rawValue = rawEntry[field];
+
+      // Validate the enum-valued fields here, not only in the zod schema. The
+      // mobile bridge reaches these handlers through `commandHandlers` with no
+      // schema in the path, and a profile entry is written to kangentic.json,
+      // so an unchecked value would reach the whole team. null is the documented
+      // "clear" state and is never an enum member, so it skips the check.
+      const allowedValues = COLUMN_ENUM_FIELDS[field];
+      if (allowedValues && rawValue !== null) {
+        const parsed = parseEnumParam(rawValue, allowedValues, field);
+        if ('error' in parsed) {
+          return { ok: false, error: `Column "${columnName}": ${parsed.error} Nothing was saved.` };
+        }
+        entry[field] = parsed.value;
+        continue;
       }
+      entry[field] = rawValue;
     }
     if (Object.keys(entry).length > 0) {
       columns[swimlaneId] = entry as BoardProfileEntry;

@@ -8,9 +8,16 @@
  * SQL would assert that we issued the statements, not that they had any effect,
  * which is exactly the class of bug this tool exists to avoid.
  *
- * Skips cleanly when better-sqlite3 cannot load under the runner's Node ABI
- * (NODE_MODULE_VERSION mismatch under plain system Node); CI resolves the
- * correct ABI at build time. Mirrors swimlane-repository.test.ts.
+ * Skips when better-sqlite3 cannot load under the runner's Node ABI. Read that
+ * as "skips everywhere", not "skips locally": `postinstall` runs
+ * scripts/rebuild-native.js, which rebuilds better-sqlite3 against ELECTRON's
+ * headers, so CI's own `npm ci` produces a binding vitest cannot load either
+ * and this whole file is inert on CI too. vitest.config.ts says the same and
+ * names the way out - `node:sqlite`, already flagged on there for the Node 22
+ * runner. Until this file moves to it, treat these cases as documentation and
+ * pin anything load-bearing somewhere that executes; the mock-harness cases in
+ * column-commands-description.test.ts cover the session-track pairing and the
+ * enum narrowing for that reason. Mirrors swimlane-repository.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -328,13 +335,65 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
     expect(untouched?.session_spawn_strategy).toBe('create_or_resume');
   });
 
-  it('lists both session fields in the no-fields-to-update error', () => {
+  it('lists the session fields and autoCommandMode in the no-fields-to-update error', () => {
     handleCreateColumn({ name: 'Brand Review' }, context);
     const response = handleUpdateColumn({ column: 'Brand Review' }, context);
 
     expect(response.success).toBe(false);
     expect(response.error).toContain('sessionTarget');
     expect(response.error).toContain('sessionSpawnStrategy');
+    expect(response.error).toContain('autoCommandMode');
+  });
+
+  // -------------------------------------------------------------------------
+  // auto-command timing
+  //
+  // The third field that drifted the same way as the two above. `mapRow`
+  // collapses anything that is not 'deferred' to 'immediate', so an invalid
+  // value here does not persist visibly - it silently acts as the default,
+  // which is why the handler refuses it outright rather than coercing.
+  // -------------------------------------------------------------------------
+
+  it('persists a deferred auto-command timing on create', () => {
+    handleCreateColumn(
+      { name: 'Brand Review', autoCommand: '/review --brand', autoCommandMode: 'deferred' },
+      context,
+    );
+
+    const created = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(created?.auto_command_mode).toBe('deferred');
+  });
+
+  it('defaults auto-command timing to immediate', () => {
+    handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(created?.auto_command_mode).toBe('immediate');
+  });
+
+  it('updates auto-command timing and reports it', () => {
+    handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', autoCommandMode: 'deferred' },
+      context,
+    );
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('autoCommandMode');
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.auto_command_mode).toBe('deferred');
+  });
+
+  it('rejects an invalid autoCommandMode instead of coercing it to immediate', () => {
+    handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', autoCommandMode: 'defered' },
+      context,
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid autoCommandMode');
+    expect(response.error).toContain('immediate, deferred');
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.auto_command_mode).toBe('immediate');
   });
 
   // -------------------------------------------------------------------------

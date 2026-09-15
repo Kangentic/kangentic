@@ -182,7 +182,7 @@ at create and is deliberately absent from `SwimlaneUpdateInput`.
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `docs/session-lifecycle.md` "Isolated Sessions"):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.
-- `session_spawn_strategy`: `create_or_resume` (default, resume the target track's session or spawn one) or `always_spawn_new` (always spawn fresh on entry, retiring the prior session for that `(task, target)`). See `SessionSpawnStrategy`. The fresh-vs-resume default is context-aware (`resolveForceFresh`): isolated columns default to `always_spawn_new`, main columns to `create_or_resume`.
+- `session_spawn_strategy`: `create_or_resume` (default, resume the target track's session or spawn one) or `always_spawn_new` (always spawn fresh on entry, retiring the prior session for that `(task, target)`). See `SessionSpawnStrategy`. The fresh-vs-resume pairing with `session_target` is applied by the writers, not by `resolveForceFresh`: this column is `NOT NULL DEFAULT 'create_or_resume'` and `SwimlaneRepository.create` writes a concrete string, so the resolver's context-aware fallback never evaluates for a stored row. Every writer (the Column Manager and the MCP column handlers) routes through `snapSpawnStrategyToTarget`, which moves this to `always_spawn_new` when a column becomes `isolated` and back when it returns to `main`, in both cases only while it still sits at the outgoing track's default.
 
 ### tasks table
 
