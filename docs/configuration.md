@@ -68,7 +68,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `theme` | ThemeMode | `'dark'` | UI theme. Values: `dark`, `light`, `moon`, `forest`, `ocean`, `ember`, `sand`, `mint`, `sky`, `peach` |
+| `theme` | ThemeMode | `'dark'` | UI theme. Values: `dark`, `light`, `kangentic-dark`, `kangentic-light`, `moon`, `forest`, `ocean`, `ember`, `sand`, `mint`, `sky`, `peach` |
 | `sidebarVisible` | boolean | `true` | Show/hide sidebar. Global-only. |
 | `boardLayout` | `'horizontal'` \| `'vertical'` | `'horizontal'` | Board scroll direction. Global-only. |
 | `cardDensity` | `'compact'` \| `'default'` \| `'comfortable'` | `'default'` | Amount of detail shown on task cards. Global-only. |

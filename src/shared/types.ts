@@ -2180,12 +2180,14 @@ export function resolvePermissionForAgent(agentList: AgentDetectionInfo[], agent
 }
 
 export type ThemeMode = 'dark' | 'light'
+  | 'kangentic-light' | 'kangentic-dark'
   | 'moon' | 'forest' | 'ocean' | 'ember'
   | 'sand' | 'mint' | 'sky' | 'peach';
 
 /** Background colors for BrowserWindow (prevents flash on launch). */
 export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
   dark: '#18181b', light: '#f5f5f4',
+  'kangentic-light': '#f6f1e8', 'kangentic-dark': '#2d2017',
   moon: '#1a1d2e', forest: '#1a2318', ocean: '#0f1923', ember: '#1f1a17',
   sand: '#f5f0e8', mint: '#eef5f0', sky: '#edf3f8', peach: '#f8f0ec',
 };
@@ -2198,12 +2200,31 @@ export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
  *  before the terminal had its own fixed color scheme. */
 export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
   dark: '#e4e4e7', light: '#292524',
+  'kangentic-light': '#332e27', 'kangentic-dark': '#ded4c8',
   moon: '#c6c8d0', forest: '#c6cac4', ocean: '#c0c6ce', ember: '#ccc8c4',
   sand: '#3d3228', mint: '#1e3028', sky: '#1a2a3a', peach: '#3a2520',
 };
 
-/** UI metadata for the settings dropdown. */
-export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light' }[] = [
+/**
+ * UI metadata for the settings dropdown, and the one place a theme's light-or-dark
+ * base is recorded. `DiffViewer` reads `base` to pick Monaco's theme and falls back
+ * to 'dark' for an id it does not find here, so EVERY theme belongs in this list,
+ * including one the dropdown groups outside the palettes.
+ *
+ * `group` lifts a theme out of the by-base palette lists into its own optgroup. The
+ * product theme gets one because every other group label answers "what are these?":
+ * Standard is the two neutrals, Dark/Light Palette are variations picked for taste.
+ * Folding Kangentic into Standard made that label describe nothing in particular, and
+ * split the pair's identity across two entries that only a shared prefix tied together.
+ *
+ * It ships as a light/dark PAIR rather than one theme because a lone "Kangentic" reads
+ * as if it follows your light/dark preference. It does not, and a dark-mode user picking
+ * the product's own theme would get a bright app.
+ */
+export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light'; group?: 'kangentic' }[] = [
+  // Dark before light, matching the Standard group above it, so both read the same way down.
+  { id: 'kangentic-dark', label: 'Kangentic Dark', base: 'dark', group: 'kangentic' },
+  { id: 'kangentic-light', label: 'Kangentic Light', base: 'light', group: 'kangentic' },
   { id: 'moon', label: 'Moon', base: 'dark' },
   { id: 'forest', label: 'Forest', base: 'dark' },
   { id: 'ocean', label: 'Ocean', base: 'dark' },

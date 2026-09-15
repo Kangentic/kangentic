@@ -143,6 +143,23 @@ test('theme=sand adds theme-sand to <html>; theme=night leaves no theme- class',
   expect(themeClasses).toEqual([]);
 });
 
+test('both Kangentic ids resolve, and the bare kangentic alias still lands on the light one', async ({ page }) => {
+  // The site embeds this frame by URL, so these three spellings are its contract. Nothing ties
+  // demo/boot.js's APP_THEMES to ThemeMode in src/shared/types.ts, which makes this the only
+  // mechanical guard that a theme added to the type is reachable from the web build at all.
+  for (const [requested, expected] of [
+    ['kangentic-light', 'theme-kangentic-light'],
+    ['kangentic-dark', 'theme-kangentic-dark'],
+    ['kangentic', 'theme-kangentic-light'],
+  ]) {
+    await gotoScene(page, { view: 'board', theme: requested, embed: '1', still: '1' });
+    const themeClasses = await page.evaluate(() =>
+      Array.from(document.documentElement.classList).filter((className) => className.startsWith('theme-')),
+    );
+    expect(themeClasses, `?theme=${requested}`).toEqual([expected]);
+  }
+});
+
 test('view=nope renders the error card, logs the unknown scene, and never marks ready', async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on('console', (message) => {
