@@ -2624,6 +2624,17 @@
                 'token counts appear inline in its output.',
             },
           },
+          {
+            name: 'goose', displayName: 'Goose CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with GooseAdapter.permissions in src/main/agent/adapters/goose/goose-adapter.ts
+            permissions: [
+              { mode: 'plan', label: 'Plan (Chat Only, Read-Only)' },
+              { mode: 'default', label: 'Default (Smart Approve)' },
+              { mode: 'acceptEdits', label: 'Auto Edit (Approve Edits)' },
+              { mode: 'bypassPermissions', label: 'Auto (Skip All Approvals)' },
+            ],
+            defaultPermission: 'default',
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];
