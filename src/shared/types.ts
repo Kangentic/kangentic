@@ -2206,10 +2206,27 @@ export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
 };
 
 /**
- * UI metadata for the settings dropdown, and the one place a theme's light-or-dark
- * base is recorded. `DiffViewer` reads `base` to pick Monaco's theme and falls back
- * to 'dark' for an id it does not find here, so EVERY theme belongs in this list,
- * including one the dropdown groups outside the palettes.
+ * Whether each theme is light or dark underneath. `Record<ThemeMode, ...>`, so tsc
+ * refuses a new theme that does not answer the question.
+ *
+ * This exists because the answer used to be read off NAMED_THEMES, which lists only
+ * the NAMED themes: `dark` and `light` are hardcoded in the settings dropdown and are
+ * not in it. `DiffViewer` resolved Monaco's theme with a `?? 'dark'` fallback for an
+ * unlisted id, so the shipped Light theme rendered a BLACK diff pane inside an
+ * otherwise light app, and any future theme would have inherited the same trap by
+ * omission. A total record cannot be omitted from.
+ */
+export const THEME_BASES: Record<ThemeMode, 'dark' | 'light'> = {
+  dark: 'dark', light: 'light',
+  'kangentic-light': 'light', 'kangentic-dark': 'dark',
+  moon: 'dark', forest: 'dark', ocean: 'dark', ember: 'dark',
+  sand: 'light', mint: 'light', sky: 'light', peach: 'light',
+};
+
+/**
+ * UI metadata for the settings dropdown. The light-or-dark question is answered by
+ * THEME_BASES above, not here, so a theme missing from this list costs it a dropdown
+ * entry and nothing else.
  *
  * `group` lifts a theme out of the by-base palette lists into its own optgroup. The
  * product theme gets one because every other group label answers "what are these?":
@@ -2221,18 +2238,18 @@ export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
  * as if it follows your light/dark preference. It does not, and a dark-mode user picking
  * the product's own theme would get a bright app.
  */
-export const NAMED_THEMES: { id: ThemeMode; label: string; base: 'dark' | 'light'; group?: 'kangentic' }[] = [
+export const NAMED_THEMES: { id: ThemeMode; label: string; group?: 'kangentic' }[] = [
   // Dark before light, matching the Standard group above it, so both read the same way down.
-  { id: 'kangentic-dark', label: 'Kangentic Dark', base: 'dark', group: 'kangentic' },
-  { id: 'kangentic-light', label: 'Kangentic Light', base: 'light', group: 'kangentic' },
-  { id: 'moon', label: 'Moon', base: 'dark' },
-  { id: 'forest', label: 'Forest', base: 'dark' },
-  { id: 'ocean', label: 'Ocean', base: 'dark' },
-  { id: 'ember', label: 'Ember', base: 'dark' },
-  { id: 'sand', label: 'Sand', base: 'light' },
-  { id: 'mint', label: 'Mint', base: 'light' },
-  { id: 'sky', label: 'Sky', base: 'light' },
-  { id: 'peach', label: 'Peach', base: 'light' },
+  { id: 'kangentic-dark', label: 'Kangentic Dark', group: 'kangentic' },
+  { id: 'kangentic-light', label: 'Kangentic Light', group: 'kangentic' },
+  { id: 'moon', label: 'Moon' },
+  { id: 'forest', label: 'Forest' },
+  { id: 'ocean', label: 'Ocean' },
+  { id: 'ember', label: 'Ember' },
+  { id: 'sand', label: 'Sand' },
+  { id: 'mint', label: 'Mint' },
+  { id: 'sky', label: 'Sky' },
+  { id: 'peach', label: 'Peach' },
 ];
 
 /** Custom terminal color overrides, editable in the Terminal settings tab's

@@ -8,7 +8,7 @@ import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import { NAMED_THEMES } from '../../../../../shared/types';
+import { THEME_BASES } from '../../../../../shared/types';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
   clampDiffScrollTop,
@@ -108,7 +108,7 @@ export function DiffViewer({
   showEditorBootSpinner = true,
 }: DiffViewerProps) {
   const theme = useConfigStore((state) => state.config.theme);
-  const themeBase = NAMED_THEMES.find((namedTheme) => namedTheme.id === theme)?.base ?? 'dark';
+  const themeBase = THEME_BASES[theme] ?? 'dark';
   const monacoTheme = themeBase === 'dark' ? 'vs-dark' : 'vs';
   const statusConfig = STATUS_LABELS[status];
 

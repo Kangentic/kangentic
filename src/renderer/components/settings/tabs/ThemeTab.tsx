@@ -1,5 +1,5 @@
 import type { AppConfig, ThemeMode } from '../../../../shared/types';
-import { NAMED_THEMES } from '../../../../shared/types';
+import { NAMED_THEMES, THEME_BASES } from '../../../../shared/types';
 import { SettingRow, Select, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
@@ -21,12 +21,12 @@ export function ThemeTab({ config }: { config: AppConfig }) {
           ))}
         </optgroup>
         <optgroup label="Dark Palette">
-          {NAMED_THEMES.filter(theme => theme.base === 'dark' && !theme.group).map(theme => (
+          {NAMED_THEMES.filter(theme => THEME_BASES[theme.id] === 'dark' && !theme.group).map(theme => (
             <option key={theme.id} value={theme.id}>{theme.label}</option>
           ))}
         </optgroup>
         <optgroup label="Light Palette">
-          {NAMED_THEMES.filter(theme => theme.base === 'light' && !theme.group).map(theme => (
+          {NAMED_THEMES.filter(theme => THEME_BASES[theme.id] === 'light' && !theme.group).map(theme => (
             <option key={theme.id} value={theme.id}>{theme.label}</option>
           ))}
         </optgroup>
