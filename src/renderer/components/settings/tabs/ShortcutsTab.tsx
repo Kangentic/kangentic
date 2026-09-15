@@ -120,7 +120,7 @@ function SortableActionItem({
     >
       {/* Summary row */}
       <div
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-hover/50 rounded-lg transition-colors"
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-surface-hover/50 rounded-lg transition-colors"
         onClick={onToggleEdit}
       >
         {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell

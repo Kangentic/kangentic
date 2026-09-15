@@ -149,7 +149,7 @@ function ProjectListItemImpl({
             className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
           />
         ) : (
-          <span className="truncate font-medium flex-1 min-w-0">{project.name}</span>
+          <span className="truncate font-medium flex-1 min-w-0 select-none">{project.name}</span>
         )}
         <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
         {/* Stays in the right-aligned cluster rather than riding the project name.

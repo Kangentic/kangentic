@@ -243,7 +243,7 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
               {sources.map((source) => (
                 <div
                   key={source.id}
-                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-hover/40 cursor-pointer group"
+                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-hover/40 cursor-pointer select-none group"
                   onClick={() => handleSourceClick(source)}
                   data-testid={`import-source-${source.id}`}
                 >
