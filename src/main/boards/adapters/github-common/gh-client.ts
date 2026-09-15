@@ -539,6 +539,7 @@ export class GitHubImporter {
     perPage: number,
     searchQuery?: string,
     state?: string,
+    since?: string,
   ): Promise<{ issues: GitHubIssueRaw[]; hasNextPage: boolean }> {
     const ghPath = await this.detect();
     if (!ghPath) throw new Error('gh CLI not found');
@@ -553,6 +554,8 @@ export class GitHubImporter {
       sort: 'updated',
       direction: 'desc',
     });
+    // GitHub's REST issues endpoint natively filters by `updated_at >= since`.
+    if (since) queryParams.set('since', since);
 
     if (searchQuery) {
       // Use the GitHub search API for text queries
@@ -649,6 +652,7 @@ export class GitHubImporter {
         labels: issue.labels.map((label) => label.name),
         assignee: issue.assignee?.login ?? null,
         state: issue.state,
+        stateCategory: issue.state === 'closed' ? 'closed' : 'open',
         createdAt: issue.created_at,
         updatedAt: issue.updated_at,
         alreadyImported: alreadyImportedIds.has(externalId),
@@ -676,6 +680,10 @@ export class GitHubImporter {
         labels,
         assignee,
         state: item.status ?? 'unknown',
+        // GitHub Projects statuses are freeform columns, not an open/closed axis,
+        // and the Import dialog hides the state toggle for projects, so every item
+        // stays in the 'open' bucket and always shows under the default filter.
+        stateCategory: 'open',
         createdAt: item.content?.createdAt ?? new Date().toISOString(),
         updatedAt: item.content?.updatedAt ?? new Date().toISOString(),
         alreadyImported: alreadyImportedIds.has(externalId),

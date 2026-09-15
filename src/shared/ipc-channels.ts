@@ -337,7 +337,8 @@ export const IPC = {
 
   // Backlog Import
   BACKLOG_IMPORT_CHECK_CLI: 'backlog:importCheckCli',
-  BACKLOG_IMPORT_FETCH: 'backlog:importFetch',
+  BACKLOG_IMPORT_GET_CACHED: 'backlog:importGetCached',
+  BACKLOG_IMPORT_RECONCILE: 'backlog:importReconcile',
   BACKLOG_IMPORT_EXECUTE: 'backlog:importExecute',
   BACKLOG_IMPORT_SOURCES_LIST: 'backlog:importSourcesList',
   BACKLOG_IMPORT_SOURCES_ADD: 'backlog:importSourcesAdd',

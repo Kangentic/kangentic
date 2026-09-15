@@ -1390,6 +1390,27 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN pr_merge_readiness TEXT DEFAULT NULL');
   }
 
+  // Persistent cache of remote board items for the Import dialog, keyed by
+  // (source, repository, external_id). Lets the dialog paint instantly on open
+  // and reconcile only items changed since the cache's high-water mark
+  // (MAX(remote_updated_at)). Living here makes it per-project and survives app
+  // restart and project switch. Timestamps are UTC ISO 8601 via toISOString();
+  // never DEFAULT CURRENT_TIMESTAMP. The composite PK bounds the
+  // (external_source, repository) prefix scan and the MAX(remote_updated_at)
+  // watermark to one source's rows, so no separate index is needed at these sizes.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_item_cache (
+      external_source   TEXT NOT NULL,
+      repository        TEXT NOT NULL,
+      external_id       TEXT NOT NULL,
+      remote_updated_at TEXT NOT NULL,
+      state_category    TEXT NOT NULL,
+      payload           TEXT NOT NULL,
+      fetched_at        TEXT NOT NULL,
+      PRIMARY KEY (external_source, repository, external_id)
+    );
+  `);
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

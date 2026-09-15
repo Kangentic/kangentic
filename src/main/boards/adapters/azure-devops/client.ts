@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import type { ExternalIssue } from '../../../../shared/types';
 import { extractInlineImageUrls } from '../../shared';
 import { convertHtmlToMarkdown } from './html-to-markdown';
-import { buildWiqlQuery } from './wiql';
+import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
 
 const execFileAsync = promisify(execFile);
 
@@ -447,12 +447,15 @@ export class AzureDevOpsImporter {
     searchQuery?: string,
     state?: string,
     iterationPath?: string,
+    changedSince?: string,
   ): Promise<{ items: AzureDevOpsWorkItemRaw[]; hasNextPage: boolean; totalCount: number }> {
     const available = await this.detect();
     if (!available) throw new Error('Azure CLI not found');
 
-    // Check cache to avoid re-fetching the full dataset on every page
-    const cacheKey = `${organization}/${project}:${state ?? ''}:${searchQuery ?? ''}:${iterationPath ?? ''}`;
+    // Check cache to avoid re-fetching the full dataset on every page. changedSince
+    // is part of the key so a full reconcile is never served a stale incremental
+    // result cached under the same org/project/state.
+    const cacheKey = `${organization}/${project}:${state ?? ''}:${searchQuery ?? ''}:${iterationPath ?? ''}:${changedSince ?? ''}`;
     const cached = this.queryCache.get(cacheKey);
     const now = Date.now();
 
@@ -461,7 +464,7 @@ export class AzureDevOpsImporter {
     if (cached && (now - cached.timestamp) < QUERY_CACHE_TTL) {
       allItems = cached.items;
     } else {
-      const wiql = buildWiqlQuery(project, state, searchQuery, iterationPath);
+      const wiql = buildWiqlQuery(project, state, searchQuery, iterationPath, changedSince);
       const organizationUrl = `https://dev.azure.com/${organization}`;
 
       const { stdout } = await execAz(
@@ -532,6 +535,36 @@ export class AzureDevOpsImporter {
     }
 
     return allItems;
+  }
+
+  /**
+   * List every current work item id in a project (all states) via an ids-only
+   * WIQL. Cheap (one query, no fields, comments, or relations) and used by the
+   * reconcile's auto-prune sweep to drop cache rows the remote no longer has.
+   */
+  async fetchWorkItemIds(
+    organization: string,
+    project: string,
+    iterationPath?: string,
+  ): Promise<number[]> {
+    const available = await this.detect();
+    if (!available) throw new Error('Azure CLI not found');
+
+    const wiql = buildWorkItemIdsWiql(project, iterationPath);
+    const organizationUrl = `https://dev.azure.com/${organization}`;
+    const { stdout } = await execAz(
+      [
+        'boards', 'query',
+        '--wiql', wiql,
+        '--organization', organizationUrl,
+        '--project', project,
+        '--output', 'json',
+      ],
+      { timeout: COMMAND_TIMEOUT, maxBuffer: 50 * 1024 * 1024 },
+    );
+
+    const parsed = JSON.parse(stdout) as AzureDevOpsWorkItemRaw[];
+    return parsed.map((item) => item.id);
   }
 
   /**
@@ -826,6 +859,25 @@ export class AzureDevOpsImporter {
     return commentsMap;
   }
 
+  /**
+   * Fetch and format comments as a markdown section per work item, for the import
+   * hydration path. Comments are deferred from the list fetch (one `az rest` per
+   * item is the dominant cost), so this runs only for the handful of items being
+   * imported.
+   */
+  async fetchCommentSectionsForItems(
+    organization: string,
+    project: string,
+    workItemIds: number[],
+  ): Promise<Map<number, string>> {
+    const commentsMap = await this.fetchCommentsForItems(organization, project, workItemIds);
+    const sections = new Map<number, string>();
+    for (const [workItemId, comments] of commentsMap) {
+      if (comments.length > 0) sections.set(workItemId, formatCommentsSection(comments));
+    }
+    return sections;
+  }
+
   /** Extract file attachments from work item relations. */
   extractFileAttachments(
     relations: AzureDevOpsWorkItemRaw['relations'],
@@ -900,6 +952,8 @@ export class AzureDevOpsImporter {
       const relations = relationsMap?.get(item.id);
       const fileAttachments = this.extractFileAttachments(relations);
 
+      const state = fields['System.State'] ?? 'Unknown';
+
       return {
         externalId,
         externalSource: 'azure_devops' as const,
@@ -908,7 +962,8 @@ export class AzureDevOpsImporter {
         body,
         labels,
         assignee,
-        state: fields['System.State'] ?? 'Unknown',
+        state,
+        stateCategory: (AZURE_CLOSED_STATES as readonly string[]).includes(state) ? 'closed' : 'open',
         workItemType: fields['System.WorkItemType'],
         createdAt: fields['System.CreatedDate'] ?? new Date().toISOString(),
         updatedAt: fields['System.ChangedDate'] ?? new Date().toISOString(),
