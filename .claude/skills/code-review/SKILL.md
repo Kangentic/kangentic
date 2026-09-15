@@ -78,7 +78,7 @@ The driver spawns all finders as **read-only** `Agent` subagents **in a single m
 |---|---|---|---|
 | Correctness / Performance / Maintainability / Best-Practices+Conventions | `review-finder` (seed with the matching Review Criteria slice, incl. the "no agent-specific code outside `adapters/`" rule, `any`, shorthand, external-parser fixture) | ALWAYS (one finder per dimension) | - |
 | Cross-file integration (signatures only) | `review-finder` (special prompt below) | ALWAYS when `changedFiles > 1` | - |
-| Test coverage (red-green) | `review-finder` (seed with the red-green coverage criteria below) | ALWAYS when the diff changes behavioral source under `src/` (self-skips docs-only / test-only / pure-styling diffs) | - |
+| Test coverage (red-green) | `review-finder` (seed with the red-green coverage criteria below) | ALWAYS when the diff changes behavioral source under `src/`, `scripts/`, or `packages/` (self-skips docs-only / test-only / pure-styling diffs) | - |
 | IPC consistency | `ipc-auditor` | GATED | `ipc-channels.ts`, `types.ts`, `preload.ts`, `src/main/ipc/handlers/**`, `tests/ui/mock-electron-api.js`, `src/renderer/stores/*-store.ts` |
 | HMR parity | `hmr-parity` | GATED | `src/renderer/stores/**`, `src/renderer/utils/**`, `src/renderer/App.tsx`, or any hunk with `<DndContext`/`import.meta.hot`/a new top-level renderer `let` |
 | Cross-platform | `platform-guard` | GATED | `src/main/pty/**`, `src/main/agent/**`, `src/main/git/**`, `shell-resolver.ts`, `command-builder.ts`, `worktree-manager.ts`, `paths.ts`, `useTerminal.ts`, or any hunk using `path.join`/`fs.rmSync`/`child_process`/an em-dash |
@@ -99,7 +99,7 @@ It answers questions the per-file finders structurally cannot: a new IPC channel
 
 **Removed / renamed surface (correctness + integration finders).** When the diff **deletes or renames** an exported symbol, a string constant, a wire-format token, an enum member, or a config key, a repo-wide search is the only way to catch survivors: the type checker cannot see string-keyed contracts, references in non-typechecked `.js`, or test files that reconstruct the old form as string literals. So for each removed/renamed identifier in the signature delta, the correctness and integration finders must `Grep` the **whole repo (including `tests/`, `docs/`, and `.js`)** and flag any surviving reference outside the diff as a finding. (This class produced the only blocking findings in a recent review - two test files outside the diff still emitted a removed directive format that `tsc` happily passed.)
 
-**Test coverage - the red-green pass.** A dedicated coverage finder runs in the same parallel fan-out whenever the diff changes behavioral source under `src/` (it self-skips docs-only, test-only, and pure-styling diffs). It is **read-only** like every other finder; the tests it identifies are written in the Apply Phase by the `test-builder` agent (see "## Apply Phase"). Its single falsifiable question, asked per behaviorally-significant change in the diff:
+**Test coverage - the red-green pass.** A dedicated coverage finder runs in the same parallel fan-out whenever the diff changes behavioral source under `src/`, `scripts/`, or `packages/` (it self-skips docs-only, test-only, and pure-styling diffs). The gate is the code, not the directory: a `scripts/` change with a `tests/unit/` file behind it is exactly as reviewable as one under `src/`, and reading the gate as `src/`-only would have skipped the finder that added five tests to the review-pack rewrite. It is **read-only** like every other finder; the tests it identifies are written in the Apply Phase by the `test-builder` agent (see "## Apply Phase"). Its single falsifiable question, asked per behaviorally-significant change in the diff:
 
 > Is there a test that would **fail if this change were reverted**?
 
@@ -327,7 +327,7 @@ Left uncommitted (already dirty before this pass, so they hold two authors' work
 - Auto-fixed: N
 - Tests added: K (plus E E2E coverage holes flagged)
 - Skipped: M
-- Pack: <size>KB, <H> hunk sections, <S> stubbed (<paths, or none>); reads beyond the pack: <R> (<path: finder, criterion>, or none)
+- Pack: <size>KB, <L> lines, <B> bodies (<W> windowed), <H> hunk sections, <S> stubbed (<paths, or none>); <F> finders; reads beyond the pack: <R> (<path: finder, criterion>, or none). Copy this row into `docs/code-review-fanout-audit.md` section 14.5.
 - Verdict: **Clean** (or **Needs revision** - M skipped findings require human judgment)
 ```
 
