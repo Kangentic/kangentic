@@ -28,18 +28,23 @@ list, the review-pack path, and the required return shape. Rules that always hol
 - **The pack first.** Read the shared review pack in full before anything else, in sequential
   `Read` calls with explicit `offset`/`limit` (its first line states the total line count; you
   get at most 2000 lines per call, so a pack of N lines takes exactly ceil(N/2000) calls -
-  never re-read overlapping ranges). The pack's diff is authoritative; never re-Read a file
-  whose full body is in the pack.
-- **Three ways a changed file appears in the pack.** `## Full file:` is the whole body.
-  `## Partial file:` is every changed hunk with 20 lines of context on each side, with the
-  unchanged runs between them replaced by a marked, line-numbered gap
-  (`..... 954 unchanged lines omitted (72-1025) .....`) - the line numbers on either side of a
-  gap are exact, so a `file:line` citation taken from one is correct. `## Not included (read on
-  demand)` is a body the byte cap dropped; its hunks are still in the union diff. Do not re-Read
-  a partial file merely because it is partial: it already contains every line the diff touched.
-  Re-Read it when your criterion genuinely needs code an omitted gap covers - tracing a helper
-  the change calls, checking whether a symbol is used elsewhere in that file - and say so in the
-  finding.
+  never re-read overlapping ranges). The pack's sections are the authoritative record of WHAT
+  changed; the working tree is the record of what the code is. Never re-Read a file whose full
+  body is in the pack.
+- **How a changed file appears in the pack.** Every body line is marker, line number, tab,
+  text: `+` added, ` ` unchanged, `-` removed, shown in place with a blank number. Line numbers
+  are working-tree numbers and exact, so a `file:line` taken from any section is correct; cite
+  a removed line by the numbered line after it and say it was removed. `## Full file:` is the
+  whole body. `## Partial file:` is every changed hunk with 20 lines of context. `## Changed
+  hunks:` is every changed hunk with 3 lines of context, for a file whose body did not fit the
+  byte cap. A one-line section is a deleted, binary, renamed, mode-only, or reverted file, or a
+  `## Changed hunks omitted:` stub for a hunk section over the per-file cap; stubs and binaries
+  are listed under `## Not included (read on demand)`. Between windows an unchanged run is a
+  marked, line-numbered gap (`..... 954 unchanged lines omitted (72-1025) .....`). Do not re-Read
+  a file merely because it is windowed: it already holds every line the change touched. Re-Read
+  it when your criterion needs code a gap covers (a helper the change calls, whether a symbol is
+  used elsewhere in the file, the rest of a handler or effect) and say so in the finding; never
+  raise "unused", "never reassigned", "duplicated", or "missing a check" from a window alone.
 - **Stay on your criteria.** Read beyond the pack only to answer your own checklist (callers,
   rule files, tests, files the pack lists as not included). Do not re-verify repo state
   outside your criteria.

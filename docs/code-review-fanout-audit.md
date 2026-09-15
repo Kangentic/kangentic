@@ -321,6 +321,7 @@ bill on large diffs (overlaps with R1; count them together, not additively). Tra
 is the one recommendation that touches the falsifiable-finding contract's evidence base; a
 finder without a file body can mis-cite line numbers. Mitigate by keeping the pack's diff
 hunks full-fidelity and validating over several reviews that per-dimension finding counts hold.
+(Evaluated 2026-09-14 against the deduplicated pack and not shipped; see section 14.3.)
 
 **R6. Shrink what every context carries: CLAUDE.md now, floor hygiene generally.** Cost:
 ~9.4k tokens in each of 11 floors (~103k written) plus a share of every cache re-read; the
@@ -575,6 +576,7 @@ Two facts about the pack, noted and deliberately not addressed here: the union d
 all, so a pathological diff still blows pack size regardless of the body cap; and for a fully
 packed file its diff's `+` and context lines are duplicated in its body (~98KB of that same 194KB).
 Both are separate designs with their own quality risk, and neither causes cross-finder duplication.
+Both are addressed in section 14.
 
 ### 13.4 A/B, section 10's shape
 
@@ -651,4 +653,114 @@ under each hostile setting.
   duplicate-read files is packed under any variant measured; `KebabMenu.tsx` lands only at a
   10-line context width and `task-changes-panel-slice.ts` at none. By 13.1 rescuing them costs
   about ten times what it saves, so the study ends by making every packed byte cheaper rather than
-  by buying more of them.
+  by buying more of them. Section 14's hunk tier packs both files' changed hunks; whether that
+  removes the duplicate reads is unmeasured.
+
+## 14. One record per changed file: the hunk tier and the per-file cap (2026-09-14)
+
+Three items from sections 13 and 7, taken together because one renderer answers all three. 13.3
+left the union diff outside every cap (194,209 bytes of #578's 400KB pack) and left a body-packed
+file's `+` and context lines duplicated between the diff and the body (about 98KB of that 194KB).
+R5 (section 7) was the one recommendation still unimplemented, held back by its own trade-away: a
+finder given hunks without a body could mis-cite line numbers. A pack in which every changed line
+appears exactly once, with its working-tree line number and a change marker, removes the
+duplication by construction, puts the former diff under a cap that changes size and not coverage,
+and gives every finder an exact number to cite. The first two shipped. R5 was then measured against
+the result and declined (14.3).
+
+### 14.1 Design decisions
+
+- **One format.** The raw union diff section is gone. Every changed file is exactly one section,
+  and every body line is `<marker><line number, 5 wide><tab><text>`: `+` added, ` ` unchanged, `-`
+  removed with a blank number, shown in place before the line that follows it. A file admitted
+  under `PACK_BODY_CAP_BYTES` is `## Full file:` or `## Partial file:` (20 lines of context, as
+  13.2 shipped it); every other readable file is `## Changed hunks:`, the same windowed renderer at
+  `HUNK_CONTEXT_LINES` (3). Deleted, binary, rename-only, mode-only, and reverted files get a
+  one-line section. The header carries a one-line legend and the table of contents lists every
+  changed file, so a finder never meets a line it cannot cite or a file it cannot find.
+- **Admission is still decided on the plain full-body cost**, the numbered body with no markers
+  and no removed lines, so the set of files with a body is byte-identical to 13.2's set. The
+  replay's `bodies packed` column must equal 13.3's on every row; a difference is a bug. Written
+  body bytes now exceed the charged budget slightly (one marker byte per line plus the removed
+  lines); the summary prints both numbers.
+- **The former diff is capped per file, not globally.** A hunk-tier section that alone exceeds
+  `PACK_HUNK_SECTION_CAP_BYTES` (100KB, half the body cap) becomes a one-line
+  `## Changed hunks omitted:` stub listed under `## Not included`. Whether a file is stubbed is a
+  fact about that file, never about its neighbours, which is the same property full-body admission
+  has: a global cap would make a file's presence depend on what else changed, the greedy reorder
+  13.2 measured losing files to. The pathological case 13.3 named (one generated or lockfile diff of
+  thousands of lines) is exactly a single oversized section; a 75-file PR is large, not
+  pathological, and its hunks are the review surface. So the pack is bounded by the review's own
+  changed lines plus the body cap, not by a constant. On the corpus the cap never fired (14.2).
+- **Every rendered byte comes from one parse.** The `--unified=0` merge-base diff that 13.2
+  introduced for window placement (working-tree coordinates) now feeds the whole pack, including
+  the removed lines. The raw three-dot and HEAD diffs are no longer gathered, and the changed-file
+  names come from the numstat lines the script already fetches, so a build spawns six git processes
+  instead of eight. `diff.context` now reaches no rendered byte and stays pinned. A parse failure is
+  loud: there is no fallback shape that would not claim nothing changed.
+- **A light shape exists for measurement.** `--body-cap 0` renders every readable file at the hunk
+  tier. That is the pack R5 would have handed its light finders, and 14.2's light column is its
+  size. The review skill never passes the flag.
+
+### 14.2 Replay over the same eight PRs
+
+`scripts/replay-review-pack-corpus.mjs` automates 13.3's method: an isolated clone,
+`refs/pull/<n>/head` for the reviewed head (this repo rebase-merges, so the pull ref is the only
+source), `gh pr view` for the base, three arms per PR. Control is the script 13.3 shipped; its
+column reproduces 13.3's treatment column byte for byte, as 13.5 says it must.
+
+| Diff | shape | control | one-record pack | delta | light shape | light vs pack | bodies packed | hunk sections | stubbed |
+|---|---|---|---|---|---|---|---|---|---|
+| PR341 (#578) | 34f +3158/-311 | 397,151 | 317,155 | **-20.1%** | 281,969 | -11.1% | 7 -> 7 | 27 | 0 |
+| PR329 (#568) | 79f +4772/-608 | 695,631 | 570,382 | **-18.0%** | 549,455 | -3.7% | 9 -> 9 | 70 | 0 |
+| PR316 | 75f +6323/-194 | 581,776 | 442,691 | **-23.9%** | 432,107 | -2.4% | 15 -> 15 | 60 | 0 |
+| PR337 | 60f +3416/-77 | 370,024 | 277,484 | **-25.0%** | 251,422 | -9.4% | 17 -> 17 | 43 | 0 |
+| PR302 | 61f +5817/-92 | 551,839 | 424,936 | **-23.0%** | 411,484 | -3.2% | 11 -> 11 | 50 | 0 |
+| PR338 | 20f +1213/-64 | 180,075 | 114,754 | **-36.3%** | 94,237 | -17.9% | 13 -> 13 | 7 | 0 |
+| PR328 | 8f +294/-25 | 64,337 | 44,719 | **-30.5%** | 25,743 | -42.4% | 8 -> 8 | 0 | 0 |
+| PR306 | 5f +694/-27 | 111,789 | 68,169 | **-39.0%** | 52,344 | -23.2% | 5 -> 5 | 0 | 0 |
+| Total | | 2,952,622 | 2,260,290 | **-23.4%** | 2,098,761 | -7.1% | | | |
+
+Corpus total **2,952,622 -> 2,260,290 bytes (-23.4%)**; at the nine finders that read the pack,
+about **6.2MB less finder input** across eight reviews, on top of 13.3's 14.7%. Coverage did not
+move: `bodies packed` is identical on every row, the per-file cap stubbed **zero** files, and every
+changed line of every PR is in its pack exactly once. Contract checks passed on all eight and all
+three arms: the `Total lines:` header matches the file, every TOC entry points at its own heading,
+the `paths:` line is byte-identical across arms, the new pack is never larger than control, and all
+**87,341** prefixed line numbers checked across the three arms match the working tree. The saving
+is spread across diff sizes (-18% to -39%) where windowing's was concentrated on small diffs:
+dedupe removes bytes in proportion to what was body-packed. Build time on the same machine fell
+from 480 to 970 ms per pack to 310 to 560 ms; at six sequential git spawns of about 55 ms each plus
+45 ms of node startup, the build is now spawn-bound and its own parse and render are within noise.
+
+### 14.3 R5, measured and declined
+
+The steering for this change was to land the two contract-neutral items first, re-measure, and
+only then ask whether R5 still adds value, and to judge R5 itself on 13.4's non-cost evidence
+(citation accuracy, format-caused re-reads) rather than on cost. The light column answers the first
+question before the second is reached. On the corpus total the light shape is **7.1%** smaller than
+the one-record pack, and on the three largest diffs, the case R5's 10% to 20% estimate was made
+for, **2.4% to 3.7%**. After the dedupe a large PR's pack is mostly hunk tier already (60 of
+PR316's 75 files), so the two shapes nearly coincide; R5's premise, that the diff was half the pack
+and every body was paid on top of it, no longer holds. With two of nine pack readers on the light
+shape (maintainability and conventions; integration gets no pack, so performance would have had
+to stay on the full pack as the second body-tier finder R5's own mitigation requires), the fan-out
+would save about **1.6%** of pack bytes, against a change to the falsifiable-finding contract's
+evidence base. There is nothing to validate shipping, so the 13.4-shaped A/B (four Sonnet
+finders) was not run. The skill still hands every finder the one pack, which keeps the public
+description of the pack true. Revisit only if a later pack change reopens a gap between the two
+shapes; the `--body-cap` knob and the replay script are what measures it.
+
+### 14.4 Stated limitations
+
+- Read multiplicity still has exactly one ground-truth sample (#578); 13.6's caveat stands. Both
+  of that review's duplicate-read files now carry their changed lines at 3 lines of context, and
+  whether that removes the reads is unmeasured until a review runs on a diff of that shape.
+- Replay uses landed commits as a proxy for the reviewed tree (13.6, first bullet).
+- The per-file cap's value is checked only against how often the corpus hits it, which is never.
+  Its first real firing will be a lockfile or fixture diff.
+- The R5 verdict rests on bytes, which the steering said not to decide on. Bytes are used here
+  only as the gate to the A/B: a saving this small cannot justify the A/B's own cost, let alone the
+  contract risk the A/B exists to measure.
+- The replay's control arm ran first on each PR, so its build times include a cold object cache;
+  the treatment's advantage is the two dropped spawns, not the cache.

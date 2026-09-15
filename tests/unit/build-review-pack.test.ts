@@ -12,15 +12,19 @@
  * overwrite .kangentic/REVIEW_PREEXISTING_DIRTY.tmp, which an in-flight review pass may
  * depend on.
  *
- * Four behaviors are pinned:
+ * The pack has one format: every changed file is exactly one section, and every body line is
+ * `<marker><line number, 5 wide><tab><text>` with "+" added, " " unchanged, and "-" removed
+ * (no number, shown in place before the line that follows it). A file admitted under the body
+ * cap is "## Full file:" or "## Partial file:" (hunks with 20 lines of context); every other
+ * readable file is "## Changed hunks:" (3 lines of context). There is no separate union diff.
+ * The behaviors pinned:
  *
  * 1. The "Total lines: N" header always matches the pack file's actual line count,
  *    including the trailing "## Not included (read on demand)" section that appears
- *    whenever a changed file is omitted (oversized, binary, or over the pack byte cap).
- *    Before the fix, N was derived from the table-of-contents cursor arithmetic, which
- *    stopped advancing once the packed sections ended and never accounted for the
- *    omitted-files block - undercounting by 1 + omittedCount whenever anything was
- *    omitted.
+ *    whenever a changed file's content is absent (oversized, binary, or a stubbed hunk
+ *    section). Before the fix, N was derived from the table-of-contents cursor arithmetic,
+ *    which stopped advancing once the packed sections ended and never accounted for the
+ *    omitted-files block - undercounting by 1 + omittedCount whenever anything was omitted.
  *
  * 2. parseNumstat resolves git's rename notation ("old => new") to the new path via
  *    resolveNumstatPath, so a renamed-and-modified committed file is ranked by its true
@@ -28,27 +32,27 @@
  *    so an unresolved lookup always misses).
  *
  * 3. Every "- line N: <label>" table-of-contents entry points at the exact line where its
- *    own section heading ("## Union diff", or a "## Full file: <path>" / "## Partial file:
- *    <path>" body heading) starts. A windowed section is the harder case: its rendered
- *    length is the shown lines plus one line per elision marker, not the file's line
- *    count, so the cursor must advance by what was written. This bit
- *    during development: the diff heading's own line was uncounted in the cursor
- *    arithmetic, sending every TOC entry to a blank line instead of its heading, and the
- *    only reason it was caught was manual verification, not a test.
+ *    own section heading starts, and every changed file has exactly one heading. A windowed
+ *    section is the harder case: its rendered length is the shown lines plus one line per
+ *    elision marker plus one line per removed line, not the file's line count, so the cursor
+ *    must advance by what was written. This bit during development: the first section's own
+ *    heading line was uncounted in the cursor arithmetic, sending every TOC entry to a blank
+ *    line instead of its heading, and the only reason it was caught was manual verification,
+ *    not a test. The second header line (the format legend) is part of that arithmetic too.
  *
- * 4. A file that pushes the packed bodies over PACK_BODY_CAP_BYTES (200KB) is omitted from
- *    the packed bodies with reason "full body over pack cap", but its diff hunk stays in the
- *    union diff (the byte cap only trims full-body packing, never the diff itself) - and
- *    the TOC/header-total contract from (1) and (3) still holds for a pack shaped this way
- *    (an omitted file contributes no TOC entry and does not perturb the header block).
+ * 4. A file that pushes the packed bodies over PACK_BODY_CAP_BYTES (200KB) is not given a
+ *    body; it is packed at the hunk tier ("## Changed hunks:", every changed line with 3 lines
+ *    of context and exact numbers), and it is NOT listed under "## Not included", because it
+ *    carries every changed line. A hunk-tier section that alone exceeds
+ *    PACK_HUNK_SECTION_CAP_BYTES (100KB) becomes a one-line "## Changed hunks omitted:" stub
+ *    and IS listed there. The cap is a fact about the file alone, never about what else
+ *    changed: a smaller hunk-tier file beside a stubbed one keeps its hunks.
  *
  * 5. The stdout "  paths: " line carries every changed file across all three layers
- *    (committed-vs-base, uncommitted, untracked), INCLUDING one trimmed by the 200KB cap,
- *    and is distinct from the "  changed files: " count line above it. This is the line
- *    /code-review's SKILL.md tells the driver to read for `changedFiles`, and the reason it
- *    exists at all: the pack's TOC lists only files whose body was packed, so deriving the
- *    list from the TOC silently drops a cap-trimmed file and un-gates a domain auditor whose
- *    glob it matched.
+ *    (committed-vs-base, uncommitted, untracked), and is distinct from the "  changed files: "
+ *    count line above it. This is the line /code-review's SKILL.md tells the driver to read
+ *    for `changedFiles`: it is the script's own array, so it cannot disagree with the pack.
+ *    The TOC now lists every changed file too, and the two are asserted to match one-to-one.
  *
  * 6. The script exits 0 on both the empty-diff and non-empty-diff paths, so only the
  *    literal "NO CHANGES:" stdout prefix (never the exit status) tells a caller which case
@@ -64,39 +68,44 @@
  *    [N, N - 1] for a zero-length hunk - a silent one-line-short window (the trailing context
  *    stops at N + WINDOW_CONTEXT_LINES - 1 instead of N + WINDOW_CONTEXT_LINES) rather than a
  *    loud failure, because the context expansion on both sides rescues the inverted range from
- *    the later end >= start filter for any realistically sized file.
+ *    the later end >= start filter for any realistically sized file. The removed lines render
+ *    in place, between the two surviving neighbours.
  *
  * 9. Window context is clamped at both file boundaries: an edit within WINDOW_CONTEXT_LINES
  *    (20) of line 1 or of the file's last line never reads past either end of the lines array.
  *
  * 10. Every elision marker's own arithmetic, not just its textual shape, is correct: the
  *     reported skip count equals its range's line span, and the range itself abuts the shown
- *     line numbers immediately surrounding it (or the file's first/last line at a boundary).
+ *     line numbers immediately surrounding it (or the file's first/last line at a boundary),
+ *     looking through removed lines, which carry no number.
  *
  * 11. WINDOW_MAX_SHARE_OF_FULL (0.85) is enforced at its actual boundary, not merely at the
  *     extremes: a windowed body whose byte share lands fractionally ABOVE 0.85 still renders
  *     as "## Full file:", and one whose share lands fractionally BELOW renders as
- *     "## Partial file:". Neither the sparse-vs-dense test (behavior 7's fixture; ratios near
- *     0.1 and 1.0) nor any other existing fixture pins where the 0.85 cutoff itself sits - a
- *     regression that moved the constant anywhere within that wide gap would still pass every
- *     other test in this file.
+ *     "## Partial file:".
  *
  * 12. WINDOW_MERGE_GAP_LINES (5) is a "less-than-or-equal" comparison against the
- *     CONTEXT-EXPANDED gap between two windows (start of the next window vs. end of the
- *     previous one), not the raw hunk-to-hunk distance: two windows exactly 5 lines apart
- *     (post-expansion) merge into one span with no elision marker between them, while two
- *     windows 6 lines apart stay separate with a marker reporting exactly 5 omitted lines. The
- *     existing merge test (behavior 7) exercises a 3-line gap, comfortably inside the boundary
- *     rather than pinning it.
+ *     CONTEXT-EXPANDED gap between two windows, not the raw hunk-to-hunk distance: two windows
+ *     exactly 5 lines apart (post-expansion) merge, while two windows 6 lines apart stay
+ *     separate with a marker reporting exactly 5 omitted lines.
  *
- * Investigated and confirmed unreachable: a defensive try/catch in the script wraps
- * `git merge-base` and the `--unified=0` diff it feeds windowing from, intending to fall back
- * to packing every body in full if either fails (e.g. baseRef and HEAD share no history).
- * There is no such baseRef, however, that does not ALSO crash the script's earlier, unguarded
- * `gitDiff(baseRef + '...HEAD')` calls first (confirmed against unrelated histories, an orphan
- * branch, and a shallow clone missing the common ancestor - all fail identically before
- * windowing code ever runs). Those earlier calls predate this diff and are out of scope here;
- * left as a follow-up rather than a test that would need to assert against the crash.
+ * 13. Every rendered line carries the right marker: "+" on an added line, " " on an unchanged
+ *     one, "-" with a blank number field on a removed line, rendered in place - before the
+ *     first line of the hunk that replaced it, after the collapse point of a pure deletion,
+ *     before line 1 for a deletion at the top of the file, and before the phantom empty last
+ *     line for a deletion at the end of a newline-terminated file. A file changed in a commit
+ *     and reverted in the working tree, a deleted file, a pure rename, and a binary each get
+ *     their own one-line (or hunks-only) section, so the pack never claims a body it cannot
+ *     show. The same file rendered with `--body-cap 0` (the light shape) is a
+ *     "## Changed hunks:" section at 3 lines of context with the same markers.
+ *
+ * 14. The pack is byte-identical under hostile local git config: the seven `-c` pins plus
+ *     `--no-ext-diff`. Every rendered byte now derives from the one `--unified=0` merge-base
+ *     parse, so a lost prefix pin would switch the WHOLE parse off, not just windowing.
+ *
+ * Not covered, and why: a C-quoted path (a quote, backslash, or control character in a file
+ * name) lands its raw block under "## Union diff (unparsed)". NTFS forbids those characters,
+ * so the fixture cannot be created on the Windows machines this suite also runs on.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -147,15 +156,37 @@ function runBuildScript(cwd: string, args: string[] = []): string {
   }
 }
 
+function readPack(cwd: string): string {
+  return fs.readFileSync(path.join(cwd, '.kangentic', 'REVIEW_PACK.tmp.md'), 'utf8');
+}
+
+// The one line format every section uses. Assertions build expected lines through this helper
+// rather than hand-padding, so the marker column cannot silently drift out of the assertions.
+function markedLine(marker: '+' | '-' | ' ', lineNumber: number | null, text: string): string {
+  return `${marker}${lineNumber === null ? '     ' : String(lineNumber).padStart(5)}\t${text}`;
+}
+
+// A section heading names its file between "## <Kind>: " and the LAST " (", so a path that
+// itself contains " (" still resolves. Returns null for the non-file headings ("## Contents
+// (start line)", "## Not included (read on demand)", "## Union diff (unparsed)").
+function headingPathOf(headingLine: string): string | null {
+  const match = headingLine.match(/^## [A-Za-z ]+: (.+)$/);
+  if (!match) return null;
+  const remainder = match[1];
+  const parenIndex = remainder.lastIndexOf(' (');
+  return parenIndex === -1 ? remainder : remainder.slice(0, parenIndex);
+}
+
 interface TocEntry {
   lineNumber: number;
   label: string;
 }
 
 function extractTocEntries(packContent: string): TocEntry[] {
-  const contentsBlock = packContent
-    .split('## Contents (start line)')[1]
-    .split('## Union diff')[0];
+  // The TOC runs from the "## Contents" heading to the first blank line; the section that
+  // follows it varies (there is no fixed "## Union diff" any more), so the blank line is the
+  // only stable terminator.
+  const contentsBlock = packContent.split('## Contents (start line)\n')[1].split('\n\n')[0];
   const entryPattern = /^- line (\d+): (.+)$/gm;
   const entries: TocEntry[] = [];
   let match: RegExpExecArray | null;
@@ -180,36 +211,37 @@ function parsePathsLine(buildOutput: string): string[] | undefined {
   return pathsLine.slice(PATHS_LINE_PREFIX.length).trim().split(', ');
 }
 
-// Shared by the TOC-accuracy test and the pack-cap test: both need to confirm every TOC
-// entry's claimed line number is exactly where its section heading starts, and that the
-// "Total lines" header matches the pack's real length. Running it against two differently
-// shaped packs (committed+uncommitted vs. uncommitted-only-with-an-omission) is deliberate,
-// not duplication - see behavior 4's comment above.
+// Shared by most tests: every TOC entry's claimed line number is exactly where its section
+// heading starts, every label has exactly one heading anywhere in the pack (a duplicated
+// section would be the diff/body redundancy this format exists to remove), and the "Total
+// lines" header matches the pack's real length.
 function assertTocLineAccuracyAndHeaderTotal(packContent: string): TocEntry[] {
   const packLines = packContent.split('\n');
   const entries = extractTocEntries(packContent);
-  // Guards the helper itself, not just today's two callers: with zero entries the loop
-  // below is vacuously true and the header check alone passes on any pack, so a future
-  // caller that forgets its own non-vacuity assertion would still get real coverage here.
+  // Guards the helper itself, not just today's callers: with zero entries the loop below is
+  // vacuously true and the header check alone passes on any pack, so a future caller that
+  // forgets its own non-vacuity assertion would still get real coverage here.
   expect(entries.length).toBeGreaterThan(0);
+  // The second header line is the format legend, and the cursor arithmetic counts it.
+  expect(packLines[1]).toMatch(/^(Full|Light) pack \(.*\)\. Line format: /);
+  const labels = entries.map((entry) => entry.label);
+  expect(new Set(labels).size).toBe(labels.length);
   for (const entry of entries) {
-    // A body is packed either in full or as windows around its changed hunks, so a section
-    // heading is "## Full file:" or "## Partial file:". Both are accepted here; which one a
-    // given file gets is pinned by the windowing tests, not by the cursor arithmetic. The
-    // cursor bug this helper guards is identical either way, and a windowed section is the
-    // harder case for it: its rendered length is the shown lines PLUS one line per elision
-    // marker, not the file's line count.
-    const expectedPrefix =
-      entry.label === 'Union diff'
-        ? '## Union diff'
-        : packLines[entry.lineNumber - 1].startsWith('## Partial file: ')
-          ? `## Partial file: ${entry.label}`
-          : `## Full file: ${entry.label}`;
-    // Compare the actual line's leading text against the expected prefix (rather than a
-    // boolean startsWith assertion) so a failure prints the real line - for the historical
-    // off-by-one bug that line is the empty string, which is immediately diagnostic.
-    const actualPrefix = packLines[entry.lineNumber - 1].slice(0, expectedPrefix.length);
-    expect(actualPrefix).toBe(expectedPrefix);
+    const actualLine = packLines[entry.lineNumber - 1];
+    // Compare the heading's own label against the entry (rather than a boolean assertion) so a
+    // failure prints the real line - for the historical off-by-one bug that line is the empty
+    // string, which is immediately diagnostic.
+    const actualLabel =
+      entry.label === 'Union diff (unparsed)'
+        ? actualLine === '## Union diff (unparsed)'
+          ? entry.label
+          : actualLine
+        : (headingPathOf(actualLine) ?? actualLine);
+    expect(actualLabel).toBe(entry.label);
+    const headingCount = packLines.filter(
+      (line) => line.startsWith('## ') && headingPathOf(line) === entry.label,
+    ).length;
+    if (entry.label !== 'Union diff (unparsed)') expect(headingCount).toBe(1);
   }
 
   const headerMatch = packContent.match(/^Total lines: (\d+)\./);
@@ -217,6 +249,22 @@ function assertTocLineAccuracyAndHeaderTotal(packContent: string): TocEntry[] {
   expect(Number(headerMatch![1])).toBe(packLines.length);
 
   return entries;
+}
+
+// The TOC lists exactly the script's own changed-file list, and each of those files has exactly
+// one section heading: the "one record per changed file" contract.
+function assertOneSectionPerChangedFile(packContent: string, changedFiles: string[]): void {
+  const tocLabels = extractTocEntries(packContent)
+    .map((entry) => entry.label)
+    .filter((label) => label !== 'Union diff (unparsed)');
+  expect([...tocLabels].sort()).toEqual([...changedFiles].sort());
+  const packLines = packContent.split('\n');
+  for (const relPath of changedFiles) {
+    const headings = packLines.filter(
+      (line) => line.startsWith('## ') && headingPathOf(line) === relPath,
+    );
+    expect(headings).toHaveLength(1);
+  }
 }
 
 interface WindowedSectionToken {
@@ -228,13 +276,14 @@ interface WindowedSectionToken {
 }
 
 // Walks a windowed section's rendered text (heading remainder plus body) into an ordered list
-// of its two possible line shapes: a numbered content line, or an elision marker. Order is
-// preserved because assertElisionMarkerArithmetic needs each marker's nearest neighboring
-// content lines on both sides, not just the marker text in isolation.
+// of its numbered content lines and elision markers. A removed line ("-" marker, blank number)
+// is deliberately NOT a token: markers' nearest-neighbour arithmetic must look through it to
+// the numbered line it precedes. Order is preserved because assertElisionMarkerArithmetic
+// needs each marker's nearest numbered neighbours on both sides.
 function tokenizeWindowedSection(sectionText: string): WindowedSectionToken[] {
   const tokens: WindowedSectionToken[] = [];
   for (const renderedLine of sectionText.split('\n')) {
-    const numberedLineMatch = renderedLine.match(/^\s*(\d+)\t/);
+    const numberedLineMatch = renderedLine.match(/^[ +] *(\d+)\t/);
     if (numberedLineMatch) {
       tokens.push({ kind: 'line', lineNumber: Number(numberedLineMatch[1]) });
       continue;
@@ -298,6 +347,13 @@ function assertElisionMarkerArithmetic(sectionText: string): void {
   }
 }
 
+// The body of one section: everything after its heading up to the next heading.
+function sectionBodyOf(packContent: string, headingPrefix: string): string {
+  const parts = packContent.split(headingPrefix);
+  expect(parts.length).toBe(2);
+  return parts[1].split('\n## ')[0];
+}
+
 beforeEach(() => {
   repoDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-review-pack-'));
   runGit(['init', '-q'], repoDirectory);
@@ -317,9 +373,9 @@ describe('build-review-pack.mjs', () => {
       fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\nline two\n');
       commitAll(repoDirectory, 'base commit');
 
-      // An uncommitted edit so the union diff and a packed body section are non-empty -
-      // otherwise this fixture would only exercise a near-empty pack and barely traverse
-      // the table-of-contents cursor arithmetic the fix replaced.
+      // An uncommitted edit so a packed body section is non-empty - otherwise this fixture
+      // would only exercise a near-empty pack and barely traverse the table-of-contents
+      // cursor arithmetic the fix replaced.
       fs.writeFileSync(
         path.join(repoDirectory, 'tracked.txt'),
         'line one\nline two\nline three (uncommitted)\n',
@@ -327,7 +383,7 @@ describe('build-review-pack.mjs', () => {
 
       // An untracked file over SINGLE_FILE_CAP_BYTES lands in "Not included" with reason
       // 'binary, missing, or >1MB' - the section whose lines the buggy cursor arithmetic
-      // never counted.
+      // never counted - and gets a one-line "## Not shown:" section of its own.
       fs.writeFileSync(
         path.join(repoDirectory, 'oversized.txt'),
         'x'.repeat(SINGLE_FILE_CAP_BYTES + 1024),
@@ -335,14 +391,16 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       // Non-vacuity guards: if either of these two sections failed to appear, the header
       // check below would trivially pass no matter what the header derivation did.
       expect(packContent).toContain('## Full file: tracked.txt');
+      expect(packContent).toContain(
+        '## Not shown: oversized.txt (binary, missing, or >1MB; new, untracked; read on demand)',
+      );
       expect(packContent).toContain('## Not included (read on demand)');
-      expect(packContent).toContain('oversized.txt');
+      expect(packContent).toMatch(/^- oversized\.txt \(churn \d+; binary, missing, or >1MB\)$/m);
 
       const headerMatch = packContent.match(/^Total lines: (\d+)\./);
       expect(headerMatch).not.toBeNull();
@@ -389,14 +447,11 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory, [baseRef]);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
-      const contentsBlock = packContent
-        .split('## Contents (start line)')[1]
-        .split('## Union diff')[0];
+      const packContent = readPack(repoDirectory);
+      const tocLabels = extractTocEntries(packContent).map((entry) => entry.label);
 
-      const renamedIndex = contentsBlock.indexOf('mmm-renamed.txt');
-      const trivialIndex = contentsBlock.indexOf('zzz-trivial.txt');
+      const renamedIndex = tocLabels.indexOf('mmm-renamed.txt');
+      const trivialIndex = tocLabels.indexOf('zzz-trivial.txt');
       expect(renamedIndex).toBeGreaterThan(-1);
       expect(trivialIndex).toBeGreaterThan(-1);
 
@@ -404,6 +459,13 @@ describe('build-review-pack.mjs', () => {
       // trivial file's 1-line edit, which only holds once its churn resolves under its
       // new path rather than the unresolved "old => new" numstat key.
       expect(renamedIndex).toBeLessThan(trivialIndex);
+
+      // The rename survives into the section heading, and the appended lines are marked added
+      // at their working-tree numbers: 100 kept lines, so the first appended one is line 101.
+      expect(packContent).toContain('## Partial file: mmm-renamed.txt (113 lines total;');
+      expect(packContent).toMatch(/^## Partial file: mmm-renamed\.txt \(.*; renamed from aaa-original\.txt\)$/m);
+      expect(packContent).toContain(markedLine('+', 101, 'appended line 0'));
+      expect(packContent).toContain(markedLine(' ', 100, 'heavy line 99'));
     },
     20000,
   );
@@ -411,12 +473,10 @@ describe('build-review-pack.mjs', () => {
   it(
     'every TOC entry line number points at the exact line where its own section heading starts',
     () => {
-      // Two changed tracked files are load-bearing, not incidental: the TOC cursor advances
-      // by two independent formulas - "1 + diffLines.length + 1" for the union-diff entry,
-      // and "1 + section.lines + 1" for each packed-file entry. A single changed file would
-      // only ever exercise the first formula (there would be nothing after it to mis-cursor
-      // into); beta.txt's entry is the only assertion below that can catch a regression to
-      // the per-section increment, so do not simplify this fixture to one file.
+      // Two changed tracked files are load-bearing, not incidental: with one file the TOC
+      // cursor advances exactly once, so a regression to the per-section increment ("1 +
+      // section lines + 1") could only mis-cursor a second entry. beta.txt's entry is the only
+      // assertion below that can catch that, so do not simplify this fixture to one file.
       fs.writeFileSync(path.join(repoDirectory, 'alpha.txt'), 'alpha one\nalpha two\nalpha three\n');
       fs.writeFileSync(path.join(repoDirectory, 'beta.txt'), 'beta one\nbeta two\n');
       commitAll(repoDirectory, 'base commit');
@@ -432,23 +492,20 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       const entries = assertTocLineAccuracyAndHeaderTotal(packContent);
 
-      // Non-vacuity guard: if fewer than 3 entries parsed (union diff + two file sections),
-      // the loop inside the helper would have exercised too little of the cursor arithmetic
-      // to catch the historical bug (every entry landing on a blank line).
-      expect(entries.map((entry) => entry.label).sort()).toEqual(
-        ['Union diff', 'alpha.txt', 'beta.txt'].sort(),
-      );
+      // Non-vacuity guard: if fewer than 2 entries parsed, the loop inside the helper would
+      // have exercised too little of the cursor arithmetic to catch the historical bug (every
+      // entry landing on a blank line).
+      expect(entries.map((entry) => entry.label).sort()).toEqual(['alpha.txt', 'beta.txt']);
     },
     20000,
   );
 
   it(
-    'a file over the 200KB pack-body cap is omitted from Full file bodies but keeps its diff hunk in the union diff',
+    'a file over the body cap is packed at the hunk tier with its changed lines; a hunk section over the per-file cap becomes a stub and a Not-included entry while a smaller hunk-tier file keeps its hunks',
     () => {
       fs.writeFileSync(path.join(repoDirectory, 'small.txt'), 'small one\n');
       // 7000 fixed-length lines land the numbered body around 356KB: comfortably over
@@ -465,39 +522,58 @@ describe('build-review-pack.mjs', () => {
         'small one\nsmall two (uncommitted)\n',
       );
       fs.appendFileSync(path.join(repoDirectory, 'big.txt'), 'appended heavy line (uncommitted)\n');
+      // An untracked file is one hunk covering every content line, so its hunk-tier section is
+      // its whole body: 8000 lines of 52 bytes each is ~416KB, over PACK_HUNK_SECTION_CAP_BYTES
+      // (100KB) on its own. That is the per-file ceiling firing on a fact about this file, not
+      // on the pack's total: big.txt's tiny hunk section beside it is untouched.
+      const hugeLines = Array.from({ length: 8000 }, () => 'y'.repeat(45));
+      fs.writeFileSync(path.join(repoDirectory, 'huge-new.txt'), hugeLines.join('\n') + '\n');
 
-      runBuildScript(repoDirectory);
+      const buildOutput = runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       expect(packContent).toContain('## Full file: small.txt');
       expect(packContent).not.toContain('## Full file: big.txt');
+      expect(packContent).not.toContain('## Partial file: big.txt');
+
+      // Over the body cap means the hunk tier, not omission: every changed line is still in the
+      // pack with its exact working-tree number, with 3 lines of context, behind a leading
+      // elision marker for the 6997 untouched lines before the window.
+      expect(packContent).toContain(
+        '## Changed hunks: big.txt (7002 lines total; 1 hunk with 3 lines of context;',
+      );
+      const bigSection = sectionBodyOf(packContent, '## Changed hunks: big.txt');
+      expect(bigSection).toContain(markedLine('+', 7001, 'appended heavy line (uncommitted)'));
+      expect(bigSection).toMatch(/^ {6}\.{5} 6997 unchanged lines omitted \(1-6997\) \.{5}$/m);
+      assertElisionMarkerArithmetic(bigSection);
+
+      // The per-file hunk cap: a one-line stub naming what it stands for, and a Not-included
+      // entry, while big.txt (which carries its hunks) is NOT listed there.
+      expect(packContent).toMatch(
+        /^## Changed hunks omitted: huge-new\.txt \(\+8000\/-0 lines in 1 hunk; section \d+KB, over the per-file hunk cap; read on demand; new, untracked; every line is added\)$/m,
+      );
       expect(packContent).toContain('## Not included (read on demand)');
-      // "full body over pack cap", not a bare "over pack cap": admission is decided on the FULL
-      // body's cost even though a windowed body may be what gets written, so a pack can report a
-      // written total well under the cap while still omitting files. The reason has to name which
-      // number was tested or it reads as a broken packer.
-      expect(packContent).toMatch(/- big\.txt \(churn \d+; full body over pack cap\)/);
+      expect(packContent).toMatch(/^- huge-new\.txt \(churn \d+; changed hunks over the per-file hunk cap\)$/m);
+      expect(packContent).not.toMatch(/^- big\.txt \(/m);
+      expect(packContent).not.toContain('yyyyy');
 
-      // The pack-body cap only trims the full-file-bodies section; the union diff is built
-      // straight from git diff output and is unaffected, so the omitted file's hunk must
-      // still be readable.
-      expect(packContent).toContain('diff --git a/big.txt b/big.txt');
-      expect(packContent).toContain('+appended heavy line (uncommitted)');
+      expect(buildOutput).toMatch(/omitted 1; hunk sections 2 \(1 over per-file hunk cap\)/);
+      expect(buildOutput).toMatch(/^ {2}omitted: huge-new\.txt$/m);
 
-      // Same line-accuracy + header-total check as the previous test, run against a pack
-      // shaped differently (one packed section, an omitted-files block, no committed-diff
-      // layer) to pin that an omitted file contributes no TOC entry and does not perturb
-      // the header block that precedes "## Union diff".
+      // Same line-accuracy + header-total check as the previous test, run against a pack shaped
+      // differently (one body, one hunk section, one stub, a Not-included block) to pin that a
+      // stub contributes a heading-only section and its own TOC entry.
       const entries = assertTocLineAccuracyAndHeaderTotal(packContent);
-      expect(entries.map((entry) => entry.label)).toEqual(['Union diff', 'small.txt']);
+      expect(entries.map((entry) => entry.label).sort()).toEqual(
+        ['big.txt', 'huge-new.txt', 'small.txt'].sort(),
+      );
     },
     20000,
   );
 
   it(
-    'the stdout "paths:" line lists every changed file across all three layers, including a cap-trimmed one the TOC omits',
+    'the stdout "paths:" line lists every changed file across all three layers, including a cap-trimmed one, and matches the TOC one-to-one',
     () => {
       // 7000 fixed-length lines, same sizing as the cap test above: the numbered body lands
       // around 356KB, comfortably over PACK_BODY_CAP_BYTES (200KB) on its own. That
@@ -531,32 +607,28 @@ describe('build-review-pack.mjs', () => {
 
       const buildOutput = runBuildScript(repoDirectory, [baseRef]);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       // Non-vacuity guard: big.txt must actually be the trimmed one, not silently packed -
-      // otherwise every path would reach the TOC anyway and the test could not tell a
-      // "paths:"-derived list apart from a TOC-derived one, which is the whole distinction.
+      // otherwise the "paths:" list and the TOC could agree for the wrong reason.
       expect(packContent).not.toContain('## Full file: big.txt');
-      // "full body over pack cap", not a bare "over pack cap": admission is decided on the FULL
-      // body's cost even though a windowed body may be what gets written, so a pack can report a
-      // written total well under the cap while still omitting files. The reason has to name which
-      // number was tested or it reads as a broken packer.
-      expect(packContent).toMatch(/- big\.txt \(churn \d+; full body over pack cap\)/);
+      expect(packContent).toContain('## Changed hunks: big.txt (');
       expect(packContent).toContain('## Full file: committed-vs-base.txt');
       expect(packContent).toContain('## Full file: tracked-uncommitted.txt');
-      expect(packContent).toContain('## Full file: untracked.txt');
-
-      // The gap the "paths:" line closes: the TOC really is missing the trimmed file, so a
-      // driver reading the TOC would under-gate its domain auditors by exactly this path.
-      const tocLabels = extractTocEntries(packContent).map((entry) => entry.label);
-      expect(tocLabels).not.toContain('big.txt');
+      expect(packContent).toContain(
+        '## Full file: untracked.txt (2 lines; line numbers prefixed; new, untracked; every line is added)',
+      );
+      expect(packContent).toContain(markedLine('+', 1, 'new file'));
 
       const changedFiles = parsePathsLine(buildOutput);
       expect(changedFiles).toBeDefined();
       expect([...changedFiles!].sort()).toEqual(
         ['committed-vs-base.txt', 'tracked-uncommitted.txt', 'untracked.txt', 'big.txt'].sort(),
       );
+
+      // One record per changed file: the TOC and the paths line name the same set, and each
+      // path has exactly one heading, trimmed or not.
+      assertOneSectionPerChangedFile(packContent, changedFiles!);
 
       // The count line is a separate, distinctly labelled line: a driver keying off "paths: "
       // must not be able to match the count line by accident.
@@ -567,7 +639,7 @@ describe('build-review-pack.mjs', () => {
   );
 
   it(
-    'packs a sparsely-changed body as windows around its hunks, keeps a densely-changed one whole, and never windows an untracked file',
+    'packs a sparsely-changed body as windows around its hunks, keeps a densely-changed one whole, never windows an untracked file, and writes each changed line exactly once',
     () => {
       // sparse.txt: 400 lines, one 2-line edit. Windows cover ~42 lines, so the body is
       // overwhelmingly untouched code - the case windowing exists for.
@@ -586,18 +658,15 @@ describe('build-review-pack.mjs', () => {
         path.join(repoDirectory, 'dense.txt'),
         denseLines.map((line) => `${line} (rewritten)`).join('\n') + '\n',
       );
-      // An untracked file has no hunks to window against - every line of it is new - so it
-      // must be packed whole no matter how large it is.
+      // An untracked file is one hunk covering every content line, so windowing it would save
+      // nothing; it must be packed whole no matter how large it is.
       fs.writeFileSync(
         path.join(repoDirectory, 'brand-new.txt'),
         Array.from({ length: 300 }, (_, index) => `new line ${index}`).join('\n') + '\n',
       );
 
       const buildOutput = runBuildScript(repoDirectory);
-      const packContent = fs.readFileSync(
-        path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md'),
-        'utf8',
-      );
+      const packContent = readPack(repoDirectory);
 
       expect(packContent).toContain('## Partial file: sparse.txt (401 lines total;');
       expect(packContent).toContain('## Full file: dense.txt');
@@ -611,8 +680,8 @@ describe('build-review-pack.mjs', () => {
 
       // The saving is real, not just a relabel: sparse.txt's section must be a small fraction
       // of the 400 lines it stands for.
-      const sparseSection = packContent.split('## Partial file: sparse.txt')[1].split('\n## ')[0];
-      const shownLineNumbers = [...sparseSection.matchAll(/^\s*(\d+)\t/gm)].map((match) =>
+      const sparseSection = sectionBodyOf(packContent, '## Partial file: sparse.txt');
+      const shownLineNumbers = [...sparseSection.matchAll(/^[ +] *(\d+)\t/gm)].map((match) =>
         Number(match[1]),
       );
       expect(shownLineNumbers.length).toBeGreaterThan(20);
@@ -626,6 +695,28 @@ describe('build-review-pack.mjs', () => {
       // correct: the reported skip count and the shown range must agree with the line numbers
       // actually surrounding it.
       assertElisionMarkerArithmetic(sparseSection);
+
+      // Markers: every content line of the untracked file is added (its phantom empty last line
+      // is the one unchanged line); the rewritten file shows its 40 old lines removed in place
+      // and its 40 new lines added.
+      const brandNewSection = sectionBodyOf(packContent, '## Full file: brand-new.txt');
+      const brandNewMarkers = [...brandNewSection.matchAll(/^([ +]) *\d+\t/gm)].map((match) => match[1]);
+      expect(brandNewMarkers.filter((marker) => marker === '+')).toHaveLength(300);
+      expect(brandNewMarkers.filter((marker) => marker === ' ')).toHaveLength(1);
+      // Git reports a block rewrite as ONE hunk (40 removed, then 40 added), and the section
+      // renders it as the diff says it: the removed block in place before the first new line.
+      const denseSection = sectionBodyOf(packContent, '## Full file: dense.txt');
+      expect([...denseSection.matchAll(/^- {5}\t/gm)]).toHaveLength(40);
+      expect([...denseSection.matchAll(/^\+ *\d+\t/gm)]).toHaveLength(40);
+      expect(denseSection).toContain(
+        markedLine('-', null, 'dense line 39') + '\n' + markedLine('+', 1, 'dense line 0 (rewritten)'),
+      );
+
+      // Each changed line is written exactly once. The pack used to carry it twice: once in the
+      // union diff and once in the body. This is the redundancy the one-section format removes.
+      expect(packContent.split('sparse line 200 (edited)')).toHaveLength(2);
+      expect(packContent.split('dense line 7 (rewritten)')).toHaveLength(2);
+      expect(packContent.split('new line 123')).toHaveLength(2);
 
       assertTocLineAccuracyAndHeaderTotal(packContent);
     },
@@ -644,9 +735,9 @@ describe('build-review-pack.mjs', () => {
       // the byte counts are identical on every platform.
       //   boundary-above.txt: 20 single-line edits spaced 48 lines apart across 1000 lines,
       //     none close enough to merge (each window is an isolated +/-20-line span). Windowed
-      //     share ~0.861 -> stays "## Full file:".
+      //     share ~0.86 -> stays "## Full file:".
       //   boundary-below.txt: 19 single-line edits spaced 50 lines apart, same shape. Windowed
-      //     share ~0.819 -> stays "## Partial file:".
+      //     share ~0.82 -> stays "## Partial file:".
       const totalLines = 1000;
       const aboveEditLines: number[] = [];
       for (let line = 30; line < totalLines - 30; line += 48) aboveEditLines.push(line);
@@ -687,8 +778,7 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       expect(packContent).toContain('## Full file: boundary-above.txt');
       expect(packContent).not.toContain('## Partial file: boundary-above.txt');
@@ -706,11 +796,12 @@ describe('build-review-pack.mjs', () => {
       // The misalignment this pins is invisible to a clean-tree fixture. The committed layer is
       // a three-dot diff (`base...HEAD`), so its hunk line numbers are HEAD-relative, while the
       // body the packer writes is read from the working tree. Prepending lines shifts the two
-      // apart. Deriving windows from that diff puts them at the wrong offset - and the failure
-      // is silent, because the prefixed line numbers come from the body and stay correct; what
-      // breaks is WHICH region is shown. Changed code is dropped, unchanged code is shown, and
-      // the section still looks perfectly well-formed. Measured on a real diff, the naive
-      // derivation dropped 18 of 80 changed lines.
+      // apart. Deriving the change record from that diff puts every hunk at the wrong offset -
+      // and the failure is silent, because the prefixed line numbers come from the body and
+      // stay correct; what breaks is WHICH region is shown and marked. Changed code is dropped,
+      // unchanged code is shown, and the section still looks perfectly well-formed. Measured on
+      // a real diff, the naive derivation dropped 18 of 80 changed lines. Every rendered byte
+      // now derives from the one merge-base parse, so this pins the whole pack, not just windows.
       const originalLines = Array.from({ length: 300 }, (_, index) => `line ${index}`);
       fs.writeFileSync(path.join(repoDirectory, 'mixed.txt'), originalLines.join('\n') + '\n');
       commitAll(repoDirectory, 'base commit');
@@ -733,16 +824,16 @@ describe('build-review-pack.mjs', () => {
       );
 
       runBuildScript(repoDirectory, [baseRef]);
-      const packContent = fs.readFileSync(
-        path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md'),
-        'utf8',
-      );
+      const packContent = readPack(repoDirectory);
 
       // Non-vacuity guard: if the file were packed whole this test could not fail.
       expect(packContent).toContain('## Partial file: mixed.txt');
-      const section = packContent.split('## Partial file: mixed.txt')[1].split('\n## ')[0];
+      const section = sectionBodyOf(packContent, '## Partial file: mixed.txt');
       const shown = new Set(
-        [...section.matchAll(/^\s*(\d+)\t/gm)].map((match) => Number(match[1])),
+        [...section.matchAll(/^[ +] *(\d+)\t/gm)].map((match) => Number(match[1])),
+      );
+      const markedAdded = new Set(
+        [...section.matchAll(/^\+ *(\d+)\t/gm)].map((match) => Number(match[1])),
       );
 
       // The authoritative changed-line set, derived here independently of the packer.
@@ -767,11 +858,17 @@ describe('build-review-pack.mjs', () => {
       expect(Math.max(...changedLines)).toBeGreaterThan(PREPENDED + 100);
 
       expect(changedLines.filter((lineNumber) => !shown.has(lineNumber))).toEqual([]);
+      // And every changed line is MARKED added, not merely shown: an unmarked changed line
+      // reads as context, which is the same misalignment in a quieter form.
+      expect(changedLines.filter((lineNumber) => !markedAdded.has(lineNumber))).toEqual([]);
 
-      // And the committed edit is shown at its WORKING-TREE line number, not its HEAD one.
+      // The committed edit is shown at its WORKING-TREE line number, not its HEAD one, with
+      // the line it replaced rendered in place before it.
       expect(section).toContain(
-        `${String(201 + PREPENDED).padStart(5)}\tline 200 (committed after base)`,
+        markedLine('-', null, 'line 200') + '\n' + markedLine('+', 201 + PREPENDED, 'line 200 (committed after base)'),
       );
+      expect(section).toContain(markedLine('+', 1, 'uncommitted preamble 0'));
+      expect(section).toContain(markedLine(' ', PREPENDED + 1, 'line 0'));
     },
     20000,
   );
@@ -783,10 +880,12 @@ describe('build-review-pack.mjs', () => {
       // Every setting below changes the pack SILENTLY - a valid-looking pack, just a different
       // one than a teammate or CI gets for the same commits:
       //   mnemonicPrefix renames the diff prefixes per source (`c/` commit, `w/` working tree)
-      //     and noprefix drops them. The windowing pass keys off `+++ b/<path>` from a
+      //     and noprefix drops them. The parser keys every file off `+++ b/<path>` from a
       //     commit-vs-working-tree diff - exactly the case mnemonic prefixes apply to - so
-      //     either one switches windowing off entirely and inflates the pack.
-      //   context resizes the union diff, the pack's largest single section.
+      //     either one switches the whole parse off: no markers, every file in the unparsed
+      //     residual.
+      //   context no longer reaches a rendered byte (every rendered diff is --unified=0) but
+      //     stays in this loop so the pin stays honest about what it guards.
       //   renames off makes a renamed-and-modified file score zero churn and rank last.
       //   external replaces the diff body with a program's arbitrary output; unlike the rest it
       //     cannot be pinned via `-c` (an empty value makes git spawn the empty string and die),
@@ -799,12 +898,13 @@ describe('build-review-pack.mjs', () => {
       sparseLines[200] = 'sparse line 200 (edited)';
       fs.writeFileSync(path.join(repoDirectory, 'sparse.txt'), sparseLines.join('\n') + '\n');
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
       runBuildScript(repoDirectory);
-      const defaultConfigPack = fs.readFileSync(packPath, 'utf8');
-      // Non-vacuity guard: without windowing under the default config there is nothing for
-      // the hostile configs to differ FROM, and both halves below would pass trivially.
+      const defaultConfigPack = readPack(repoDirectory);
+      // Non-vacuity guard: without windowing and a marked edit under the default config there
+      // is nothing for the hostile configs to differ FROM, and the loop below would pass
+      // trivially.
       expect(defaultConfigPack).toContain('## Partial file: sparse.txt');
+      expect(defaultConfigPack).toContain(markedLine('+', 201, 'sparse line 200 (edited)'));
 
       for (const [key, value] of [
         ['diff.mnemonicPrefix', 'true'],
@@ -814,13 +914,13 @@ describe('build-review-pack.mjs', () => {
         // A real external differ, not a bogus one: `echo` exists on every platform's PATH
         // (Windows resolves it through the Git-for-Windows shell git uses to spawn diff
         // drivers), so this exercises the "diff replaced by arbitrary output" path rather
-        // than the "spawn failed" path. Without --no-ext-diff the union diff becomes echo's
-        // output and the pack is unrecognisable.
+        // than the "spawn failed" path. Without --no-ext-diff the parse sees echo's output
+        // and the pack is unrecognisable.
         ['diff.external', 'echo'],
       ]) {
         runGit(['config', key, value], repoDirectory);
         runBuildScript(repoDirectory);
-        expect(fs.readFileSync(packPath, 'utf8')).toBe(defaultConfigPack);
+        expect(readPack(repoDirectory)).toBe(defaultConfigPack);
         runGit(['config', '--unset', key], repoDirectory);
       }
     },
@@ -879,8 +979,7 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       expect(packContent).toContain('## Partial file: gap-merge.txt');
       // A single merged window, not two: reverting the merge to "always emit a separate window
@@ -888,15 +987,19 @@ describe('build-review-pack.mjs', () => {
       // below could still coincidentally look plausible.
       expect(packContent).toContain('in 1 window;');
 
-      const section = packContent.split('## Partial file: gap-merge.txt')[1].split('\n## ')[0];
+      const section = sectionBodyOf(packContent, '## Partial file: gap-merge.txt');
 
-      // Both edited lines are shown.
-      expect(section).toContain(`${String(100).padStart(5)}\tgap merge line 99 (edited)`);
-      expect(section).toContain(`${String(143).padStart(5)}\tgap merge line 142 (edited)`);
+      // Both edited lines are shown and marked, each preceded in place by the line it replaced.
+      expect(section).toContain(
+        markedLine('-', null, 'gap merge line 99') + '\n' + markedLine('+', 100, 'gap merge line 99 (edited)'),
+      );
+      expect(section).toContain(
+        markedLine('-', null, 'gap merge line 142') + '\n' + markedLine('+', 143, 'gap merge line 142 (edited)'),
+      );
       // The "gap" between the two raw hunks (working-tree lines 121-122, untouched) belongs to
-      // the SAME merged window, so it is shown rather than elided.
-      expect(section).toContain(`${String(121).padStart(5)}\tgap merge line 120`);
-      expect(section).toContain(`${String(122).padStart(5)}\tgap merge line 121`);
+      // the SAME merged window, so it is shown rather than elided, marked unchanged.
+      expect(section).toContain(markedLine(' ', 121, 'gap merge line 120'));
+      expect(section).toContain(markedLine(' ', 122, 'gap merge line 121'));
 
       // Exactly two markers (one leading, one trailing): a regression back to "always separate
       // windows" would insert a third marker for the omitted 121-122 gap.
@@ -946,8 +1049,7 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       expect(packContent).toContain('## Partial file: merge-gap-boundary.txt');
       // Three windows total: pair A's merge collapses two raw ranges into one, pair B's two
@@ -955,29 +1057,19 @@ describe('build-review-pack.mjs', () => {
       // "never merge" would report 4.
       expect(packContent).toContain('in 3 windows;');
 
-      const section = packContent
-        .split('## Partial file: merge-gap-boundary.txt')[1]
-        .split('\n## ')[0];
+      const section = sectionBodyOf(packContent, '## Partial file: merge-gap-boundary.txt');
 
       // Pair A: both edits shown, AND everything between them (lines 101-144) shown too, since
       // they now live inside one merged window with no marker in between.
-      expect(section).toContain(
-        `${String(100).padStart(5)}\tmerge boundary line 99 (pair A edit one)`,
-      );
-      expect(section).toContain(
-        `${String(145).padStart(5)}\tmerge boundary line 144 (pair A edit two)`,
-      );
-      expect(section).toContain(`${String(122).padStart(5)}\tmerge boundary line 121`);
+      expect(section).toContain(markedLine('+', 100, 'merge boundary line 99 (pair A edit one)'));
+      expect(section).toContain(markedLine('+', 145, 'merge boundary line 144 (pair A edit two)'));
+      expect(section).toContain(markedLine(' ', 122, 'merge boundary line 121'));
       expect(section).not.toMatch(/unchanged lines omitted \(1(0[1-9]|[1-3]\d|4[0-4])-/);
 
       // Pair B: both edits shown, but the exact 5-line gap between their expanded windows
       // (working-tree lines 321-325) is elided rather than merged away.
-      expect(section).toContain(
-        `${String(300).padStart(5)}\tmerge boundary line 299 (pair B edit one)`,
-      );
-      expect(section).toContain(
-        `${String(346).padStart(5)}\tmerge boundary line 345 (pair B edit two)`,
-      );
+      expect(section).toContain(markedLine('+', 300, 'merge boundary line 299 (pair B edit one)'));
+      expect(section).toContain(markedLine('+', 346, 'merge boundary line 345 (pair B edit two)'));
       expect(section).toContain('      ..... 5 unchanged lines omitted (321-325) .....');
 
       assertElisionMarkerArithmetic(section);
@@ -987,7 +1079,7 @@ describe('build-review-pack.mjs', () => {
   );
 
   it(
-    'anchors a pure-deletion hunk at its collapse point and shows context on both sides of the removed lines',
+    'anchors a pure-deletion hunk at its collapse point, renders the removed lines in place, and shows context on both sides',
     () => {
       // `git diff --unified=0` reports a pure deletion as "@@ -a,b +N,0 @@": nothing on the
       // new side, so the parser special-cases it to a point range at N rather than the general
@@ -1009,29 +1101,33 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       // Non-vacuity guard: windowing must actually engage for the line-120 assertion below to
       // mean anything.
       expect(packContent).toContain('## Partial file: deletion.txt');
       expect(packContent).not.toContain('## Full file: deletion.txt');
 
-      const section = packContent.split('## Partial file: deletion.txt')[1].split('\n## ')[0];
+      const section = sectionBodyOf(packContent, '## Partial file: deletion.txt');
 
-      // The last surviving line before the gap (working-tree line 100) and the first
-      // surviving line after it (working-tree line 101) are adjacent in the rendered window,
-      // showing the code the removed lines used to sit between.
-      expect(section).toContain(`${String(100).padStart(5)}\tdeletion line 99`);
-      expect(section).toContain(`${String(101).padStart(5)}\tdeletion line 105`);
+      // The last surviving line before the gap (working-tree line 100), the five removed lines
+      // in place with no line number, and the first surviving line after it (working-tree line
+      // 101): the finder sees exactly what was removed and between which lines.
+      expect(section).toContain(
+        [
+          markedLine(' ', 100, 'deletion line 99'),
+          ...deletionLines.slice(100, 105).map((text) => markedLine('-', null, text)),
+          markedLine(' ', 101, 'deletion line 105'),
+        ].join('\n'),
+      );
 
       // Context extends WINDOW_CONTEXT_LINES (20) on each side of the anchor at working-tree
       // line 100: line 120 is the last line inside the window, line 121 the first excluded one.
-      expect(section).toContain(`${String(120).padStart(5)}\tdeletion line 124`);
+      expect(section).toContain(markedLine(' ', 120, 'deletion line 124'));
       expect(section).not.toContain('deletion line 125');
       // And symmetrically on the near side: line 80 is the first line inside the window, line
       // 79 the first excluded one going backward.
-      expect(section).toContain(`${String(80).padStart(5)}\tdeletion line 79`);
+      expect(section).toContain(markedLine(' ', 80, 'deletion line 79'));
       expect(section).not.toContain('deletion line 78');
 
       assertElisionMarkerArithmetic(section);
@@ -1059,17 +1155,16 @@ describe('build-review-pack.mjs', () => {
 
       runBuildScript(repoDirectory);
 
-      const packPath = path.join(repoDirectory, '.kangentic', 'REVIEW_PACK.tmp.md');
-      const packContent = fs.readFileSync(packPath, 'utf8');
+      const packContent = readPack(repoDirectory);
 
       expect(packContent).toContain('## Partial file: boundary.txt');
-      const section = packContent.split('## Partial file: boundary.txt')[1].split('\n## ')[0];
+      const section = sectionBodyOf(packContent, '## Partial file: boundary.txt');
 
       const totalLinesMatch = section.match(/\((\d+) lines total/);
       expect(totalLinesMatch).not.toBeNull();
       const totalLines = Number(totalLinesMatch![1]);
 
-      const shownLineNumbers = [...section.matchAll(/^\s*(\d+)\t/gm)].map((match) =>
+      const shownLineNumbers = [...section.matchAll(/^[ +] *(\d+)\t/gm)].map((match) =>
         Number(match[1]),
       );
       expect(shownLineNumbers.length).toBeGreaterThan(0);
@@ -1090,11 +1185,185 @@ describe('build-review-pack.mjs', () => {
       ];
       expect(markerMatches).toHaveLength(1);
 
-      expect(section).toContain(`${String(5).padStart(5)}\tboundary line 4 (edited)`);
-      expect(section).toContain(`${String(295).padStart(5)}\tboundary line 294 (edited)`);
+      expect(section).toContain(markedLine('+', 5, 'boundary line 4 (edited)'));
+      expect(section).toContain(markedLine('+', 295, 'boundary line 294 (edited)'));
 
       assertElisionMarkerArithmetic(section);
       assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'marks every line (+ added, space unchanged, - removed in place with no number) including deletions at line 0 and at EOF, and renders the same file at the hunk tier under --body-cap 0',
+    () => {
+      // markers.txt: 60 committed lines. The working tree drops the first two, edits one in
+      // the middle, inserts one, and drops the last three, so one file exercises all four
+      // removed-line placements: before line 1, before a replaced line, nowhere (a pure
+      // insertion has nothing removed), and after the last content line - where the removed
+      // lines anchor before the phantom empty last line that a newline-terminated file's
+      // split leaves behind.
+      const originalLines = Array.from({ length: 60 }, (_, index) => `marker line ${index}`);
+      fs.writeFileSync(path.join(repoDirectory, 'markers.txt'), originalLines.join('\n') + '\n');
+      // no-newline.txt: the `\ No newline at end of file` annotation is not content and must
+      // not leak into a rendered line.
+      fs.writeFileSync(path.join(repoDirectory, 'no-newline.txt'), 'a\nb');
+      commitAll(repoDirectory, 'base commit');
+
+      const editedLines = originalLines.slice(2, 57);
+      editedLines[28] = 'marker line 30 (edited)';
+      editedLines.splice(39, 0, 'inserted line');
+      fs.writeFileSync(path.join(repoDirectory, 'markers.txt'), editedLines.join('\n') + '\n');
+      fs.writeFileSync(path.join(repoDirectory, 'no-newline.txt'), 'a\nb\nc');
+
+      runBuildScript(repoDirectory);
+      const fullPack = readPack(repoDirectory);
+
+      // At 20 lines of context the four windows merge into one span over the whole 57-line
+      // file, so the body tier renders it whole.
+      expect(fullPack).toContain('## Full file: markers.txt (57 lines; line numbers prefixed)');
+      const fullSection = sectionBodyOf(fullPack, '## Full file: markers.txt (57 lines; line numbers prefixed)\n');
+
+      // Deletion at the top of the file: the removed lines come first, before line 1.
+      expect(fullSection.startsWith(
+        [
+          markedLine('-', null, 'marker line 0'),
+          markedLine('-', null, 'marker line 1'),
+          markedLine(' ', 1, 'marker line 2'),
+        ].join('\n'),
+      )).toBe(true);
+      // A replaced line: removed in place, then its replacement at the working-tree number.
+      expect(fullSection).toContain(
+        markedLine('-', null, 'marker line 30') + '\n' + markedLine('+', 29, 'marker line 30 (edited)'),
+      );
+      // A pure insertion: nothing removed, the new line between its unchanged neighbours.
+      expect(fullSection).toContain(
+        [
+          markedLine(' ', 39, 'marker line 40'),
+          markedLine('+', 40, 'inserted line'),
+          markedLine(' ', 41, 'marker line 41'),
+        ].join('\n'),
+      );
+      // Deletion at EOF: after the last content line, before the phantom empty line 57.
+      expect(fullSection).toContain(
+        [
+          markedLine(' ', 56, 'marker line 56'),
+          markedLine('-', null, 'marker line 57'),
+          markedLine('-', null, 'marker line 58'),
+          markedLine('-', null, 'marker line 59'),
+          markedLine(' ', 57, ''),
+        ].join('\n'),
+      );
+      // Exactly the diff's counts, and no unmarked line.
+      expect([...fullSection.matchAll(/^- {5}\t/gm)]).toHaveLength(6);
+      expect([...fullSection.matchAll(/^\+ *\d+\t/gm)]).toHaveLength(2);
+      const bodyLines = fullSection.split('\n').filter((line) => line.length > 0);
+      expect(bodyLines.every((line) => /^[ +-]/.test(line))).toBe(true);
+      expect(fullPack).not.toMatch(/^\\ No newline/m);
+
+      // The annotation line is skipped; the last line's newline change renders as the diff
+      // says it: the old "b" removed, the new "b" and "c" added.
+      expect(fullPack).toContain(
+        [markedLine(' ', 1, 'a'), markedLine('-', null, 'b'), markedLine('+', 2, 'b'), markedLine('+', 3, 'c')].join('\n'),
+      );
+
+      assertTocLineAccuracyAndHeaderTotal(fullPack);
+
+      // The light shape: the same file at 3 lines of context is a "## Changed hunks:" section
+      // whose windows are [1,3], [26,43] (the edit at 29 and the insertion at 40 merge across
+      // their 5-line gap), and [53,57], with the same markers in the same places.
+      runBuildScript(repoDirectory, ['--body-cap', '0']);
+      const lightPack = readPack(repoDirectory);
+      expect(lightPack.split('\n')[1].startsWith('Light pack (every file at 3 lines of context).')).toBe(true);
+      expect(lightPack).not.toMatch(/^## (Full|Partial) file: /m);
+      expect(lightPack).toContain(
+        '## Changed hunks: markers.txt (57 lines total; 4 hunks with 3 lines of context;',
+      );
+      const lightSection = sectionBodyOf(lightPack, '## Changed hunks: markers.txt');
+      expect(lightSection).toContain('      ..... 22 unchanged lines omitted (4-25) .....');
+      expect(lightSection).toContain('      ..... 9 unchanged lines omitted (44-52) .....');
+      expect([...lightSection.matchAll(/^ {6}\.{5} /gm)]).toHaveLength(2);
+      expect(lightSection).toContain(
+        markedLine('-', null, 'marker line 30') + '\n' + markedLine('+', 29, 'marker line 30 (edited)'),
+      );
+      expect(lightSection).toContain(
+        [
+          markedLine(' ', 56, 'marker line 56'),
+          markedLine('-', null, 'marker line 57'),
+          markedLine('-', null, 'marker line 58'),
+          markedLine('-', null, 'marker line 59'),
+          markedLine(' ', 57, ''),
+        ].join('\n'),
+      );
+      // The marker arithmetic must look through removed lines (which carry no number).
+      assertElisionMarkerArithmetic(lightSection);
+      assertTocLineAccuracyAndHeaderTotal(lightPack);
+      expect(fs.readFileSync(path.join(repoDirectory, '.kangentic', 'REVIEW_PREEXISTING_DIRTY.tmp'), 'utf8')).toBe(
+        'markers.txt\nno-newline.txt\n',
+      );
+    },
+    20000,
+  );
+
+  it(
+    'renders every non-body kind as one section: a deleted file with its removed lines, a pure rename, a no-net-change file, and a binary, each with exactly one TOC entry',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'deleted.txt'), 'gone one\ngone two\ngone three\n');
+      fs.writeFileSync(
+        path.join(repoDirectory, 'renamed-src.txt'),
+        Array.from({ length: 60 }, (_, index) => `renamed line ${index}`).join('\n') + '\n',
+      );
+      fs.writeFileSync(path.join(repoDirectory, 'reverted.txt'), 'v1\n');
+      fs.writeFileSync(path.join(repoDirectory, 'image.bin'), Buffer.from([0x89, 0x50, 0x00, 0x47, 0x0d, 0x0a]));
+      commitAll(repoDirectory, 'base commit');
+      const baseRef = runGit(['rev-parse', 'HEAD'], repoDirectory).trim();
+
+      runGit(['rm', '-q', 'deleted.txt'], repoDirectory);
+      runGit(['mv', 'renamed-src.txt', 'renamed-dst.txt'], repoDirectory);
+      fs.writeFileSync(path.join(repoDirectory, 'reverted.txt'), 'v2\n');
+      commitAll(repoDirectory, 'delete, rename, and edit');
+
+      // Working tree: the edit is reverted (so the file is in changedFiles through both the
+      // committed and the uncommitted layer, yet has no net change against the merge base),
+      // and the binary is rewritten.
+      fs.writeFileSync(path.join(repoDirectory, 'reverted.txt'), 'v1\n');
+      fs.writeFileSync(path.join(repoDirectory, 'image.bin'), Buffer.from([0x89, 0x50, 0x00, 0x48, 0x0d, 0x0a, 0x1a]));
+
+      const buildOutput = runBuildScript(repoDirectory, [baseRef]);
+      const packContent = readPack(repoDirectory);
+
+      // A deleted file has no body to read, so it renders from the parse alone: its removed
+      // lines, no numbers, under a heading that says how many.
+      expect(packContent).toContain(
+        [
+          '## Deleted file: deleted.txt (3 lines removed)',
+          markedLine('-', null, 'gone one'),
+          markedLine('-', null, 'gone two'),
+          markedLine('-', null, 'gone three'),
+        ].join('\n'),
+      );
+      expect(packContent).toContain(
+        '## Not shown: renamed-dst.txt (renamed from renamed-src.txt, content unchanged)',
+      );
+      expect(packContent).not.toContain('renamed line 7');
+      expect(packContent).toContain(
+        '## Not shown: reverted.txt (no net change against the merge base; changed in a commit and reverted in the working tree)',
+      );
+      expect(packContent).toContain('## Not shown: image.bin (binary)');
+      expect(packContent).toMatch(/^- image\.bin \(churn \d+; binary\)$/m);
+      expect(packContent).not.toContain('## Union diff');
+
+      const changedFiles = parsePathsLine(buildOutput);
+      expect(changedFiles).toBeDefined();
+      expect([...changedFiles!].sort()).toEqual(
+        ['deleted.txt', 'renamed-dst.txt', 'reverted.txt', 'image.bin'].sort(),
+      );
+      assertOneSectionPerChangedFile(packContent, changedFiles!);
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+
+      expect(buildOutput).toMatch(
+        /bodies packed 0 \(0 windowed, 0KB written of 0KB budgeted\), omitted 1; hunk sections 1 \(0 over per-file hunk cap\)/,
+      );
     },
     20000,
   );
