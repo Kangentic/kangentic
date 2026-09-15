@@ -795,10 +795,30 @@ test.describe('Column automations', () => {
     // The gutter survives the grip, or the lone row's text slides left of every
     // row above it. Both groups sit in one card, so that edge is read straight
     // down and a 13px step in it is obvious.
-    const labelLeft = (name: string) =>
-      row(name).locator('[data-testid="column-automation-row-label"]')
-        .evaluate((node) => Math.round(node.getBoundingClientRect().left));
-    expect(await labelLeft('Only')).toBe(await labelLeft('First'));
+    // Both measured in ONE evaluate, and each against its OWN row's left edge.
+    //
+    // Two separate round trips reading absolute viewport x was wrong twice over:
+    // the dialog enters at scale(0.96), so the two reads land on different
+    // animation frames and the whole row moves between them, which produced a
+    // spurious 2px gap that a rounding tolerance would have hidden rather than
+    // fixed. A box-model probe showed the three rows byte-identical, label at
+    // the same offset in each. This is the same trap `SegmentedControl` fell
+    // into: absolute geometry means nothing while an ancestor is animating.
+    const offsets = await dialog().evaluate((node) => {
+      const read = (name: string): number | null => {
+        const row = node.querySelector(`[data-testid="column-automation-row"][data-name="${name}"]`);
+        const label = row?.querySelector('[data-testid="column-automation-row-label"]');
+        if (!row || !label) return null;
+        return label.getBoundingClientRect().left - row.getBoundingClientRect().left;
+      };
+      return { only: read('Only'), first: read('First') };
+    });
+
+    expect(offsets.only).not.toBeNull();
+    expect(offsets.first).not.toBeNull();
+    // Row-relative and same-frame, so what is left is float noise. The
+    // regression this guards moves it by the whole width of the grip.
+    expect(Math.abs(offsets.only! - offsets.first!)).toBeLessThan(0.5);
   });
 
   test('dragging a row down cannot scroll the pane into empty space', async () => {
