@@ -559,7 +559,8 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.BACKLOG_LABEL_COLORS_CHANGED, handler);
     },
     importCheckCli: (source) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_CHECK_CLI, source),
-    importFetch: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_FETCH, input),
+    importGetCached: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_GET_CACHED, input),
+    importReconcile: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_RECONCILE, input),
     importExecute: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_EXECUTE, input),
     importSourcesList: () => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_LIST),
     importSourcesAdd: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_ADD, input),

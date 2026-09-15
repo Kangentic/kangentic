@@ -131,12 +131,13 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlog:changedByAgent` | on | Event: backlog was modified by an agent via MCP tool call |
 | `backlog:labelColorsChanged` | on | Event: label color mappings changed by agent via MCP tool call |
 
-### Backlog Import (6 channels)
+### Backlog Import (7 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `backlog:importCheckCli` | invoke | Check if the CLI tool for a source is available and authenticated |
-| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, GitHub Projects, Azure DevOps, Asana) |
-| `backlog:importExecute` | invoke | Import selected items into the backlog with attachment download |
+| `backlog:importGetCached` | invoke | Read the persistent remote-item cache for a source (no network), for an instant dialog paint |
+| `backlog:importReconcile` | invoke | Fetch items changed since the cache high-water mark, merge and prune, and return the merged set |
+| `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
 | `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). Providers with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
@@ -846,7 +847,8 @@ src/main/boards/
 `BoardAdapter` (in `shared/types.ts`) declares:
 - Required metadata: `id` (matches `ExternalSource`), `displayName`, `icon`, `status` (`'stable' | 'stub'`).
 - Required setup methods: `checkPrerequisites()` (structured CLI + auth check), `checkCli()` (legacy wrapper for back-compat).
-- Required import methods: `fetch()`, `downloadImages()`. Optional `downloadFileAttachments()` for providers with explicit attachment relations (Azure DevOps).
+- Required import methods: `fetch()` (whose `input.since` drives incremental reconcile), `downloadImages()`. Optional `downloadFileAttachments()` for providers with explicit attachment relations (Azure DevOps).
+- Optional import-performance methods: `hydrateForImport()` (fetch deferred per-item detail such as Azure DevOps comments for the selected items at import time) and `listExternalIds()` (cheap id-only listing so the reconcile can prune deleted items). Both implemented by Azure DevOps.
 - Optional future methods: `authenticate()`, `listProjects()`, `listIssues()`, `pushUpdates()`. Reserved for live discovery and write-back. No provider implements these yet.
 
 Stub adapters (`jira`, `linear`, `trello`) implement the required surface with method bodies that throw `Error('<Provider> adapter is not yet implemented')`. The IPC handler short-circuits stubs by checking `adapter.status === 'stub'` before dispatch, returning a structured error to the renderer.
@@ -862,7 +864,7 @@ No edits to IPC handlers or the renderer are required - dispatch is registry-dri
 
 ### IPC channels
 
-Backlog Import group (6 channels): `backlog:importCheckCli`, `backlog:importFetch`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. All dispatch through `boardRegistry.getOrThrow(source)` in `src/main/ipc/handlers/backlog.ts`.
+Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetCached`, `backlog:importReconcile`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. The fetch/import channels dispatch through `boardRegistry.requireStable(source)` in `src/main/ipc/handlers/backlog.ts`. `importGetCached` reads the per-project `remote_item_cache` table with no network; `importReconcile` fetches only items changed since the cache high-water mark, merges them, and auto-prunes items the remote no longer has.
 
 Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
 

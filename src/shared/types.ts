@@ -3597,6 +3597,12 @@ export interface ExternalIssue {
   labels: string[];
   assignee: string | null;
   state: string;
+  /**
+   * Normalized open/closed bucket, stamped by each adapter's mapper from its own
+   * state vocabulary. The Import dialog filters open/closed/all client-side over a
+   * single cache bucket, so a state change just re-upserts with a fresh category.
+   */
+  stateCategory: 'open' | 'closed';
   workItemType?: string;
   createdAt: string;
   updatedAt: string;
@@ -3626,6 +3632,12 @@ export interface ImportFetchInput {
   perPage: number;
   searchQuery?: string;
   state?: 'open' | 'closed' | 'all';
+  /**
+   * ISO 8601 remote-change watermark. Adapters that support incremental fetch
+   * (ADO `System.ChangedDate`, GitHub `since`) return only items changed at or
+   * after this instant; adapters without native support ignore it and full-fetch.
+   */
+  since?: string;
 }
 
 export interface ImportFetchResult {
@@ -3653,6 +3665,34 @@ export interface ImportExecuteResult {
   skippedDuplicates: number;
   skippedAttachments: number;
   items: BacklogTask[];
+}
+
+/** Read the persisted remote-item cache for a source, with no network access. */
+export interface ImportCacheQuery {
+  source: ExternalSource;
+  repository: string;
+}
+
+export interface ImportReconcileInput {
+  source: ExternalSource;
+  repository: string;
+  /**
+   * 'incremental' (default) fetches only items changed since the cache's
+   * high-water mark; 'full' re-fetches everything and prunes items the remote no
+   * longer has. An empty cache is always treated as 'full'.
+   */
+  mode?: 'incremental' | 'full';
+}
+
+export interface ImportCachedResult {
+  issues: ExternalIssue[];
+}
+
+export interface ImportReconcileResult {
+  issues: ExternalIssue[];
+  added: number;
+  updated: number;
+  removed: number;
 }
 
 export interface AsanaAuthStatus {
@@ -5551,7 +5591,8 @@ export interface ElectronAPI {
     onChangedByAgent: (callback: (projectId?: string) => void) => () => void;
     onLabelColorsChanged: (callback: () => void) => () => void;
     importCheckCli: (source: ExternalSource) => Promise<ImportCheckCliResult>;
-    importFetch: (input: ImportFetchInput) => Promise<ImportFetchResult>;
+    importGetCached: (input: ImportCacheQuery) => Promise<ImportCachedResult>;
+    importReconcile: (input: ImportReconcileInput) => Promise<ImportReconcileResult>;
     importExecute: (input: ImportExecuteInput) => Promise<ImportExecuteResult>;
     importSourcesList: () => Promise<ImportSource[]>;
     importSourcesAdd: (input: { source: ExternalSource; url: string }) => Promise<ImportSource>;
