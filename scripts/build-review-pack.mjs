@@ -33,8 +33,9 @@
  * Prints a compact summary to stdout; never prints the pack itself. One line of that summary is
  * a contract rather than a nicety: `  paths: <a>, <b>, ...` is the authoritative changed-file
  * list the review driver gates its domain auditors on. It is the script's own changedFiles
- * array, so it cannot disagree with what the pack was built from. Keep it labelled distinctly
- * from the `changed files:` count line above it.
+ * array (the three layers plus any path only the change record names), so it cannot disagree
+ * with what the pack was built from. Keep it labelled distinctly from the `changed files:` count
+ * line above it.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
@@ -175,7 +176,8 @@ const uncommittedChurn = parseNumstat(gitDiff('HEAD', '--numstat'));
 const uncommittedNames = [...uncommittedChurn.keys()];
 const untrackedNames = nameOnly(git('ls-files', '--others', '--exclude-standard'));
 
-const changedFiles = [...new Set([...committedNames, ...uncommittedNames, ...untrackedNames])];
+const changedFileSet = new Set([...committedNames, ...uncommittedNames, ...untrackedNames]);
+const changedFiles = [...changedFileSet];
 if (changedFiles.length === 0) {
   console.log('NO CHANGES: committed diff, uncommitted diff, and untracked list are all empty.');
   process.exit(0);
@@ -303,6 +305,18 @@ function parseUnifiedZeroDiff(text) {
 const mergeBase = baseRef ? git('merge-base', baseRef, 'HEAD').trim() : 'HEAD';
 const { filesByPath: parsedByPath, unparsedBlocks } = parseUnifiedZeroDiff(gitDiff('--unified=0', mergeBase));
 
+// The three layers list what changed against the base and against HEAD; the parse lists what
+// changed against the merge base in the working tree. They name the same files except for one
+// shape: a rename committed at HEAD whose working-tree edits then push it below git's similarity
+// threshold. The three-dot layer lists only the new path (the rename holds at HEAD), while the
+// parse sees the old path deleted and the new one added. Without this union that deletion would
+// be in neither the pack nor the `paths:` line.
+const changeRecordOnlyNames = [...parsedByPath.keys()].filter((relPath) => !changedFileSet.has(relPath));
+for (const relPath of changeRecordOnlyNames) {
+  changedFileSet.add(relPath);
+  changedFiles.push(relPath);
+}
+
 // 3c. Rendering. One line format for every section: marker, line number 5 wide, tab, text.
 function markLine(marker, lineNumber, lineText) {
   return marker + (lineNumber === null ? '     ' : String(lineNumber).padStart(5)) + '\t' + lineText;
@@ -415,7 +429,12 @@ const churnOf = (relPath) => {
     const lines = readFileLines(relPath);
     return lines ? lines.length : 0;
   }
-  return (committedChurn.get(relPath) || 0) + (uncommittedChurn.get(relPath) || 0);
+  if (committedChurn.has(relPath) || uncommittedChurn.has(relPath)) {
+    return (committedChurn.get(relPath) || 0) + (uncommittedChurn.get(relPath) || 0);
+  }
+  // A path only the change record names has no numstat line; count its changed lines there.
+  const parsed = parsedByPath.get(relPath);
+  return parsed ? parsed.hunks.reduce((sum, hunk) => sum + hunk.newLength + hunk.removed.length, 0) : 0;
 };
 const ranked = changedFiles
   .map((relPath) => ({ relPath, churn: churnOf(relPath) }))
@@ -654,7 +673,10 @@ writeFileSync(packPath, pack.text);
 // 6. Summary only - never print the pack.
 const kilobytes = (bytes) => (bytes / 1024).toFixed(0) + 'KB';
 console.log(`Review pack written: ${packPath}`);
-console.log(`  changed files: ${changedFiles.length} (committed ${committedNames.length}, uncommitted ${uncommittedNames.length}, untracked ${untrackedNames.length})`);
+console.log(
+  `  changed files: ${changedFiles.length} (committed ${committedNames.length}, uncommitted ${uncommittedNames.length}, untracked ${untrackedNames.length}` +
+  `${changeRecordOnlyNames.length > 0 ? `, change record only ${changeRecordOnlyNames.length}` : ''})`,
+);
 // Labelled distinctly from the count line above: the driver reads THIS line to decide
 // which gated finders to spawn.
 console.log(`  paths: ${changedFiles.join(', ')}`);

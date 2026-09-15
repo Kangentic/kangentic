@@ -697,7 +697,10 @@ the result and declined (14.3).
   the removed lines. The raw three-dot and HEAD diffs are no longer gathered, and the changed-file
   names come from the numstat lines the script already fetches, so a build spawns six git processes
   instead of eight. `diff.context` now reaches no rendered byte and stays pinned. A parse failure is
-  loud: there is no fallback shape that would not claim nothing changed.
+  loud: there is no fallback shape that would not claim nothing changed. Any path the parse names
+  that the three layers did not (a rename committed at HEAD whose working-tree edits then fell
+  below git's similarity threshold, so the parse sees a deletion the three-dot layer folded into
+  the rename) is added to the changed-file list, so a deletion cannot fall between the two gathers.
 - **A light shape exists for measurement.** `--body-cap 0` renders every readable file at the hunk
   tier. That is the pack R5 would have handed its light finders, and 14.2's light column is its
   size. The review skill never passes the flag.
@@ -755,7 +758,9 @@ shapes; the `--body-cap` knob and the replay script are what measures it.
 
 - Read multiplicity still has exactly one ground-truth sample (#578); 13.6's caveat stands. Both
   of that review's duplicate-read files now carry their changed lines at 3 lines of context, and
-  whether that removes the reads is unmeasured until a review runs on a diff of that shape.
+  whether that removes the reads is unmeasured until a review runs on a diff of that shape. Every
+  finder now ends its report with its reads beyond the pack, and the review Summary carries the
+  tally beside the pack's size and stub count, so the number accrues per review without a study.
 - Replay uses landed commits as a proxy for the reviewed tree (13.6, first bullet).
 - The per-file cap's value is checked only against how often the corpus hits it, which is never.
   Its first real firing will be a lockfile or fixture diff.
