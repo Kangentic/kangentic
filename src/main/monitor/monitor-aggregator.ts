@@ -44,6 +44,15 @@ export const RECENTLY_FINISHED_WINDOW_MS = 30 * 60 * 1000;
 /** Hard cap on recently-finished rows, so a long-running app cannot grow the list without bound. */
 export const RECENTLY_FINISHED_CAP = 50;
 
+/**
+ * Longest task description carried on a row. The card clamps it to at most four
+ * 16px lines on a wide card, about 400 characters after markdown is stripped;
+ * the slack covers the markup the renderer strips. A raw description can run
+ * to many KB, and the snapshot is fanned to every monitor window on every
+ * change.
+ */
+export const MONITOR_ROW_DESCRIPTION_MAX_CHARS = 600;
+
 interface ProjectLookup {
   projectName: string;
   tasks: ReturnType<typeof getProjectRepos>['tasks'];
@@ -187,6 +196,10 @@ export function buildMonitorSnapshot(context: IpcContext): MonitorSnapshot {
       // ride MONITOR_PEEK. A synchronous O(rows) grid read, negligible next to the
       // two indexed DB lookups this loop already does per session.
       outputPeek: sessionManager.getOutputPeek(managed.id),
+      // Capped: the card clamps this to at most four short lines, and the
+      // snapshot is fanned to every monitor window on every change, so a
+      // multi-KB description would ride each push for nothing.
+      description: task?.description ? task.description.slice(0, MONITOR_ROW_DESCRIPTION_MAX_CHARS) : null,
       displayId: task?.display_id ?? null,
       columnName: task ? project.swimlaneNames.get(task.swimlane_id) ?? '' : '',
       commandTerminalBranch: managed.commandTerminalBranch,

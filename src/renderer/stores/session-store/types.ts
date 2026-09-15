@@ -3,6 +3,7 @@ import type {
   SessionUsage,
   ActivityState,
   ActivityReason,
+  AssistantMessageTrailEntry,
   SessionEvent,
   SpawnSessionInput,
 } from '../../../shared/types';
@@ -144,6 +145,14 @@ export interface CoreSessionSlice {
    * Consumed by the TaskCard hover tooltip and the debug overlay.
    */
   sessionActivityReason: Record<string, ActivityReason>;
+  /**
+   * The agent's newest messages per session, oldest first, as main pushes
+   * them on `session:messageTrail` (one line per message, already collapsed
+   * and capped). The board card prints the newest few in its description
+   * slot. Main is the keyset authority: it retains a trail after the session
+   * exits and prunes it when the session leaves the registry.
+   */
+  sessionMessageTrails: Record<string, AssistantMessageTrailEntry[]>;
   sessionEvents: Record<string, SessionEvent[]>;
   seenIdleSessions: Record<string, boolean>;
   /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID. */
@@ -207,6 +216,7 @@ export interface CoreSessionSlice {
   updateUsage: (sessionId: string, data: SessionUsage) => void;
   markFirstOutput: (sessionId: string) => void;
   updateActivity: (sessionId: string, state: ActivityState, reason?: ActivityReason) => void;
+  updateMessageTrail: (sessionId: string, entries: AssistantMessageTrailEntry[]) => void;
   addEvent: (sessionId: string, event: SessionEvent) => void;
   batchUpdateUsage: (entries: Map<string, SessionUsage>) => void;
   batchAddEvents: (entries: Array<{ sessionId: string; event: SessionEvent }>) => void;

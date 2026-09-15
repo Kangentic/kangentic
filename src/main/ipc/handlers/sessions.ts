@@ -20,7 +20,9 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
-import type { PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
+import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
+import { agentRegistry } from '../../agent/agent-registry';
+import { MessageTrailTracker } from '../../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
@@ -500,6 +502,29 @@ export function registerSessionHandlers(context: IpcContext): void {
       scheduleBackgroundFlush();
     }
   });
+
+  // Board-card agent message trail. The tracker subscribes to the session
+  // manager itself and reads a bounded transcript tail on the events above; it
+  // is NOT buffered like usage/events, because it already coalesces at the
+  // source and a background card is exactly where the trail is looked at.
+  const messageTrailTracker = new MessageTrailTracker({
+    sessionManager: context.sessionManager,
+    resolveSessionFacts: (sessionId, projectId) => {
+      try {
+        const record = new SessionRepository(getProjectDb(projectId)).findByAnyId(sessionId);
+        if (!record) return null;
+        return { sessionType: record.session_type, agentSessionId: record.agent_session_id, cwd: record.cwd };
+      } catch {
+        return null;
+      }
+    },
+    resolveAdapter: (sessionType) => agentRegistry.getBySessionType(sessionType),
+  });
+  messageTrailTracker.on('trail', (sessionId: string, entries: AssistantMessageTrailEntry[], projectId: string) => {
+    if (context.mainWindow.isDestroyed()) return;
+    broadcast(context.mainWindow, IPC.SESSION_MESSAGE_TRAIL, sessionId, entries, projectId);
+  });
+  ipcMain.handle(IPC.SESSION_GET_MESSAGE_TRAILS, () => messageTrailTracker.snapshot());
 
   context.sessionManager.on('session-changed', (sessionId: string, session: Session) => {
     if (session.status === 'running') {

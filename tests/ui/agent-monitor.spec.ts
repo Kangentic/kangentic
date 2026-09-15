@@ -468,6 +468,78 @@ test.describe('agent monitor', () => {
     }
   });
 
+  test('the card slot follows Card Preview: agent messages without the well, the latest message, the description, then the peek', async () => {
+    // Parity with the board card: the Task tab's Card Preview setting decides
+    // what this slot prints, and the output peek is only the FALLBACK (the
+    // analogue of the board card falling back to its description).
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      const card = page.locator('[data-session-id="sess-working"]');
+      const terminalCard = page.locator('[data-session-id="sess-command-terminal"]');
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toContainText('npm run typecheck');
+
+      const setCardPreview = (value: string) => page.evaluate((cardPreview) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { updateConfig: (partial: { cardPreview: string }) => Promise<void> } } };
+        }).__zustandStores;
+        return stores?.config.getState().updateConfig({ cardPreview });
+      }, value);
+
+      // A trail lands for the task agent: the peek gives way to the agent's
+      // latest message (the default), wrapped to two rows since this row
+      // carries a label, with no well around it. The Command Terminal has no
+      // trail, so its peek stays.
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-working', [
+        { uuid: 'm1', ts: 1, text: 'Reading the buffer manager.' },
+        { uuid: 'm2', ts: 2, text: 'Found the race in the drain path.' },
+        { uuid: 'm3', ts: 3, text: 'Adding the guard now.' },
+      ]));
+      const trail = card.locator('[data-testid="monitor-card-trail"]');
+      await expect(trail).toHaveAttribute('data-mode', 'latest');
+      await expect(trail).toHaveAttribute('data-lines', '2');
+      await expect(trail.locator('> div')).toHaveText(['Adding the guard now.']);
+      await expect(trail.locator('> div')).toHaveClass(/line-clamp-2/);
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toHaveCount(0);
+      await expect(terminalCard.locator('[data-testid="monitor-card-peek"]')).toContainText('nothing to commit');
+
+      // The cost gate follows the slot: once this row draws the trail, the
+      // renderer stops asking main to sample its terminal, while the Command
+      // Terminal (which still draws a peek) stays named.
+      const lastWanted = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekWantedCalls: Array<string[] | null> })
+          .__peekWantedCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+      await expect.poll(lastWanted).not.toContain('sess-working');
+      await expect.poll(lastWanted).toContain('sess-command-terminal');
+
+      // Recent messages: one line each, newest last, in the same two rows.
+      await setCardPreview('agent-messages');
+      await expect(trail).toHaveAttribute('data-mode', 'lines');
+      await expect(trail.locator('> div')).toHaveText(['Found the race in the drain path.', 'Adding the guard now.']);
+
+      // Task description: the row carries one after this snapshot, so the card
+      // prints it in place of the trail; the terminal row has none and keeps
+      // its peek.
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-working'
+          ? Object.assign({}, row, { description: 'Fix the PTY capture race in the buffer manager.' })
+          : row
+      ))));
+      await setCardPreview('description');
+      await expect(card.locator('[data-testid="monitor-card-description"]')).toContainText('Fix the PTY capture race');
+      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
+      await expect(terminalCard.locator('[data-testid="monitor-card-peek"]')).toContainText('nothing to commit');
+
+      // Back to the default: the trail returns.
+      await setCardPreview('agent-latest-message');
+      await expect(trail).toHaveAttribute('data-mode', 'latest');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a session with no captured output renders no peek well at all', async () => {
     // `OutputPeek` returns null when `lines.length === 0`. sess-paused and
     // sess-other-project both seed outputPeek: [] and exercise that early

@@ -38,6 +38,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── Task ──
   { id: 'cardDensity', tabId: 'task', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
+  { id: 'cardPreview', tabId: 'task', label: 'Card Preview', description: "What each card shows under its title: the agent's latest message, its recent messages, or the task description.", scope: 'global', keywords: ['preview', 'messages', 'description', 'trail', 'excerpt', 'agent', 'latest'] },
   { id: 'showTaskNumbers', tabId: 'task', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
 
   // ── Task > Context Bar ──

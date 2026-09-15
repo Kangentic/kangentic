@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -259,6 +259,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_ACTIVITY, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_ACTIVITY, handler);
     },
+    getMessageTrails: () => ipcRenderer.invoke(IPC.SESSION_GET_MESSAGE_TRAILS),
+    onMessageTrail: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, entries: AssistantMessageTrailEntry[], projectId?: string) => callback(sessionId, entries, projectId);
+      ipcRenderer.on(IPC.SESSION_MESSAGE_TRAIL, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_MESSAGE_TRAIL, handler);
+    },
     getEvents: (sessionId) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS, sessionId),
     getEventsCache: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS_CACHE, projectId),
     onEvent: (callback) => {
@@ -441,8 +447,8 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.MONITOR_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.MONITOR_CHANGED, handler);
     },
-    setPeekSubscribed: (subscribed: boolean) =>
-      ipcRenderer.invoke(IPC.MONITOR_SET_PEEK_SUBSCRIBED, subscribed),
+    setPeekSubscribed: (subscribed: boolean, sessionIds?: string[]) =>
+      ipcRenderer.invoke(IPC.MONITOR_SET_PEEK_SUBSCRIBED, subscribed, sessionIds),
     onPeek: (callback: (peeks: Record<string, string[]>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, peeks: Record<string, string[]>) => callback(peeks);
       ipcRenderer.on(IPC.MONITOR_PEEK, handler);

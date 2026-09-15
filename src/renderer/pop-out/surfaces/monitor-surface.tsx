@@ -38,6 +38,14 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     });
     signal.addEventListener('abort', unsubscribeActivity);
 
+    // The card slot's agent message trail, same route as activity: declared in
+    // this surface's `channels`, seeded by the `syncSessions` above, patched
+    // into this window's session store on push.
+    const unsubscribeMessageTrail = window.electronAPI.sessions.onMessageTrail?.((sessionId, entries) => {
+      useSessionStore.getState().updateMessageTrail(sessionId, entries);
+    });
+    if (unsubscribeMessageTrail) signal.addEventListener('abort', unsubscribeMessageTrail);
+
     // Snapshot pushes for the DB-resident half (session spawned/exited, task
     // retitled or moved).
     const unsubscribeChanged = window.electronAPI.monitor.onChanged((snapshot) => {

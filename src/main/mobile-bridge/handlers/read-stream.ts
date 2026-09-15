@@ -6,7 +6,7 @@ import {
   type TranscriptWindowResponsePayload,
 } from '@kangentic/protocol';
 import type { ActivityReason, ActivityState, SessionEvent, SessionUsage, TranscriptEntry } from '../../../shared/types';
-import { lastAssistantPreview } from '../message-preview';
+import { lastAssistantPreview } from '../../agent/shared/message-preview';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveTaskTranscript } from '../../agent/transcript-service';

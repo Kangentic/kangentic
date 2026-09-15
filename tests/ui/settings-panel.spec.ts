@@ -119,10 +119,14 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Task tab with card density, ticket numbers, and context bar settings', async () => {
+  test('shows Task tab with card density, card preview, ticket numbers, and context bar settings', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true }).click();
     await expect(page.locator('text=Card Density')).toBeVisible();
+    // Card Preview select (cardPreview) - goes RED if its SettingRow is removed
+    // from TaskTab.tsx, while leaving all other assertions green.
+    await expect(page.locator('text=Card Preview')).toBeVisible();
+    await expect(page.getByTestId('setting-row-cardPreview').locator('select')).toHaveValue('agent-latest-message');
     // Ticket Numbers toggle row (showTaskNumbers) - goes RED if SettingToggleRow is
     // removed from TaskTab.tsx, while leaving all other assertions green.
     await expect(page.locator('text=Ticket Numbers')).toBeVisible();

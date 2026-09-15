@@ -51,6 +51,14 @@ declare global {
     __mockNotificationClickListeners?: Array<(projectId: string, taskId: string) => void>;
     /** Fires the notification-clicked push to every registered subscriber. Installed eagerly at mock-bootstrap time; throws if no subscriber has registered yet. */
     __mockFireNotificationClicked?: (projectId: string, taskId: string) => void;
+
+    /** Pushes a session's agent message trail (`session:messageTrail`) the way main does; also records it for `sessions.getMessageTrails()`. Installed once `onMessageTrail` has a subscriber. */
+    __mockFireMessageTrail?: (sessionId: string, entries: Array<{ uuid: string; ts: number; text: string }>, projectId?: string) => void;
+
+    /** The monitor rows the mock serves; replaced wholesale by `__mockFireMonitorChanged`. Rows are loosely typed: specs author them as literals. */
+    __mockMonitorRows?: Array<Record<string, unknown> & { sessionId: string }>;
+    /** Replaces the monitor rows and pushes a `monitor:changed` snapshot to every subscriber. Installed once `monitor.onChanged` has a subscriber. */
+    __mockFireMonitorChanged?: (rows: Array<Record<string, unknown> & { sessionId: string }>) => void;
   }
 }
 

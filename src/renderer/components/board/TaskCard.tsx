@@ -18,6 +18,7 @@ import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/f
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
+import { CardMessageTrail, EXCERPT_CLAMP_CLASS, trailModeFor, type ExcerptLines } from './CardMessageTrail';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';
@@ -64,11 +65,14 @@ function CardStatusBar({
 }
 
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
-  // A single `useShallow`-gated selector replaces four individual subscriptions.
-  // Scaling: 100 cards × 4 subs each = 400 selector invocations per session-store
+  // A single `useShallow`-gated selector replaces five individual subscriptions.
+  // Scaling: 100 cards × 5 subs each = 500 selector invocations per session-store
   // update; with one selector it drops to 100, and shallow equality still skips
-  // re-renders when the projected object hasn't actually changed.
-  const { sessionId, isHighlighted, isResuming, activityReason } = useSessionStore(
+  // re-renders when the projected object hasn't actually changed. The message
+  // trail rides here for the same reason: main pushes a session's trail array
+  // only when a line is new, so its reference is stable between pushes and the
+  // shallow compare skips every other card's write.
+  const { sessionId, isHighlighted, isResuming, activityReason, messageTrail } = useSessionStore(
     useShallow(
       useCallback(
         (s: ReturnType<typeof useSessionStore.getState>) => {
@@ -78,6 +82,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             isHighlighted: !!resolvedSessionId && resolvedSessionId === s.activeSessionId,
             isResuming: s._sessionByTaskId.get(task.id)?.resuming ?? false,
             activityReason: resolvedSessionId ? s.sessionActivityReason[resolvedSessionId] : undefined,
+            messageTrail: resolvedSessionId ? s.sessionMessageTrails[resolvedSessionId] : undefined,
           };
         },
         [task.id],
@@ -191,6 +196,15 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   );
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
+  const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  // `messageTrail` (from the shared selector above) is the session's agent
+  // message trail as main pushes it on change. NEVER fetched here: a board
+  // renders every card at once, and a per-card transcript read is the one way
+  // this feature ships broken. Falls back to the description while a task has
+  // no session or its agent has not said anything yet, so the default setting
+  // never blanks a card.
+  const trailMode = trailModeFor(cardPreview);
+  const shownTrail = trailMode && messageTrail && messageTrail.length > 0 ? messageTrail : null;
 
   // Subtle, muted `#N` (display_id) matching the task-detail header format. Right-aligned
   // and shrink-0 so a long title truncates before the number; rendered only when the
@@ -242,11 +256,18 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               </button>
             )}
           </div>
-          {task.description && (
+          {/* This card is dimmer overall, so its one trail line sits one step
+              above its `text-fg-disabled` description rather than at the full
+              card's muted tone. */}
+          {shownTrail && trailMode ? (
             <div className="mt-0.5">
-              <span className="text-xs text-fg-disabled truncate block">{stripMarkdown(task.description)}</span>
+              <CardMessageTrail entries={shownTrail} lines={1} mode={trailMode} olderLineClass="text-fg-disabled" newestLineClass="text-fg-faint" />
             </div>
-          )}
+          ) : task.description ? (
+            <div className="mt-0.5">
+              <span className="text-xs text-fg-disabled truncate block" data-testid="task-card-description">{stripMarkdown(task.description)}</span>
+            </div>
+          ) : null}
           <div className="mt-1">
             <LabelPills labels={taskLabels} labelColors={labelColors} />
           </div>
@@ -294,6 +315,10 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const boardDensity = compact ? 'compact' : cardDensity;
   const isCompactDensity = boardDensity === 'compact';
   const isComfortableDensity = boardDensity === 'comfortable';
+  // The description slot's clamp per density. Compact used to print no excerpt
+  // at all; it now always shows exactly one line, so a compact board still says
+  // what each agent is doing.
+  const excerptLines: ExcerptLines = isCompactDensity ? 1 : isComfortableDensity ? 5 : 3;
 
   return (
     <>
@@ -377,9 +402,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           </div>
         )}
 
-        {!isCompactDensity && task.description && (
-          <div className={`text-xs text-fg-faint mt-1 ${isComfortableDensity ? 'line-clamp-5' : 'line-clamp-3'}`}>{stripMarkdown(task.description)}</div>
-        )}
+        {shownTrail && trailMode ? (
+          <div className="mt-1">
+            <CardMessageTrail entries={shownTrail} lines={excerptLines} mode={trailMode} olderLineClass="text-fg-faint" newestLineClass="text-fg-muted" />
+          </div>
+        ) : task.description ? (
+          <div className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[excerptLines]}`} data-testid="task-card-description">{stripMarkdown(task.description)}</div>
+        ) : null}
 
         <div className={isCompactDensity ? 'mt-1' : 'mt-1.5'}>
           <LabelPills labels={taskLabels} labelColors={labelColors} />

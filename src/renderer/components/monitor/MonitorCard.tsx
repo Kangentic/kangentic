@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { CirclePause, Check, GitBranch } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
@@ -7,7 +7,11 @@ import { LabelPills, Pill } from '../Pill';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
+import { CardMessageTrail, EXCERPT_CLAMP_CLASS, TRAIL_HEIGHT_CLASS, trailModeFor, type ExcerptLines } from '../board/CardMessageTrail';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
+import { stripMarkdown } from '../../utils/strip-markdown';
+import { useConfigStore } from '../../stores/config-store';
+import { useSessionStore } from '../../stores/session-store';
 import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
 
 /**
@@ -23,10 +27,15 @@ import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
  *   - an eyebrow line naming the owning project and column (the cross-project bit)
  *   - the live activity line ("Idle for 5m - Claude is waiting for your input")
  *     as a right-aligned eyebrow pill, which is what this view exists to surface
- *   - a live OUTPUT PEEK where the board card shows its task description. This is
- *     the deliberate divergence: a description reads the same every time you look
- *     at it, and a Command Terminal has none at all, so the slot was static for
- *     task rows and empty for terminal rows. See `OutputPeek` below.
+ *   - a live OUTPUT PEEK as the slot's FALLBACK where the board card falls back
+ *     to its task description. The slot itself follows the same Card Preview
+ *     setting the board card does (`cardPreview`): the agent's recent messages
+ *     or its latest message, rendered through the shared `CardMessageTrail` with
+ *     no well, so a user who set the preference on the Task tab sees it honored
+ *     here. Only when that yields nothing (the description mode, a Command
+ *     Terminal, an agent that has not said anything yet) does the peek show,
+ *     because a description reads the same every time you look at it and a
+ *     terminal has none at all. See `OutputPeek` below.
  */
 
 interface MonitorCardProps {
@@ -164,7 +173,8 @@ const PEEK_ROWS_WITH_LABELS = 2;
  */
 const PEEK_ROWS_WITHOUT_LABELS = 4;
 
-/** `leading-4` (16px per row) is what makes these exact. Keep them in step. */
+/** `leading-4` (16px per row) is what makes these exact. Keep them in step with
+ *  `TRAIL_HEIGHT_CLASS`, which the trail and description forms of the same slot use. */
 const PEEK_HEIGHT_CLASS: Record<number, string> = { 2: 'h-8', 3: 'h-12', 4: 'h-16' };
 
 function OutputPeek({ lines, rows }: { lines: string[]; rows: number }) {
@@ -184,58 +194,85 @@ function OutputPeek({ lines, rows }: { lines: string[]; rows: number }) {
   );
 }
 
-function MonitorCardInner({
-  row,
-  labelColors,
-  dense = false,
-  onOpen,
-  onContextMenu,
-  hideProject = false,
-}: MonitorCardProps) {
-  const activityLine = formatMonitorStatus(row);
-
-  // Scoped with `currentTarget.contains()`: the card is itself a role="button",
-  // and a nested interactive element's own menu must win over this one.
-  const handleContextMenu = (event: React.MouseEvent) => {
+/** The card's right-click, scoped with `currentTarget.contains()`: the card is
+ *  itself a role="button", and a nested interactive element's own menu must win
+ *  over this one. */
+function useCardContextMenu(row: MonitorSessionRow, onContextMenu: MonitorCardProps['onContextMenu']) {
+  return (event: React.MouseEvent) => {
     if (!onContextMenu) return;
     if (!event.currentTarget.contains(event.target as Node)) return;
     event.preventDefault();
     event.stopPropagation();
     onContextMenu(row, { x: event.clientX, y: event.clientY });
   };
+}
 
-  if (dense) {
-    return (
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onOpen(row)}
-        onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
-        onContextMenu={handleContextMenu}
-        className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer text-left"
-        data-testid="monitor-card"
-        data-dense="true"
-        data-session-id={row.sessionId}
-        data-project-id={row.projectId}
-        title={`Open ${row.taskTitle}`}
-      >
-        <StateGlyph row={row} />
-        {!hideProject && (
-          <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
-        )}
-        <span className="text-sm text-fg font-medium truncate min-w-0 flex-1">{row.taskTitle}</span>
-        <span className="shrink-0 font-mono text-xs text-fg-muted">
-          {row.displayId === null ? '' : `#${row.displayId}`}
-        </span>
-        <span className={`text-xs truncate min-w-0 max-w-[30ch] ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
-          {activityLine}
-        </span>
-        {row.status !== 'exited' && (
-          <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
-        )}
-      </div>
-    );
-  }
+/**
+ * The compact list layout: one scannable line per session, no slot. Its own
+ * component so a list of a hundred rows subscribes to nothing the slot needs;
+ * the full card below is the only reader of the Card Preview setting and the
+ * session's message trail.
+ */
+function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: MonitorCardProps) {
+  const activityLine = formatMonitorStatus(row);
+  const handleContextMenu = useCardContextMenu(row, onContextMenu);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(row)}
+      onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
+      onContextMenu={handleContextMenu}
+      className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer text-left"
+      data-testid="monitor-card"
+      data-dense="true"
+      data-session-id={row.sessionId}
+      data-project-id={row.projectId}
+      title={`Open ${row.taskTitle}`}
+    >
+      <StateGlyph row={row} />
+      {!hideProject && (
+        <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
+      )}
+      <span className="text-sm text-fg font-medium truncate min-w-0 flex-1">{row.taskTitle}</span>
+      <span className="shrink-0 font-mono text-xs text-fg-muted">
+        {row.displayId === null ? '' : `#${row.displayId}`}
+      </span>
+      <span className={`text-xs truncate min-w-0 max-w-[30ch] ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
+        {activityLine}
+      </span>
+      {row.status !== 'exited' && (
+        <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
+      )}
+    </div>
+  );
+}
+
+function MonitorFullCard({
+  row,
+  labelColors,
+  onOpen,
+  onContextMenu,
+  hideProject = false,
+}: MonitorCardProps) {
+  const activityLine = formatMonitorStatus(row);
+  const handleContextMenu = useCardContextMenu(row, onContextMenu);
+
+  // The slot's content follows the Task tab's Card Preview, exactly as the board
+  // card's does. The trail lives in the session store (main pushes it on change;
+  // this window's `syncSessions` seeds it), keyed by session so another row's
+  // line does not re-render this card.
+  const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  const messageTrail = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) => s.sessionMessageTrails[row.sessionId],
+      [row.sessionId],
+    ),
+  );
+  const slotRows: ExcerptLines = row.labels.length > 0 ? PEEK_ROWS_WITH_LABELS : PEEK_ROWS_WITHOUT_LABELS;
+  const trailMode = trailModeFor(cardPreview);
+  const shownTrail = trailMode && messageTrail && messageTrail.length > 0 ? messageTrail : null;
+  const shownDescription = !trailMode && row.description ? stripMarkdown(row.description) : null;
 
   return (
     <div
@@ -316,10 +353,32 @@ function MonitorCardInner({
         </div>
       )}
 
-      <OutputPeek
-        lines={row.outputPeek}
-        rows={row.labels.length > 0 ? PEEK_ROWS_WITH_LABELS : PEEK_ROWS_WITHOUT_LABELS}
-      />
+      {/* No well around the trail or the description: the well marks monospace
+          machine output as a different KIND of thing (see `OutputPeek`), and
+          these are prose in the board card's own tones, so they read as the
+          board card does. Same fixed height as the well, so the choice of mode
+          never changes a card's height. */}
+      {shownTrail && trailMode ? (
+        <div className="mt-2">
+          <CardMessageTrail
+            entries={shownTrail}
+            lines={slotRows}
+            mode={trailMode}
+            olderLineClass="text-fg-faint"
+            newestLineClass="text-fg-muted"
+            testId="monitor-card-trail"
+          />
+        </div>
+      ) : shownDescription !== null ? (
+        /* `!== null`, not truthy: a description that strips to nothing still
+           counts as "has a description" here, the same predicate MonitorBody
+           uses to decide which rows main should sample a peek for. */
+        <div className={`mt-2 ${TRAIL_HEIGHT_CLASS[slotRows]}`} data-testid="monitor-card-description" data-lines={slotRows}>
+          <div className={`text-xs text-fg-faint ${EXCERPT_CLAMP_CLASS[slotRows]}`}>{shownDescription}</div>
+        </div>
+      ) : (
+        <OutputPeek lines={row.outputPeek} rows={slotRows} />
+      )}
 
       {row.labels.length > 0 && (
         <div className="mt-1.5">
@@ -353,6 +412,10 @@ function MonitorCardInner({
       />
     </div>
   );
+}
+
+function MonitorCardInner(props: MonitorCardProps) {
+  return props.dense ? <MonitorDenseCard {...props} /> : <MonitorFullCard {...props} />;
 }
 
 // Memoized: the virtualizer re-renders the whole visible window on every scroll

@@ -53,8 +53,8 @@ const { mockSubscribe, mockUnsubscribe } = vi.hoisted(() => ({
 
 vi.mock('../../src/main/monitor/monitor-peek-tracker', () => ({
   MonitorPeekTracker: class {
-    subscribe(rendererId: number): void {
-      mockSubscribe(rendererId);
+    subscribe(rendererId: number, wanted: ReadonlySet<string> | null): void {
+      mockSubscribe(rendererId, wanted);
     }
     unsubscribe(rendererId: number): void {
       mockUnsubscribe(rendererId);
@@ -97,7 +97,7 @@ interface NavigationDetails {
   isSameDocument: boolean;
 }
 
-type SetPeekSubscribedHandler = (event: { sender: FakeWebContents }, subscribed: boolean) => void;
+type SetPeekSubscribedHandler = (event: { sender: FakeWebContents }, subscribed: boolean, sessionIds?: string[]) => void;
 
 function getSubscribeHandler(): SetPeekSubscribedHandler {
   const registeredCall = mockHandle.mock.calls.find((call) => call[0] === IPC.MONITOR_SET_PEEK_SUBSCRIBED);
@@ -201,6 +201,20 @@ describe('MONITOR_SET_PEEK_SUBSCRIBED - renderer subscribe/teardown wiring', () 
     handler({ sender: secondSender }, true);
 
     expect(secondSender.listenerCount('destroyed')).toBe(1);
+  });
+
+  it('passes the named session ids to the tracker as a set, and null when none are named', () => {
+    const handler = getSubscribeHandler();
+    const sender = new FakeWebContents(8);
+
+    handler({ sender }, true, ['sess-a', 'sess-b']);
+    expect(mockSubscribe).toHaveBeenLastCalledWith(8, new Set(['sess-a', 'sess-b']));
+
+    handler({ sender }, true, []);
+    expect(mockSubscribe).toHaveBeenLastCalledWith(8, new Set());
+
+    handler({ sender }, true);
+    expect(mockSubscribe).toHaveBeenLastCalledWith(8, null);
   });
 
   it('subscribed=false calls unsubscribe directly without registering any teardown hooks', () => {
