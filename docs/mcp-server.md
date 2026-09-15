@@ -198,6 +198,10 @@ the finish line: on the default board the last non-done column is Merge, which a
 A column a *user* archived deliberately stays hidden. The carve-out is the `done` role alone, not
 "any archived column".
 
+A column that runs tasks on its own conversation is tagged `[isolated session]`. Only those are
+marked: a main-session column is the norm, and tagging every one would bury the distinction. See
+[kangentic_update_column](#kangentic_update_column) for what the tag means.
+
 ### Board Profiles
 
 A **Board Profile** is a named alternate ladder of per-column strategy settings, so one task can
@@ -469,11 +473,16 @@ Read the agent's native session history file for a task. Returns the raw file co
 
 ### kangentic_get_column_detail
 
-Get detailed column configuration: description, auto-spawn, permission mode, plan exit target, and visual settings.
+Get detailed column configuration: description, auto-spawn, permission mode, session track, plan exit target, and visual settings.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `column` | string | Yes | Column name (case-insensitive) |
+
+`Session`, `On enter`, and `Handoff context` always print, even at their defaults. The overrides
+below them print only when set, because "no override" is the absence of a value; a session track is
+never absent, so hiding the default would leave a caller unable to tell a main-session column from a
+failed write.
 
 Also returns `taskOrder`: the column's tasks top to bottom, each with its `position` (the
 zero-based ordinal slot described under [kangentic_list_tasks](#kangentic_list_tasks)). That makes
@@ -627,9 +636,22 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 | `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change is injected live, without a restart. |
 | `permissionMode` | string \| null | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto`. `null` uses project default. |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
+| `sessionTarget` | string | No | `main` or `isolated`. Which session a task runs on here: `main` continues the task's own conversation, `isolated` gives the column its own, keyed to the column. Not nullable, since the underlying column is NOT NULL: pass `"main"` to go back to the default. |
+| `sessionSpawnStrategy` | string | No | `create_or_resume` or `always_spawn_new`. What the column does with that session on entry. Not nullable; pass `"create_or_resume"` to go back to the default. |
 | `planExitTargetColumn` | string \| null | No | Column to auto-move the task to when an agent in plan mode exits planning. `null` disables. |
 
 At least one updatable field is required.
+
+**Changing `sessionTarget` carries `sessionSpawnStrategy` with it** unless you pass one explicitly.
+Switching to `isolated` also switches the column to `always_spawn_new`, and switching back to `main`
+returns it to `create_or_resume`, so an isolated column runs an independent pass per entry by
+default. A strategy you set deliberately is never overwritten: the carry only fires when the
+strategy still sits at the outgoing track's default, and restating a `sessionTarget` the column
+already has changes nothing. To get a persistent isolated track (one long side conversation that
+resumes), pass `sessionTarget: "isolated"` and `sessionSpawnStrategy: "create_or_resume"` together.
+
+This mirrors the Column Manager's Session and On enter fields exactly; the rule is shared code
+(`src/shared/session-track.ts`), not two implementations.
 
 **Cross-project edits write the setting but do not reconcile.** When you target another board with
 `project`, the column is updated and persisted to that project's `kangentic.json`, but no session
@@ -658,10 +680,27 @@ every lane, including the archived Done lane.
 | `effortOverride` | string | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"high"`, `"xhigh"`) |
 | `permissionMode` | string | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
+| `sessionTarget` | string | No | `main` (default) or `isolated`. `isolated` gives the column its own conversation instead of continuing the task's. |
+| `sessionSpawnStrategy` | string | No | `create_or_resume` or `always_spawn_new`. Defaults to `always_spawn_new` when `sessionTarget` is `isolated`, `create_or_resume` otherwise. |
 | `planExitTargetColumn` | string | No | Column to auto-move the task to when an agent in plan mode exits planning |
 | `position` | number | No | Zero-based ordinal slot among the board's columns (not a raw stored `position`); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do (so `position: 0` does not come first), and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done. |
 
 Roles are structural and cannot be set: every board already has its To Do and Done columns.
+
+**A column that checks an earlier column's work wants `sessionTarget: "isolated"`.** On the default
+`main` track the reviewer shares the task's conversation, which makes it the same agent that wrote
+the code. Passing `sessionTarget: "isolated"` alone is enough; `sessionSpawnStrategy` follows it to
+`always_spawn_new` under the rule described in
+[kangentic_update_column](#kangentic_update_column). A working review column is one call:
+
+```json
+{
+  "name": "Code Review",
+  "autoCommand": "/code-review",
+  "sessionTarget": "isolated",
+  "icon": "code"
+}
+```
 
 ### kangentic_delete_column
 

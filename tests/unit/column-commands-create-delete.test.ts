@@ -224,6 +224,120 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
   });
 
   // -------------------------------------------------------------------------
+  // the session track
+  //
+  // Every assertion here reads the PERSISTED row, not the response payload.
+  // `session_spawn_strategy` is NOT NULL with a literal default, so a handler
+  // that merely declines to write it still ends up with 'create_or_resume' on
+  // disk while its own echo looks right - which is the exact shape of the bug
+  // these tests exist for.
+  // -------------------------------------------------------------------------
+
+  it('carries the spawn strategy across when a new column asks only for isolation', () => {
+    // The whole point of the issue: "set up a Code Review column that runs
+    // /code-review" must produce a column that runs an independent pass each
+    // entry, not one that resumes its own previous review.
+    handleCreateColumn({ name: 'Review Pass', sessionTarget: 'isolated' }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Review Pass');
+    expect(created?.session_target).toBe('isolated');
+    expect(created?.session_spawn_strategy).toBe('always_spawn_new');
+  });
+
+  it('preserves an explicit persistent isolated track instead of snapping it', () => {
+    handleCreateColumn({
+      name: 'Design Notes',
+      sessionTarget: 'isolated',
+      sessionSpawnStrategy: 'create_or_resume',
+    }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Design Notes');
+    expect(created?.session_target).toBe('isolated');
+    expect(created?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('leaves a main-session column at the defaults', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+
+    const created = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(created?.session_target).toBe('main');
+    expect(created?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('snaps the spawn strategy back when a column returns to the main session', () => {
+    handleCreateColumn({ name: 'Review Pass', sessionTarget: 'isolated' }, context);
+    const response = handleUpdateColumn({ column: 'Review Pass', sessionTarget: 'main' }, context);
+
+    expect(response.success).toBe(true);
+    const updated = repository.list().find((lane) => lane.name === 'Review Pass');
+    expect(updated?.session_target).toBe('main');
+    expect(updated?.session_spawn_strategy).toBe('create_or_resume');
+    // The derived field is reported, not silently changed underneath the caller.
+    expect(response.message).toContain('sessionSpawnStrategy');
+  });
+
+  it('does not clobber a deliberate strategy when sessionTarget is restated', () => {
+    // An MCP caller cannot tell a change from a restatement the way a <select>
+    // can, so a no-op write must stay a no-op.
+    handleCreateColumn({
+      name: 'Design Notes',
+      sessionTarget: 'isolated',
+      sessionSpawnStrategy: 'create_or_resume',
+    }, context);
+    handleUpdateColumn({ column: 'Design Notes', sessionTarget: 'isolated' }, context);
+
+    const updated = repository.list().find((lane) => lane.name === 'Design Notes');
+    expect(updated?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('updates the spawn strategy on its own, without a sessionTarget', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', sessionSpawnStrategy: 'always_spawn_new' },
+      context,
+    );
+
+    expect(response.success).toBe(true);
+    const updated = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(updated?.session_target).toBe('main');
+    expect(updated?.session_spawn_strategy).toBe('always_spawn_new');
+  });
+
+  it('rejects an invalid sessionTarget on create instead of storing it', () => {
+    const response = handleCreateColumn({ name: 'Brand Review', sessionTarget: 'seperate' }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid sessionTarget');
+    expect(response.error).toContain('main, isolated');
+    expect(repository.list().some((lane) => lane.name === 'Brand Review')).toBe(false);
+  });
+
+  it('rejects an invalid sessionSpawnStrategy on update instead of storing it', () => {
+    // Neither DB column has a CHECK constraint and mapRow asserts rather than
+    // narrows, so an unvalidated value would persist and read back as a member
+    // of the union. The mobile bridge reaches this handler with no zod layer.
+    handleCreateColumn({ name: 'Brand Review' }, context);
+    const response = handleUpdateColumn(
+      { column: 'Brand Review', sessionSpawnStrategy: 'always' },
+      context,
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Invalid sessionSpawnStrategy');
+    const untouched = repository.list().find((lane) => lane.name === 'Brand Review');
+    expect(untouched?.session_spawn_strategy).toBe('create_or_resume');
+  });
+
+  it('lists both session fields in the no-fields-to-update error', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+    const response = handleUpdateColumn({ column: 'Brand Review' }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('sessionTarget');
+    expect(response.error).toContain('sessionSpawnStrategy');
+  });
+
+  // -------------------------------------------------------------------------
   // delete_column - refusals
   // -------------------------------------------------------------------------
 

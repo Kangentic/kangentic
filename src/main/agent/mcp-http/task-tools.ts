@@ -19,6 +19,37 @@ const PERMISSION_MODE_SCHEMA = z.enum(['default', 'plan', 'acceptEdits', 'dontAs
 const RUN_MODE_SCHEMA = z.enum(['column_settings', 'agent_override']);
 
 /**
+ * The two session-track fields, shared by create_column and update_column.
+ *
+ * Neither is `.nullable()`, unlike the clearable fields beside them and unlike
+ * the same two keys in profile-tools.ts. Both DB columns are NOT NULL, so there
+ * is no "clear" state to express: going back to the default means passing
+ * "main" / "create_or_resume". Literals are kept in lockstep with the shared
+ * `SessionTarget` / `SessionSpawnStrategy` unions by
+ * tests/unit/mcp-column-field-parity.test.ts.
+ */
+const SESSION_TARGET_SCHEMA = z.enum(['main', 'isolated']);
+const SESSION_SPAWN_STRATEGY_SCHEMA = z.enum(['create_or_resume', 'always_spawn_new']);
+
+/**
+ * Written to lead a caller to the right answer rather than to name the enum. An
+ * agent asked to "set up a Code Review column" has only this text to tell it
+ * that a reviewer sharing the task's main session IS the agent that wrote the
+ * code, which is the failure these fields exist to prevent.
+ */
+const SESSION_TARGET_DESCRIPTION =
+  'Which session a task runs on in this column. "main" (default) continues the task\'s own conversation, '
+  + 'so the agent here remembers everything earlier columns did. "isolated" gives the column its own separate '
+  + 'conversation, keyed to the column, which is what makes a reviewer or tester independent of the agent that '
+  + 'wrote the code. Choosing "isolated" also switches the column to a fresh session per entry unless '
+  + 'sessionSpawnStrategy says otherwise.';
+const SESSION_SPAWN_STRATEGY_DESCRIPTION =
+  'What this column does with that session when a task enters it. "create_or_resume" (the default for a main-session '
+  + 'column) picks the conversation back up; "always_spawn_new" (the default once sessionTarget is "isolated") retires '
+  + 'the previous one and starts fresh, so each entry is an independent pass. Pass it explicitly only to break that '
+  + 'pairing, e.g. an isolated column that should accumulate one long side conversation.';
+
+/**
  * Build the create_task routing-check refusal shown when the call
  * defaulted to the active project but the task text named one or more
  * other registered projects. Names a concrete re-run for each option:
@@ -295,7 +326,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_list_columns',
     {
-      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. Pass `project` to list columns from a different project.',
+      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. A column marked `[isolated session]` runs tasks on its own conversation rather than the task\'s main one. Pass `project` to list columns from a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -306,7 +337,7 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list columns: ${response.error}` }], isError: true };
       }
-      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number }>;
+      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number; sessionTarget?: 'isolated' }>;
       const lines = columns.map((column) => {
         const roleTag = column.role ? ` (${column.role})` : '';
         // The done column breaks the "N task(s)" shape deliberately: its live
@@ -314,7 +345,10 @@ export function registerTaskTools(
         const count = column.completedCount !== undefined
           ? `${column.completedCount} completed`
           : `${column.taskCount} task(s)`;
-        return `- ${column.name}${roleTag}: ${count}`;
+        // Only isolated columns are marked. A main-session column is the norm
+        // and tagging every one of them would bury the distinction.
+        const isolationTag = column.sessionTarget === 'isolated' ? ' [isolated session]' : '';
+        return `- ${column.name}${roleTag}: ${count}${isolationTag}`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),
@@ -747,7 +781,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_column',
     {
-      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
+      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, running the column on an isolated session, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
       inputSchema: z.object({
         column: z.string().describe('Column name to update (case-insensitive, e.g. "Review"). The role columns (To Do, Done) can be renamed and restyled here like any other; their role itself is structural and not settable.'),
         name: z.string().max(100).optional().describe('New column name.'),
@@ -761,12 +795,14 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
+        sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ column, name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       description: description === undefined ? undefined : description,
@@ -779,6 +815,8 @@ export function registerTaskTools(
       effortOverride: effortOverride === undefined ? undefined : effortOverride,
       permissionMode: permissionMode === undefined ? undefined : permissionMode,
       handoffContext: handoffContext ?? undefined,
+      sessionTarget: sessionTarget ?? undefined,
+      sessionSpawnStrategy: sessionSpawnStrategy ?? undefined,
       planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
     }, ctx, 'Failed to update column')),
   );
@@ -787,7 +825,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_create_column',
     {
-      description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. Pass `project` to add a column to a different project.',
+      description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. A column that reviews, tests, or otherwise checks the work of an earlier column wants sessionTarget: "isolated", or its agent is the same one that did that work. Pass `project` to add a column to a different project.',
       inputSchema: z.object({
         name: z.string().max(100).describe('Column name, unique on this board (case-insensitive).'),
         description: z.string().max(1000).optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json.'),
@@ -800,13 +838,15 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode for agents spawned in this column. Omit to use the project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
+        sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
         position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the board\'s columns (not a raw stored position); later columns shift right. Clamped between the role columns: a value below the lowest legal slot lands immediately after To Do, and a value at or past Done lands immediately before Done, never after it. Omit for the default placement just before Done.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+    async ({ name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
       name,
       description,
       color,
@@ -818,6 +858,8 @@ export function registerTaskTools(
       effortOverride,
       permissionMode,
       handoffContext,
+      sessionTarget,
+      sessionSpawnStrategy,
       planExitTargetColumn,
       position,
     }, ctx, 'Failed to create column'), { alwaysAnnotate: true }),

@@ -594,6 +594,13 @@ export const handleGetColumnDetail: CommandHandler = (
     `  Tasks: ${tasks.length}`,
     `  Auto-spawn: ${matched.auto_spawn ? 'yes' : 'no'}`,
     `  Permission mode: ${matched.permission_mode ?? 'default (inherited)'}`,
+    // Unconditional, unlike the overrides below, because a default here is a
+    // real answer a caller needs. Printing these only when non-default is the
+    // original bug in reverse: an agent sets isolation, reads back, sees
+    // nothing, and cannot tell a default column from a failed write.
+    `  Session: ${matched.session_target === 'isolated' ? 'isolated (own conversation)' : 'main (task conversation)'}`,
+    `  On enter: ${matched.session_spawn_strategy === 'always_spawn_new' ? 'always spawn new' : 'create or resume'}`,
+    `  Handoff context: ${matched.handoff_context ? 'yes' : 'no'}`,
   ];
   if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
   if (matched.description) lines.push(`  Description: ${matched.description}`);
@@ -645,6 +652,9 @@ export const handleGetColumnDetail: CommandHandler = (
       agentOverride: matched.agent_override,
       modelOverride: matched.model_override,
       effortOverride: matched.effort_override,
+      handoffContext: matched.handoff_context,
+      sessionTarget: matched.session_target,
+      sessionSpawnStrategy: matched.session_spawn_strategy,
       planExitTarget: planExitTargetName,
       color: matched.color,
       icon: matched.icon,

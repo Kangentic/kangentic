@@ -296,6 +296,52 @@ describe('handleGetColumnDetail - description field', () => {
     expect((result.data as Record<string, unknown>).description).toBeNull();
   });
 
+  it('reports the session track even when every value is the default', () => {
+    // The read-back half of the isolated-column fix. These three print
+    // unconditionally, unlike the overrides around them: an agent that sets
+    // isolation and reads back nothing cannot tell a default column from a
+    // write that silently did not take.
+    const swimlaneRow = makeSwimlaneRow();
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'To Do' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Session: main (task conversation)');
+    expect(result.message).toContain('On enter: create or resume');
+    expect(result.message).toContain('Handoff context: no');
+    expect(result.data).toMatchObject({
+      sessionTarget: 'main',
+      sessionSpawnStrategy: 'create_or_resume',
+      handoffContext: false,
+    });
+  });
+
+  it('reports an isolated column as isolated', () => {
+    const swimlaneRow = makeSwimlaneRow({
+      name: 'Code Review',
+      role: null,
+      session_target: 'isolated',
+      session_spawn_strategy: 'always_spawn_new',
+      handoff_context: 1,
+    });
+    const db = createMockDb([swimlaneRow]);
+    const context = createMockContext(db);
+
+    const result = handleGetColumnDetail({ column: 'Code Review' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Session: isolated (own conversation)');
+    expect(result.message).toContain('On enter: always spawn new');
+    expect(result.message).toContain('Handoff context: yes');
+    expect(result.data).toMatchObject({
+      sessionTarget: 'isolated',
+      sessionSpawnStrategy: 'always_spawn_new',
+      handoffContext: true,
+    });
+  });
+
   it('data.description is null when description is null', () => {
     const swimlaneRow = makeSwimlaneRow({ description: null });
     const db = createMockDb([swimlaneRow]);

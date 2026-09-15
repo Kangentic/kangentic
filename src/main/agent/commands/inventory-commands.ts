@@ -24,6 +24,11 @@ export const handleListColumns: CommandHandler = (
     // Live cards on the board, for every lane including Done.
     taskCount: taskRepo.list(swimlane.id).length,
     ...(swimlane.role === 'done' ? { completedCount } : {}),
+    // Sparse on purpose, like completedCount: only the columns that run their
+    // own conversation carry it, so the common board prints unchanged. This is
+    // what lets an agent see which columns are isolated from the board survey
+    // it already makes, instead of a get_column_detail call per column.
+    ...(swimlane.session_target === 'isolated' ? { sessionTarget: 'isolated' as const } : {}),
   }));
 
   return { success: true, data: columns };
