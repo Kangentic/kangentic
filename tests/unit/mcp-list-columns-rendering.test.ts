@@ -110,3 +110,39 @@ describe('kangentic_list_columns rendering', () => {
     expect(config.description).toMatch(/\bdone\b/i);
   });
 });
+
+describe('kangentic_list_columns isolation tag', () => {
+  it('marks an isolated column so an agent can see it without a per-column call', async () => {
+    const text = await render([
+      { name: 'To Do', role: 'todo', taskCount: 7 },
+      { name: 'Code Review', role: null, taskCount: 1, sessionTarget: 'isolated' },
+    ]);
+
+    expect(text).toBe([
+      '- To Do (todo): 7 task(s)',
+      '- Code Review: 1 task(s) [isolated session]',
+    ].join('\n'));
+  });
+
+  it('leaves every main-session column untagged', async () => {
+    // Tagging the norm would bury the distinction the tag exists to draw.
+    const text = await render(DEFAULT_BOARD);
+
+    expect(text).not.toContain('[isolated session]');
+  });
+
+  it('keeps the tag after the done column\'s completed count', async () => {
+    const text = await render([
+      { name: 'Done', role: 'done', taskCount: 0, completedCount: 12, sessionTarget: 'isolated' },
+    ]);
+
+    expect(text).toBe('- Done (done): 12 completed [isolated session]');
+  });
+
+  it('tells an agent in its description what the tag means', async () => {
+    mockRunHandler.mockResolvedValue({ success: true, data: [] });
+    const { config } = captureTools();
+
+    expect(config.description).toMatch(/isolated/i);
+  });
+});

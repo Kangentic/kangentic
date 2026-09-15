@@ -49,12 +49,17 @@ const MERGE_LANE = { id: 'lane-merge', name: 'Merge', role: null, is_archived: f
 const DONE_LANE = { id: 'lane-done', name: 'Done', role: 'done', is_archived: true };
 /** Archived by a USER, to hide it. Must never surface. */
 const HIDDEN_LANE = { id: 'lane-hidden', name: 'Icebox', role: null, is_archived: true };
+/** Runs its own conversation, so a reviewer is not the agent that wrote the code. */
+const REVIEW_LANE = {
+  id: 'lane-review', name: 'Code Review', role: null, is_archived: false, session_target: 'isolated',
+};
 
 interface ListedColumn {
   name: string;
   role: string | null;
   taskCount: number;
   completedCount?: number;
+  sessionTarget?: 'isolated';
 }
 
 function makeContext(): CommandContext {
@@ -180,5 +185,31 @@ describe('handleListTasks resolves the done column', () => {
     // never names the lane the user hid.
     const available = (response.error ?? '').split('Available columns: ')[1];
     expect(available).toBe('To Do, Done');
+  });
+});
+
+describe('handleListColumns session isolation', () => {
+  it('marks only the columns that run their own conversation', () => {
+    mockSwimlaneRepoList.mockReturnValue([TODO_LANE, REVIEW_LANE, MERGE_LANE]);
+
+    const response = handleListColumns({}, makeContext());
+
+    const columns = response.data as ListedColumn[];
+    // Sparse on purpose: a main-session column is the norm, so carrying the key
+    // on every lane would bury the distinction rather than report it.
+    expect(columns.find((column) => column.name === 'Code Review')?.sessionTarget).toBe('isolated');
+    expect(columns.find((column) => column.name === 'To Do')).not.toHaveProperty('sessionTarget');
+    expect(columns.find((column) => column.name === 'Merge')).not.toHaveProperty('sessionTarget');
+  });
+
+  it('leaves a board with no isolated column byte-for-byte unchanged', () => {
+    mockSwimlaneRepoList.mockReturnValue([TODO_LANE, MERGE_LANE]);
+
+    const response = handleListColumns({}, makeContext());
+
+    expect(response.data).toEqual([
+      { name: 'To Do', role: 'todo', taskCount: 0 },
+      { name: 'Merge', role: null, taskCount: 0 },
+    ]);
   });
 });
