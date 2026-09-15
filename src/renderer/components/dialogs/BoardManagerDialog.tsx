@@ -50,6 +50,7 @@ import { ProfileBar } from './board-manager/ProfileBar';
 import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TASK_TEMPLATE_VARS } from '../../../shared/task-template-vars';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
+import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -1925,16 +1926,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                             ...current,
                             session_target: nextTarget,
                             // Snap the spawn policy to the sensible default for the
-                            // chosen track, but only when it is still at the other
-                            // track's default - an explicit non-default choice is
-                            // preserved. Mirrors resolveForceFresh's context-aware
-                            // default (isolated => always-fresh, main => resume).
-                            session_spawn_strategy:
-                              nextTarget === 'isolated' && current.session_spawn_strategy === 'create_or_resume'
-                                ? 'always_spawn_new'
-                                : nextTarget === 'main' && current.session_spawn_strategy === 'always_spawn_new'
-                                  ? 'create_or_resume'
-                                  : current.session_spawn_strategy,
+                            // chosen track. The rule is shared with the MCP column
+                            // handlers so the two writers cannot drift; see
+                            // src/shared/session-track.ts for why it lives there.
+                            session_spawn_strategy: snapSpawnStrategyToTarget(
+                              current.session_target,
+                              nextTarget,
+                              current.session_spawn_strategy,
+                            ),
                           }));
                         }}
                         wrapperClassName="relative"
