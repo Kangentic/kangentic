@@ -58,6 +58,9 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_GET_ACTIVITY_STATS',
   'SESSION_GET_EVENTS',
   'SESSION_GET_EVENTS_CACHE',
+  // Whole-map read of the board cards' agent message trails (unscoped, like
+  // the activity cache), for mount and HMR re-sync.
+  'SESSION_GET_MESSAGE_TRAILS',
   'SESSION_GET_SUMMARY',
   'SESSION_LIST_SUMMARIES',
   'SESSION_GET_TOOL_BREAKDOWN',

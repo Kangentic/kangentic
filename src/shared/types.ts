@@ -2517,6 +2517,14 @@ export interface MonitorSessionRow {
    * MONITOR_PEEK push. Extraction rule: `src/main/pty/buffer/output-peek.ts`.
    */
   outputPeek: string[];
+  /**
+   * The task's description, so the card can honor a Card Preview of
+   * `description` the way the board card does. Null for a Command Terminal,
+   * which has no task; the card then shows the output peek in that mode. The
+   * two agent-message modes read the session's trail from the session store,
+   * not from this row.
+   */
+  description: string | null;
   /** The task's #N ticket number; null when the task row could not be resolved. */
   displayId: number | null;
   /** Swimlane (column) name the task currently sits in. Empty for a Command
@@ -2668,6 +2676,14 @@ export interface AppConfig {
   sidebarVisible: boolean;
   boardLayout: 'horizontal' | 'vertical';
   cardDensity: 'compact' | 'default' | 'comfortable';
+  /**
+   * What a board card prints under its title: the agent's latest message alone
+   * wrapped to the slot (the default), the agent's recent messages one line
+   * each, or always the task description. Both agent modes fall back to the
+   * description while a task has no session or its agent has not said anything
+   * yet. The Agent Monitor card honors the same value.
+   */
+  cardPreview: 'agent-messages' | 'agent-latest-message' | 'description';
   columnWidth: 'narrow' | 'default' | 'wide';
   showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
   terminalPanelVisible: boolean;
@@ -3216,6 +3232,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   sidebarVisible: true,
   boardLayout: 'horizontal',
   cardDensity: 'default',
+  cardPreview: 'agent-latest-message',
   columnWidth: 'default',
   showTaskNumbers: true,
   terminalPanelVisible: true,
@@ -4474,6 +4491,20 @@ export interface SubagentUsageTotals {
 }
 
 /**
+ * One line of a board card's agent message trail: an assistant entry's prose,
+ * collapsed to one plain line and capped (`assistantMessagePreviews` in
+ * `src/main/agent/shared/message-preview.ts`). Main pushes a session's whole
+ * trail, oldest first, on `session:messageTrail` whenever it changes; the
+ * card renders the newest few. `uuid` is the transcript entry's own id, so an
+ * accumulator can tell a new line from one it already holds.
+ */
+export interface AssistantMessageTrailEntry {
+  uuid: string;
+  ts: number;
+  text: string;
+}
+
+/**
  * One entry in a parsed agent transcript. Distinct from `SessionEvent`
  * (telemetry only) - this preserves the actual conversation content for
  * display in the Transcript tab.
@@ -5118,6 +5149,14 @@ export interface ElectronAPI {
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
     getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
     onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => void) => () => void;
+    /**
+     * Every session's agent message trail (sessionId -> lines, oldest first),
+     * for `syncSessions` to seed the store on mount and after an HMR reload.
+     * Optional on the type because a running preload can predate it.
+     */
+    getMessageTrails?: () => Promise<Record<string, AssistantMessageTrailEntry[]>>;
+    /** A session's agent message trail changed. Pushed only on change, cross-project. */
+    onMessageTrail?: (callback: (sessionId: string, entries: AssistantMessageTrailEntry[], projectId?: string) => void) => () => void;
     getActivityReason: (sessionId: string) => Promise<ActivityReason | null>;
     getActivityReasons: (projectId?: string) => Promise<Record<string, ActivityReason>>;
     getActivityStats: (sessionId: string) => Promise<ActivityStatsSnapshot | null>;
@@ -5460,8 +5499,12 @@ export interface ElectronAPI {
     onChanged: (callback: (snapshot: MonitorSnapshot) => void) => () => void;
     /** Start or stop the live output-peek stream for THIS renderer. Subscribe-gated
      *  because it is the one monitor push with a standing cost in main (a PTY
-     *  output listener plus a sampling timer); a closed monitor costs nothing. */
-    setPeekSubscribed: (subscribed: boolean) => Promise<void>;
+     *  output listener plus a sampling timer); a closed monitor costs nothing.
+     *  `sessionIds` names the sessions whose cards actually draw a peek (the
+     *  slot follows Card Preview, so most cards draw the agent's messages
+     *  instead); main taps and samples only those, and none at all for an
+     *  empty list. Re-sent whenever the set changes. Omitted means every session. */
+    setPeekSubscribed: (subscribed: boolean, sessionIds?: string[]) => Promise<void>;
     /** Changed output peeks, keyed by session id. Only sessions whose visible text
      *  actually changed are sent, so a repainting TUI whose content is unchanged
      *  produces no traffic. Patched onto rows in place, like activity. */

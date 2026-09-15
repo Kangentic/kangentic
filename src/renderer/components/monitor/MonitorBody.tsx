@@ -8,6 +8,7 @@ import { useMonitorStore } from '../../stores/monitor-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
+import { trailModeFor } from '../board/CardMessageTrail';
 import { MonitorToolbar } from './MonitorToolbar';
 import { MonitorSummaryCards } from './MonitorSummaryCards';
 import { MonitorCard } from './MonitorCard';
@@ -68,11 +69,6 @@ export function MonitorBody() {
   );
   const setView = useMonitorStore((state) => state.setView);
   const closeMonitor = useMonitorStore((state) => state.close);
-
-  // Live terminal output for every row, for as long as this body is mounted.
-  // Mounted HERE rather than in the page shell so both hosts (in-app overlay and
-  // detached window) get it from the one component they share.
-  useMonitorPeekSubscription();
 
   // Memoized so LabelPills' own React.memo is not defeated by a fresh object
   // identity on every render (the trap TaskCard documents).
@@ -152,9 +148,44 @@ export function MonitorBody() {
     return {
       list: toRenderUnits(groups, columns),
       groups,
+      filteredRows: filtered,
       visibleCount: filtered.length,
     };
   }, [rows, view, columns]);
+
+  // Live terminal output, for as long as this body is mounted and only for the
+  // rows whose card would draw it. Mounted HERE rather than in the page shell so
+  // both hosts (in-app overlay and detached window) get it from the one
+  // component they share.
+  //
+  // The card's slot follows Card Preview: a row with a message trail draws the
+  // trail, a row with a description draws that in the description mode, and only
+  // the rest (a Command Terminal, an agent that has not spoken) draw the peek.
+  // The list and table layouts draw none. Naming those rows lets main drop every
+  // other session's output at the tap, and an empty set switches its listener
+  // and timer off. Selected as ONE string so a trail landing for some other
+  // session, or one that leaves the set unchanged, re-renders nothing here.
+  const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  const trailMode = trailModeFor(cardPreview);
+  const filteredRows = units.filteredRows;
+  const isCardsLayout = view.layout === 'cards';
+  const wantedPeekKey = useSessionStore(
+    useCallback(
+      (state: ReturnType<typeof useSessionStore.getState>) => {
+        if (!isCardsLayout) return '';
+        const wanted: string[] = [];
+        for (const row of filteredRows) {
+          const trail = state.sessionMessageTrails[row.sessionId];
+          if (trailMode && trail && trail.length > 0) continue;
+          if (!trailMode && row.description) continue;
+          wanted.push(row.sessionId);
+        }
+        return wanted.sort().join('\n');
+      },
+      [filteredRows, isCardsLayout, trailMode],
+    ),
+  );
+  useMonitorPeekSubscription(wantedPeekKey);
 
   // Project-scope-only rows for the summary tiles; see the comment at the
   // render site below for why the tiles follow the scope but not the other

@@ -15,6 +15,10 @@
   let attachments = [];
   let backlogTasks = [];
   let activityCache = {};
+  // sessionId -> AssistantMessageTrailEntry[] (oldest first), what
+  // sessions.getMessageTrails() serves; __mockFireMessageTrail writes it too
+  // so a re-sync after the push sees the same trail main would report.
+  let messageTrailCache = {};
   let eventCache = {};
   let summaryCache = {};
   let currentProjectId = null;
@@ -108,6 +112,7 @@
     sidebarVisible: true,
     boardLayout: 'horizontal',
     cardDensity: 'default',
+    cardPreview: 'agent-latest-message',
     columnWidth: 'default',
     showTaskNumbers: false,
     terminalPanelVisible: true,
@@ -1871,6 +1876,27 @@
       },
       onUsage: function () {
         return noop;
+      },
+      getMessageTrails: async function () {
+        return Object.assign({}, messageTrailCache);
+      },
+      onMessageTrail: function (callback) {
+        // Tests can fire this via
+        // window.__mockFireMessageTrail(sessionId, entries, projectId).
+        if (!window.__mockMessageTrailListeners) window.__mockMessageTrailListeners = [];
+        window.__mockMessageTrailListeners.push(callback);
+        if (!window.__mockFireMessageTrail) {
+          window.__mockFireMessageTrail = function (sessionId, entries, projectId) {
+            messageTrailCache[sessionId] = entries;
+            var listeners = (window.__mockMessageTrailListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, entries, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockMessageTrailListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       getActivity: async function (/* projectId */) {
         return Object.assign({}, activityCache);
@@ -3807,8 +3833,12 @@
       // spec assert that a mounted monitor subscribes and an unmounted one stops
       // (the property that keeps main from watching PTY output for nobody).
       __peekSubscribeCalls: [],
-      setPeekSubscribed: function (subscribed) {
+      // The session ids each subscribe named (null when it named none), so a spec
+      // can assert which rows the renderer asked main to sample.
+      __peekWantedCalls: [],
+      setPeekSubscribed: function (subscribed, sessionIds) {
         window.electronAPI.monitor.__peekSubscribeCalls.push(subscribed);
+        window.electronAPI.monitor.__peekWantedCalls.push(Array.isArray(sessionIds) ? sessionIds.slice() : null);
         return Promise.resolve();
       },
       // Push peeks from a spec with window.__mockFireMonitorPeek({ 's1': ['line'] }).
@@ -4239,6 +4269,7 @@
       sessions: sessions,
       backlogTasks: backlogTasks,
       activityCache: activityCache,
+      messageTrailCache: messageTrailCache,
       eventCache: eventCache,
       summaryCache: summaryCache,
       projectConfigs: projectConfigs,
@@ -4302,6 +4333,7 @@
       ['sessions', 'getActivity'],
       ['sessions', 'getActivityReasons'],
       ['sessions', 'getEventsCache'],
+      ['sessions', 'getMessageTrails'],
     ];
     watched.forEach(function (pair) {
       var namespace = pair[0];

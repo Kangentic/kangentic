@@ -260,6 +260,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   sessionFirstOutput: {},
   sessionActivity: {},
   sessionActivityReason: {},
+  sessionMessageTrails: {},
   sessionEvents: {},
   seenIdleSessions: {},
   pendingCommandLabel: preservedPendingCommandLabel,
@@ -308,6 +309,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       cachedEvents,
       cachedFirstOutput,
       cachedSpawnProgress,
+      cachedMessageTrails,
     ] = await Promise.all([
       safeFetch('list', () => sessionsApi.list()),
       safeFetch('getUsage', () => sessionsApi.getUsage(currentProjectId)),
@@ -316,6 +318,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       safeFetch('getEventsCache', () => sessionsApi.getEventsCache(currentProjectId)),
       safeFetch('getFirstOutput', () => sessionsApi.getFirstOutput?.()),
       safeFetch('getSpawnProgress', () => tasksApi.getSpawnProgress?.()),
+      safeFetch('getMessageTrails', () => sessionsApi.getMessageTrails?.()),
     ]);
     if (signal.aborted) return false;
 
@@ -434,6 +437,13 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       sessionActivityReason: cachedReasons
         ? reconcileCache(cachedReasons, currentState.sessionActivityReason)
         : currentState.sessionActivityReason,
+      // Message trails: unscoped and main-authoritative (main retains a trail
+      // past exit and prunes on registry removal), so plain reconcileCache like
+      // activity - the snapshot is the keyset, a push that landed during the
+      // async gap keeps its fresher value.
+      sessionMessageTrails: cachedMessageTrails
+        ? reconcileCache(cachedMessageTrails, currentState.sessionMessageTrails)
+        : currentState.sessionMessageTrails,
       sessionEvents: cachedEvents
         ? reconcileLiveCache(cachedEvents, currentState.sessionEvents, liveSessionIds)
         : currentState.sessionEvents,
@@ -708,6 +718,10 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       }
       return updates;
     });
+  },
+
+  updateMessageTrail: (sessionId, entries) => {
+    set((s) => ({ sessionMessageTrails: { ...s.sessionMessageTrails, [sessionId]: entries } }));
   },
 
   addEvent: (sessionId, event) => {

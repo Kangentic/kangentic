@@ -459,9 +459,10 @@ Applies to every project (Settings > Task, not a per-project override). These de
 | Setting | Description |
 |---------|-------------|
 | Card Density | Amount of detail shown on task cards (compact, default, comfortable) |
+| Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
 | Ticket Numbers | Show each task's `#N` number as a muted badge on its card (off by default) |
 
-The Task tab also holds the Context Bar toggles below.
+With Card Preview at its default, a card with a running agent prints that agent's newest message in place of the description, wrapped to three lines at default density, five at comfortable, one at compact. Recent agent messages prints the newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works and stays on the card after the session pauses or ends. A task with no session, or whose agent has not said anything yet, prints its description instead. The Agent Monitor's cards honor the same setting. The Task tab also holds the Context Bar toggles below.
 
 ### Context Bar
 
@@ -772,7 +773,7 @@ Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. 
 
 Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live. The tiles follow the Projects filter, so a scoped view counts only the projects in view.
 
-Every card also carries a **live output peek**: the last few rendered lines of that session's terminal, in a shaded panel where a task description would otherwise sit. It updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. The panel is a fixed height, so a card never resizes as messages land.
+The slot under each card's title follows the same Card Preview setting as the board card (Settings > Task): the agent's recent messages one line each, or its latest message wrapped, in the board card's own tones with no panel. With Card Preview set to the task description, the card prints the description instead. When none of those has anything to show (a Command Terminal, an agent that has not said anything yet), the card carries a **live output peek**: the last few rendered lines of that session's terminal, in a shaded panel. It updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. Every form of the slot is a fixed height, so a card never resizes as messages land.
 
 Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each is titled `Command Terminal N` (matching the number on its own window), draws a terminal-shaped activity glyph rather than the agent one, and names the **branch** it is working on where a task card names its column.
 

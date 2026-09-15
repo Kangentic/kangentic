@@ -267,6 +267,10 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // pushes above it is subscribe-gated, and this window subscribes on its own
       // behalf, so main is already fanning to it by the time rows exist.
       IPC.MONITOR_PEEK,
+      // The card's slot follows the Card Preview setting, and its two agent
+      // modes read the session's message trail from this window's own session
+      // store, which `syncSessions` seeds and this push keeps live.
+      IPC.SESSION_MESSAGE_TRAIL,
       IPC.SESSION_STATUS,
       IPC.SESSION_EXIT,
       IPC.CONFIG_CHANGED,

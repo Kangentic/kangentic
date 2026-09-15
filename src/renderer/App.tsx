@@ -474,6 +474,18 @@ export function App() {
       }));
     }
 
+    // Agent message trail for the board card. Cross-project like activity (a
+    // small map keyed by session, and a project switch must find the trails
+    // already there), and deferred through the coalescer so a line landing
+    // mid-drag does not re-render a sortable card until the drop.
+    if (sessions.onMessageTrail) {
+      cleanups.push(sessions.onMessageTrail((sessionId, entries) => {
+        enqueueSessionUpdate(() => {
+          useSessionStore.getState().updateMessageTrail(sessionId, entries);
+        });
+      }));
+    }
+
     // Session activity state (thinking/idle)
     // ALWAYS update activity (sidebar badges need cross-project data),
     // but only run auto-focus for current project.
