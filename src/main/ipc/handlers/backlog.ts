@@ -3,6 +3,7 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
+import { RemoteItemCacheRepository } from '../../db/repositories/remote-item-cache-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { ActionRepository } from '../../db/repositories/action-repository';
@@ -19,8 +20,10 @@ import type {
   BacklogTaskUpdateInput,
   BacklogPromoteInput,
   BacklogDemoteInput,
+  ExternalIssue,
   ExternalSource,
-  ImportFetchInput,
+  ImportCacheQuery,
+  ImportReconcileInput,
   ImportExecuteInput,
   Task,
 } from '../../../shared/types';
@@ -58,6 +61,24 @@ function savePendingAttachments(
   for (const attachment of pendingAttachments) {
     backlogAttachmentRepo.add(projectPath, backlogTaskId, attachment.filename, attachment.data, attachment.media_type);
   }
+}
+
+/** Per-round-trip page size for the reconcile fetch (GitHub caps per_page at 100; ADO ignores it). */
+const RECONCILE_PAGE_SIZE = 100;
+
+/**
+ * Re-stamp `alreadyImported` on cached issues from the live backlog. The flag is
+ * never persisted (it goes stale as the user imports), so it is recomputed on
+ * every read of the cache.
+ */
+function stampAlreadyImported(
+  backlogRepo: BacklogRepository,
+  source: ExternalSource,
+  issues: ExternalIssue[],
+): ExternalIssue[] {
+  if (issues.length === 0) return issues;
+  const imported = backlogRepo.findByExternalIds(source, issues.map((issue) => issue.externalId));
+  return issues.map((issue) => ({ ...issue, alreadyImported: imported.has(issue.externalId) }));
 }
 
 export function registerBacklogHandlers(context: IpcContext): void {
@@ -365,13 +386,76 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return adapter.checkCli();
   });
 
-  ipcMain.handle(IPC.BACKLOG_IMPORT_FETCH, async (_, input: ImportFetchInput) => {
+  // Paint instantly from the persistent cache, no network. alreadyImported is
+  // re-stamped from the live backlog so a just-imported item shows imported offline.
+  ipcMain.handle(IPC.BACKLOG_IMPORT_GET_CACHED, (_, input: ImportCacheQuery) => {
     if (!context.currentProjectId) throw new Error('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
+    const cacheRepo = new RemoteItemCacheRepository(db);
+    const backlogRepo = new BacklogRepository(db);
+    const issues = cacheRepo.getForSource(input.source, input.repository);
+    return { issues: stampAlreadyImported(backlogRepo, input.source, issues) };
+  });
+
+  // Fetch items changed since the cache high-water mark, merge them in, prune
+  // items the remote no longer has, and return the full merged set. A 'full' mode
+  // (or an empty cache) re-fetches everything.
+  ipcMain.handle(IPC.BACKLOG_IMPORT_RECONCILE, async (_, input: ImportReconcileInput) => {
+    if (!context.currentProjectId) throw new Error('No project is currently open');
+    const db = getProjectDb(context.currentProjectId);
+    const cacheRepo = new RemoteItemCacheRepository(db);
     const backlogRepo = new BacklogRepository(db);
     const adapter = boardRegistry.requireStable(input.source);
+    const findAlreadyImported = (source: ExternalSource, externalIds: string[]) =>
+      backlogRepo.findByExternalIds(source, externalIds);
 
-    return adapter.fetch(input, (source, externalIds) => backlogRepo.findByExternalIds(source, externalIds));
+    const isFull = input.mode === 'full' || cacheRepo.count(input.source, input.repository) === 0;
+    const since = isFull ? undefined : cacheRepo.getWatermark(input.source, input.repository);
+
+    // Fetch changed items across all states so the single cache bucket stays
+    // complete. ADO returns everything in one page; GitHub loops real pages.
+    const fetched: ExternalIssue[] = [];
+    let page = 1;
+    for (;;) {
+      const result = await adapter.fetch(
+        { source: input.source, repository: input.repository, page, perPage: RECONCILE_PAGE_SIZE, state: 'all', since },
+        findAlreadyImported,
+      );
+      fetched.push(...result.issues);
+      if (!result.hasNextPage) break;
+      page += 1;
+    }
+
+    // A source can return the same item on two pages when its ordering shifts
+    // between sequential fetches, so dedupe by externalId (keeping the last, freshest
+    // copy) before the upsert. Without this the added/updated counts double-count a
+    // duplicate and the same row is written twice.
+    const dedupedById = new Map<string, ExternalIssue>();
+    for (const issue of fetched) dedupedById.set(issue.externalId, issue);
+    const toCache = [...dedupedById.values()];
+
+    const syncTime = new Date().toISOString();
+    const { added, updated } = cacheRepo.upsertMany(input.source, input.repository, toCache, syncTime);
+
+    // Auto-prune: a cheap id listing (ADO) prunes on every reconcile; without one,
+    // only a full fetch is authoritative enough to prune (its result IS the set). The
+    // fetched items are already committed, so a prune failure (a transient CLI error on
+    // the second call) must not fail the whole reconcile and hide the just-synced data;
+    // degrade to no prune this round instead.
+    let removed = 0;
+    try {
+      if (adapter.listExternalIds) {
+        const keepIds = await adapter.listExternalIds({ source: input.source, repository: input.repository });
+        removed = cacheRepo.pruneMissing(input.source, input.repository, keepIds);
+      } else if (isFull) {
+        removed = cacheRepo.pruneMissing(input.source, input.repository, toCache.map((issue) => issue.externalId));
+      }
+    } catch (error) {
+      console.warn('[BACKLOG_IMPORT_RECONCILE] prune step failed; skipping prune this round', error);
+    }
+
+    const all = cacheRepo.getForSource(input.source, input.repository);
+    return { issues: stampAlreadyImported(backlogRepo, input.source, all), added, updated, removed };
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
@@ -385,11 +469,18 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const externalIds = input.issues.map((issue) => issue.externalId);
     const alreadyImportedIds = backlogRepo.findByExternalIds(input.source, externalIds);
 
+    // Fetch deferred per-item detail (e.g. ADO comments) for the selected items
+    // and fold it into each body, so the imported backlog item carries the same
+    // content the pre-defer list fetch used to.
+    const issuesToImport = adapter.hydrateForImport
+      ? await adapter.hydrateForImport(input.repository, input.issues)
+      : input.issues;
+
     const importedItems = [];
     let skippedDuplicates = 0;
     let totalSkippedAttachments = 0;
 
-    for (const issue of input.issues) {
+    for (const issue of issuesToImport) {
       if (alreadyImportedIds.has(issue.externalId)) {
         skippedDuplicates++;
         continue;

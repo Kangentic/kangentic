@@ -68,6 +68,7 @@ function mapOne(task: AsanaTaskRaw, alreadyImported: boolean): ExternalIssue {
       .filter((name) => name.length > 0),
     assignee: task.assignee?.name ?? null,
     state: task.completed ? 'closed' : 'open',
+    stateCategory: task.completed ? 'closed' : 'open',
     workItemType: sectionName,
     createdAt: task.created_at ?? new Date(0).toISOString(),
     updatedAt: task.modified_at ?? task.created_at ?? new Date(0).toISOString(),
