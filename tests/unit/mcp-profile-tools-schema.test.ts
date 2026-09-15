@@ -196,6 +196,22 @@ describe('PROFILE_ENTRY_SCHEMA literal parity with the shared strategy types', (
     expect(new Set(options)).toEqual(new Set(Object.keys(EXPECTED_SESSION_TARGETS)));
   });
 
+  it('autoCommandMode accepts exactly the AutoCommandMode union', () => {
+    // autoCommandMode was added to PROFILE_ENTRY_SCHEMA as its own inline
+    // z.enum(['immediate', 'deferred']) literal, the exact shape that drifted
+    // to 'always_create' for sessionSpawnStrategy above. Nothing else in the
+    // suite reads this schema: mcp-column-field-parity.test.ts pins
+    // autoCommandMode's literal against the shared union too, but only for the
+    // column tools (task-tools.ts) - a separate registration with its own
+    // separate inline enum, not this one.
+    const server = makeServerWithProfileTools();
+    const options = getProfileEntryEnumOptions(
+      server.getInputSchema('kangentic_create_board_profile'),
+      'autoCommandMode',
+    );
+    expect(options).toEqual(readStringUnionMembers('AutoCommandMode'));
+  });
+
   // Behavioral pin through the WHOLE wire contract (the record and
   // optional/nullable wrapping included), not just the extracted enum, so
   // this fails the same way a real MCP call would if the schema drifts again.

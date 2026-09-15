@@ -10,10 +10,11 @@
  * task's main session, so the reviewer was the agent that wrote the code.
  * Nothing failed; the tool result simply did not mention it.
  *
- * That was the third field to drift this way (`auto_command_mode` is still out),
- * because nothing compared the two lists. `mcp-tool-list-parity.test.ts` checks
- * tool NAMES only, and the `board-config-parity` field classification governs
- * `kangentic.json`, not MCP.
+ * Three fields drifted this way in total, `auto_command_mode` included, because
+ * nothing compared the two lists. `mcp-tool-list-parity.test.ts` checks tool
+ * NAMES only, and the `board-config-parity` field classification governs
+ * `kangentic.json`, not MCP. All three are exposed now, so
+ * `MCP_UNEXPOSED_COLUMN_FIELDS` holds only deliberate entries.
  *
  * Two deliberate mechanism choices:
  *
@@ -44,6 +45,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
 }));
 
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
+import { COLUMN_ENUM_FIELDS } from '../../src/main/agent/commands/column-enums';
 import { readInterfaceFieldNames, readStringUnionMembers } from './helpers/shared-type-source';
 
 /**
@@ -203,6 +205,31 @@ describe('MCP column-field parity', () => {
       expect(enumOptionsFor(config, 'autoCommandMode', toolName))
         .toEqual(readStringUnionMembers('AutoCommandMode'));
     }
+  });
+
+  it('COLUMN_ENUM_FIELDS lists every member of its shared union, not just valid members of it', () => {
+    // The test above pins the SCHEMA literals against the source unions. It says
+    // nothing about COLUMN_ENUM_FIELDS (column-enums.ts), the list the HANDLER
+    // narrows against on the unvalidated mobile-bridge path - rule 3 of this
+    // rule file. `VALID_SESSION_TARGETS: SessionTarget[] = ['main']` still
+    // typechecks: the annotation guarantees every listed value is a real union
+    // member, never that every union member is listed. A truncated list here
+    // fails silently in the worst direction: the handler REJECTS a legitimate
+    // value, on the one path (mobile bridge) that has no schema in front of it
+    // to reject it first. It also fails invisibly to the handler's own
+    // rejection-loop tests (column-commands-description.test.ts and
+    // column-commands-create-session-track.test.ts): both loop
+    // `Object.entries(COLUMN_ENUM_FIELDS)` and derive their expectation from the
+    // very list a truncation would have already shrunk, so they stay green
+    // against it.
+    expect([...COLUMN_ENUM_FIELDS.permissionMode].sort())
+      .toEqual(readStringUnionMembers('PermissionMode'));
+    expect([...COLUMN_ENUM_FIELDS.sessionTarget].sort())
+      .toEqual(readStringUnionMembers('SessionTarget'));
+    expect([...COLUMN_ENUM_FIELDS.sessionSpawnStrategy].sort())
+      .toEqual(readStringUnionMembers('SessionSpawnStrategy'));
+    expect([...COLUMN_ENUM_FIELDS.autoCommandMode].sort())
+      .toEqual(readStringUnionMembers('AutoCommandMode'));
   });
 
   it('the enum fields are not nullable, because their DB columns are NOT NULL', () => {
