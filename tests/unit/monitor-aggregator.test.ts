@@ -96,6 +96,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
 
 import {
   buildMonitorSnapshot,
+  MONITOR_ROW_DESCRIPTION_MAX_CHARS,
   RECENTLY_FINISHED_CAP,
   RECENTLY_FINISHED_WINDOW_MS,
 } from '../../src/main/monitor/monitor-aggregator';
@@ -417,6 +418,9 @@ describe('buildMonitorSnapshot', () => {
     expect(row.prNumber).toBeNull();
     expect(row.prState).toBeNull();
     expect(row.prMergeReadiness).toBeNull();
+    // A Command Terminal has no task, so no description; the card falls back
+    // to the output peek in that mode instead of a description-mode blank.
+    expect(row.description).toBeNull();
   });
 
   it('falls back to the unnumbered name for a transient session with no slot', () => {
@@ -862,6 +866,50 @@ describe('buildMonitorSnapshot', () => {
       ]);
 
       expect(buildMonitorSnapshot(context).rows[0].commandTerminalBranch).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // description (row seeding) - the Card Preview fallback slot
+  // =========================================================================
+
+  describe('description (row seeding)', () => {
+    it("carries the task's description on the row", () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { description: 'Fix the PTY capture race.' })]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
+
+      expect(buildMonitorSnapshot(context).rows[0].description).toBe('Fix the PTY capture race.');
+    });
+
+    it('is null when the task has no description, not an empty string', () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { description: '' })]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
+
+      expect(buildMonitorSnapshot(context).rows[0].description).toBeNull();
+    });
+
+    it('truncates a description longer than MONITOR_ROW_DESCRIPTION_MAX_CHARS', () => {
+      // The snapshot fans to every monitor window on every change, so a raw
+      // multi-KB description must never ride it uncapped.
+      const longDescription = 'x'.repeat(MONITOR_ROW_DESCRIPTION_MAX_CHARS + 500);
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { description: longDescription })]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+      ]);
+
+      const row = buildMonitorSnapshot(context).rows[0];
+      expect(row.description).toHaveLength(MONITOR_ROW_DESCRIPTION_MAX_CHARS);
+      expect(row.description).toBe(longDescription.slice(0, MONITOR_ROW_DESCRIPTION_MAX_CHARS));
     });
   });
 
