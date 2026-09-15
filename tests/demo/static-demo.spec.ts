@@ -355,36 +355,22 @@ function mountedGrid(page: Page, sessionId: string): Promise<Grid | null> {
   }, sessionId);
 }
 
-/** The grid a served recording was made at, read from the file the frame fetched. */
-async function recordingGrid(page: Page, url: string): Promise<Grid> {
-  const recording = await (await page.request.get(url)).json() as { cols?: number; rows?: number };
-  return { cols: recording.cols ?? 0, rows: recording.rows ?? 0 };
-}
-
 /**
- * Bytes replay only into a terminal whose grid equals the recording's (the frame's rule, and
- * main's): a machine whose fonts or display scaling fit another grid gets the recording's frame
- * and nothing streams. Each streaming case asserts whichever branch this machine is on.
+ * A spawn's boot has to ARRIVE, whichever path carries it. Bytes replay only into a terminal whose
+ * grid equals the recording's; any other grid plays the recording's frames instead. Both reach the
+ * page through the mock's onData path, which is what the bottom-panel case below proves at a grid
+ * no font size can ever reconcile, so one listener observes either path and the grid does not have
+ * to be classified first.
+ *
+ * `streamed` is armed by the caller BEFORE the spawn, and that timing is the whole point: a boot
+ * recording is short and plays out in seconds, so a listener attached after the fact hears an
+ * already-finished session and reports silence. An earlier version classified the grid first and
+ * only then attached a listener on the non-fitting branch. That branch is unreachable on a machine
+ * whose fonts fit the recorded grid, so it went green on Windows and failed on CI's Linux runner,
+ * where it spent its whole budget waiting for a fit that never comes and then heard nothing.
  */
-async function expectStreamedOrStill(page: Page, sessionId: string, recordingUrl: string, streamed: Promise<string | null>): Promise<void> {
-  // A spawned session mounts in the bottom panel first (15 rows, never the recording's grid)
-  // and in the task window once that opens, so wait for the mount that fits rather than the
-  // first one; a machine where none fits runs out the wait and is on the still branch.
-  const recorded = await recordingGrid(page, recordingUrl);
-  const fits = await page.waitForFunction(({ id, cols, rows }) => {
-    const calls = (window as unknown as DemoElectronWindow).electronAPI.sessions.__resizeCalls ?? [];
-    const last = calls.filter((call) => call.sessionId === id).pop();
-    return !!last && last.cols === cols && last.rows === rows;
-  }, { id: sessionId, cols: recorded.cols, rows: recorded.rows }, { timeout: 10_000 }).then(() => true, () => false);
-  if (fits) {
-    expect(await streamed).toBe(sessionId);
-  } else {
-    // The long listener outlives the test on this branch; settle it so its rejection is not the verdict.
-    streamed.catch(() => null);
-    // A boot that never found a fitting mount still has to arrive: its terminal plays the
-    // recording's frames instead of its bytes, which is the whole point of carrying both.
-    expect(await firstStreamedSession(page, 10_000, sessionId)).toBe(sessionId);
-  }
+async function expectStreamedOrStill(page: Page, sessionId: string, streamed: Promise<string | null>): Promise<void> {
+  expect(await streamed).toBe(sessionId);
 }
 
 async function dragCardToColumn(page: Page, title: string, column: string): Promise<void> {
@@ -576,7 +562,7 @@ test('dragging a To Do card into Executing starts its agent from the recorded bo
     return (await api.tasks.list()).find((row) => row.title === 'Add user auth flow')?.session_id ?? null;
   });
   expect(sessionId).not.toBeNull();
-  await expectStreamedOrStill(page, sessionId as string, recordingUrl, streamed);
+  await expectStreamedOrStill(page, sessionId as string, streamed);
   // The context bar's spinner gives way to the pills once the session's usage is pushed, a beat
   // after its first output, as main's status-line push does on the desktop.
   await expect(page.getByText('Starting agent...')).toHaveCount(0, { timeout: 15_000 });
@@ -605,14 +591,13 @@ test('a new Command Terminal boots the project default agent from the recorded b
   // The project already has a running Command Terminal, so the new window opens tiled beside
   // it and boots the recording made at that size, not the single-window one.
   await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/terminal-proj-contoso-web-tiled-')), { timeout: 15_000 }).toBe(true);
-  const recordingUrl = getRecordingRequests().find((url) => url.includes('/recordings/terminal-proj-contoso-web-tiled-')) as string;
   const sessionId = await page.evaluate(async () => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     const sessions = await api.sessions.list();
     return sessions.filter((row) => row.transient && row.status === 'running' && row.id !== 'sess-cw-terminal-1').map((row) => row.id)[0] ?? null;
   });
   expect(sessionId).not.toBeNull();
-  await expectStreamedOrStill(page, sessionId as string, recordingUrl, streamed);
+  await expectStreamedOrStill(page, sessionId as string, streamed);
   await expect(page.getByText('Starting agent...')).toHaveCount(0, { timeout: 15_000 });
   expect(getUnexpectedErrors()).toEqual([]);
 });
