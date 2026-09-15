@@ -33,6 +33,8 @@ const {
   trailerConstructorCalls,
   trailerOnCalls,
   trailerSnapshotMock,
+  mockFindByAnyId,
+  mockGetBySessionType,
 } = vi.hoisted(() => ({
   mockHandle: vi.fn(),
   mockOn: vi.fn(),
@@ -41,6 +43,11 @@ const {
   trailerSnapshotMock: vi.fn(() => ({
     'fake-session-id': [{ uuid: 'trail-u1', ts: 1, text: 'fake trail entry' }],
   })),
+  // Shared across every `new SessionRepository(...)` instance the closure
+  // under test creates, so a per-test return value/throw is reachable without
+  // capturing the constructed instance.
+  mockFindByAnyId: vi.fn(),
+  mockGetBySessionType: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -62,7 +69,11 @@ vi.mock('node:crypto', () => ({ randomUUID: vi.fn(() => 'mock-uuid') }));
 // same registerSessionHandlers import chain)
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
-  SessionRepository: class { getLatestForTask = vi.fn(); updateStatus = vi.fn(); },
+  SessionRepository: class {
+    getLatestForTask = vi.fn();
+    updateStatus = vi.fn();
+    findByAnyId(sessionId: string): unknown { return mockFindByAnyId(sessionId); }
+  },
 }));
 vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
   UsageHistoryRepository: class { record = vi.fn(); },
@@ -123,7 +134,7 @@ vi.mock('../../src/main/transition-engine/terminal-submit-scheduler', () => ({
   TerminalSubmitScheduler: class { cancelAll = vi.fn(); },
 }));
 vi.mock('../../src/main/agent/agent-registry', () => ({
-  agentRegistry: { get: vi.fn(), list: vi.fn(() => []) },
+  agentRegistry: { get: vi.fn(), list: vi.fn(() => []), getBySessionType: mockGetBySessionType },
 }));
 vi.mock('../../src/main/agent/adapters/claude/trust-manager', () => ({
   ensureWorktreeTrust: vi.fn(),
@@ -188,6 +199,28 @@ function getRegisteredHandler(channel: string): ((...args: unknown[]) => unknown
 
 function getTrailListener(): ((...args: unknown[]) => void) | undefined {
   return trailerOnCalls.find(([event]) => event === 'trail')?.[1];
+}
+
+/**
+ * The two DI closures `sessions.ts` builds inline and hands to
+ * `MessageTrailTracker`'s constructor: `resolveSessionFacts` (the DB lookup
+ * and snake_case -> camelCase field map) and `resolveAdapter` (the
+ * `agentRegistry` delegation). `MessageTrailTracker` itself is mocked above,
+ * so these are exercised directly against the real closures - nothing else in
+ * the tree calls them, since every tracker test in message-trail-tracker.test.ts
+ * supplies its own fake lambda instead.
+ */
+interface CapturedMessageTrailDeps {
+  resolveSessionFacts: (sessionId: string, projectId: string) => {
+    sessionType: string;
+    agentSessionId: string | null;
+    cwd: string;
+  } | null;
+  resolveAdapter: (sessionType: string) => unknown;
+}
+
+function getConstructedDeps(): CapturedMessageTrailDeps {
+  return trailerConstructorCalls[0] as CapturedMessageTrailDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +329,8 @@ describe('IPC handler wiring: message trail tracker', () => {
     trailerConstructorCalls.length = 0;
     trailerOnCalls.length = 0;
     trailerSnapshotMock.mockClear();
+    mockFindByAnyId.mockReset();
+    mockGetBySessionType.mockReset();
   });
 
   it('constructs exactly one MessageTrailTracker and registers SESSION_GET_MESSAGE_TRAILS delegating to its snapshot()', () => {
@@ -341,5 +376,66 @@ describe('IPC handler wiring: message trail tracker', () => {
     trailListener?.('sess-abc', [], 'proj-xyz');
 
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  describe('resolveSessionFacts / resolveAdapter (the DI closures passed to the tracker)', () => {
+    it('maps a found record to MessageTrailSessionFacts, snake_case field for snake_case field', () => {
+      const context = makeContext();
+      registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+      const { resolveSessionFacts } = getConstructedDeps();
+
+      mockFindByAnyId.mockReturnValueOnce({
+        session_type: 'claude',
+        agent_session_id: 'claude-agent-session-1',
+        cwd: '/mock/project/worktree',
+      });
+
+      const facts = resolveSessionFacts('sess-abc', 'proj-xyz');
+
+      expect(mockFindByAnyId).toHaveBeenCalledWith('sess-abc');
+      // Exact shape, not just non-null: a transposed field (e.g. cwd swapped
+      // with agentSessionId) would still satisfy a truthy or a `toBeDefined`
+      // check while pointing the tracker's window reads at the wrong file.
+      expect(facts).toEqual({
+        sessionType: 'claude',
+        agentSessionId: 'claude-agent-session-1',
+        cwd: '/mock/project/worktree',
+      });
+    });
+
+    it('returns null when no record is found for the id', () => {
+      const context = makeContext();
+      registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+      const { resolveSessionFacts } = getConstructedDeps();
+
+      mockFindByAnyId.mockReturnValueOnce(undefined);
+
+      expect(resolveSessionFacts('sess-unknown', 'proj-xyz')).toBeNull();
+    });
+
+    it('returns null, not throw, when the lookup itself throws (a project DB that will not open)', () => {
+      const context = makeContext();
+      registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+      const { resolveSessionFacts } = getConstructedDeps();
+
+      mockFindByAnyId.mockImplementationOnce(() => {
+        throw new Error('[test] simulated DB-open failure');
+      });
+
+      expect(() => resolveSessionFacts('sess-abc', 'proj-broken')).not.toThrow();
+      expect(resolveSessionFacts('sess-abc', 'proj-broken')).toBeNull();
+    });
+
+    it('delegates resolveAdapter to agentRegistry.getBySessionType', () => {
+      const context = makeContext();
+      registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+      const { resolveAdapter } = getConstructedDeps();
+
+      const fakeAdapter = { name: 'fake-claude-adapter' };
+      mockGetBySessionType.mockReturnValueOnce(fakeAdapter);
+
+      expect(resolveAdapter('claude')).toBe(fakeAdapter);
+      expect(mockGetBySessionType).toHaveBeenCalledWith('claude');
+    });
   });
 });

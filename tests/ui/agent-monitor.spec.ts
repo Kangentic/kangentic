@@ -1037,10 +1037,21 @@ test.describe('agent monitor', () => {
       const cards = page.locator('[data-testid="monitor-card"]');
       const tableRows = page.locator('[data-testid="monitor-table-row"]');
 
+      // The session ids the renderer last told main it wants a peek for
+      // (MonitorBody's `wantedPeekKey`, keyed on layout + Card Preview + each
+      // row's trail/description). None of the fixture's rows carry a trail or
+      // a description here, so cards layout wants every row.
+      const lastWantedPeek = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekWantedCalls: Array<string[] | null> })
+          .__peekWantedCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+
       // Cards: roomy cards, no table.
       await expect(cards).toHaveCount(4);
       await expect(tableRows).toHaveCount(0);
       await expect(cards.first()).not.toHaveAttribute('data-dense', 'true');
+      await expect.poll(lastWantedPeek).toHaveLength(4);
 
       // Table: real table rows, no cards. Grouping still applies - a <table>
       // cannot interleave section headers, so each group gets its own table
@@ -1056,12 +1067,18 @@ test.describe('agent monitor', () => {
       // Effort and permission mode are surfaced as their own sortable columns.
       await expect(page.locator('th', { hasText: 'Effort' }).first()).toBeVisible();
       await expect(page.locator('th', { hasText: 'Permission' }).first()).toBeVisible();
+      // No row in the table layout draws the peek/trail slot at all, so main
+      // is told to want nothing: the listener and sampling timer go idle even
+      // though the monitor is still open (MonitorBody's `isCardsLayout` gate).
+      await expect.poll(lastWantedPeek).toEqual([]);
 
       // List: cards again, but dense and forced to a single column.
       await page.locator('[data-testid="monitor-layout-list"]').click();
       await expect(tableRows).toHaveCount(0);
       await expect(cards.first()).toHaveAttribute('data-dense', 'true');
       await expect(page.locator('[data-testid="monitor-grid"]')).toHaveAttribute('data-columns', '1');
+      // The dense list card has no peek/trail slot either.
+      await expect.poll(lastWantedPeek).toEqual([]);
 
       // Back to cards: the column count must RECOVER. Switching layout does not
       // resize the container, so a resize-observer-only implementation stays
@@ -1072,6 +1089,9 @@ test.describe('agent monitor', () => {
         async () => Number(await page.locator('[data-testid="monitor-grid"]').getAttribute('data-columns')),
         { timeout: 10000 },
       ).toBeGreaterThanOrEqual(2);
+      // The wanted set recovers too, so a card back in view draws its peek
+      // again rather than staying starved from the table/list detour.
+      await expect.poll(lastWantedPeek).toHaveLength(4);
     } finally {
       await browser.close();
     }
