@@ -117,16 +117,21 @@ function framesOf(record: DemoCaptureRecord): Array<{ t: number; frame: string }
 export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): DemoRecordingsIndex {
   const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
   const index: DemoRecordingsIndex = { sessions: {}, spawns: {}, terminals: {}, geometry: manifest.geometry ?? {} };
-  const read = (file: string): DemoRecordingEntry | null => {
-    const record = JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord;
+  // Built in one place so a new DemoRecordingEntry field cannot reach the spawn and terminal
+  // entries below while the session entries keep the old shape. The sessions loop takes the
+  // record loadRecordings already parsed; only spawns and terminals, which the manifest does not
+  // list, still read from disk.
+  const entryOf = (file: string, record: DemoCaptureRecord): DemoRecordingEntry | null => {
     if (typeof record.serialized !== 'string' || record.serialized.length === 0) return null;
     return { file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '', frameTimeline: framesOf(record) };
   };
+  const read = (file: string): DemoRecordingEntry | null =>
+    entryOf(file, JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord);
   for (const { sessionId, record } of loadRecordings(fixturesDir)) {
-    const manifestEntry = (JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest).captures
-      .find((entry) => entry.sessionId === sessionId);
-    if (!manifestEntry || typeof record.serialized !== 'string') continue;
-    index.sessions[sessionId] = { file: manifestEntry.file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '', frameTimeline: framesOf(record) };
+    const manifestEntry = manifest.captures.find((entry) => entry.sessionId === sessionId);
+    if (!manifestEntry) continue;
+    const entry = entryOf(manifestEntry.file, record);
+    if (entry) index.sessions[sessionId] = entry;
   }
   for (const file of fs.readdirSync(fixturesDir)) {
     const spawn = /^spawn-(.+)-(plan|acceptEdits|default|dontAsk|bypassPermissions|auto)\.json$/.exec(file);
@@ -152,7 +157,22 @@ export function readAppVersion(): string {
   return packageJson.version;
 }
 
+/**
+ * The parsed recordings, keyed by resolved fixtures directory. Every accessor below walks the
+ * whole set, and one `npm run build:demo` calls seven of them (loadDemoRecordings for the asset
+ * plan, then six more for the seed), so an uncached read parsed the 39MB fixture directory seven
+ * times per build, on every PR through the always-on demo CI job. The fixtures are static files
+ * that nothing rewrites mid-process: the capture rig and the timeline backfill both use plain fs
+ * calls rather than this module, so one parse per directory per process is enough. Consumers only
+ * read the records (buildDemoPreConfig stringifies them), so sharing one parse between accessors
+ * is safe.
+ */
+const recordingsCache = new Map<string, Array<{ sessionId: string; record: DemoCaptureRecord }>>();
+
 function loadRecordings(fixturesDir: string): Array<{ sessionId: string; record: DemoCaptureRecord }> {
+  const cacheKey = path.resolve(fixturesDir);
+  const cached = recordingsCache.get(cacheKey);
+  if (cached) return cached;
   const manifestPath = path.join(fixturesDir, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as DemoManifest;
   const recordings: Array<{ sessionId: string; record: DemoCaptureRecord }> = [];
@@ -161,6 +181,7 @@ function loadRecordings(fixturesDir: string): Array<{ sessionId: string; record:
     if (!fs.existsSync(recordingPath)) continue;
     recordings.push({ sessionId: entry.sessionId, record: JSON.parse(fs.readFileSync(recordingPath, 'utf-8')) as DemoCaptureRecord });
   }
+  recordingsCache.set(cacheKey, recordings);
   return recordings;
 }
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pill } from '../Pill';
+import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../Pill';
 import { useConfigStore } from '../../stores/config-store';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 
@@ -21,8 +21,8 @@ export const PriorityBadge = React.memo(function PriorityBadge({ priority, showL
   return (
     <Pill
       size="sm"
-      className="bg-surface-hover/60 font-medium"
-      style={{ color: entry.color }}
+      className="font-medium border"
+      style={{ color: entry.color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
       title={entry.label}
     >
       {entry.label}

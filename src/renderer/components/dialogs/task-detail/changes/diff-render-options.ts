@@ -1,3 +1,6 @@
+import { THEME_BASES } from '../../../../../shared/types';
+import type { ThemeMode } from '../../../../../shared/types';
+
 /** Above this combined original+modified character count, a diff is large
  *  enough that Monaco's 'advanced' (word-level) algorithm can take noticeably
  *  longer to resolve in its worker than the simpler 'legacy' line diff -
@@ -22,4 +25,20 @@ export function selectDiffAlgorithmOptions(originalLength: number, modifiedLengt
     return { diffAlgorithm: 'legacy', maxComputationTime: LARGE_DIFF_MAX_COMPUTATION_MS };
   }
   return { diffAlgorithm: 'advanced' };
+}
+
+/**
+ * Monaco's built-in theme id for a given app theme, driven by THEME_BASES (a
+ * total `Record<ThemeMode, 'dark' | 'light'>`) rather than NAMED_THEMES (the
+ * settings-dropdown metadata list, which omits 'dark' and 'light' since those
+ * two are hardcoded dropdown options). Looking this up against NAMED_THEMES
+ * used to fall through its `?? 'dark'` fallback for the Light theme, painting
+ * a black diff pane inside an otherwise light app - see THEME_BASES' own
+ * comment in src/shared/types.ts. The `?? 'dark'` here is a runtime-only
+ * backstop for an id that predates a theme rename/removal on disk; every
+ * value of the ThemeMode type itself is covered by THEME_BASES.
+ */
+export function monacoThemeForTheme(theme: ThemeMode): 'vs' | 'vs-dark' {
+  const themeBase = THEME_BASES[theme] ?? 'dark';
+  return themeBase === 'dark' ? 'vs-dark' : 'vs';
 }
