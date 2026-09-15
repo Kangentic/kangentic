@@ -20,6 +20,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { CompactTile } from './CompactTile';
+import { agentShortName } from '../../utils/agent-display-name';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { KngSparkline } from './charts/KngSparkline';
@@ -38,6 +39,13 @@ const DELTA_BASELINE_LABELS: Record<UsageTimePeriod, string> = {
  *  delta render as two muted pills, so the tile stays three layers - label,
  *  big value, context - and the separation is structural (containers), not
  *  punctuation. Spend/usage going UP reads warm, going DOWN calm-green. */
+/** "Claude", "Claude and Codex", "Claude, Codex and Gemini". A plain `join(' and ')`
+ *  reads as "A and B and C" once a third agent ships. */
+function joinAgentNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 function HeroContextLine({ sub, delta, baseline }: { sub?: string; delta: number | null; baseline: string }) {
   const showDelta = delta !== null && baseline !== '';
   const up = (delta ?? 0) >= 0;
@@ -245,6 +253,37 @@ export function KpiTiles({
     subagentTokens,
     previous ? previous.subagentInputTokens + previous.subagentOutputTokens : null,
   );
+  const hasSubagentTurns = Boolean(kpis && kpis.subagentTurnCount > 0);
+  const nestedCount = kpis?.subagentNestedCount ?? 0;
+  // Unchanged from what ships. Nesting is NOT added here: the sub-line gets
+  // (windowWidth - 88) / 8 - 50 px (measured against the live strip: 119px at a
+  // 1440 window) and already truncates, so a third fact would have to displace
+  // one of these two, and nesting is not worth that trade. It reads in the
+  // tooltip and in both MCP outputs instead, neither of which is space-bound.
+  const subagentSub = hasSubagentTurns
+    ? `${kpis!.subagentCount} agent(s), ${formatTokenCount(kpis!.subagentCacheReadTokens)} cached`
+    : undefined;
+  // A blind range is not an empty one. Only Claude reports subagent usage today,
+  // so a Codex or Gemini range renders the same `-` a genuinely quiet Claude
+  // range does, and nothing on the tile distinguishes "nothing fanned out" from
+  // "fan-outs here are not measurable".
+  const blindAgents = payload?.subagentBlindAgents ?? [];
+  const blindLabel = joinAgentNames(blindAgents.map(agentShortName));
+  // One agent takes a singular verb. The list is short (there are three agents
+  // that could appear), so this is agreement, not i18n.
+  const blindVerb = blindAgents.length === 1 ? 'does not' : 'do not';
+  const subagentTitle = hasSubagentTurns
+    ? [
+        `Fresh + output tokens from ${kpis!.subagentTurnCount.toLocaleString()} subagent turn(s), additive to Total Tokens and already counted in Cost.`,
+        `${formatTokenCount(kpis!.subagentCacheReadTokens)} cache read.`,
+        nestedCount > 0
+          ? `${nestedCount} of ${kpis!.subagentCount} ${nestedCount === 1 ? 'was' : 'were'} spawned by another subagent.`
+          : null,
+        blindAgents.length > 0 ? `Excludes ${blindLabel}, which ${blindVerb} report subagent usage.` : null,
+      ].filter(Boolean).join(' ')
+    : blindAgents.length > 0
+      ? `${blindLabel} ${blindVerb} report subagent usage, so fan-outs in this range cannot be counted.`
+      : 'No subagent turns recorded in this range';
   const avgSessionDelta = deltaPercent(
     kpis && kpis.sessionCount > 0 ? kpis.totalDurationMs / kpis.sessionCount : 0,
     previous && previous.sessionCount > 0 ? previous.totalDurationMs / previous.sessionCount : null,
@@ -362,14 +401,10 @@ export function KpiTiles({
         <CompactTile
           label="Subagents"
           icon={<GitFork size={14} />}
-          value={kpis && kpis.subagentTurnCount > 0 ? formatTokenCount(subagentTokens) : '-'}
-          sub={kpis && kpis.subagentTurnCount > 0
-            ? `${kpis.subagentCount} agent(s), ${formatTokenCount(kpis.subagentCacheReadTokens)} cached`
-            : undefined}
-          title={kpis && kpis.subagentTurnCount > 0
-            ? `Fresh + output tokens from ${kpis.subagentTurnCount.toLocaleString()} subagent turn(s), additive to Total Tokens and already counted in Cost.`
-            : 'No subagent (Task-tool) turns recorded in this range'}
-          delta={kpis && kpis.subagentTurnCount > 0 ? subagentDelta : null}
+          value={hasSubagentTurns ? formatTokenCount(subagentTokens) : '-'}
+          sub={subagentSub}
+          title={subagentTitle}
+          delta={hasSubagentTurns ? subagentDelta : null}
           deltaBaseline={deltaBaseline}
           resetKey={resetKey}
           testId="kpi-subagents"

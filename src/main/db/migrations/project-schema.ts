@@ -959,6 +959,36 @@ export function runProjectMigrations(db: Database.Database): void {
   // breakdown rides idx_turn_usage_task, which already exists and IS selective.
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_agent_type ON conversation_turn_usage(agent_type, ts)');
 
+  // Migration: the spawn-link side of `parent_tool_use_id`.
+  //
+  // `parent_tool_use_id` holds the tool-use id of the spawning call, but nothing
+  // recorded WHICH turn emitted a given tool-use id, so it was half a join with no
+  // other side: `conversation_turn_usage.turn_uuid` is the transcript record's own
+  // uuid for a main-thread row and `sub:<subagentId>:<messageId>` for a subagent
+  // one, and neither is a tool-use id. This table is the missing half - one row per
+  // subagent-spawning tool call, mapping that call's id to the turn that emitted it.
+  //
+  // Deliberately minimal. `turn_uuid` joins straight back to the ledger, which
+  // already carries session_id / task_id / ts, so denormalizing them here would only
+  // create a second copy to keep in sync. Rows are written by whichever parser saw
+  // the emitting turn: the main transcript for a depth-1 spawn, the subagent
+  // transcript for a deeper one, which is what lets a nested subagent resolve to its
+  // parent rather than only to a depth number.
+  //
+  // No sessions-DELETE cascade, for the same reason the ledger it serves has none:
+  // it is durable bookkeeping, not a rebuildable index.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turn_spawn_links (
+      tool_use_id TEXT PRIMARY KEY,
+      turn_uuid TEXT NOT NULL,
+      recorded_at TEXT NOT NULL
+    )
+  `);
+  // Serves the reverse direction (given a driver turn, which spawns did it make).
+  // The forward direction, which is the one the fan-out rollup drives, rides the
+  // PRIMARY KEY on tool_use_id.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_spawn_links_turn ON turn_spawn_links(turn_uuid)');
+
   // Durable activity-disposition-interval ledger: one row per continuous span
   // a session spent in one `ActivityDisposition` bucket ('idle' - needing the
   // user, covering both ActivityState idle and permission - or 'active' -

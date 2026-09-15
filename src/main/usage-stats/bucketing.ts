@@ -418,6 +418,10 @@ export function computeKpis(
   let subagentCacheReadTokens = 0;
   let subagentTurnCount = 0;
   let subagentCount = 0;
+  // A SUBSET of subagentCount, not another addend: a nested subagent's tokens are
+  // already inside the four sums above. Summing it separately would double count
+  // it in any total built from these fields.
+  let subagentNestedCount = 0;
   for (const row of subagentTotals) {
     subagentInputTokens += row.inputTokens;
     subagentOutputTokens += row.outputTokens;
@@ -425,6 +429,7 @@ export function computeKpis(
     subagentCacheReadTokens += row.cacheReadTokens;
     subagentTurnCount += row.turnCount;
     subagentCount += row.subagentCount;
+    subagentNestedCount += row.nestedSubagentCount;
   }
 
   // Burn rates average over the elapsed window (floored at one minute so a
@@ -460,6 +465,7 @@ export function computeKpis(
     subagentCacheReadTokens,
     subagentTurnCount,
     subagentCount,
+    subagentNestedCount,
     burnRateTokensPerHour,
     burnRateUsdPerHour,
   };
@@ -494,6 +500,15 @@ export function mergeSubagentTotals(perProject: SubagentUsageTotals[][]): Subage
       existing.cacheReadTokens += row.cacheReadTokens;
       existing.turnCount += row.turnCount;
       existing.subagentCount += row.subagentCount;
+      existing.nestedTurnCount += row.nestedTurnCount;
+      existing.nestedSubagentCount += row.nestedSubagentCount;
+      // Depth is a MAX, not a sum: two projects each two deep are still two deep.
+      // Null means no row recorded a depth, so it loses to any real number.
+      existing.maxSpawnDepth = existing.maxSpawnDepth === null
+        ? row.maxSpawnDepth
+        : row.maxSpawnDepth === null
+          ? existing.maxSpawnDepth
+          : Math.max(existing.maxSpawnDepth, row.maxSpawnDepth);
     }
   }
   return Array.from(byType.values()).sort(

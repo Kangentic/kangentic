@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { streamJsonlRecords } from '../../shared/history-scan';
 import { locateClaudeTranscriptFile } from './transcript-parser';
-import type { SubagentTranscriptSignature, SubagentUsageTurn } from '../../agent-adapter';
+import type { SubagentSpawnLink, SubagentTranscriptSignature, SubagentUsageTurn } from '../../agent-adapter';
 
 /**
  * Claude writes every Task-tool subagent's conversation to its OWN transcript,
@@ -31,6 +31,15 @@ import type { SubagentTranscriptSignature, SubagentUsageTurn } from '../../agent
 const SUBAGENTS_DIR = 'subagents';
 /** Claude's placeholder model on synthetic assistant records (API-error notices). */
 const SYNTHETIC_MODEL = '<synthetic>';
+/**
+ * The tool Claude spawns a subagent with. A subagent's sidecar records the id of
+ * the `Task` call that created it as `toolUseId`, so matching this name in a
+ * transcript's `tool_use` blocks is how the spawning turn is found again.
+ *
+ * Exported for `claude-adapter.ts` to declare as `subagentSpawnToolName`, so the
+ * literal lives once beside the sidecar format it belongs to.
+ */
+export const CLAUDE_SUBAGENT_SPAWN_TOOL = 'Task';
 
 /**
  * Locate a session's subagent transcript directory.
@@ -119,6 +128,27 @@ function numberOrZero(value: unknown): number {
 }
 
 /** One message id's folded usage, plus the tie-breakers for a stable row. */
+/**
+ * Record every `Task` tool-use id this message emitted, keyed to the message that
+ * emitted it.
+ *
+ * A Map rather than a list, so re-emitted records of one message (which is why
+ * the usage fold exists at all) union instead of duplicating. That keeps a
+ * re-walk of an appended file byte-identical, the same property `ts` and `model`
+ * are held to above.
+ */
+function collectSpawnToolUseIds(content: unknown, messageId: string, into: Map<string, string>): void {
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block.type !== 'tool_use') continue;
+    if (block.name !== CLAUDE_SUBAGENT_SPAWN_TOOL) continue;
+    const toolUseId = typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
+    if (!toolUseId) continue;
+    into.set(toolUseId, messageId);
+  }
+}
+
 interface FoldedMessage {
   inputTokens: number;
   outputTokens: number;
@@ -163,16 +193,16 @@ async function parseSubagentFile(
   filePath: string,
   subagentId: string,
   meta: SubagentMeta,
-): Promise<{ ok: boolean; turns: SubagentUsageTurn[] }> {
+): Promise<{ ok: boolean; turns: SubagentUsageTurn[]; spawnLinks: SubagentSpawnLink[] }> {
   const byMessageId = new Map<string, FoldedMessage>();
+  /** toolUseId -> the message id that emitted it. */
+  const spawnToolUseIds = new Map<string, string>();
   let inlineAgentType: string | null = null;
 
   const readWholeFile = await streamJsonlRecords(filePath, (raw) => {
     if (raw.type !== 'assistant') return;
     const message = raw.message;
     if (!isRecord(message)) return;
-    const usage = message.usage;
-    if (!isRecord(usage)) return;
     const messageId = typeof message.id === 'string' ? message.id : null;
     if (!messageId) return;
     const model = typeof message.model === 'string' && message.model.length > 0 ? message.model : null;
@@ -181,6 +211,17 @@ async function parseSubagentFile(
     // one, so they are neither real spend nor a well-formed key. Skipped for
     // the same reason `session-history-parser.ts` skips them.
     if (model === SYNTHETIC_MODEL) return;
+
+    // Spawn links are collected ABOVE the usage filter below, and above the
+    // all-zero-group skip further down, on purpose. A depth-2 subagent names its
+    // parent by the tool-use id of the `Task` call that created it; if that call
+    // rode a message the ledger drops, the link is never written and a re-walk
+    // drops it identically, so the whole subtree beneath it becomes permanently
+    // unattributable. Tokens can be absent and recovered later. This cannot.
+    collectSpawnToolUseIds(message.content, messageId, spawnToolUseIds);
+
+    const usage = message.usage;
+    if (!isRecord(usage)) return;
 
     // Fallback for a missing/corrupt sidecar: every record names its own
     // subagent type inline.
@@ -251,7 +292,14 @@ async function parseSubagentFile(
       },
     });
   }
-  return { ok: readWholeFile, turns };
+  // Built from the same `sub:<subagentId>:<messageId>` key the turns use, so a
+  // link resolves to a real ledger row whenever that message produced one, and
+  // resolves to nothing (rather than to a wrong row) when it did not.
+  const spawnLinks: SubagentSpawnLink[] = [];
+  for (const [toolUseId, messageId] of spawnToolUseIds) {
+    spawnLinks.push({ toolUseId, turnUuid: `sub:${subagentId}:${messageId}` });
+  }
+  return { ok: readWholeFile, turns, spawnLinks };
 }
 
 /**
@@ -271,16 +319,23 @@ async function parseSubagentFile(
 export async function parseClaudeSubagentUsage(
   agentSessionId: string,
   cwd: string,
-): Promise<{ directoryPresent: boolean; complete: boolean; sourcePath: string; turns: SubagentUsageTurn[] }> {
+): Promise<{
+  directoryPresent: boolean;
+  complete: boolean;
+  sourcePath: string;
+  turns: SubagentUsageTurn[];
+  spawnLinks: SubagentSpawnLink[];
+}> {
   const directory = locateClaudeSubagentDir(agentSessionId, cwd);
   let entries: string[];
   try {
     entries = fs.readdirSync(directory);
   } catch {
-    return { directoryPresent: false, complete: true, sourcePath: directory, turns: [] };
+    return { directoryPresent: false, complete: true, sourcePath: directory, turns: [], spawnLinks: [] };
   }
 
   const turns: SubagentUsageTurn[] = [];
+  const spawnLinks: SubagentSpawnLink[] = [];
   let complete = true;
   for (const entry of entries) {
     if (!entry.endsWith('.jsonl')) continue;
@@ -289,6 +344,7 @@ export async function parseClaudeSubagentUsage(
     const parsed = await parseSubagentFile(path.join(directory, entry), subagentId, meta);
     if (!parsed.ok) complete = false;
     turns.push(...parsed.turns);
+    spawnLinks.push(...parsed.spawnLinks);
   }
-  return { directoryPresent: true, complete, sourcePath: directory, turns };
+  return { directoryPresent: true, complete, sourcePath: directory, turns, spawnLinks };
 }

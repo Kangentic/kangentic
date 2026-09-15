@@ -357,12 +357,13 @@ test.describe('usage dashboard', () => {
               cacheCreationTokens: 10, cacheReadTokens: 50,
               subagentInputTokens: 0, subagentOutputTokens: 0,
               subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
-              subagentTurnCount: 0, subagentCount: 0,
+              subagentTurnCount: 0, subagentCount: 0, subagentNestedCount: 0,
               burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
             },
             previousKpis: null,
             tokenSeries: [], costSeries: [],
             byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+            subagentBlindAgents: [],
           };
         };
       })();
@@ -376,7 +377,62 @@ test.describe('usage dashboard', () => {
       // card is absent", not "the dashboard failed to load".
       await expect(page.locator('[data-testid="breakdown-model"]')).toBeVisible({ timeout: 10000 });
       await expect(page.locator('[data-testid="breakdown-subagent"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="kpi-subagents"]')).toContainText('-');
+      const tile = page.locator('[data-testid="kpi-subagents"]');
+      await expect(tile).toContainText('-');
+      // Every agent here CAN report subagent usage, so the dash is a real
+      // measurement and the tooltip must not imply a blind spot.
+      await expect(tile).toHaveAttribute('title', 'No subagent turns recorded in this range');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('says which agents cannot report subagent usage, instead of a dash that reads as "nothing fanned out"', async () => {
+    // The two cases render the same `-`: a range where nothing fanned out, and a
+    // range whose agent has no subagent capture at all. Only Claude implements
+    // it, so a Codex range is permanently the second one and has to say so.
+    const blindAgentFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          return {
+            scope: scope, period: period,
+            rangeStartMs: now - 3600000, rangeEndMs: now,
+            bucketSizeMs: 3600000, costBucketSizeMs: 86400000, generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 5, costKnown: true,
+              totalInputTokens: 1000, totalOutputTokens: 200, totalTokens: 1200,
+              sessionCount: 1, toolCallCount: 3,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 1000,
+              turnInputTokens: 900, turnOutputTokens: 150,
+              cacheCreationTokens: 10, cacheReadTokens: 50,
+              subagentInputTokens: 0, subagentOutputTokens: 0,
+              subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
+              subagentTurnCount: 0, subagentCount: 0, subagentNestedCount: 0,
+              burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
+            },
+            previousKpis: null,
+            tokenSeries: [], costSeries: [],
+            byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+            subagentBlindAgents: ['codex'],
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + blindAgentFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      const tile = page.locator('[data-testid="kpi-subagents"]');
+      await expect(tile).toContainText('-', { timeout: 10000 });
+      // Singular agent, singular verb - the list is short enough that agreement
+      // is worth getting right rather than papering over with "do(es) not".
+      await expect(tile).toHaveAttribute(
+        'title',
+        'Codex does not report subagent usage, so fan-outs in this range cannot be counted.',
+      );
     } finally {
       await browser.close();
     }

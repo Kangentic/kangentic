@@ -7,6 +7,7 @@ import type {
   ParsedSubagentUsage,
   ParsedTranscript,
   ParsedTranscriptWindow,
+  SubagentSpawnLink,
   SubagentTranscriptSignature,
 } from '../../agent/agent-adapter';
 import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
@@ -15,6 +16,7 @@ import type { ChunkInput, IndexStateRow } from '../types';
 import { chunkTranscript, CHUNKER_VERSION } from './transcript-chunker';
 import {
   ConversationUsageStore,
+  extractTurnSpawnLinks,
   extractTurnUsageRecords,
   type TurnUsageInput,
 } from './conversation-usage-store';
@@ -88,6 +90,9 @@ interface AdapterLike {
     cwd: string,
   ) => SubagentTranscriptSignature | null;
   parseSubagentUsage?: (agentSessionId: string, cwd: string) => Promise<ParsedSubagentUsage>;
+  /** The agent's subagent-spawning tool name, or undefined when it has none.
+   *  Read rather than matched here, so no agent name reaches this layer. */
+  subagentSpawnToolName?: string;
 }
 
 /**
@@ -111,6 +116,10 @@ interface WalkedTranscript {
   entryCount: number;
   chunks: ChunkInput[];
   usageRecords: TurnUsageInput[];
+  /** Subagent-spawning tool calls this transcript emitted. Collected alongside
+   *  the usage records but NOT gated on them, so a spawn on a turn the ledger
+   *  skips is still resolvable. */
+  spawnLinks: SubagentSpawnLink[];
 }
 
 export interface ConversationIndexerDeps {
@@ -282,7 +291,8 @@ export class ConversationIndexer {
     // JSONL. Best-effort - a usage-write failure must not fail the search index or
     // drop the 'ok' state below (the class contract is "never throws to callers").
     try {
-      new ConversationUsageStore(db).recordTurns(
+      const usageStore = new ConversationUsageStore(db);
+      usageStore.recordTurns(
         {
           agentSessionId: record.agent_session_id,
           sessionId: record.id,
@@ -291,6 +301,10 @@ export class ConversationIndexer {
         walked.usageRecords,
         this.deps.now(),
       );
+      // The other half of a subagent's `parent_tool_use_id`. No-op (no statement,
+      // no transaction) when this transcript spawned nothing, which is the common
+      // case on the live turn-boundary path this method sits on.
+      usageStore.recordSpawnLinks(walked.spawnLinks, this.deps.now());
     } catch (error) {
       console.warn(`[retrieval] turn-usage record failed for session ${record.id}:`, error);
     }
@@ -374,7 +388,8 @@ export class ConversationIndexer {
     }
 
     try {
-      new ConversationUsageStore(db).recordTurns(
+      const usageStore = new ConversationUsageStore(db);
+      usageStore.recordTurns(
         {
           agentSessionId: record.agent_session_id,
           sessionId: record.id,
@@ -383,6 +398,12 @@ export class ConversationIndexer {
         parsed.turns,
         this.deps.now(),
       );
+      // Spawns made BY these subagents. This is the edge a depth-2 subagent needs
+      // to reach its depth-1 parent; without it, nesting is only a number.
+      // `?? []` because an adapter that predates this field would otherwise throw
+      // here, and the catch below would discard its TURNS too - losing real token
+      // data over a missing optional.
+      usageStore.recordSpawnLinks(parsed.spawnLinks ?? [], this.deps.now());
     } catch (error) {
       console.warn(`[retrieval] subagent usage record failed for session ${record.id}:`, error);
       this.writeState(store, record, signature, 'error', 0, 0, SUBAGENT_DOC_SUFFIX);
@@ -424,6 +445,7 @@ export class ConversationIndexer {
   ): Promise<WalkedTranscript> {
     const chunks: ChunkInput[] = [];
     const usageRecords: TurnUsageInput[] = [];
+    const spawnLinks: SubagentSpawnLink[] = [];
     let sourcePath: string | null = null;
     let entryCount = 0;
 
@@ -444,6 +466,13 @@ export class ConversationIndexer {
         chunks.push({ ...chunk, seq: chunks.length });
       }
       for (const usage of extractTurnUsageRecords(indexable)) usageRecords.push(usage);
+      // Note this reads `indexable`, not the raw `entries`: the truncation notice
+      // is the only thing filtered out and it is a `system` entry, so the two are
+      // identical here. Using the same list the usage records use keeps one
+      // source for both.
+      for (const link of extractTurnSpawnLinks(indexable, adapter.subagentSpawnToolName)) {
+        spawnLinks.push(link);
+      }
     };
 
     if (adapter.parseTranscriptWindow) {
@@ -477,18 +506,18 @@ export class ConversationIndexer {
         offset = window.nextByteOffset;
         if (offset >= window.totalBytes) break;
       }
-      return { sourcePath, entryCount, chunks, usageRecords };
+      return { sourcePath, entryCount, chunks, usageRecords, spawnLinks };
     }
 
     // Narrowed rather than asserted: `indexSession` only reaches here when at
     // least one of the two capabilities exists, and the window branch above
     // consumed the other - but that reasoning lives in a different method, so
     // let the type system carry it instead of a `!`.
-    if (!adapter.parseTranscript) return { sourcePath, entryCount, chunks, usageRecords };
+    if (!adapter.parseTranscript) return { sourcePath, entryCount, chunks, usageRecords, spawnLinks };
     const parsed = await adapter.parseTranscript(agentSessionId, cwd);
     sourcePath = parsed.sourcePath;
     collect(parsed.entries);
-    return { sourcePath, entryCount, chunks, usageRecords };
+    return { sourcePath, entryCount, chunks, usageRecords, spawnLinks };
   }
 
   /**

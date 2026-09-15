@@ -422,6 +422,16 @@ for them would double count. `byAgent` is a different axis: that is the CLI that
 session (Claude vs Codex), not a subagent inside one. For ONE task's fan-out, use
 `kangentic_get_task_stats` with a `taskId`.
 
+`subagentNestedCount` names how many of those subagents were spawned by another subagent
+rather than by the driver. It is a subset of `subagentCount`, never an addend: their
+tokens are already inside the four `subagent*` totals.
+
+A `Not counted:` line names agents in the range that CANNOT report subagent usage, from
+`subagentBlindAgents`. Only the Claude adapter implements subagent capture today, so a
+Codex or Gemini range reports an empty breakdown that otherwise reads as a measurement
+("nothing fanned out") when it is really a blind spot. The list is derived from which
+adapters declare the capability, not from agent names in the reporting layer.
+
 Reads the durable usage ledgers (`usage_history` per-session totals and
 `conversation_turn_usage` per-turn time series), so totals survive task and session
 deletion. Usage from in-flight sessions is excluded until they finalize. Two token
@@ -448,7 +458,20 @@ token counts, turn count and distinct-subagent count. On a `/code-review` or `/t
 task that is usually most of the traffic, and it is the only place the board can say
 which subagent was expensive. It reports no cost of its own: the task's reported cost
 already covers the whole session tree. The rows are absent for a task with no fan-out,
-and for one whose subagent transcripts the agent pruned before they were indexed.
+and for one whose subagent transcripts the agent pruned before they were indexed. A type
+that ran anything nested also names how much: `N nested` on the summary line and
+`(N nested)` on its own row, omitted entirely at zero rather than printed as `0 nested`.
+
+The message then carries a `Fan-outs:` section, and `data.fanOuts`, grouping the same
+turns by the DRIVER TURN that started each one - the question the per-type rollup cannot
+answer, since a `/code-review` task spawns the same `review-finder` from several turns.
+Each line reads `14:32 - review-finder x6, 1.2M fresh tokens, 28.4M cache read`, heaviest
+first, capped at five with a `+N more` tail. A nested subagent is folded into the fan-out
+that ultimately caused it, by walking its parent chain up to the driver. Subagents whose
+parent cannot be resolved print as one `(unlinked)` row instead of being dropped: spawn
+links only exist for sessions indexed since they shipped, so on an older task that is
+every row, and omitting them would leave the fan-out lines disagreeing with the per-type
+totals directly above.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

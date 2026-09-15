@@ -18,6 +18,7 @@ import {
   type UsageRollupRow,
   type UsageWindowTotals,
 } from '../db/repositories/usage-history-repository';
+import { agentRegistry } from '../agent/agent-registry';
 import { ConversationUsageStore, type GroupedTurnUsageRow } from '../retrieval/conversation/conversation-usage-store';
 import {
   COST_GROUP_MS,
@@ -117,6 +118,16 @@ export interface UsageStatsDeps {
   openReader: (projectId: string) => ProjectUsageReader;
   listProjects: () => Array<{ id: string; name: string }>;
   projectDbExists: (projectId: string) => boolean;
+  /**
+   * Whether the named agent can report subagent usage at all, so the dashboard
+   * can tell "nothing fanned out" from "this agent's fan-outs are not measurable".
+   * Both render as an empty breakdown otherwise.
+   *
+   * Takes the agent NAME as recorded on the session and answers from the adapter
+   * registry, so the agent-name-to-capability mapping stays inside the adapters
+   * (`agent-adapters-boundary.md`) and this service never compares one itself.
+   */
+  reportsSubagentUsage: (agent: string) => boolean;
   now?: () => number;
 }
 
@@ -377,6 +388,14 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       byAgent: buildAgentBreakdown(combinedRollup),
       byEffort: buildEffortBreakdown(combinedRollup),
       bySubagentType,
+      // Derived from the agents that actually ran in this range, so a project
+      // that has never run Codex never mentions Codex. A null agent (rows
+      // predating the column) is not reported: it names no agent to explain.
+      subagentBlindAgents: buildAgentBreakdown(combinedRollup)
+        .map((row) => row.agent)
+        .filter((agent): agent is string => agent !== null)
+        .filter((agent) => !deps.reportsSubagentUsage(agent))
+        .sort(),
     };
     if (scope.kind === 'all') {
       stats.perProject = perProject;
@@ -407,4 +426,17 @@ export const usageStatsService = createUsageStatsService({
   },
   listProjects: () => new ProjectRepository().list().map((project) => ({ id: project.id, name: project.name })),
   projectDbExists: (projectId) => fs.existsSync(PATHS.projectDb(projectId)),
+  // The SAME pair of methods `ConversationIndexer.indexSubagentUsage` gates on,
+  // read off the adapter rather than restated, so the dashboard's claim about an
+  // agent cannot drift from whether the indexer actually writes its rows.
+  //
+  // `agent` is a LOOKUP KEY here, never compared: there is no `=== 'claude'` and
+  // no per-agent branch, so adding a second adapter with these methods changes
+  // this answer with no edit. That is what `agent-adapters-boundary.md` asks for
+  // (declare a capability, read it generically), and it is why the registry
+  // lookup is in this layer rather than an agent name being.
+  reportsSubagentUsage: (agent) => {
+    const adapter = agentRegistry.get(agent);
+    return Boolean(adapter?.parseSubagentUsage && adapter.statSubagentTranscripts);
+  },
 });

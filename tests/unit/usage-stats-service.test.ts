@@ -325,6 +325,9 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
     openReader,
     listProjects: () => projects.map((project) => ({ id: project.id, name: project.name })),
     projectDbExists: (projectId) => projects.find((candidate) => candidate.id === projectId)?.exists !== false,
+    // Mirrors the real registry: only the Claude adapter implements subagent
+    // capture, so every other agent in a range is reported as blind.
+    reportsSubagentUsage: (agent) => agent === 'claude',
     now: () => nowMs,
   });
   return { service, openReader, readerCalls };
@@ -573,8 +576,8 @@ describe('usage-stats service: app-wide rollup', () => {
         makeRow({ sessionRecordId: 'yesterday', sessionStartedAt: new Date(previousMs).toISOString() }),
       ],
       subagents: [
-        { tsMs: nowMs, agentType: 'review-finder', inputTokens: 300, outputTokens: 120, cacheCreationTokens: 40, cacheReadTokens: 9000, turnCount: 12, subagentCount: 3 },
-        { tsMs: previousMs, agentType: 'review-finder', inputTokens: 100, outputTokens: 50, cacheCreationTokens: 20, cacheReadTokens: 4000, turnCount: 5, subagentCount: 2 },
+        { tsMs: nowMs, agentType: 'review-finder', inputTokens: 300, outputTokens: 120, cacheCreationTokens: 40, cacheReadTokens: 9000, turnCount: 12, subagentCount: 3, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
+        { tsMs: previousMs, agentType: 'review-finder', inputTokens: 100, outputTokens: 50, cacheCreationTokens: 20, cacheReadTokens: 4000, turnCount: 5, subagentCount: 2, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
       ],
     }]);
 
@@ -600,7 +603,7 @@ describe('usage-stats service: app-wide rollup', () => {
       groups: [{ bucketStartMs: nowMs - 60_000, inputTokens: 200, outputTokens: 100, cacheCreationTokens: 10, cacheReadTokens: 1000, turnCount: 2, sessionRecordId: 'session-1' }],
       // A realistic fan-out: an order of magnitude more than the driver.
       subagents: [
-        { tsMs: nowMs - 60_000, agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4 },
+        { tsMs: nowMs - 60_000, agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
       ],
     }]);
 
@@ -616,7 +619,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.kpis.subagentInputTokens).toBe(9000);
     expect(stats.kpis.subagentCacheReadTokens).toBe(2_400_000);
     expect(stats.bySubagentType).toEqual([
-      { agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4 },
+      { agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
     ]);
   });
 
@@ -628,8 +631,8 @@ describe('usage-stats service: app-wide rollup', () => {
         name: 'One',
         rows: [makeRow()],
         subagents: [
-          { tsMs: nowMs, agentType: 'review-finder', inputTokens: 100, outputTokens: 10, cacheCreationTokens: 1, cacheReadTokens: 500, turnCount: 4, subagentCount: 2 },
-          { tsMs: nowMs, agentType: null, inputTokens: 7, outputTokens: 3, cacheCreationTokens: 0, cacheReadTokens: 9, turnCount: 1, subagentCount: 1 },
+          { tsMs: nowMs, agentType: 'review-finder', inputTokens: 100, outputTokens: 10, cacheCreationTokens: 1, cacheReadTokens: 500, turnCount: 4, subagentCount: 2, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
+          { tsMs: nowMs, agentType: null, inputTokens: 7, outputTokens: 3, cacheCreationTokens: 0, cacheReadTokens: 9, turnCount: 1, subagentCount: 1, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
         ],
       },
       {
@@ -637,7 +640,7 @@ describe('usage-stats service: app-wide rollup', () => {
         name: 'Two',
         rows: [makeRow({ sessionRecordId: 'session-2' })],
         subagents: [
-          { tsMs: nowMs, agentType: 'review-finder', inputTokens: 50, outputTokens: 5, cacheCreationTokens: 2, cacheReadTokens: 900, turnCount: 3, subagentCount: 1 },
+          { tsMs: nowMs, agentType: 'review-finder', inputTokens: 50, outputTokens: 5, cacheCreationTokens: 2, cacheReadTokens: 900, turnCount: 3, subagentCount: 1, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
         ],
       },
     ]);
@@ -647,10 +650,10 @@ describe('usage-stats service: app-wide rollup', () => {
     // SQL groups within one project DB, so the same type arrives once per
     // project and has to be merged here. Heaviest cache read leads.
     expect(stats.bySubagentType).toEqual([
-      { agentType: 'review-finder', inputTokens: 150, outputTokens: 15, cacheCreationTokens: 3, cacheReadTokens: 1400, turnCount: 7, subagentCount: 3 },
+      { agentType: 'review-finder', inputTokens: 150, outputTokens: 15, cacheCreationTokens: 3, cacheReadTokens: 1400, turnCount: 7, subagentCount: 3, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
       // A null type is a real bucket (no sidecar, no inline attribution), not a
       // row to drop.
-      { agentType: null, inputTokens: 7, outputTokens: 3, cacheCreationTokens: 0, cacheReadTokens: 9, turnCount: 1, subagentCount: 1 },
+      { agentType: null, inputTokens: 7, outputTokens: 3, cacheCreationTokens: 0, cacheReadTokens: 9, turnCount: 1, subagentCount: 1, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
     ]);
     expect(stats.kpis.subagentCount).toBe(4);
   });
@@ -699,6 +702,44 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.byModel).toEqual([]);
     expect(stats.byAgent).toEqual([]);
     expect(stats.byEffort).toEqual([]);
+  });
+});
+
+describe('usage-stats service: subagentBlindAgents', () => {
+  // Mirrors the fake reader's own capability stub above: only 'claude' reports.
+  it('names the agent that ran but cannot report subagent usage, excludes the reporting agent, and drops a null agent', () => {
+    const { service } = makeService([
+      {
+        id: 'p1',
+        name: 'One',
+        rows: [
+          makeRow({ sessionRecordId: 'a', agent: 'claude' }),
+          makeRow({ sessionRecordId: 'b', agent: 'codex' }),
+          makeRow({ sessionRecordId: 'c', agent: null }),
+        ],
+      },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.subagentBlindAgents).toEqual(['codex']);
+  });
+
+  it('sorts and dedups several non-reporting agents even when multiple sessions share one', () => {
+    const { service } = makeService([
+      {
+        id: 'p1',
+        name: 'One',
+        rows: [
+          makeRow({ sessionRecordId: 'a', agent: 'gemini' }),
+          makeRow({ sessionRecordId: 'b', agent: 'codex' }),
+          // A second 'codex' session must not produce a second 'codex' entry.
+          makeRow({ sessionRecordId: 'c', agent: 'codex' }),
+        ],
+      },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.subagentBlindAgents).toEqual(['codex', 'gemini']);
   });
 });
 
