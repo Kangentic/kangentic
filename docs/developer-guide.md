@@ -211,9 +211,10 @@ boot script (`demo/boot.js`: the URL contract, config overrides, still and embed
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
 pre-reveal click runner), `tests/ui/mock-electron-api.js` verbatim, and the generated seed (the
 sample install from `tests/captures/helpers/demo-dataset.ts` plus, per recording under
-`tests/captures/fixtures/demo/`, its opening and final terminal frames, its working-tree diff, its
-output-peek timeline, and the agent message trail a board card prints under the default Card
-Preview). The plugin also emits every
+`tests/captures/fixtures/demo/`, its opening and final terminal frames, its working-tree diff, the
+last output peek its Monitor row shows and, for a working session, how that peek changes over the
+recording, and the agent message trail a board card prints under the default Card Preview). The
+plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, and the agent boots a drag or a new Command
 Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
