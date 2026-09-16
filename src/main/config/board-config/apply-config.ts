@@ -6,7 +6,7 @@ import type { BoardConfig, SwimlaneRole } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
-import { configDeclaresAutomations, planColumnAutomations } from './apply-automations';
+import { configDeclaresAutomations, configIsAutomationAware, planColumnAutomations } from './apply-automations';
 
 /**
  * Apply a BoardConfig (already loaded + merged from kangentic.json and
@@ -208,9 +208,17 @@ export function applyBoardConfigToDb(
     // delete the ones a user built in the app.
     if (configDeclaresAutomations(config.columns)) {
       const lanesByName = new Map(swimlaneRepo.list().map((lane) => [lane.name, lane]));
+      // Whether an absent `automations` key means "none" or "this writer did not
+      // know about them". Only a file that uses the key somewhere earns the
+      // first reading; see `configIsAutomationAware`.
+      const automationAware = configIsAutomationAware(config.columns);
       for (const columnConfig of config.columns) {
         const lane = lanesByName.get(columnConfig.name);
         if (!lane) continue;
+        // A legacy file speaks only for the columns that carry a message. Every
+        // other column keeps what it has, because the file has said nothing
+        // about it rather than said it is empty.
+        if (!automationAware && columnConfig.autoCommand === undefined) continue;
         const plan = planColumnAutomations(columnConfig);
         warnings.push(...plan.warnings);
         automationRepo.replaceForColumn(lane.id, plan.rows);

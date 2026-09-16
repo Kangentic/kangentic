@@ -194,6 +194,42 @@ describeWithSqlite('kangentic.json automations round-trip', () => {
       expect(rows[0].config).toMatchObject({ message: '/pull-request', mode: 'deferred' });
     });
 
+    it('keeps a migrated transition script on a column the file says nothing about', () => {
+      // The real upgrade shape, taken from a board in the wild: a custom script
+      // hung off a `* -> Planning` transition, and three OTHER columns whose
+      // only automation is their message. The schema migration turns the
+      // transition into Planning's automation; then this apply runs.
+      //
+      // The trap is that `configDeclaresAutomations` is true for the WHOLE
+      // config as soon as any column carries a message, and the reconcile then
+      // visits every column. Planning declares nothing, so a plan of zero rows
+      // for it would call `replaceForColumn(planning, [])` and delete the
+      // script the migration had just rescued, on the first open after upgrade.
+      const { lanes, automations } = freshDatabase();
+      const planning = lanes.list().find((lane) => lane.name === 'Planning')!;
+      automations.replaceForColumn(planning.id, [
+        {
+          name: 'Move Work Item',
+          type: 'run_script',
+          trigger: 'enter',
+          enabled: true,
+          config: { script: 'node scripts/move-work-item.mjs --state InProgress' },
+        },
+      ]);
+
+      const config = build();
+      columnNamed(config, 'Code Review')!.autoCommand = '/code-review';
+      columnNamed(config, 'Testing')!.autoCommand = '/pull-request';
+      columnNamed(config, 'Merge')!.autoCommand = '/merge-pull-request';
+      // Planning's own automations are dropped from the file, exactly as an
+      // older build would have written it: it never knew about the key.
+      delete columnNamed(config, 'Planning')!.automations;
+
+      applyBoardConfigToDb('p1', config);
+
+      expect(automations.listForColumn(planning.id).map((row) => row.name)).toEqual(['Move Work Item']);
+    });
+
     it('leaves the retired lane field cleared, which is the bug a preview caught', () => {
       // Writing it back is what put the message somewhere nothing reads.
       const { lanes } = freshDatabase();

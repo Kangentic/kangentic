@@ -42,7 +42,8 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
       data-testid="column-automation-glyph"
       data-enter={counts.enter}
       data-exit={counts.exit}
-      title={`${total} automation${total > 1 ? 's' : ''} run here: ${parts.join(', ')}`}
+      // Both halves agree with the count: one automation RUNS, several RUN.
+      title={`${total} automation${total > 1 ? 's run' : ' runs'} here: ${parts.join(', ')}`}
       className="flex flex-shrink-0 items-center gap-0.5 text-fg-disabled"
     >
       <Zap size={12} />
