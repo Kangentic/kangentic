@@ -3167,6 +3167,23 @@
         }
         return { hasPendingChanges: false, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
       },
+      prefetchRemotes: async function (checkPath) {
+        // Test hook: record every prefetch so drag-prefetch-remotes.spec.ts can
+        // assert the board warms the fetch for a worktree-backed card at drag
+        // start and never for a card without a worktree.
+        if (typeof window !== 'undefined') {
+          window.__mockPrefetchRemotesCalls = window.__mockPrefetchRemotesCalls || [];
+          window.__mockPrefetchRemotesCalls.push(checkPath);
+          // Test hook: force this call to reject, so a test can pin that the
+          // fire-and-forget `.catch(() => {})` in handleDragStart is load-bearing
+          // and a rejecting prefetch cannot break the drag. Default off (falsy)
+          // so no existing spec's behavior changes. Set
+          // window.__mockPrefetchRemotesShouldReject = true before the drag.
+          if (window.__mockPrefetchRemotesShouldReject) {
+            throw new Error('mock prefetchRemotes rejection');
+          }
+        }
+      },
       branchSummary: async function (request) {
         // Test hook: record every branchSummary call (worktreePath, projectPath,
         // baseBranch, refreshRemote) so a test can assert how the mount-only

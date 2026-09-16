@@ -6,7 +6,6 @@ import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences 
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
-import { onBoardDragEnd } from '../lib/session-update-coalescer';
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { onTerminalRefocus } from '../utils/focused-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
@@ -1235,15 +1234,14 @@ export function useTerminal(options: UseTerminalOptions) {
       // dropped bytes in the per-session scrollback ring. Dropped slices are
       // still acked inside the queue.
       shouldDrop: () => suppressDataRef.current || isTerminalParked(sessionId),
-      // While a board drag OR a scrollback replay is in flight, HOLD (not
-      // drop) inbound writes. For a replay, getScrollback() drains the
-      // server-side pending buffer, so anything still arriving here is either
-      // an in-flight duplicate of the replay (harmless to re-apply) or
-      // genuinely new live output (e.g. a diff frame) that must not be lost -
-      // dropping it (the prior behavior) could silently discard a selection
-      // highlight in a fullscreen TUI. Held bytes are retained and resumed via
-      // kick() on drag end, at the end of afterWrite, or by the stuck-replay
-      // watchdog.
+      // While a scrollback replay is in flight, HOLD (not drop) inbound writes.
+      // getScrollback() drains the server-side pending buffer, so anything still
+      // arriving here is either an in-flight duplicate of the replay (harmless to
+      // re-apply) or genuinely new live output (e.g. a diff frame) that must not
+      // be lost - dropping it (the prior behavior) could silently discard a
+      // selection highlight in a fullscreen TUI. Held bytes are retained and
+      // resumed via kick() at the end of afterWrite or by the stuck-replay
+      // watchdog (both through settleScrollback).
       // Deliberately NOT gated on a board drag any more. `TerminalPanel` is a SIBLING
       // of `KanbanBoard`, outside the <DndContext> subtree, and xterm writes to its own
       // canvas without producing a single React render - so holding here never
@@ -1295,17 +1293,12 @@ export function useTerminal(options: UseTerminalOptions) {
       repaintNudge.noteOutput();
       queue.push(data);
     });
-    // Resume the held drain the moment a board drag ends (also via the
-    // coalescer's watchdog / window-blur backstops, which route through here).
-    const unsubscribeDragEnd = onBoardDragEnd(() => queue.kick());
-
     cleanupRef.current = cleanup;
     return () => {
       cleanup();
       cleanupRef.current = null;
       incomingResumeRef.current = null;
       incomingResetRef.current = null;
-      unsubscribeDragEnd();
       queue.reset();
       repaintNudge.dispose();
       repaintNudgeRef.current = null;

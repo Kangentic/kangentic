@@ -52,15 +52,27 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
   // Default to true (conservative): a caller that omits it is treated as if the
   // branch will be deleted, so only-local commits are surfaced rather than hidden.
   const autoCleanup = opts?.autoCleanup ?? true;
+  // Dev-only step timing. The probe gates a Done drop's completion (the card has
+  // landed, the archive waits on this), and it measured 640 to 1150ms on the
+  // dogfooding instance in the 2026-09-16 drag audit; this line says which step.
+  const stepStartedAt = __KANGENTIC_DEV__ ? performance.now() : 0;
+  const stepTimings: string[] = [];
+  const noteStep = (label: string): void => {
+    if (!__KANGENTIC_DEV__) return;
+    stepTimings.push(`${label} ${Math.round(performance.now() - stepStartedAt)}ms`);
+  };
   try {
     const git = simpleGit(checkPath);
     const status = await git.status();
+    noteStep('status');
 
     const uncommittedFileCount = status.files.length;
     const { branch: currentBranch } = await readWorktreeHead(checkPath);
+    noteStep('head');
 
     let unpushedCommitCount = 0;
     const remotes = await git.getRemotes();
+    noteStep('remotes');
     // The count matters only when the move force-deletes the branch (autoCleanup):
     // only then are only-local commits genuinely at risk. With the branch kept
     // they stay reachable on its ref and the worktree is recreatable, so the count
@@ -75,14 +87,19 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
       // behavior. Kept outside the inner try so a hypothetical throw lands in
       // the outer catch (safe default) rather than yielding a false 0 count.
       await fetchAllRemotesIfStale(checkPath);
+      noteStep('fetch');
       try {
         unpushedCommitCount = await countLocalOnlyCommits(checkPath, { prNumber: opts?.prNumber, prState: opts?.prState });
       } catch {
         // Detached HEAD or unborn branch - treat as 0.
       }
+      noteStep('local-only');
     }
 
     const hasPendingChanges = uncommittedFileCount > 0 || unpushedCommitCount > 0;
+    if (__KANGENTIC_DEV__) {
+      console.debug(`[probe] checkPendingChanges cumulative: ${stepTimings.join(', ')}`);
+    }
     return { hasPendingChanges, uncommittedFileCount, unpushedCommitCount, currentBranch };
   } catch {
     // If git fails (missing directory, corrupted repo, etc.), assume changes exist as safe default
@@ -165,6 +182,30 @@ export function registerGitDiffHandlers(context: IpcContext): void {
       prNumber: input.prNumber,
       prState: input.prState,
     });
+  });
+
+  // Warms the same throttle cache the probe above reads, so a probe that follows
+  // within the 30s window either skips the fetch outright or joins the one already
+  // in flight and pays only its remainder. Non-interactive because a drag is not a
+  // moment for a credential prompt; a failure leaves the cache unset and the probe
+  // fetches for itself as before. Measured in the 2026-09-16 drag audit: the probe
+  // ran 640 to 1150ms on the dogfooding instance and the fetch was its dominant
+  // step, while the FlyingCard flight it gates is 500ms.
+  //
+  // Gated on the SAME per-project setting the background scheduler reads
+  // (`git.autoFetchIntervalMinutes`, null or <= 0 meaning off). A drag is a user
+  // gesture, but it is not a request to reach the network, and a card dragged
+  // between two working columns never goes near the Done probe at all. A user who
+  // turned background fetching off therefore sees no new fetches; their Done drop
+  // still fetches inside the probe exactly as it does today, so the setting costs
+  // them the speed-up and nothing else.
+  ipcMain.handle(IPC.GIT_PREFETCH_REMOTES, async (_, checkPath: unknown): Promise<void> => {
+    if (typeof checkPath !== 'string' || checkPath.length === 0) return;
+    const intervalMinutes = context.configManager
+      .getEffectiveConfig(context.currentProjectPath ?? undefined)
+      .git.autoFetchIntervalMinutes;
+    if (intervalMinutes === null || intervalMinutes <= 0) return;
+    await fetchAllRemotesIfStale(checkPath, { nonInteractive: true });
   });
 
   ipcMain.handle(IPC.GIT_BRANCH_SUMMARY, async (_, input: GitBranchSummaryInput) => {

@@ -9,34 +9,35 @@
  *      microtask flush, so N pushes that arrive in the same event-loop turn
  *      cause one React render instead of N. (React 19 auto-batches the set()
  *      calls in flush.)
- *   2. Drag gate. While a board drag is active, ALL session pushes are held and
- *      flushed on drag end. An in-flight spawn (creating a worktree, streaming
- *      first output) therefore never re-renders a `useSortable` card mid-drag,
- *      which would otherwise force dnd-kit to re-measure on the same thread as
- *      the pointer-move pipeline and drop frames. Outside a drag the
- *      side-effect-bearing handlers run immediately (no behavior change), so
- *      only the high-frequency usage/event stream is coalesced when idle. The
- *      optimistic move/drop never routes through here (it lives in board-store),
- *      so drop responsiveness is unaffected.
- *   3. Reload gate. Background-originated full reloads (`enqueueReload`) carry
- *      the same drag hazard as session pushes: an agent-driven `loadBoard()` /
- *      `loadBacklog()` / `loadConfig()` landing mid-drag reconciles the board
- *      and re-renders the changed lane, clearing dnd-kit's measured rects on the
- *      pointer-move thread (the reason `dragStartRectRef` exists). They are held
+ *   2. Drag gate, for RELOADS ONLY. Session pushes are NOT held during a drag:
+ *      usage, activity events, spawn progress, status, first output, and exit all
+ *      apply immediately, because a card that stops reporting while an unrelated
+ *      task is dragged reads as the app hanging, and a re-render never disturbs
+ *      dnd-kit anyway (droppables register in a `useEffect(..., [id])` and the
+ *      default measuring strategy is WhileDragging, so only a card HEIGHT change
+ *      re-measures, and every card is height-stable by construction). What IS
+ *      held is a background-originated full reload (`enqueueReload`): an
+ *      agent-driven `loadBoard()` / `loadBacklog()` / `loadConfig()` landing
+ *      mid-drag replaces the sortable item set, and `SortableContext` compares
+ *      `items` as id strings by value, so a mid-gesture reconcile re-measures the
+ *      lane and disables transforms, snapping displaced cards. Reloads are parked
  *      while a drag is active and flushed once on drag end, deduped by key so N
  *      agent events that each requested a reload collapse to one. When idle they
- *      run immediately (no behavior change). User-initiated reloads (drop,
- *      detail-dialog actions, project switch, confirm dialogs, drag-cancel) do
- *      NOT route through here - they already fire at/after drag end.
+ *      run immediately. User-initiated reloads (drop, detail-dialog actions,
+ *      project switch, confirm dialogs, drag-cancel) do NOT route through here;
+ *      they already fire at or after drag end. The optimistic move/drop never
+ *      routes through here either (it lives in board-store).
+ *   3. Drag-end signal. `onBoardDragEnd` lets another renderer subsystem defer
+ *      its own expensive work for the length of a gesture and resume when the
+ *      gate clears, including via the watchdog and blur backstops below.
  *
  * Usage and events keep their dedicated batch store actions (`batchUpdateUsage`
  * / `batchAddEvents`) for efficient last-write-wins / append semantics. The
- * other handlers carry side effects (auto-focus, notifications, auto-name) that
- * read the store AFTER their own write, so when held they are buffered as
- * whole-body thunks (and run unchanged when idle) to keep read-after-write
- * atomic. Held thunks flush in arrival order, which keeps lifecycle ordering
- * correct (`upsertSession` clears `spawnProgress[taskId]`, so a status thunk
- * after a spawn-progress thunk resolves to the right state).
+ * side-effect-bearing handlers (auto-focus, notifications, auto-name) run their
+ * thunk synchronously in `enqueueSessionUpdate`; `pendingThunks` is retained as
+ * the documented mechanism should a hold ever be reintroduced, and it flushes in
+ * arrival order so lifecycle ordering would stay correct (`upsertSession` clears
+ * `spawnProgress[taskId]`).
  *
  * HMR: a board drag never survives a module reload (every `<DndContext>`
  * re-keys via `hmrGeneration`), and App.tsx's `vite:afterUpdate` handler
@@ -71,17 +72,19 @@ const pendingReloads = new Map<ReloadKey, () => void>();
 let dragActive = false;
 
 /**
- * Whether a board drag is currently in progress. Read by other renderer
- * subsystems that want to pause expensive per-frame work during a drag (e.g. the
- * incoming xterm write queue, which holds its buffer instead of parsing mid-drag).
+ * Whether a board drag is currently in progress. Read by a renderer subsystem
+ * that defers expensive main-thread work for the length of a gesture. The xterm
+ * WRITE queue deliberately does not read it (see `shouldHold` in useTerminal:
+ * xterm writes cause no React render, and holding them only dumped the burst on
+ * drop); xterm CONSTRUCTION is the kind of work this is for.
  */
 export function isBoardDragActive(): boolean {
   return dragActive;
 }
 
-// hmr-safe: subscriptions are owned by live components (each re-registers on
-// remount). resetCoalescerForHmr NOTIFIES rather than clears, so a held consumer
-// (e.g. a paused write queue) resumes; a stale listener firing on an
+// hmr-safe: subscriptions are owned by their consumers (a module re-registers on
+// re-evaluation, a component on remount). resetCoalescerForHmr NOTIFIES rather
+// than clears, so a deferred consumer resumes; a stale listener firing on an
 // already-reset consumer is a no-op.
 const dragEndListeners = new Set<() => void>();
 
@@ -274,7 +277,7 @@ export function enqueueReload(key: ReloadKey, thunk: () => void): void {
   thunk();
 }
 
-/** Mark the start of a board drag. While active, all queued updates are held. */
+/** Mark the start of a board drag. While active, background reloads are held. */
 export function beginBoardDrag(): void {
   if (__KANGENTIC_DEV__) console.debug('[reload-gate] begin board drag');
   dragActive = true;
@@ -313,7 +316,7 @@ export function endBoardDrag(): void {
   }
   dragActive = false;
   flush();
-  // Resume any consumer that paused for the drag (e.g. held write queues).
+  // Resume any consumer that deferred work for the drag.
   notifyDragEndListeners();
 }
 
@@ -334,8 +337,8 @@ export function resetCoalescerForHmr(): void {
   }
   dragActive = false;
   flushScheduled = false;
-  // Notify (do NOT clear) so a held write queue resumes after the HMR reset.
-  // Live terminals do not remount on an unrelated Fast Refresh, so their
-  // subscriptions remain valid; a kick on an already-drained queue is a no-op.
+  // Notify (do NOT clear) so a deferred consumer resumes after the HMR reset.
+  // A consumer that did not remount on the Fast Refresh keeps a valid
+  // subscription; resuming one with nothing deferred is a no-op.
   notifyDragEndListeners();
 }

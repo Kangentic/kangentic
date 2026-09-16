@@ -263,11 +263,19 @@ project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogCo
 wrapped inside it.
 
 A sweep is one `fetchAllRemotesIfStale(projectPath, { nonInteractive: true })`, the same throttled,
-5s-bounded, never-rejecting `git fetch --all --prune` the Changes panel mount and the Done probe run,
-queued through `WorktreeManager.withGitLock` at BACKGROUND priority so it never delays a waiting
-user-initiated git op and never contends with a `worktree add` on the `.git` lock. The 30s throttle
-is a floor under the schedule, not the schedule. `--prune` therefore runs periodically now, not only
-on the Done probe: a remote-deleted branch loses its `origin/<branch>` ref within one interval.
+5s-bounded, never-rejecting `git fetch --all --prune` the Changes panel mount and the Done probe
+run, queued through `WorktreeManager.withGitLock` at BACKGROUND priority so it never delays a
+waiting user-initiated git op and never contends with a `worktree add` on the `.git` lock. The 30s
+throttle is a floor under the schedule, not the schedule. `--prune` therefore runs periodically
+now, not only on the Done probe: a remote-deleted branch loses its `origin/<branch>` ref within one
+interval.
+
+There is a third caller, and it is a head start rather than a trigger of its own: the board fires
+`git:prefetchRemotes` when a drag of a worktree-backed card begins, so the Done probe that may
+follow finds the fetch already cached or still in flight instead of starting one after the card has
+landed. It shares this scheduler's throttle cache AND its `git.autoFetchIntervalMinutes` setting,
+so a user who turned background fetching off gets no fetch from dragging. See
+[board-drag-perf-audit.md](board-drag-perf-audit.md).
 
 Two things are deliberate. The scheduler's fetches run with `GIT_TERMINAL_PROMPT=0` and
 `GCM_INTERACTIVE=never` (`nonInteractiveGitEnv` in `fetch-throttle.ts`): a fetch on a timer has no

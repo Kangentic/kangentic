@@ -28,6 +28,7 @@
 
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { RetrievalStore } from '../retrieval-store';
 import { hasVecSupport } from '../vec-support';
 import { EmbedClient } from './embed-client';
@@ -364,10 +365,13 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       return 'transient';
     }
 
-    store.writeEmbeddings(
+    // Synchronous sqlite-vec write on the main thread, and the one part of the
+    // drain that can contend with a task write under the 5s busy timeout: the
+    // dev lag monitor records it when it runs long (see event-loop-lag.ts).
+    timeSyncWork('embed:writeEmbeddings', () => store.writeEmbeddings(
       batch.map((chunk, index) => ({ chunkId: chunk.id, vector: vectors[index], contentHash: chunk.contentHash })),
       model.modelTag,
-    );
+    ));
 
     const sleepMs = computeEmbedSleepMs(batchMs, deps.dutyCycle);
     const run = drainRuns.get(projectId);

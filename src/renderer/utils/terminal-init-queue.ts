@@ -39,7 +39,24 @@
  *
  * The first enqueue still runs on the very next frame, so a single terminal opening on its
  * own is exactly as fast as before. Only the 2nd and later in a burst are pushed out.
+ *
+ * BOARD DRAG HOLD. While a card is being dragged the pump does not run at all. A drag is
+ * driven by pointer events on the main thread, so a construction landing inside one skips
+ * the pointer for its whole duration and the card visibly jumps to catch up. Measured on
+ * the production build in the 2026-09-16 drag audit: a construction is a 21 to 42ms frame
+ * there (3 to 6 refresh periods at 144Hz), and 75 to 130ms in dev. The collision is not
+ * rare: the pane a drop spawns mounts 400 to 800ms after the release with a mock agent
+ * and seconds later with a real CLI, which is exactly when the user is dragging the NEXT
+ * card of a batch. Held inits resume one frame after the drop frame (that frame already
+ * pays the drop handler, 8 to 10ms in production), landing under dnd-kit's compositor-
+ * driven 250ms settle animation, which a main-thread block does not stall. Every path
+ * that ends a drag routes through the coalescer's `endBoardDrag()` (the real drop, cancel,
+ * the unmount cleanup, the 30s watchdog, the window-blur backstop), so a stuck gate cannot
+ * starve inits, and the cost of the hold is one gesture of extra veil on a card that
+ * spawned mid-drag. This holds CONSTRUCTION only; the xterm write queue deliberately does
+ * not hold for a drag (see `shouldHold` in useTerminal.ts).
  */
+import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
 
 // Both declarations reset on an HMR update rather than being preserved, which is correct
 // here: they hold per-mount work, not durable state. Carrying entries across an update would
@@ -65,12 +82,21 @@ let pumpScheduled = false;
 
 function schedulePump(): void {
   if (pumpScheduled) return;
+  // Never arm a frame mid-gesture. A pump armed during the drag is still pending when the drop
+  // lands, so it fires in the drop frame's own animation-frame phase and constructs there,
+  // which is exactly the frame `resumeAfterDrag`'s extra hop exists to keep free. Declining to
+  // arm makes that function the only way back, which is what the header comment promises.
+  if (isBoardDragActive()) return;
   pumpScheduled = true;
   requestAnimationFrame(pumpInitQueue);
 }
 
 function pumpInitQueue(): void {
   pumpScheduled = false;
+  if (pendingInits.length === 0) return;
+  // Held for the gesture: a drag that BEGAN after this frame was armed, which the guard in
+  // `schedulePump` cannot see. The queue stays intact and `resumeAfterDrag` below re-arms it.
+  if (isBoardDragActive()) return;
   const next = pendingInits.shift();
   if (!next) return;
   try {
@@ -80,6 +106,29 @@ function pumpInitQueue(): void {
     // terminal queued behind it - a wedged queue would leave panes permanently blank.
     if (pendingInits.length > 0) schedulePump();
   }
+}
+
+/**
+ * Re-arm the pump one frame AFTER the drop frame. `endBoardDrag()` notifies from inside
+ * the pointerup handler, and a frame callback requested there still runs in that same
+ * frame's animation-frame phase, so a bare `schedulePump()` would stack the construction
+ * onto the drop handler. The extra frame puts it on the next one.
+ */
+function resumeAfterDrag(): void {
+  if (pendingInits.length === 0) return;
+  requestAnimationFrame(() => schedulePump());
+}
+
+// hmr-safe: the coalescer notifies its listeners on its own HMR reset, and a listener from
+// a replaced module re-arms a pump over an emptied array, which is a no-op; the dispose
+// below drops it anyway so listeners do not accumulate across updates.
+const unsubscribeResumeAfterDrag = onBoardDragEnd(resumeAfterDrag);
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose(() => {
+    unsubscribeResumeAfterDrag();
+  });
 }
 
 /**

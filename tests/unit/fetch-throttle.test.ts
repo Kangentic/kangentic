@@ -353,6 +353,18 @@ describe('fetchAllRemotesIfStale', () => {
     }
   });
 
+  it('a non-interactive warm-up (the drag-start prefetch) makes the following default call a cache hit', async () => {
+    // The board fires `git:prefetchRemotes` when a worktree-backed card drag begins;
+    // the Done probe then calls with no options after the release. Options never
+    // enter the throttle key, so the probe must find the warm-up's fetch cached.
+    routeByGitSubcommand(() => Promise.resolve({ stdout: '', stderr: '' }));
+
+    await fetchAllRemotesIfStale(WORKTREE_PATH, { nonInteractive: true });
+    await fetchAllRemotesIfStale(WORKTREE_PATH);
+
+    expect(fetchCallCount()).toBe(1);
+  });
+
   it('throttles by common dir: two worktrees of the same repo share one fetch', async () => {
     routeByGitSubcommand(() => Promise.resolve({ stdout: '', stderr: '' }));
 
