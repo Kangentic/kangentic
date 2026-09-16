@@ -322,6 +322,18 @@ test.describe('usage dashboard', () => {
       // window is read for the subagent fields too (225k against 186k = +21%).
       await expect(subagentTile).toContainText('+21%');
 
+      // The tooltip carries the two facts too small for the tile's own body:
+      // how many of the 8 subagents were nested (2, from the mock's
+      // kpis.subagentNestedCount), and that 'codex' (present in byAgent) cannot
+      // report subagent usage at all, so this range's total is a floor, not a
+      // complete count.
+      await expect(subagentTile).toHaveAttribute(
+        'title',
+        'Fresh + output tokens from 190 subagent turn(s), additive to Total Tokens and already counted in Cost. '
+        + '5.2M cache read. 2 of 8 were spawned by another subagent. '
+        + 'Excludes Codex, which does not report subagent usage.',
+      );
+
       // Unchanged: the mock's own totalInputTokens + totalOutputTokens, which
       // never absorb the subagent traffic above.
       await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('192k');

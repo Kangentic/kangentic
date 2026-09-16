@@ -23,6 +23,7 @@ import {
   computeKpis,
   foldCostSeries,
   foldTokenSeries,
+  mergeSubagentTotals,
   mergeUsageTotals,
   nextBucketStart,
   resolveAllTimeBucketKinds,
@@ -36,6 +37,7 @@ import type {
   UsageWindowTotals,
 } from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
+import type { SubagentUsageTotals } from '../../src/shared/types';
 
 function makeGroup(overrides: Partial<GroupedTurnUsageRow> = {}): GroupedTurnUsageRow {
   return {
@@ -79,6 +81,22 @@ function makeRollup(overrides: Partial<UsageRollupRow> = {}): UsageRollupRow {
     outputTokens: 400,
     costUsd: 1,
     sessionCount: 1,
+    ...overrides,
+  };
+}
+
+function makeSubagentTotals(overrides: Partial<SubagentUsageTotals> = {}): SubagentUsageTotals {
+  return {
+    agentType: 'review-finder',
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheCreationTokens: 10,
+    cacheReadTokens: 500,
+    turnCount: 4,
+    subagentCount: 2,
+    nestedTurnCount: 0,
+    nestedSubagentCount: 0,
+    maxSpawnDepth: 1,
     ...overrides,
   };
 }
@@ -413,6 +431,71 @@ describe('computeKpis', () => {
     );
     // 60 tokens over the 1-minute floor = 3600 tokens/hr, not 216M.
     expect(kpis.burnRateTokensPerHour).toBeCloseTo(3600);
+  });
+
+  it('sums subagentNestedCount across every subagent type row, as a subset of subagentCount', () => {
+    // Distinct nonzero values per row so a dropped `+=` (summing only one row)
+    // cannot accidentally match the total.
+    const kpis = computeKpis(makeTotals(), [], 3_600_000, [
+      makeSubagentTotals({ agentType: 'review-finder', subagentCount: 4, nestedSubagentCount: 3 }),
+      makeSubagentTotals({ agentType: 'test-builder', subagentCount: 2, nestedSubagentCount: 5 }),
+    ]);
+    expect(kpis.subagentNestedCount).toBe(8);
+    // A subset, not additive: subagentCount is unaffected by the nested field.
+    expect(kpis.subagentCount).toBe(6);
+  });
+
+  it('reports zero subagentNestedCount with no subagent totals', () => {
+    const kpis = computeKpis(makeTotals(), [], 3_600_000);
+    expect(kpis.subagentNestedCount).toBe(0);
+  });
+});
+
+describe('mergeSubagentTotals', () => {
+  it('sums nestedTurnCount and nestedSubagentCount across projects for the same type', () => {
+    // Distinct nonzero values per project so a dropped `+=` line cannot
+    // accidentally match (e.g. reading only the second project's value).
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', nestedTurnCount: 10, nestedSubagentCount: 1 })],
+      [makeSubagentTotals({ agentType: 'review-finder', nestedTurnCount: 25, nestedSubagentCount: 4 })],
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].nestedTurnCount).toBe(35);
+    expect(merged[0].nestedSubagentCount).toBe(5);
+  });
+
+  it('takes the MAX of maxSpawnDepth across projects, not the last one merged', () => {
+    // Descending order (3 merged before 1): a "last write wins" bug would
+    // return 1 here, not 3.
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 3 })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 1 })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBe(3);
+  });
+
+  it('keeps a real depth when a later project reports null, rather than overwriting it', () => {
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 2 })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBe(2);
+  });
+
+  it('adopts a later project real depth when the running total is still null', () => {
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: 4 })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBe(4);
+  });
+
+  it('stays null when no project recorded a depth - a real bucket, not a zero', () => {
+    const merged = mergeSubagentTotals([
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+      [makeSubagentTotals({ agentType: 'review-finder', maxSpawnDepth: null })],
+    ]);
+    expect(merged[0].maxSpawnDepth).toBeNull();
   });
 });
 
