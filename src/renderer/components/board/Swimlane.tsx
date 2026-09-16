@@ -65,6 +65,8 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
       >
         {/* Drag handle for custom columns */}
         {isDraggable && (
+          // select-none-ok: the handle draws a grip icon and no text, and it
+          // inherits the header's `select-none` anyway.
           <div
             {...dragHandleProps}
             onClick={(e: React.MouseEvent) => e.stopPropagation()}
