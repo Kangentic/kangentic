@@ -60,12 +60,19 @@ function makeSliceStore(
   let state: Partial<SessionStore> & Record<string, unknown> = {
     sessions: initialSessions,
     _sessionByTaskId: buildSessionByTaskId(initialSessions),
+    // Every per-session map `withoutSessions` scrubs, plus activeSessionId,
+    // which it clears when the removed id held it. The real store initializes
+    // all of them, so a fake missing one is a fake that has drifted: the
+    // transient removers scrub through that shared helper (session-index.ts),
+    // and it reads each one unconditionally.
+    activeSessionId: null,
     sessionUsage: {},
     sessionFirstOutput: {},
     sessionActivity: {},
     sessionActivityReason: {},
     sessionEvents: {},
     seenIdleSessions: {},
+    sessionMessageTrails: {},
     spawnProgress: {},
     commandBarVisible: false,
     transientSessions: initialTransientSessions,
