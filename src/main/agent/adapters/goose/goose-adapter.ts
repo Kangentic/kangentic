@@ -14,7 +14,10 @@ import { ActivityDetection } from '../../../../shared/types';
  *
  * "Not wired" rather than "not available", and the distinction matters because
  * it is what justifies the PTY-only activity detection below. Goose DOES ship a
- * hook system: plugin-scoped `hooks/hooks.json` discovered from
+ * hook system (verified against Goose's published CLI docs, 2026-09-16:
+ * https://goose-docs.ai/docs/guides/context-engineering/hooks/ - not against a
+ * live binary, so treat the event list as the documented contract rather than a
+ * measured one): plugin-scoped `hooks/hooks.json` discovered from
  * `<project>/.agents/plugins/<name>/` or `~/.agents/plugins/<name>/`, firing
  * SessionStart, SessionEnd, Stop, UserPromptSubmit, PreToolUse, PreToolUseResult,
  * PostToolUse, PostToolUseFailure, BeforeReadFile, AfterFileEdit,
@@ -44,7 +47,8 @@ import { ActivityDetection } from '../../../../shared/types';
  * full `PermissionMode` union makes a newly added mode a compile error here
  * rather than a silent wrong-mode spawn.
  *
- * Goose's four modes (`goose --help`, `/mode`):
+ * Goose's four modes, per its published permission-modes docs (2026-09-16),
+ * not a live probe:
  * - `chat`: no tools at all. Not "read-only" - the agent cannot read files
  *   either, so a plan-mode Goose session reasons without repo access.
  * - `smart_approve`: file modifications need approval, reads do not.
@@ -199,9 +203,11 @@ export class GooseAdapter implements AgentAdapter {
   clearSettingsCache(): void {}
 
   getExitSequence(): string[] {
-    // Goose's Ctrl+C is CONTEXTUAL: it clears the line if text is entered,
-    // interrupts the request if one is processing, and exits only when the
-    // line is already empty. A kill lands mid-turn far more often than at an
+    // Goose's Ctrl+C is CONTEXTUAL (per its published CLI docs, 2026-09-16:
+    // "clear the current line if text is entered, interrupt the current request
+    // if processing, or exit the session if line is empty"): it clears the line
+    // if text is entered, interrupts the request if one is processing, and
+    // exits only when the line is already empty. A kill lands mid-turn far more often than at an
     // idle prompt (moving a card to Done while the agent works), where Ctrl+C
     // alone interrupts and leaves the session running until the teardown grace
     // expires and it is force-killed. So interrupt first, then exit explicitly,
