@@ -83,6 +83,9 @@ function fakeRuns() {
     recordSkipped: (input: { id: string }, reason: string) => {
       rows.push({ id: input.id, status: 'skipped', detail: reason, attempts: 0 });
     },
+    recordDeliveredByCaller: (input: { id: string }, detail: string) => {
+      rows.push({ id: input.id, status: 'succeeded', detail, attempts: 1 });
+    },
   };
   return { rows, repository: repository as unknown as AutomationRunRepository };
 }
@@ -520,7 +523,7 @@ describe('a recovery move out of Done', () => {
 // rest of the group through the runner, and this is what keeps the message from
 // going out twice.
 describe('rows the caller already delivered', () => {
-  it('does not execute them, and writes no second run record', async () => {
+  it('does not execute them, but still records that they ran', async () => {
     const { rows, repository } = fakeRuns();
     const executed: string[] = [];
     const registry = registryOf(
@@ -541,15 +544,24 @@ describe('rows the caller already delivered', () => {
       registry,
     });
 
+    // Not executed: sending it here would put the message out twice.
     expect(executed).toEqual(['notify']);
-    // No record at all for the pre-delivered row: exactly one run row, and one
-    // outcome, both for the OTHER automation. It DID run, and the caller that
-    // ran it reports its real outcome on the auto-command channel, so a row
-    // here would double-count it in the log the user reads.
-    expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('succeeded');
-    expect(summary.outcomes).toHaveLength(1);
-    expect(summary.outcomes[0].name).toBe('Tell me');
+
+    // But RECORDED. This used to write nothing at all, on the reasoning that
+    // there was nothing to tell the user because it ran. That is backwards for
+    // the most common automation anyone owns: a preview showed a column's
+    // message firing correctly on a warm move and leaving NO run row, so its
+    // last-run line stayed blank and `kangentic_get_automation_runs` answered
+    // "did my message fire" with nothing at all. The log is the answer to that
+    // question, so the row most boards actually have cannot be the one missing
+    // from it.
+    expect(rows).toHaveLength(2);
+    const greeted = rows.find((row) => row.id === 'run-already-sent' || row.detail?.includes('keystrokes'));
+    expect(greeted?.status).toBe('succeeded');
+    // "Sent", not "Delivered", and it names who sent it: the confirmed outcome
+    // arrives separately on the task's own auto-command channel.
+    expect(greeted?.detail).toBe("Sent with the move's own keystrokes.");
+    expect(summary.outcomes.map((outcome) => outcome.name).sort()).toEqual(['Greet', 'Tell me']);
   });
 
   it('runs the whole group when the set is empty', async () => {

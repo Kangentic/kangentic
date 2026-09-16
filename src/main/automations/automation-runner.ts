@@ -134,10 +134,6 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
   for (const automation of automations) {
     signal.throwIfAborted();
 
-    // Delivered by the caller already. Not a skip in the recorded sense: there
-    // is nothing to tell the user, because it ran.
-    if (options.alreadyDelivered?.has(automation.id)) continue;
-
     const runId = randomUUID();
     const started: Parameters<AutomationRunRepository['start']>[0] = { id: runId, automation, taskId: context.task.id };
     const record = (status: AutomationRunStatus, detail: string | null): void => {
@@ -152,6 +148,20 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       summary.outcomes.push(outcome);
       if (status === 'failed') summary.failures.push(outcome);
     };
+
+    // Delivered by the caller already: a column's first message rides the move's
+    // own keystroke burst, so sending it here would send it twice. It is still
+    // RECORDED, because "it ran" is precisely what the run log exists to say,
+    // and this is the one automation most boards actually have.
+    //
+    // "Sent", not "Delivered", for the same reason every other enter message
+    // says so: the burst was handed to the scheduler, and the confirmed outcome
+    // arrives separately on the task's own auto-command channel.
+    if (options.alreadyDelivered?.has(automation.id)) {
+      runs.recordDeliveredByCaller(started, "Sent with the move's own keystrokes.");
+      record('succeeded', "Sent with the move's own keystrokes.");
+      continue;
+    }
 
     const adapter = registry.get(automation.type);
     if (!adapter) {
