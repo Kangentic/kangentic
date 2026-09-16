@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import type { Project } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
 
@@ -52,14 +53,9 @@ export function useAddProject() {
     }
 
     if (probe.alreadyRegisteredProjectId) {
-      try {
-        await openProject(probe.alreadyRegisteredProjectId);
-      } catch (error) {
-        useToastStore.getState().addToast({
-          message: `Could not open that project. ${error instanceof Error ? error.message : 'Unknown error'}`,
-          variant: 'error',
-        });
-      }
+      // openProject has already reported any failure itself (a toast, or
+      // the missing-path dialog); nothing further to raise here.
+      await openProject(probe.alreadyRegisteredProjectId);
       return;
     }
 
@@ -80,8 +76,9 @@ export function useAddProject() {
       git = { ok: false, created: false, error: 'Unknown error' };
     }
 
+    let added: Project | null = null;
     try {
-      await openProjectByPath(selectedPath, { name: probe.suggestedName });
+      added = await openProjectByPath(selectedPath, { name: probe.suggestedName });
     } catch (error) {
       useToastStore.getState().addToast({
         message: `Could not add that project. ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -89,6 +86,11 @@ export function useAddProject() {
       });
       return;
     }
+    // `null` means the already-registered branch's inner `openProject` did
+    // not land; that failure has already been reported (a toast, or the
+    // missing-path dialog), so stop rather than showing the git toasts
+    // below over a board that never opened.
+    if (!added) return;
 
     // Raised after the open, so it lands on the board the user is now looking at rather
     // than over the folder picker they have already moved on from.

@@ -215,7 +215,7 @@ import {
 } from '../../src/main/ipc/handlers/projects';
 import { ensureGitignore } from '../../src/main/ipc/helpers';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
-import { IPC } from '../../src/shared/ipc-channels';
+import { IPC, PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project } from '../../src/shared/types';
 
@@ -390,6 +390,27 @@ describe('pruneOrphanedTasksAndNotify (via activateAllProjects)', () => {
     await activateAllProjects(asIpcContext(context));
 
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. PROJECT_OPEN with an unknown id (Sentry DESKTOP-V)
+// ---------------------------------------------------------------------------
+
+describe('PROJECT_OPEN with an unknown id', () => {
+  it('rejects with the PROJECT_NOT_FOUND sentinel rather than a bare message', async () => {
+    const context = createMockContext();
+    context.projectRepo.getById.mockReturnValue(undefined);
+    registerProjectHandlers(asIpcContext(context));
+    const handler = capturedHandlers.get(IPC.PROJECT_OPEN);
+    if (!handler) throw new Error('PROJECT_OPEN handler was not registered');
+
+    // The renderer matches this with `.includes()` (Electron re-wraps the
+    // error before the renderer sees it), so the sentinel must be a
+    // substring of the rejection's message, not the whole message.
+    await expect(handler(null, 'unknown-project-id')).rejects.toThrow(
+      new RegExp(PROJECT_NOT_FOUND_PREFIX),
+    );
   });
 });
 

@@ -5287,6 +5287,13 @@ export interface ElectronAPI {
     onMoveProgress: (callback: (progress: ProjectMoveProgress) => void) => () => void;
     onAutoOpened: (callback: (project: Project) => void) => () => void;
     onPathMissing: (callback: (project: Project) => void) => () => void;
+    /**
+     * Main deleted or reconciled project rows the renderer's list did not
+     * know about (a dev-only boot prune, or a global-DB recovery that
+     * reopened onto a different file). Carries no payload; the renderer
+     * refetches `list()` and `getCurrent()` in response. See Sentry DESKTOP-V.
+     */
+    onListChanged: (callback: () => void) => () => void;
   };
 
   // Project Groups

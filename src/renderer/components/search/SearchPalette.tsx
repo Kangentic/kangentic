@@ -150,14 +150,10 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
 
     const switchProjectIfNeeded = async (): Promise<boolean> => {
       if (!isCrossProject) return true;
-      try {
-        await projectStore.openProject(hit.projectId);
-        return true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        useToastStore.getState().addToast({ message, variant: 'error' });
-        return false;
-      }
+      // openProject has already reported any failure itself (a toast, or the
+      // missing-path dialog); nothing further to raise here.
+      const outcome = await projectStore.openProject(hit.projectId);
+      return outcome === 'opened';
     };
 
     switch (hit.kind) {

@@ -34,10 +34,14 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
     if (!projectId) return;
     set({ pendingConfigChange: null });
 
-    // Switch project if needed
+    // Switch project if needed. openProject never throws - it reports its
+    // own failure (a toast, or the missing-path dialog) - so a switch that
+    // did not land must be caught here explicitly, or `boardConfig.apply`
+    // below would run against whatever project was actually still current.
     const activeProjectId = useProjectStore.getState().currentProject?.id;
     if (projectId !== activeProjectId) {
-      await useProjectStore.getState().openProject(projectId);
+      const outcome = await useProjectStore.getState().openProject(projectId);
+      if (outcome !== 'opened') return;
     }
 
     const warnings = await window.electronAPI.boardConfig.apply(projectId);

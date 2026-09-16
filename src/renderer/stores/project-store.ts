@@ -1,12 +1,25 @@
 import { create, type StateCreator } from 'zustand';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
-import { PROJECT_PATH_MISSING_PREFIX } from '../../shared/ipc-channels';
+import { PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../shared/ipc-channels';
 import { describeIpcError } from '../lib/ipc-error';
 // Not `./session-store` directly: that would close an import cycle whose
 // circular-import invalidate full-reloads the dev page. See the module docblock.
 import { killTransientSessionForProject, markIdleSessionsSeen } from './session-lifecycle-hooks';
 import { useConfigStore } from './config-store';
+import { useToastStore } from './toast-store';
 import { dropProject as dropProjectCache } from './project-cache';
+
+/**
+ * What `openProject` actually did. `openProject` never throws: every failure is
+ * reported where it happens (a toast, or `missingPathProject` for the "Locate
+ * Folder..." dialog) and reflected in the outcome instead. Callers branch on
+ * this so they do not act as though a switch landed when it did not, which is
+ * what `board-config-slice.ts` applying config against the wrong project, and
+ * `ProjectPathMissingDialog` toasting success for a re-open that never
+ * happened, both used to do. A caller that only needs "did it open" compares
+ * against `'opened'`; the three failure values are diagnostic.
+ */
+export type OpenProjectOutcome = 'opened' | 'missing-path' | 'not-found' | 'failed';
 
 // Hydration gate: tracks whether both loadProjects() and loadCurrent() have
 // resolved at least once. Module-scoped so they don't pollute the store
@@ -28,8 +41,17 @@ interface ProjectStore {
   loadProjects: () => Promise<void>;
   createProject: (input: ProjectCreateInput) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
-  openProject: (id: string) => Promise<void>;
-  openProjectByPath: (folderPath: string, overrides?: ProjectOpenByPathOverrides) => Promise<Project>;
+  openProject: (id: string) => Promise<OpenProjectOutcome>;
+  /**
+   * Opens an already-registered path via `openProject`, or registers a new one.
+   * The two branches fail differently, so a caller needs to handle both. For an
+   * already-registered path this resolves to `null` and never throws, because
+   * the inner `openProject` has already reported why (a toast, or the
+   * missing-path dialog); stop rather than proceed as though a project opened.
+   * Registering a NEW path still throws if `projects.openByPath` rejects, so
+   * keep that call in a try/catch and report the error yourself.
+   */
+  openProjectByPath: (folderPath: string, overrides?: ProjectOpenByPathOverrides) => Promise<Project | null>;
   probePath: (folderPath: string) => Promise<ProjectPathProbe>;
   /** Make sure a picked folder is covered by git, initialising a repo when it is not. */
   ensureGit: (folderPath: string) => Promise<ProjectEnsureGitResult>;
@@ -113,18 +135,88 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     try {
       await window.electronAPI.projects.open(id);
     } catch (err) {
-      // The project's folder was moved or renamed on disk. Surface the
-      // "Locate Folder..." dialog instead of a generic failure.
       if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX)) {
-        const project = get().projects.find((candidate) => candidate.id === id) ?? null;
+        // The project's folder was moved or renamed on disk. Surface the
+        // "Locate Folder..." dialog instead of a generic failure.
+        let project = get().projects.find((candidate) => candidate.id === id) ?? null;
+        if (!project) {
+          // The renderer's own list is stale - the same staleness class as
+          // the not-found branch below, just caught by a different sentinel.
+          // Without this, `missingPathProject` is set to null, the dialog
+          // never renders, and the click reads as doing nothing.
+          await get().loadProjects();
+          project = get().projects.find((candidate) => candidate.id === id) ?? null;
+        }
+        if (!project) {
+          // Main confirmed the row exists (it threw the path-missing
+          // sentinel, not not-found) - the renderer simply has nothing to
+          // put in the dialog even after a refetch. Report it and stop;
+          // 'not-found' would tell the caller a different, false story.
+          // A static message here, not describeIpcError(err): this err's
+          // message IS the PROJECT_PATH_MISSING_PREFIX sentinel, which
+          // describeIpcError has no reason to know how to strip, so
+          // interpolating it would leak the raw token into the toast.
+          useToastStore.getState().addToast({
+            message: 'Could not open that project. Its record could not be found after refreshing the project list.',
+            variant: 'error',
+          });
+          return 'failed';
+        }
         set({ missingPathProject: project });
-        return;
+        return 'missing-path';
       }
-      throw err;
+
+      if (err instanceof Error && err.message.includes(PROJECT_NOT_FOUND_PREFIX)) {
+        // Sentry DESKTOP-V: the renderer's project list outlived the row
+        // behind it. Refetch the whole list rather than dropping just this
+        // row - the production repro clicked five different stale rows in
+        // three seconds, so healing one at a time would leave the rest
+        // clickable-but-broken.
+        await get().loadProjects();
+        await get().loadCurrent();
+        const stillListed = get().projects.some((candidate) => candidate.id === id);
+        useToastStore.getState().addToast({
+          // Not describeIpcError(err) in the stillListed branch: this err's
+          // message IS the PROJECT_NOT_FOUND_PREFIX sentinel, which
+          // describeIpcError has no reason to know how to strip, so
+          // interpolating it would leak the raw token into the toast.
+          message: stillListed
+            // The refetch still lists it: this is a main-side
+            // inconsistency, not a stale renderer, and the "gone" story
+            // would be false.
+            ? 'Could not open that project. The project list may be out of sync - try again.'
+            : 'That project is no longer available. The list has been refreshed.',
+          variant: 'error',
+        });
+        return 'not-found';
+      }
+
+      useToastStore.getState().addToast({
+        message: `Could not open that project. ${describeIpcError(err)}`,
+        variant: 'error',
+      });
+      return 'failed';
     }
-    const project = get().projects.find((p) => p.id === id) || await window.electronAPI.projects.getCurrent();
+    // The `getCurrent()` fallback is reached exactly when the renderer's cached
+    // list has not caught up with the row main just opened, which is the same
+    // staleness this whole change exists for. It sits outside the try above, so
+    // an unguarded rejection here would escape as a thrown `openProject` - the
+    // one thing the five de-catched call sites no longer handle.
+    let project = get().projects.find((candidate) => candidate.id === id) ?? null;
+    if (!project) {
+      try {
+        project = await window.electronAPI.projects.getCurrent();
+      } catch (err) {
+        useToastStore.getState().addToast({
+          message: `Could not open that project. ${describeIpcError(err)}`,
+          variant: 'error',
+        });
+        return 'failed';
+      }
+    }
     set({ currentProject: project });
     markIdleSessionsSeen(id);
+    return 'opened';
   },
 
   openProjectByPath: async (folderPath, overrides) => {
@@ -135,8 +227,11 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     );
 
     if (existing) {
-      await get().openProject(existing.id);
-      return existing;
+      // openProject has already reported any failure itself (a toast, or the
+      // missing-path dialog); null tells the caller to stop rather than
+      // proceed as though the project opened.
+      const outcome = await get().openProject(existing.id);
+      return outcome === 'opened' ? existing : null;
     }
 
     const project = await window.electronAPI.projects.openByPath(folderPath, overrides);

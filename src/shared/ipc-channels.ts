@@ -19,6 +19,7 @@ export const IPC = {
   PROJECT_RELOCATE: 'project:relocate',
   PROJECT_MOVE_PROGRESS: 'project:moveProgress',
   PROJECT_PATH_MISSING: 'project:pathMissing',
+  PROJECT_LIST_CHANGED: 'project:listChanged',
 
   // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
@@ -499,3 +500,13 @@ export const IPC = {
  * offers the "Locate Folder..." relocation flow instead of a generic error.
  */
 export const PROJECT_PATH_MISSING_PREFIX = 'PROJECT_PATH_MISSING:';
+
+/**
+ * Sentinel prefix for "no project with this id in the global index DB".
+ * Electron wraps handler errors in its own Error, so the renderer detects
+ * this case via `error.message.includes(PROJECT_NOT_FOUND_PREFIX)` and
+ * refetches the project list instead of surfacing a raw IPC error. See
+ * Sentry DESKTOP-V: a renderer holding a stale list clicked a row main
+ * could no longer resolve, and the failure had nowhere to go.
+ */
+export const PROJECT_NOT_FOUND_PREFIX = 'PROJECT_NOT_FOUND:';
