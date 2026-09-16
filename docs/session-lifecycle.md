@@ -520,7 +520,8 @@ When a suspended task moves to an active column:
   task moved. The flag reaches the runner as `suppressAgentMessages` and each
   suppressed row is recorded `skipped` with the reason, rather than being
   allowed to run against a `deliverToAgent` that silently does nothing and then
-  report "Delivered". See [Transition Engine](transition-engine.md#command-injection).
+  report a success for a message nobody received. See
+  [Transition Engine](transition-engine.md#command-injection).
 
 ## Crash Recovery (Session Recovery)
 

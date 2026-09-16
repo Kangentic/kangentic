@@ -115,6 +115,8 @@ The one legacy adapter, kept because a row carrying a custom `promptTemplate` is
 - **Bounded.** Nothing timed out: `withTaskLock` is a PQueue with no timeout and Phase 3 holds it across the whole list, so one hung webhook wedged every later operation on that task until a restart. Each row now runs under its adapter's `timeoutMs`, combined with the move's own signal.
 - **Recorded.** There was no run table at all, so "did my automation run" had no answer. Every row writes an `automation_runs` row: `running` before the attempt, closed on every exit path as `succeeded`, `failed`, `skipped` or `interrupted`, with a one-line `detail` (`HTTP 204`, `exit 0`, the skip reason, the error).
 
+  A message reports **"Delivered" on exit and "Sent" on enter**, and the difference is real rather than cosmetic. The exit hook awaits the keystroke burst, so the row is written only once it has gone out. The enter group cannot await: Phase 3 holds the task lock across it, and a deferred message waits for the agent's current turn to end, so awaiting would hold that lock for as long as the scheduler's ladder runs. Neither word is "Confirmed": only Claude implements a submission verifier, so on every other agent even the exit case is unconfirmed and the scheduler reports that outcome on its own channel.
+
 The runner never throws for an automation's sake. It rethrows exactly one thing: an abort of the move itself.
 
 ### What the user sees

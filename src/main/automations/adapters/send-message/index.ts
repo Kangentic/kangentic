@@ -40,15 +40,25 @@ export const sendMessageAdapter: AutomationAdapter = {
     if (!message) return { detail: 'No message to send.' };
 
     await context.deliverToAgent(message, config.mode ?? 'immediate', context.signal);
-    // "Delivered" is deliberately not "Confirmed". Only Claude implements a
-    // submission verifier today, so on every other agent a delivery can only be
-    // unconfirmed, and the scheduler reports that outcome on its own channel.
+    // Two words, because the two triggers earn different ones and the run log is
+    // where someone checks whether a message actually landed.
     //
-    // On exit the engine awaits the burst, so this line is reached only when
-    // the keystrokes actually went out; a burst that was cancelled or failed
-    // throws and the row records THAT. On enter the promise resolves as soon
-    // as delivery is scheduled, which is the honest meaning of the word there.
-    return { detail: 'Delivered' };
+    // On EXIT the engine awaits the burst, so this line is reached only once the
+    // keystrokes have gone out; a burst that was cancelled or failed throws and
+    // the row records that instead. "Delivered" is a fact there.
+    //
+    // On ENTER the promise resolves as soon as delivery is SCHEDULED. Awaiting
+    // is not available: Phase 3 holds the task lock across the enter group, and
+    // a deferred message waits for the agent's current turn to end, so awaiting
+    // would hold that lock for up to the scheduler's own 120s. "Sent" is what is
+    // true at that point, and saying "Delivered" cost this feature once already
+    // - the exit path reported it in ONE millisecond while the agent received
+    // nothing but the burst's leading Ctrl+U.
+    //
+    // Neither word is "Confirmed". Only Claude implements a submission verifier,
+    // so on every other agent even the exit case is unconfirmed, and the
+    // scheduler reports that outcome on its own channel.
+    return { detail: context.trigger === 'exit' ? 'Delivered' : 'Sent' };
   },
 };
 

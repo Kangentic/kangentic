@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Clock, Zap } from 'lucide-react';
-import { AUTOMATION_MANIFEST, stableAutomationTypes } from '../../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS, stableAutomationTypes } from '../../../../shared/automation-manifest';
 import type { AutomationField } from '../../../../shared/automation-manifest';
-import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
+import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { BaseDialog, DialogFooterActions } from '../BaseDialog';
 import { Select } from '../../settings/shared';
 import { FIELD_CONTROL_CLASS } from '../../Field';
@@ -25,6 +25,15 @@ import {
  * Everything type-specific is rendered from the manifest, so a new automation
  * type needs no change here at all.
  */
+
+/**
+ * The types that can outlast the exit budget, and so are worth warning about.
+ *
+ * A notify is instant and a message is bounded by the scheduler's own ladder, so
+ * neither of those can meaningfully hit the cap. Naming the two that can keeps
+ * the line off three quarters of the rows that would never see it fire.
+ */
+const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 
 /**
  * Module scope, not an inline literal: `SegmentedControl` keys its measuring
@@ -203,6 +212,19 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
             value={local.trigger}
             onChange={(trigger) => setLocal((current) => ({ ...current, trigger }))}
           />
+          {/* Shown only on exit, and only for a type that can actually take a
+              while. The cap is real and nothing else says it: an exit group
+              shares EXIT_GROUP_BUDGET_MS in aggregate whatever the adapters
+              declare, so a script written for the five minutes its own default
+              allows is killed at sixty seconds and the rows behind it are
+              skipped. Learning that at runtime, from a run log, is learning it
+              too late. This passes the essential-and-non-obvious bar the other
+              hints in this dialog are held to: it changes what you build. */}
+          {local.trigger === 'exit' && SLOW_TYPES.has(local.type) && (
+            <p data-testid="edit-automation-exit-budget" className={SETTING_DESCRIPTION_CLASS}>
+              {`On exit, this column's automations share ${Math.round(EXIT_GROUP_BUDGET_MS / 1000)} seconds in total. Put longer work on enter.`}
+            </p>
+          )}
         </div>
       </div>
 
