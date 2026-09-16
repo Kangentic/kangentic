@@ -19,7 +19,11 @@ import { getCurrentProjectLogName } from './project-log-context';
  *
  * Resilience: when `getProjectRoot()` returns null (no project open yet) or
  * when the file system rejects the write, the call is silently dropped. We
- * never want a diagnostic feature to crash the app.
+ * never want a diagnostic feature to crash the app. The same guarantee
+ * covers the terminal echo below: a packaged Windows GUI build has no
+ * console, so the echo's write can throw synchronously (EPIPE), and that
+ * throw must not propagate into whatever main-process code called
+ * `console.*` in the first place.
  */
 
 interface LogMirrorOptions {
@@ -61,7 +65,20 @@ export function startLogMirror(options: LogMirrorOptions): void {
       const prefix = projectName
         ? `[${formatLogTimestamp(now)}] [${projectName}]`
         : `[${formatLogTimestamp(now)}]`;
-      original.apply(console, prefixConsoleArgs(args, prefix));
+      try {
+        original.apply(console, prefixConsoleArgs(args, prefix));
+      } catch {
+        // A dead stdout must not reach the caller. On a packaged Windows
+        // GUI build the main process has no console, so Node's stdio is a
+        // sync pipe whose EPIPE comes back through the writable callback,
+        // outside the try/catch Node's own console puts around
+        // stream.write. Left unguarded it aborted the CALLER mid-function
+        // (Sentry DESKTOP-10/11/12: agent detection threw away a CLI it
+        // had just found). Deliberately narrow: persistence below must
+        // still run, because in exactly this environment the log file is
+        // the only record. Never log from here, the echo is what just
+        // failed.
+      }
       if (!shouldPersist(level, options.getPersistInfoDebug())) return;
       appendLog(options.getProjectRoot(), {
         ts: now.toISOString(),

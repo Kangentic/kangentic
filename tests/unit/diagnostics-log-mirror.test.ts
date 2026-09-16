@@ -90,6 +90,18 @@ function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * The exact shape packaged Windows sync-pipe stdio produces (`uvException`):
+ * `<code>: <uv message>, <syscall>`, with `code` and `syscall` set. This is
+ * the error that reached Sentry as DESKTOP-10/11/12.
+ */
+function epipeWriteError(): NodeJS.ErrnoException {
+  const error: NodeJS.ErrnoException = new Error('EPIPE: broken pipe, write');
+  error.code = 'EPIPE';
+  error.syscall = 'write';
+  return error;
+}
+
 describe('log-mirror', () => {
   it('persists error and warn even when persistInfoDebug is false', async () => {
     const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
@@ -174,6 +186,57 @@ describe('log-mirror', () => {
       level: 'error',
       args: ['from renderer'],
     });
+  });
+});
+
+describe('echo failure containment', () => {
+  it('survives a throwing echo on every patched level (DESKTOP-10/11/12)', async () => {
+    // Simulates a packaged Windows build with no console: the echo write
+    // throws EPIPE synchronously. The spy is installed before
+    // startLogMirror so it becomes the `original` each wrap calls through.
+    const throwingEcho = vi.fn(() => {
+      throw epipeWriteError();
+    });
+    console.log = throwingEcho;
+    console.warn = throwingEcho;
+    console.error = throwingEcho;
+    console.info = throwingEcho;
+    console.debug = throwingEcho;
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => true,
+    });
+
+    expect(() => console.log('a')).not.toThrow();
+    expect(() => console.warn('b')).not.toThrow();
+    expect(() => console.error('c')).not.toThrow();
+    expect(() => console.info('d')).not.toThrow();
+    expect(() => console.debug('e')).not.toThrow();
+
+    // Each call reached the throwing echo exactly once - the catch block
+    // must not itself log (which would recurse into the same failure).
+    expect(throwingEcho).toHaveBeenCalledTimes(5);
+  });
+
+  it('still persists the line when the echo throws', async () => {
+    const throwingEcho = vi.fn(() => {
+      throw epipeWriteError();
+    });
+    console.error = throwingEcho;
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => false,
+    });
+
+    expect(() => console.error('boom despite dead stdout')).not.toThrow();
+
+    const lines = await readLogLines(todayUtc());
+    const errorLine = lines.find((entry) => entry.level === 'error');
+    expect(errorLine?.args[0]).toBe('boom despite dead stdout');
   });
 });
 

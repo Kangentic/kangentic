@@ -239,8 +239,19 @@ export function initErrorReporting(): void {
         // The known-benign Windows `npm start` TTY write artifacts that
         // index.ts's isSuppressibleUncaughtError filters for Aptabase. Sentry's
         // own global handlers would otherwise report them as crashes.
+        //
+        // Two different message shapes carry the same benign EPIPE/EAGAIN:
+        // Node's `errnoException` (an async socket, the dev TTY case above)
+        // reads `write EPIPE`, while `uvException` (a packaged Windows GUI
+        // build's synchronous stdio pipe, DESKTOP-10/11/12) reads
+        // `EPIPE: broken pipe, write`. Neither literal below matches the
+        // other shape, so both are listed. The log-mirror echo guard
+        // (log-mirror.ts) is the actual fix for the packaged case; this is
+        // defense-in-depth for any other main-process stdout write.
         'write EAGAIN',
         'write EPIPE',
+        /EPIPE: .*, write/,
+        /EAGAIN: .*, write/,
         // The SDK's own childProcessIntegration captures every utility-process
         // exit as `'Utility' process exited with '<reason>'`, tagged only with
         // the process TYPE - it attaches serviceName/name/exitCode to a
