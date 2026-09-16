@@ -7,6 +7,7 @@ import { Pill } from '../Pill';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
 import { ButtonGroup } from '../ButtonGroup';
 import { useBacklogStore } from '../../stores/backlog-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { getProviderLabel, getSourceIcon } from './import-providers';
 import type { ExternalIssue, ImportSource } from '../../../shared/types';
@@ -105,6 +106,11 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [hideImported, setHideImported] = useState(true);
 
   const fetchSequenceRef = useRef(0);
+  // Pinned once, at mount. Every cache read and reconcile this dialog issues names
+  // the project it was opened for, so a project switch between the call and the
+  // main process dispatching it cannot point the per-project cache at another
+  // project's database.
+  const projectIdRef = useRef(useProjectStore.getState().currentProject?.id);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const loadBacklog = useBacklogStore((state) => state.loadBacklog);
   const addToast = useToastStore((state) => state.addToast);
@@ -135,6 +141,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       const result = await window.electronAPI.backlog.importReconcile({
         source: source.source,
         repository: source.repository,
+        projectId: projectIdRef.current,
         mode,
       });
       if (fetchSequenceRef.current !== token) return;
@@ -155,6 +162,22 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   // until the reconcile lands.
   useEffect(() => {
     const token = fetchSequenceRef.current;
+    // Start both round trips together. The cache read needs no CLI, so gating it
+    // behind the availability check would put an `az`/`gh` process launch in front
+    // of the paint this cache exists to make instant.
+    const cachedPromise = window.electronAPI.backlog.importGetCached({
+      source: source.source,
+      repository: source.repository,
+      projectId: projectIdRef.current,
+    }).then((cached) => {
+      if (fetchSequenceRef.current !== token) return;
+      const cachedIssues = sortByCreatedDesc(cached.issues);
+      setIssues(cachedIssues);
+      if (cachedIssues.length > 0) setLoading(false);
+    }).catch(() => {
+      // A cache-read failure is non-fatal; the reconcile below will populate.
+    });
+
     window.electronAPI.backlog.importCheckCli(source.source).then(async (cli) => {
       if (fetchSequenceRef.current !== token) return;
       if (!cli.available || !cli.authenticated) {
@@ -163,18 +186,10 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         setSyncing(false);
         return;
       }
-      try {
-        const cached = await window.electronAPI.backlog.importGetCached({
-          source: source.source,
-          repository: source.repository,
-        });
-        if (fetchSequenceRef.current !== token) return;
-        const cachedIssues = sortByCreatedDesc(cached.issues);
-        setIssues(cachedIssues);
-        if (cachedIssues.length > 0) setLoading(false);
-      } catch {
-        // A cache-read failure is non-fatal; the reconcile below will populate.
-      }
+      // Let the cached paint land first so the reconcile's result never races
+      // ahead of it and gets overwritten by a slower cache read.
+      await cachedPromise;
+      if (fetchSequenceRef.current !== token) return;
       void reconcile('incremental');
     }).catch((cliError: unknown) => {
       if (fetchSequenceRef.current !== token) return;

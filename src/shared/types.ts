@@ -3671,15 +3671,21 @@ export interface ImportExecuteResult {
 export interface ImportCacheQuery {
   source: ExternalSource;
   repository: string;
+  /**
+   * The project whose cache to read, captured when the user opened the dialog.
+   * The main process falls back to the ambient current project when it is absent,
+   * but passing it keeps a project switch between the click and the handler's
+   * dispatch from pointing the read at another project's database.
+   */
+  projectId?: string;
 }
 
-export interface ImportReconcileInput {
-  source: ExternalSource;
-  repository: string;
+export interface ImportReconcileInput extends ImportCacheQuery {
   /**
    * 'incremental' (default) fetches only items changed since the cache's
    * high-water mark; 'full' re-fetches everything and prunes items the remote no
-   * longer has. An empty cache is always treated as 'full'.
+   * longer has. An empty cache is always treated as 'full', as is a cache whose
+   * provider has no cheap id listing and has gone too long without a full pass.
    */
   mode?: 'incremental' | 'full';
 }

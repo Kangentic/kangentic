@@ -3346,6 +3346,11 @@
           window.__mockImportGetCachedCallCount = (window.__mockImportGetCachedCallCount || 0) + 1;
           window.__mockImportGetCachedLastArgs = input;
         }
+        // Forced failure, so a test can prove a cache-read error is non-fatal and the
+        // reconcile still populates the dialog.
+        if (typeof window !== 'undefined' && window.__mockImportGetCachedFailUntilCleared) {
+          throw new Error('Mock import cache read failure');
+        }
         var cached = (typeof window !== 'undefined' && window.__mockImportCached) || null;
         if (Array.isArray(cached)) return { issues: cached };
         if (cached && Array.isArray(cached.issues)) return { issues: cached.issues };

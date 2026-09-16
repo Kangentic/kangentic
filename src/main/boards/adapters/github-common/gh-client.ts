@@ -350,6 +350,18 @@ function normalizeCommitPull(raw: GhCommitPullRaw): GhPrListItem {
   };
 }
 
+/**
+ * Shift an ISO 8601 instant back by one second, so a `since` filter whose
+ * boundary may be exclusive still returns items that changed on the boundary
+ * itself. An unparseable value is returned untouched rather than turned into an
+ * epoch date, which would re-fetch the entire history.
+ */
+function rewindOneSecond(isoTimestamp: string): string {
+  const parsed = new Date(isoTimestamp);
+  if (Number.isNaN(parsed.getTime())) return isoTimestamp;
+  return new Date(parsed.getTime() - 1000).toISOString();
+}
+
 export class GitHubImporter {
   private ghPath: string | null = null;
   private detectPromise: Promise<string | null> | null = null;
@@ -554,8 +566,16 @@ export class GitHubImporter {
       sort: 'updated',
       direction: 'desc',
     });
-    // GitHub's REST issues endpoint natively filters by `updated_at >= since`.
-    if (since) queryParams.set('since', since);
+    // GitHub's REST issues endpoint filters on `updated_at` against `since`, but
+    // documents the boundary as "after", where Azure DevOps's WIQL clause is an
+    // explicit `>=`. Both adapters feed the same MAX(remote_updated_at) watermark,
+    // so the two have to agree. Rewinding one second makes this side inclusive
+    // whichever way GitHub's boundary actually falls: GitHub timestamps have
+    // one-second resolution, so an item updated in the same second as the watermark
+    // would otherwise be skipped by every later incremental fetch. The cost is
+    // re-fetching at most one second of items, which upserts idempotently - the
+    // same trade the Azure DevOps side already takes deliberately.
+    if (since) queryParams.set('since', rewindOneSecond(since));
 
     if (searchQuery) {
       // Use the GitHub search API for text queries

@@ -1434,7 +1434,6 @@ export function runProjectMigrations(db: Database.Database): void {
       repository        TEXT NOT NULL,
       external_id       TEXT NOT NULL,
       remote_updated_at TEXT NOT NULL,
-      state_category    TEXT NOT NULL,
       payload           TEXT NOT NULL,
       fetched_at        TEXT NOT NULL,
       PRIMARY KEY (external_source, repository, external_id)

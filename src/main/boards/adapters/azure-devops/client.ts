@@ -564,7 +564,12 @@ export class AzureDevOpsImporter {
     );
 
     const parsed = JSON.parse(stdout) as AzureDevOpsWorkItemRaw[];
-    return parsed.map((item) => item.id);
+    // The ids feed the reconcile's prune keep-list, where a stray undefined would
+    // not match any cached row and would therefore delete a live item. Drop
+    // anything that is not a real numeric id rather than passing it through.
+    return parsed
+      .map((item) => item?.id)
+      .filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
   }
 
   /**

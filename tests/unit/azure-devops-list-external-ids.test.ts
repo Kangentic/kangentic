@@ -45,12 +45,28 @@ describe('AzureDevOpsAdapter.listExternalIds', () => {
     expect(fetchWorkItemIds).toHaveBeenCalledWith('my-org', 'my-project', String.raw`my-project\Sprint 1`);
   });
 
-  it('returns an empty array without calling the client when the repository reference is malformed', async () => {
+  // The reconcile prunes cache rows against whatever this resolves to, so an empty
+  // array has to mean "the project has no work items" and nothing else. Returning
+  // [] for an unparseable reference would claim the remote is empty and wipe the
+  // source's entire cache; throwing routes it to the handler's prune try/catch,
+  // which degrades to no prune for that round.
+  it('throws without calling the client when the repository reference is malformed', async () => {
     const { adapter, fetchWorkItemIds } = makeAdapter();
 
-    const ids = await adapter.listExternalIds({ source: 'azure_devops', repository: 'not-a-valid-reference' });
-
-    expect(ids).toEqual([]);
+    await expect(
+      adapter.listExternalIds({ source: 'azure_devops', repository: 'not-a-valid-reference' }),
+    ).rejects.toThrow(/Malformed Azure DevOps repository reference/);
     expect(fetchWorkItemIds).not.toHaveBeenCalled();
+  });
+
+  it('drops entries the CLI returned without a numeric id', async () => {
+    const { adapter, fetchWorkItemIds } = makeAdapter();
+    // A non-numeric id would not match any cached row, so passing it through to the
+    // prune keep-list would delete a live item instead of keeping it.
+    fetchWorkItemIds.mockResolvedValue([5, undefined, 7]);
+
+    const ids = await adapter.listExternalIds({ source: 'azure_devops', repository: 'my-org/my-project' });
+
+    expect(ids).toEqual(['5', '7']);
   });
 });
