@@ -20,10 +20,10 @@ import { getCurrentProjectLogName } from './project-log-context';
  * Resilience: when `getProjectRoot()` returns null (no project open yet) or
  * when the file system rejects the write, the call is silently dropped. We
  * never want a diagnostic feature to crash the app. The same guarantee
- * covers the terminal echo below: a packaged Windows GUI build has no
- * console, so the echo's write can throw synchronously (EPIPE), and that
- * throw must not propagate into whatever main-process code called
- * `console.*` in the first place.
+ * covers the terminal echo below: the echo itself can throw, which is what
+ * a packaged Windows GUI build with no console attached did, and that throw
+ * must not propagate into whatever main-process code called `console.*` in
+ * the first place. The catch names which paths actually reach it.
  */
 
 interface LogMirrorOptions {
@@ -65,19 +65,34 @@ export function startLogMirror(options: LogMirrorOptions): void {
       const prefix = projectName
         ? `[${formatLogTimestamp(now)}] [${projectName}]`
         : `[${formatLogTimestamp(now)}]`;
+      // Built outside the guard below on purpose: that guard is for a dead
+      // stdout, and a defect in prefixConsoleArgs must still surface.
+      const echoArgs = prefixConsoleArgs(args, prefix);
       try {
-        original.apply(console, prefixConsoleArgs(args, prefix));
+        original.apply(console, echoArgs);
       } catch {
-        // A dead stdout must not reach the caller. On a packaged Windows
-        // GUI build the main process has no console, so Node's stdio is a
-        // sync pipe whose EPIPE comes back through the writable callback,
-        // outside the try/catch Node's own console puts around
-        // stream.write. Left unguarded it aborted the CALLER mid-function
-        // (Sentry DESKTOP-10/11/12: agent detection threw away a CLI it
-        // had just found). Deliberately narrow: persistence below must
-        // still run, because in exactly this environment the log file is
-        // the only record. Never log from here, the echo is what just
-        // failed.
+        // A dead stdout must not reach the caller. Left unguarded, a throw
+        // out of the echo aborted the CALLER mid-function (Sentry
+        // DESKTOP-10/11/12, from a packaged Windows GUI build, which has
+        // no console attached: agent detection threw away a CLI it had
+        // just found).
+        //
+        // Measured on Node 24, because what can reach this catch is
+        // narrower than it looks: console swallows write failures itself,
+        // both a synchronous throw and an error handed to the write
+        // callback, so neither of those gets here. Two things do escape,
+        // because console does them BEFORE entering that guard. It
+        // resolves `process.stdout`, so a throw from constructing the
+        // stream comes straight out. And it formats the args, so a
+        // hostile one does too (a throwing custom inspect, or a throwing
+        // Symbol.toPrimitive under %s; plain getters are safe, inspect
+        // does not call them).
+        //
+        // So the catch stays untyped on purpose: neither path reliably
+        // produces an EPIPE, and narrowing this to a code would reopen the
+        // crash. Persistence below must still run, because in exactly this
+        // environment the log file is the only record. Never log from
+        // here, the echo is what just failed.
       }
       if (!shouldPersist(level, options.getPersistInfoDebug())) return;
       appendLog(options.getProjectRoot(), {

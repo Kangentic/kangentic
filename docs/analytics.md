@@ -193,7 +193,11 @@ in one Sentry org, one triage surface.
   for the one class `ignoreErrors` cannot see (native crashes, below). Scrubbing removes data from an
   event we keep; filtering decides a whole class of event is un-actionable and should never become an
   issue. Four classes are filtered:
-  - The Windows `npm start` TTY write artifacts (`write EAGAIN`, `write EPIPE`).
+  - Benign Windows stdio write artifacts, in two message shapes. Node's `errnoException` reads
+    `write EAGAIN` / `write EPIPE` (the dev `npm start` TTY case) and is matched by those two
+    string literals; libuv's `uvException` reads `EPIPE: broken pipe, write` (a packaged GUI
+    build, which has no console) and is matched by the two regexes beside them. Neither literal
+    matches the other shape, so both forms are listed.
   - Utility-process exits reported by the SDK's own `childProcessIntegration`
     (`'Utility' process exited with '<reason>'`). That event is tagged only with the process
     TYPE - `serviceName` / `name` / `exitCode` go into a breadcrumb added AFTER the capture, so it

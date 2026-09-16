@@ -191,9 +191,12 @@ describe('log-mirror', () => {
 
 describe('echo failure containment', () => {
   it('survives a throwing echo on every patched level (DESKTOP-10/11/12)', async () => {
-    // Simulates a packaged Windows build with no console: the echo write
-    // throws EPIPE synchronously. The spy is installed before
-    // startLogMirror so it becomes the `original` each wrap calls through.
+    // What the guard has to contain is any synchronous throw out of the
+    // echo call, so the spy just throws and the error's own shape is not
+    // under test here. Which real paths can throw is recorded on the catch
+    // in log-mirror.ts; this pins only that the wrapper survives one.
+    // The spy is installed before startLogMirror so it becomes the
+    // `original` each wrap calls through.
     const throwingEcho = vi.fn(() => {
       throw epipeWriteError();
     });

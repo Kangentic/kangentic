@@ -311,6 +311,22 @@ describe('error reporting runtime behavior (module-state gated)', () => {
           typeof pattern === 'string' ? message.includes(pattern) : pattern.test(message),
         );
 
+      // Two shapes carry the same benign EPIPE/EAGAIN write artifact: Node's
+      // errnoException (asserted above via the string literals) and a
+      // packaged Windows GUI build's uvException, which reads
+      // "EPIPE: broken pipe, write" instead. Neither string literal matches
+      // that second shape, which is why the two RegExp entries exist.
+      expect(matches('EPIPE: broken pipe, write')).toBe(true);
+      expect(matches('EAGAIN: resource temporarily unavailable, write')).toBe(true);
+      // The errnoException shape must still match through the same helper,
+      // so the two shapes coexist rather than one displacing the other.
+      expect(matches('write EPIPE')).toBe(true);
+      expect(matches('write EAGAIN')).toBe(true);
+      // Narrowness guard: a message that merely mentions EPIPE outside the
+      // benign stdio-write shape must not match. A loosened pattern like
+      // /EPIPE/ would wrongly swallow a real connection error such as this.
+      expect(matches('connect EPIPE 127.0.0.1:5432')).toBe(false);
+
       // The SDK's childProcessIntegration reports every utility-process exit
       // with only the process TYPE, so the event can never say WHICH process
       // died (serviceName/exitCode land in a breadcrumb added after capture).
