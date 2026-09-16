@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { GripVertical, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
@@ -81,19 +81,42 @@ export interface AutomationsPaneProps {
  * The x axis is pinned rather than clamped. This is a vertical list, sideways
  * travel means nothing to it, and letting x drift would grow horizontal overflow
  * the same way.
+ *
+ * The bound is the row's OWN GROUP, intersected with that scroller. A row can
+ * only ever land in its own group, so letting it travel past the heading into
+ * the other one advertised a drop that was never going to happen: it sat over
+ * On exit's rows looking like it belonged there and then snapped back. Stopping
+ * it at its group's last row makes the reachable range and the legal range the
+ * same thing. The intersection is what keeps the scroller half honest, since a
+ * group longer than the pane would otherwise let the row leave the visible box
+ * and start the overflow loop again.
  */
-const restrictToScroller: Modifier = ({ transform, draggingNodeRect, scrollableAncestorRects }) => {
-  const bounds = scrollableAncestorRects[0];
-  if (!draggingNodeRect || !bounds) return { ...transform, x: 0 };
+interface VerticalBounds {
+  top: number;
+  bottom: number;
+}
 
+/** The overlap of two vertical spans, or null when they do not meet. */
+function intersectVertically(first: VerticalBounds, second: VerticalBounds): VerticalBounds | null {
+  const top = Math.max(first.top, second.top);
+  const bottom = Math.min(first.bottom, second.bottom);
+  return bottom > top ? { top, bottom } : null;
+}
+
+/** Hold a dragged row's travel inside `bounds`, and on its own vertical axis. */
+function clampToBounds(
+  transform: { x: number; y: number; scaleX: number; scaleY: number },
+  rect: { top: number; bottom: number },
+  bounds: VerticalBounds,
+): { x: number; y: number; scaleX: number; scaleY: number } {
   let y = transform.y;
-  if (draggingNodeRect.top + y <= bounds.top) {
-    y = bounds.top - draggingNodeRect.top;
-  } else if (draggingNodeRect.bottom + y >= bounds.top + bounds.height) {
-    y = bounds.top + bounds.height - draggingNodeRect.bottom;
+  if (rect.top + y <= bounds.top) {
+    y = bounds.top - rect.top;
+  } else if (rect.bottom + y >= bounds.bottom) {
+    y = bounds.bottom - rect.bottom;
   }
   return { ...transform, x: 0, y };
-};
+}
 
 export function AutomationsPane(props: AutomationsPaneProps) {
   const { column } = props;
@@ -104,6 +127,45 @@ export function AutomationsPane(props: AutomationsPaneProps) {
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  /**
+   * Each group's row list, so a drag can be bounded by the group it belongs to.
+   *
+   * The LIST rather than the section: the section also spans its heading and its
+   * Add automation control, and neither is somewhere a row can land.
+   */
+  const groupLists = useRef<Partial<Record<AutomationTrigger, HTMLUListElement | null>>>({});
+
+  const clampToGroup = useCallback<Modifier>(({ transform, draggingNodeRect, active, scrollableAncestorRects }) => {
+    if (!draggingNodeRect) return { ...transform, x: 0 };
+    const activeRow = props.drafts.find((draft) => draft.id === String(active?.id));
+    const list = activeRow ? groupLists.current[activeRow.trigger] : null;
+    const scroller = scrollableAncestorRects[0];
+
+    // Pushed rather than filtered: `scrollableAncestorRects[0]` is typed as a
+    // rect but indexing an array can hand back undefined, and a type guard for
+    // null let that through and crashed the whole DndContext on the first frame
+    // of a drag. The compiler could not see it.
+    const candidates: VerticalBounds[] = [];
+    // The list's own box does not move while its rows translate around it, so
+    // this stays put for the whole gesture.
+    if (list) {
+      const group = list.getBoundingClientRect();
+      candidates.push({ top: group.top, bottom: group.bottom });
+    }
+    if (scroller) candidates.push({ top: scroller.top, bottom: scroller.top + scroller.height });
+    if (candidates.length === 0) return { ...transform, x: 0 };
+
+    const bounds = candidates.reduce<VerticalBounds | null>(
+      (accumulated, rect) => (accumulated ? intersectVertically(accumulated, rect) : rect),
+      null,
+    );
+    if (!bounds) return { ...transform, x: 0 };
+
+    return clampToBounds(transform, draggingNodeRect, bounds);
+  }, [props.drafts]);
+
+  const modifiers = useMemo(() => [clampToGroup], [clampToGroup]);
 
   /**
    * A row is only ever a drop target for its OWN group.
@@ -174,12 +236,18 @@ export function AutomationsPane(props: AutomationsPaneProps) {
         key={hmrGeneration}
         sensors={sensors}
         collisionDetection={collisionDetection}
-        modifiers={[restrictToScroller]}
+        modifiers={modifiers}
         onDragEnd={handleDragEnd}
       >
         <div data-testid="column-automations-scroller" className="min-h-0 overflow-y-auto">
           {TRIGGERS.map((trigger) => (
-            <AutomationGroup key={trigger} trigger={trigger} {...props} column={column} />
+            <AutomationGroup
+              key={trigger}
+              trigger={trigger}
+              registerList={(node) => { groupLists.current[trigger] = node; }}
+              {...props}
+              column={column}
+            />
           ))}
         </div>
       </DndContext>
@@ -187,7 +255,10 @@ export function AutomationsPane(props: AutomationsPaneProps) {
   );
 }
 
-function AutomationGroup({ trigger, ...props }: AutomationsPaneProps & { trigger: AutomationTrigger }) {
+function AutomationGroup({ trigger, registerList, ...props }: AutomationsPaneProps & {
+  trigger: AutomationTrigger;
+  registerList: (node: HTMLUListElement | null) => void;
+}) {
   const rows = rowsFor(props.drafts, trigger);
   // To Do and Done can never run an ENTER automation, so that group is replaced
   // by the reason rather than shown empty with an Add control that would build
@@ -203,7 +274,7 @@ function AutomationGroup({ trigger, ...props }: AutomationsPaneProps & { trigger
         </p>
       ) : (
         <SortableContext items={rows.map((row) => row.id)} strategy={verticalListSortingStrategy}>
-          <ul className="flex flex-col gap-1">
+          <ul ref={registerList} className="flex flex-col gap-1">
             {rows.map((draft, index) => (
               // A lone row has nothing to reorder against, so it gets no grip.
               // The GROUP decides, not the row: a row cannot see its siblings.
