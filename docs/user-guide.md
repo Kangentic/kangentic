@@ -426,8 +426,8 @@ the switch and the trash keep their own jobs and do not open it. A name is requi
 template variables: type `{{` to pick one, or use the **Template variable** button. A known
 variable is highlighted; an unknown one is flagged and sent as written.
 
-**Reordering.** Drag a row by its grip. Dragging it across the group heading changes when it runs
-as well as where it sits.
+**Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
+sits, never when it runs. To change when it runs, open the row and set When.
 
 **The agent starts by itself.** Nothing in the list starts the agent, and there is no Start agent
 row. On enter, Kangentic starts the column's agent right before the first automation that needs
