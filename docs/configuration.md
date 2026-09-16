@@ -526,6 +526,10 @@ carrying a custom prompt, and cannot be created. `kill_session`, `create_worktre
 `cleanup_worktree` are gone entirely, rows and all, because each was a no-op or a duplicate of
 what the move path already does.
 
+`send_command` is accepted on read as an alias for `send_message`, and its `command` field as an
+alias for `message`, so a hand-written file that predates the rename still opens. Neither alias is
+written back.
+
 A name is required and unique within its column, ignoring case. That is enforced by a unique
 index in the schema, not only by the editor, so a hand-edited file or an MCP write cannot break
 it.
