@@ -88,6 +88,23 @@ export class AutomationRunRepository {
     this.finish(input.id, 'skipped', reason, 0);
   }
 
+  /**
+   * Record a row the MOVE delivered itself, so it is as visible as every other.
+   *
+   * A column's first message rides the same keystroke burst as the move's own
+   * `/model` or `/effort` change, which is why the runner does not send it a
+   * second time. It used to record nothing at all on that path, reasoning that
+   * there was nothing to tell the user because it ran. That is exactly backwards
+   * for the most common automation anyone owns: the run log is where "did my
+   * message fire" is answered, and the one row people actually have was the one
+   * row with no entry, so its last-run line stayed blank and
+   * `kangentic_get_automation_runs` returned nothing for it.
+   */
+  recordDeliveredByCaller(input: StartRunInput, detail: string): void {
+    this.start(input);
+    this.finish(input.id, 'succeeded', detail, 1);
+  }
+
   listForTask(taskId: string, limit = 50): AutomationRun[] {
     const rows = this.db
       .prepare('SELECT * FROM automation_runs WHERE task_id = ? ORDER BY started_at DESC LIMIT ?')
