@@ -115,6 +115,18 @@ type ActivityReason =
   | { kind: 'turn-active' };
 ```
 
+The reason also moves WITHOUT the state moving, and it is pushed on its own when it does. A
+session stays `thinking` from before the first subagent spawns until after the last one stops, so
+a transition-only push leaves the reason frozen at whatever it was when the turn began. On a
+recorded 9-way `/code-review` fan-out (`tests/fixtures/replay/session-029-*.jsonl`) that was 3
+deliveries across 711 events while the derived kind changed 176 times. `ActivityEngine` therefore
+tracks `lastPushedReason` and calls a second callback, `onReasonChange`, whenever `reason.kind`
+differs from the last one delivered. The gate is the KIND alone: tool churn moves `currentTool`
+and `pendingCount` on nearly every event, and reporting on those would push about four times a
+second per session. `SessionManager` emits it as `activity-reason`, NOT as `activity`, because the
+notifiers, turn-completion auto-move, the terminal submit scheduler, and the interval recorder all
+read an `activity` emit as a real transition.
+
 `since` (epoch ms) is `SessionEngineState.needsUserSince`: when the session FIRST entered a
 needs-user state. It spans both `idle` and `permission` - a `permission <-> idle` crossing keeps
 the original park time rather than resetting it - and is cleared only on returning to `thinking`.
