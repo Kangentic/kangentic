@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   createHostMemoryPressureState,
   evaluateHostMemoryPressure,
+  getLastHostMemorySample,
   pressureThreshold,
   sampleHostMemory,
   startHostMemorySampler,
@@ -297,6 +298,64 @@ describe('startHostMemorySampler', () => {
 
     dispose();
     consoleErrorSpy.mockRestore();
+  });
+
+  it('reads getActiveAgentCount only on a pressure crossing and threads its exact value into onPressure', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    // Healthy headroom on tick 1: no pressure crossing.
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 50_000_000 });
+    const getActiveAgentCount = vi.fn(() => 7);
+    const onPressure = vi.fn();
+
+    const dispose = startHostMemorySampler({
+      getActiveAgentCount,
+      onPressure,
+      intervalMs: 1000,
+    });
+
+    // No crossing yet: getActiveAgentCount must be read LIVE at warning time
+    // (the module docstring's contract), not on every tick - a hoisted read
+    // would poll the session manager every 60s for no reason.
+    vi.advanceTimersByTime(1000);
+    expect(getActiveAgentCount).not.toHaveBeenCalled();
+    expect(onPressure).not.toHaveBeenCalled();
+
+    // Starve remaining commit so tick 2 crosses the threshold.
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 1 });
+    vi.advanceTimersByTime(1000);
+
+    expect(getActiveAgentCount).toHaveBeenCalledTimes(1);
+    expect(onPressure).toHaveBeenCalledTimes(1);
+    // A transposed or hardcoded argument (e.g. always 0, or the sample twice)
+    // would pass every other test in this file but fail here.
+    const [sampleArgument, activeAgentCountArgument] = onPressure.mock.calls[0];
+    expect(activeAgentCountArgument).toBe(7);
+    expect(sampleArgument.commitRemainingBytes).toBe(1 * 1024);
+
+    dispose();
+  });
+
+  it('records every tick sample in getLastHostMemorySample(), even a tick with no pressure crossing', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    // Healthy headroom: onPressure never fires this tick, but the crash-time
+    // reader (crash-capture.ts, and the give-up dialog's detail line) must
+    // still see a fresh sample recorded regardless.
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 50_000_000 });
+
+    const dispose = startHostMemorySampler({
+      getActiveAgentCount: () => 0,
+      onPressure: vi.fn(),
+      intervalMs: 1000,
+    });
+
+    vi.advanceTimersByTime(1000);
+    const sample = getLastHostMemorySample();
+    expect(sample).not.toBeNull();
+    expect(sample?.commitRemainingBytes).toBe(50_000_000 * 1024);
+
+    dispose();
   });
 });
 
