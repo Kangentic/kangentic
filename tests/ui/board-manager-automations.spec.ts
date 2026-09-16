@@ -821,6 +821,35 @@ test.describe('Column automations', () => {
     expect(Math.abs(offsets.only! - offsets.first!)).toBeLessThan(0.5);
   });
 
+  test('the exit budget is stated before it bites, and only where it can', async () => {
+    // The cap is real and was invisible: an exit group shares 60 seconds in
+    // aggregate whatever an adapter declares, so a script written for the five
+    // minutes its own default allows is killed at sixty and the rows behind it
+    // are skipped. A run log is too late to learn that.
+    await seedColumn('Executing', [
+      { name: 'Script', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
+      { name: 'Ping', type: 'notify', trigger: 'enter', config: { title: 'hi', body: 'there' } },
+    ]);
+    await openColumn('Executing');
+
+    const budget = editDialog().locator('[data-testid="edit-automation-exit-budget"]');
+
+    await row('Script').locator('[data-testid="column-automation-row-label"]').click();
+    // On enter it says nothing: the enter path has no aggregate cap.
+    await expect(budget).toHaveCount(0);
+    await editDialog().locator('[data-testid="edit-automation-trigger-exit"]').click();
+    await expect(budget).toBeVisible();
+    await expect(budget).toContainText('60 seconds');
+    await editDialog().locator('[data-testid="edit-automation-cancel"]').click();
+
+    // A notify cannot outlast the budget, so warning about it there would be
+    // noise on a row that will never see it fire.
+    await row('Ping').locator('[data-testid="column-automation-row-label"]').click();
+    await editDialog().locator('[data-testid="edit-automation-trigger-exit"]').click();
+    await expect(budget).toHaveCount(0);
+    await editDialog().locator('[data-testid="edit-automation-cancel"]').click();
+  });
+
   test('a dragged row stops at the bottom of its own group', async () => {
     test.slow();
     await seedColumn('Executing', [
