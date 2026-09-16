@@ -153,12 +153,15 @@ describe('importExecute - hydrateForImport branch', () => {
       source: 'azure_devops',
       repository: 'my-org/my-project',
       issues: [makeIssue({ body: 'Original body' })],
-    }) as { items: unknown[] };
+    }) as { items: unknown[]; detailUnavailable: number };
 
     expect(backlogRepoMock.create).toHaveBeenCalledWith(
       expect.objectContaining({ description: 'Original body' }),
     );
     expect(result.items).toHaveLength(1);
+    // The import succeeds, so the only way the user learns the comments are missing
+    // is this count reaching the toast.
+    expect(result.detailUnavailable).toBe(1);
   });
 
   it('imports the raw input issues unchanged when the adapter has no hydrateForImport', async () => {

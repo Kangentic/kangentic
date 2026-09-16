@@ -550,11 +550,16 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // now throw away an import they had already chosen items for. Comments are
     // supplementary, so degrade to the un-hydrated bodies and still import.
     let issuesToImport = input.issues;
+    let detailUnavailable = 0;
     if (adapter.hydrateForImport) {
       try {
         issuesToImport = await adapter.hydrateForImport(input.repository, input.issues);
       } catch (error) {
         console.warn('[BACKLOG_IMPORT_EXECUTE] hydrate step failed; importing without deferred detail', error);
+        // Report it rather than degrading silently. The items import fine, but they
+        // are missing content the user would otherwise have got, and nothing else on
+        // the item says so.
+        detailUnavailable = input.issues.length;
       }
     }
 
@@ -618,6 +623,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       imported: importedItems.length,
       skippedDuplicates,
       skippedAttachments: totalSkippedAttachments,
+      detailUnavailable,
       items: importedItems,
     };
   });
