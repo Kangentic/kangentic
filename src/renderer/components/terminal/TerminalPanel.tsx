@@ -235,6 +235,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
         {/* Clickable spacer fills remaining tab bar space */}
         {onToggleCollapse && (
+          // select-none-ok: an empty spacer, so it has no text to select.
           <div
             role="presentation"
             className="flex-1 self-stretch cursor-pointer hover:bg-surface-raised/30 transition-colors"

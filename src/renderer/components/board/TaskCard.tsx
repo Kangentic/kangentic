@@ -250,7 +250,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           onClick={handleClick}
           onContextMenu={handleContextMenu}
           data-task-id={task.id}
-          className={`bg-surface-raised/60 border border-edge/50 rounded-md px-2.5 py-1.5 cursor-grab active:cursor-grabbing hover:border-edge-input transition-colors select-none group/card ${
+          className={`bg-surface-raised/60 border border-edge/50 rounded-md px-2.5 py-1.5 cursor-grab active:cursor-grabbing select-none hover:border-edge-input transition-colors group/card ${
             isDragOverlay ? 'shadow-xl' : ''
           }`}
         >
@@ -350,7 +350,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         data-task-id={task.id}
-        className={`border rounded-md ${isComfortableDensity ? 'p-3' : 'p-2.5'} cursor-grab active:cursor-grabbing transition-colors select-none bg-surface-raised ${
+        className={`border rounded-md ${isComfortableDensity ? 'p-3' : 'p-2.5'} cursor-grab active:cursor-grabbing select-none transition-colors bg-surface-raised ${
           isHighlighted ? 'border-[2px] border-fg-faint/60' : isIdle ? 'border-edge/40' : 'border-edge hover:border-edge-input'
         } ${isIdle ? 'animate-pulse-subtle' : ''
         } ${isDragOverlay ? 'shadow-xl' : ''}`}

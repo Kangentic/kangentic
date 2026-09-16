@@ -89,7 +89,7 @@ export function MonitorTable({
       render: (row) => (
         <span className="flex items-center gap-1.5 min-w-0">
           {row.displayId !== null && (
-            <span className="shrink-0 font-mono text-xs text-fg-muted">#{row.displayId}</span>
+            <span className="shrink-0 font-mono text-xs text-fg-muted select-text">#{row.displayId}</span>
           )}
           <span className="truncate text-fg">{row.taskTitle}</span>
         </span>
@@ -151,7 +151,7 @@ export function MonitorTable({
       label: 'Doing now',
       sortValue: (row) => formatMonitorStatus(row),
       render: (row) => (
-        <span className={`truncate block ${needsUser(row) ? 'text-attention' : 'text-fg-tertiary'}`}>
+        <span className={`truncate block select-text ${needsUser(row) ? 'text-attention' : 'text-fg-tertiary'}`}>
           {formatMonitorStatus(row) || (row.lastEvent?.detail ?? '')}
         </span>
       ),

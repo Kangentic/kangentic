@@ -110,6 +110,8 @@ function ProjectListItemImpl({
   ].filter(Boolean).join('\n');
 
   return (
+    // select-none-ok: scoped to the project name span below, so it never reaches
+    // the rename input this row swaps in.
     <div
       ref={setNodeRef}
       style={style}

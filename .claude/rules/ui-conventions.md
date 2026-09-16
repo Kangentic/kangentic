@@ -36,6 +36,15 @@ chrome unless these are stated.
   confirmation should be suppressible. Never build a one-off modal for a simple confirmation.
 - **Dialog dismissal:** all dialogs use a global `useEffect` Escape key listener.
 - **Test selectors:** add `data-testid` and `data-swimlane-name` attributes for test selectors.
+- **Clickable controls ignore text selection.** A hand-rolled clickable control (a non-`button`
+  element with an `onClick` and `cursor-pointer`) carries `select-none`, so a click that drifts a
+  few pixels activates the control instead of selecting its label. Native `<button>` gets this from
+  the `@layer base` rule in `index.css`, which stays scoped to native buttons because `role="button"`
+  is spread onto dnd-kit wrapper divs. `user-select` is inherited, so a container's `select-none`
+  reaches every descendant: where a control holds text a user copies (a live output line, a ticket
+  id), put `select-text` on that child rather than dropping the container's `select-none`. A control
+  that should not carry it (a bare checkbox wrapper, an empty spacer, or a row that scopes
+  `select-none` to its text-bearing child instead) opts out with `// select-none-ok: <reason>`.
 - **Minimum font size:** default small text is `text-xs` (12px). The minimum is `text-[11px]`,
   reserved for very tight spaces (badges, column headers). Never `text-[10px]` or smaller
   without explicit approval. Empty states, descriptions, and hints use `text-sm` (14px) or larger.
@@ -78,9 +87,17 @@ chrome unless these are stated.
   branding asset each of the three exempt files imports, so the allowlist above is anchored to
   real imports rather than being a fourth list that drifts. It does not detect a NEW inline
   `<svg>` elsewhere; that stays review-caught.
-- No dedicated mechanical test yet. Candidate future checks: a scan for raw `<select>` and for
-  `text-[10px]` (or smaller) under `src/renderer/`; a scan of `SETTINGS_REGISTRY` label/description
-  fields for raw hex / byte-code literals (`0x`, `\x`, `\u`, `U+`).
+- **Test (text selection):** `tests/unit/clickable-control-select-none.test.ts` parses the TSX AST
+  under `src/renderer/**` and fails on a non-`button` element with an `onClick` and `cursor-pointer`
+  whose className lacks `select-none`, unless it carries a `// select-none-ok: <reason>` marker. It
+  parses rather than matching `<Tag ...>` with a regex, which truncates at the `>` inside
+  `onClick={() => ...}` and so misses exactly the clickable elements. It also pins the known exempt
+  sites, so a parser change that stops resolving JSX cannot pass vacuously. Runs in CI via
+  `npm run test:unit`.
+- The remaining bullets have no dedicated mechanical test yet. Candidate future checks: a scan for
+  raw `<select>` and for `text-[10px]` (or smaller) under `src/renderer/`; a scan of
+  `SETTINGS_REGISTRY` label/description fields for raw hex / byte-code literals (`0x`, `\x`, `\u`,
+  `U+`).
 
 ## Scope
 
