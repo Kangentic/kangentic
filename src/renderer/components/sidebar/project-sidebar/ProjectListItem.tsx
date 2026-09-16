@@ -149,6 +149,8 @@ function ProjectListItemImpl({
             className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
           />
         ) : (
+          /* select-none sits on the name span rather than on the clickable row, so it never
+             reaches the rename input the row swaps in above. Same placement as GroupHeader. */
           <span className="truncate font-medium flex-1 min-w-0 select-none">{project.name}</span>
         )}
         <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
