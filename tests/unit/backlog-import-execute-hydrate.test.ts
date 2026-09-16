@@ -143,6 +143,24 @@ describe('importExecute - hydrateForImport branch', () => {
     expect(result.items).toHaveLength(1);
   });
 
+  // Deferring comments moved this call from list time to import time, so its failure
+  // moved too: it would now discard an import the user had already chosen items for.
+  // The comments are supplementary, so the import has to survive without them.
+  it('still imports, without the deferred detail, when hydrateForImport fails', async () => {
+    adapter.hydrateForImport = vi.fn(async () => { throw new Error('az rest failed'); });
+
+    const result = await executeHandler()(null, {
+      source: 'azure_devops',
+      repository: 'my-org/my-project',
+      issues: [makeIssue({ body: 'Original body' })],
+    }) as { items: unknown[] };
+
+    expect(backlogRepoMock.create).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Original body' }),
+    );
+    expect(result.items).toHaveLength(1);
+  });
+
   it('imports the raw input issues unchanged when the adapter has no hydrateForImport', async () => {
     // adapter.hydrateForImport is intentionally absent here (matches GitHub,
     // which has no deferred per-item detail to fold in).

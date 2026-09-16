@@ -544,10 +544,19 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
     // Fetch deferred per-item detail (e.g. ADO comments) for the selected items
     // and fold it into each body, so the imported backlog item carries the same
-    // content the pre-defer list fetch used to.
-    const issuesToImport = adapter.hydrateForImport
-      ? await adapter.hydrateForImport(input.repository, input.issues)
-      : input.issues;
+    // content the pre-defer list fetch used to. Deferring this moved the call from
+    // list time to import time, which also moved when its failure lands: a
+    // transient CLI error used to fail a list the user could just reopen, and would
+    // now throw away an import they had already chosen items for. Comments are
+    // supplementary, so degrade to the un-hydrated bodies and still import.
+    let issuesToImport = input.issues;
+    if (adapter.hydrateForImport) {
+      try {
+        issuesToImport = await adapter.hydrateForImport(input.repository, input.issues);
+      } catch (error) {
+        console.warn('[BACKLOG_IMPORT_EXECUTE] hydrate step failed; importing without deferred detail', error);
+      }
+    }
 
     const importedItems = [];
     let skippedDuplicates = 0;

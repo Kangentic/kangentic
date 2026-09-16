@@ -215,6 +215,28 @@ describe('findByExternalIds (import dedup query)', () => {
     expect(statements[0].args).toEqual(['github_issues', '623', 'github_issues', '623']);
   });
 
+  // The Import dialog's paint path passes the whole remote cache, not a page, and
+  // the clause binds two parameters per id. Left unchunked, a few thousand cached
+  // items exceed SQLite's bound-parameter ceiling and the cache read throws.
+  it('splits a large id list across several bounded queries', async () => {
+    const { BacklogRepository } = await vi.importActual<BacklogRepositoryModule>(
+      '../../src/main/db/repositories/backlog-repository',
+    );
+    const { db, statements } = createSqlTracker();
+    const repo = new BacklogRepository(db);
+
+    const externalIds = Array.from({ length: 950 }, (_, index) => String(index));
+    repo.findByExternalIds('github_issues', externalIds);
+
+    expect(statements.length).toBeGreaterThan(1);
+    for (const statement of statements) {
+      // Two bindings per id plus the source once per unioned table.
+      expect(statement.args.length).toBeLessThanOrEqual(400 * 2 + 2);
+    }
+    const boundIds = new Set(statements.flatMap((statement) => statement.args.slice(1)));
+    for (const externalId of externalIds) expect(boundIds.has(externalId)).toBe(true);
+  });
+
   it('returns an empty set without touching the DB when no external IDs are given', async () => {
     const { BacklogRepository } = await vi.importActual<BacklogRepositoryModule>(
       '../../src/main/db/repositories/backlog-repository',
