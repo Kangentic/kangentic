@@ -475,7 +475,7 @@ test.describe('BoardManagerDialog extended', () => {
   // still READS the column value, which is why the last assertion here checks
   // that saving does not disturb it.
 
-  test('Conversation: Session is a two-option radiogroup that saves, leaving the spawn strategy alone', async () => {
+  test('Conversation: Session is a two-option radiogroup that saves, carrying the spawn strategy with it', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
@@ -502,9 +502,17 @@ test.describe('BoardManagerDialog extended', () => {
       return { target: lane?.session_target, spawn: lane?.session_spawn_strategy };
     });
     expect(saved.target).toBe('isolated');
-    // Untouched: dropping the control must not start clobbering a value a
-    // hand-edited `kangentic.json` may have set deliberately.
-    expect(saved.spawn).toBe('create_or_resume');
+    // Carried, not left alone. This control no longer OFFERS the spawn strategy,
+    // and the first version of this test read that as "writes only the target".
+    // It is not: both columns are NOT NULL with a literal DEFAULT, so a stored
+    // lane always holds a concrete strategy and `resolveForceFresh`'s fallback
+    // never fires for one. Leaving it would strand an isolated column on
+    // `create_or_resume`, which resumes the previous pass instead of running a
+    // fresh one, the exact bug `snapSpawnStrategyToTarget` exists to stop.
+    //
+    // A deliberate pairing still survives, because the snap only moves a
+    // strategy sitting at the OTHER track's default, and only on a real change.
+    expect(saved.spawn).toBe('always_spawn_new');
 
     // Cleanup: restore the default.
     await page.evaluate(async () => {
