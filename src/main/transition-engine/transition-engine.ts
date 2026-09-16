@@ -192,6 +192,12 @@ export class TransitionEngine {
       deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
       showNotification: (input: NotificationInput) => void;
       onProgress?: (phase: string) => void;
+      /**
+       * The caller's own budget. Without it the runner falls back to the
+       * trigger default, which caps a re-run of an EXIT row at the 60s
+       * short-lock budget the re-run path explicitly does not inherit.
+       */
+      groupBudgetMs?: number;
     },
   ): Promise<AutomationRunSummary> {
     const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
@@ -223,6 +229,7 @@ export class TransitionEngine {
       toColumn?: Swimlane | null;
       alreadyDelivered?: ReadonlySet<string>;
       suppressAgentMessages?: boolean;
+      groupBudgetMs?: number;
     },
   ): Promise<AutomationRunSummary> {
     const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
@@ -259,6 +266,7 @@ export class TransitionEngine {
       startAgent: options.startAgent,
       alreadyDelivered: options.alreadyDelivered,
       suppressAgentMessages: options.suppressAgentMessages,
+      groupBudgetMs: options.groupBudgetMs,
       context: {
         task,
         column,

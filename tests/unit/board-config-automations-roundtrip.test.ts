@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
+import type { BoardColumnConfig } from '../../src/shared/types';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;
@@ -35,6 +36,7 @@ const { buildBoardConfigFromDb } = await import('../../src/main/config/board-con
 const { applyBoardConfigToDb } = await import('../../src/main/config/board-config/apply-config');
 const { AutomationRepository } = await import('../../src/main/db/repositories/automation-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
+const { planColumnAutomations } = await import('../../src/main/config/board-config/apply-automations');
 
 /**
  * Adapt node:sqlite to the slice of better-sqlite3 the migrations and
@@ -288,6 +290,30 @@ describeWithSqlite('kangentic.json automations round-trip', () => {
       const lane = lanes.list().find((candidate) => candidate.name === 'Executing')!;
       expect(automations.listForColumn(lane.id)).toEqual([]);
     });
+
+    // `idx_column_automations_name` is UNIQUE on (swimlane_id, name COLLATE
+    // NOCASE) with no `trigger` column, so a hand-written file naming the same
+    // automation on both onEnter and onExit used to throw inside
+    // applyBoardConfigToDb's transaction, taking down the WHOLE board reconcile
+    // on project open, not just this column.
+    it('dedupes a name repeated across onEnter and onExit rather than blowing up the whole reconcile', () => {
+      const { lanes, automations } = freshDatabase();
+      const config = build();
+      columnNamed(config, 'Executing')!.automations = {
+        onEnter: [{ name: 'Notify', type: 'send_message', message: '/enter-ping' }],
+        onExit: [{ name: 'Notify', type: 'send_message', message: '/exit-ping' }],
+      };
+
+      const { warnings } = applyBoardConfigToDb('p1', config);
+
+      const lane = lanes.list().find((candidate) => candidate.name === 'Executing')!;
+      const rows = automations.listForColumn(lane.id);
+      expect(rows.map((row) => [row.trigger, row.name])).toEqual([
+        ['enter', 'Notify'],
+        ['exit', 'Notify 2'],
+      ]);
+      expect(warnings.some((warning) => warning.includes('Notify'))).toBe(true);
+    });
   });
 
   describe('additive versus destructive', () => {
@@ -329,5 +355,55 @@ describeWithSqlite('kangentic.json automations round-trip', () => {
       expect(automations.listForColumn(executing.id)).toEqual([]);
       expect(automations.listForColumn(planning.id).map((row) => row.name)).toEqual(['Kept']);
     });
+  });
+});
+
+// `planColumnAutomations` is a pure function of one `BoardColumnConfig`, with
+// no database underneath it. Pinned directly (not gated behind node:sqlite) so
+// the dedup behavior is covered even on a machine where the better-sqlite3
+// native binding is not built.
+describe('planColumnAutomations name dedup', () => {
+  function columnWithDuplicateName(): BoardColumnConfig {
+    return {
+      name: 'Executing',
+      automations: {
+        onEnter: [{ name: 'Notify', type: 'send_message', message: '/enter-ping' }],
+        onExit: [{ name: 'Notify', type: 'send_message', message: '/exit-ping' }],
+      },
+    };
+  }
+
+  it('renames the later of two same-named rows across onEnter and onExit', () => {
+    const plan = planColumnAutomations(columnWithDuplicateName());
+
+    expect(plan.rows.map((row) => [row.trigger, row.name])).toEqual([
+      ['enter', 'Notify'],
+      ['exit', 'Notify 2'],
+    ]);
+  });
+
+  it('warns naming the rename', () => {
+    const plan = planColumnAutomations(columnWithDuplicateName());
+
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain('Notify');
+    expect(plan.warnings[0]).toContain('Notify 2');
+  });
+
+  it('does not throw building the plan for a same-column name collision', () => {
+    expect(() => planColumnAutomations(columnWithDuplicateName())).not.toThrow();
+  });
+
+  it('leaves two distinctly named rows alone, with no warning', () => {
+    const plan = planColumnAutomations({
+      name: 'Executing',
+      automations: {
+        onEnter: [{ name: 'Notify', type: 'send_message', message: '/enter-ping' }],
+        onExit: [{ name: 'Wrap up', type: 'send_message', message: '/exit-ping' }],
+      },
+    });
+
+    expect(plan.rows.map((row) => row.name)).toEqual(['Notify', 'Wrap up']);
+    expect(plan.warnings).toHaveLength(0);
   });
 });

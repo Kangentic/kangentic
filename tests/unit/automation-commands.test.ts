@@ -55,7 +55,7 @@ import {
   handleGetAutomationRuns,
   handleRunAutomation,
 } from '../../src/main/agent/commands/automation-commands';
-import { handleUpdateColumn, handleCreateColumn } from '../../src/main/agent/commands/column-commands';
+import { handleUpdateColumn, handleCreateColumn, handleDeleteColumn } from '../../src/main/agent/commands/column-commands';
 import { resolveColumnMessage } from '../../src/main/transition-engine/column-strategy';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { AutomationRunAgainResult, BoardProfile } from '../../src/shared/types';
@@ -440,12 +440,54 @@ describeWithSqlite('automation MCP commands', () => {
       expect(resolveColumnMessage(automations.listForColumn(executingId()))?.mode).toBe('deferred');
     });
 
+    // autoCommandMode ALONE, no autoCommand in the same call. This used to write
+    // only the retired `swimlanes.auto_command_mode` lane field, which the
+    // automations migration resets and no delivery path reads, and still report
+    // success. The delivered mode lives on the message automation's own config,
+    // so a bare mode change has to land there instead.
+    it('updates the existing message automation\'s delivery mode when autoCommandMode is set alone', () => {
+      handleUpdateColumn({ column: 'Executing', autoCommand: '/review' }, context);
+      expect(resolveColumnMessage(automations.listForColumn(executingId()))?.mode).toBe('immediate');
+
+      const response = handleUpdateColumn({ column: 'Executing', autoCommandMode: 'deferred' }, context);
+
+      expect(response.success).toBe(true);
+      expect(resolveColumnMessage(automations.listForColumn(executingId()))?.mode).toBe('deferred');
+    });
+
+    // With no message row to carry a delivery mode, the call has nothing the
+    // engine will ever read, so the caller is told that rather than given a bare
+    // success that changed nothing.
+    it('says there is no message to apply the mode to, rather than reporting a bare success', () => {
+      const response = handleUpdateColumn({ column: 'Executing', autoCommandMode: 'deferred' }, context);
+
+      expect(response.success).toBe(true);
+      expect(response.message).toContain('no message for that delivery mode to apply to');
+      expect(automations.listForColumn(executingId())).toHaveLength(0);
+    });
+
     it('gives a newly created column its message too', () => {
       const response = handleCreateColumn({ name: 'Brand Review', autoCommand: '/brand' }, context);
       expect(response.success).toBe(true);
 
       const lane = swimlanes.list().find((candidate) => candidate.name === 'Brand Review');
       expect(resolveColumnMessage(automations.listForColumn(lane!.id))?.message).toBe('/brand');
+    });
+
+    // The MCP tool's zod schema already refuses a misspelled autoCommandMode for
+    // the released tool, but the mobile bridge and any other direct caller reach
+    // this handler with no zod in front of it. Coercing an unrecognized value to
+    // 'immediate' (the old behavior) silently changed the delivery mode instead
+    // of refusing the call, and still reported success.
+    it('refuses an unrecognized autoCommandMode on create rather than coercing it to immediate', () => {
+      const response = handleCreateColumn(
+        { name: 'Misspelled Mode Column', autoCommand: '/go', autoCommandMode: 'delayed' },
+        context,
+      );
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('autoCommandMode');
+      expect(swimlanes.list().some((lane) => lane.name === 'Misspelled Mode Column')).toBe(false);
     });
 
     it('leaves other automations on the column alone', () => {
@@ -458,6 +500,42 @@ describeWithSqlite('automation MCP commands', () => {
       const rows = automations.listForColumn(executingId());
       expect(rows).toHaveLength(2);
       expect(rows.find((row) => row.name === 'Ping')?.config.url).toBe('https://example.com');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // delete_column, which used to count only `swimlane_transitions` rows (now
+  // effectively always zero after the automations migration) and never the
+  // column's automations, which `deleteSwimlaneRowWithReferences` actually
+  // deletes. A caller lost a whole enter/exit group with no report of it.
+  // ---------------------------------------------------------------------------
+
+  describe('delete_column reports removed automations', () => {
+    it('counts a deleted column\'s automations and names the count in both data and message', () => {
+      handleCreateColumn({ name: 'Temp Column' }, context);
+      handleSetAutomations({
+        column: 'Temp Column',
+        automations: [
+          { name: 'Review', type: 'send_message', message: '/code-review' },
+          { name: 'Ping', type: 'webhook', url: 'https://example.com' },
+        ],
+      }, context);
+
+      const response = handleDeleteColumn({ column: 'Temp Column' }, context);
+
+      expect(response.success).toBe(true);
+      expect((response.data as { automationsRemoved: number }).automationsRemoved).toBe(2);
+      expect(response.message).toContain('2 automation(s)');
+    });
+
+    it('reports zero and omits the automation clause when the column had none', () => {
+      handleCreateColumn({ name: 'Bare Column' }, context);
+
+      const response = handleDeleteColumn({ column: 'Bare Column' }, context);
+
+      expect(response.success).toBe(true);
+      expect((response.data as { automationsRemoved: number }).automationsRemoved).toBe(0);
+      expect(response.message).not.toContain('automation(s)');
     });
   });
 

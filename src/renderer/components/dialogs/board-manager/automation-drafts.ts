@@ -53,7 +53,19 @@ export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
 /** The two groups, in the order the pane stacks them. */
 export const TRIGGERS: readonly AutomationTrigger[] = ['enter', 'exit'];
 
-let newDraftCounter = 0;
+/**
+ * A draft id no saved row can hold and no other draft can collide with.
+ *
+ * A module-scope counter was the obvious thing and is the wrong thing here: this
+ * file sits outside `stores/` and `utils/`, so `hmr-resync.test.ts`'s
+ * module-state scan never sees it, and a hot update reset it to 0 while the
+ * dialog's own `automationDrafts` state survived. The next Add minted an id a
+ * live draft already had, and `replaceRow` / `removeRow` resolve rows by id.
+ * `makeNewDraft` on the swimlane side already mints ids this way.
+ */
+function newDraftId(): string {
+  return `new:${crypto.randomUUID()}`;
+}
 
 export function isUnsaved(draft: AutomationDraft): boolean {
   return draft.id.startsWith('new:');
@@ -140,9 +152,8 @@ export function defaultConfigForType(type: AutomationType): AutomationConfig {
 }
 
 export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigger): AutomationDraft {
-  newDraftCounter += 1;
   return {
-    id: `new:${newDraftCounter}`,
+    id: newDraftId(),
     // Named for the type rather than left blank: a blank name blocks Save, and
     // the dialog opens with this selected, so the common case is to type over it.
     name: `New ${AUTOMATION_MANIFEST[type].label.toLowerCase()}`,
@@ -159,9 +170,8 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
  * user could reasonably expect and only one of them is true here.
  */
 export function copyAutomation(source: AutomationDraft, trigger: AutomationTrigger, takenNames: string[]): AutomationDraft {
-  newDraftCounter += 1;
   return {
-    id: `new:${newDraftCounter}`,
+    id: newDraftId(),
     name: uniqueName(source.name, takenNames),
     type: source.type,
     trigger,
@@ -269,7 +279,13 @@ export function dropIndexFor(
  * Unicode, while SQLite's NOCASE is ASCII only, so the dialog rejects a superset
  * of what the index would. That is the safe direction.
  */
-export function findNameConflict(drafts: AutomationDraft[], name: string, exceptId?: string): string | null {
+export function findNameConflict(
+  // Narrowed to what this reads, so the Edit dialog can hand it a bare list of
+  // taken names without casting a two-key literal to a full draft.
+  drafts: Pick<AutomationDraft, 'id' | 'name'>[],
+  name: string,
+  exceptId?: string,
+): string | null {
   const wanted = name.trim().toLowerCase();
   if (!wanted) return null;
   const clash = drafts.find((draft) => draft.id !== exceptId && draft.name.trim().toLowerCase() === wanted);

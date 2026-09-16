@@ -589,7 +589,17 @@ export async function handleTaskMove(
             signal,
             alreadyDelivered: deliveredMessageId ? new Set([deliveredMessageId]) : undefined,
             deliverToAgent: async (message, mode) => {
-              const liveSession = task.session_id;
+              // Re-read, never the Phase-1 snapshot. The enter group runs
+              // OUTSIDE withTaskLock on purpose (a run_script row would
+              // otherwise hold the lock for its whole budget), so between
+              // arming and delivering, a Pause, a kill, or a natural agent exit
+              // can take the now-free lock and null this task's session_id. The
+              // move's own AbortSignal does not cover that: it fires only for a
+              // superseding move. Delivering to the snapshot scheduled
+              // keystrokes at a dead PTY and recorded the run as sent. Mirrors
+              // agent-spawn.ts's deliverToAgent, which already re-reads.
+              const currentTask = enterRepos.tasks.getById(task.id);
+              const liveSession = currentTask?.session_id;
               if (!liveSession) return;
               context.terminalSubmitScheduler.scheduleKeystrokes(
                 task.id,

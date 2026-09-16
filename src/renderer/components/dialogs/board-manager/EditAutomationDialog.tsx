@@ -92,7 +92,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
 
   const entry = AUTOMATION_MANIFEST[local.type];
   const conflict = findNameConflict(
-    props.takenNames.map((name, index) => ({ id: `taken:${index}`, name } as AutomationDraft)),
+    props.takenNames.map((name, index) => ({ id: `taken:${index}`, name })),
     local.name,
   );
   const nameEmpty = local.name.trim() === '';

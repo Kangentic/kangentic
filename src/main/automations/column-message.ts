@@ -77,6 +77,39 @@ export function setColumnMessage(
 }
 
 /**
+ * Change WHEN the column's message is delivered, leaving its text alone.
+ *
+ * Split out from `setColumnMessage` rather than folded into it because the two
+ * callers differ: setting a message is asking for it to be sent (so that path
+ * switches the row on), while setting a delivery mode says nothing about
+ * whether the message should run, so this one leaves `enabled` as it found it.
+ *
+ * It exists at all because `autoCommandMode` alone used to write only
+ * `swimlanes.auto_command_mode`, which the automations migration resets and no
+ * delivery path reads. The caller was told it worked and nothing changed, which
+ * is the exact failure this module's own header calls the worst of the three.
+ *
+ * Targets the same row `setColumnMessage` does, NOT the one
+ * `resolveColumnMessage` returns: that one filters on `enabled`, so reading the
+ * text back through it and re-writing it could land on a different row.
+ */
+export function setColumnMessageMode(
+  automations: AutomationRepository,
+  swimlaneId: string,
+  mode: AutoCommandMode,
+): ColumnMessageWriteResult {
+  const rows = automations.listForColumn(swimlaneId);
+  const target = firstMessageRow(rows);
+  if (!target) return { action: 'unchanged', name: null };
+  if ((target.config.mode ?? 'immediate') === mode) return { action: 'unchanged', name: target.name };
+
+  automations.replaceForColumn(swimlaneId, rows.map((row) => (row.id === target.id
+    ? { ...toWriteInput(row), config: { ...row.config, mode } }
+    : toWriteInput(row))));
+  return { action: 'updated', name: target.name };
+}
+
+/**
  * The row `resolveColumnMessage` would deliver, ignoring its `enabled` filter.
  * Position order, because that is the order the group runs in and the order the
  * Column Manager shows.

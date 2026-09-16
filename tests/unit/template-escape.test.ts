@@ -33,6 +33,20 @@ describe('stripShellMetacharacters', () => {
     expect(stripShellMetacharacters('Fix the login redirect on Safari 18')).toBe('Fix the login redirect on Safari 18');
   });
 
+  it("defuses cmd.exe's %VAR% form, which is expanded and then RE-PARSED", () => {
+    // The one metacharacter class that is not a shell breakout on its own. cmd
+    // expands %VAR% while PARSING and re-tokenizes what comes back, so an `&`
+    // living inside the variable's VALUE chains a second command. A script also
+    // receives every template variable raw as KANGENTIC_*, so a title of
+    // "%KANGENTIC_LABELS%" survived this escape intact, landed in the script
+    // body as a variable reference, and cmd ran whatever a label contained.
+    // Measured on Windows before the fix: the second command executed.
+    // POSIX `$VAR` and PowerShell's `$env:` are not re-parsed, and `$` and the
+    // backtick are already stripped above.
+    expect(stripShellMetacharacters('%KANGENTIC_LABELS%')).toBe('KANGENTIC_LABELS');
+    expect(stripShellMetacharacters('%PATH%')).toBe('PATH');
+  });
+
   it('is the same on every platform, which is the reason it strips rather than quotes', () => {
     // Correct quoting differs per shell and SessionManager caches one shell for
     // the focused project, so a quoting scheme is right on the machine that

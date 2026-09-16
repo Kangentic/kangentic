@@ -7,6 +7,7 @@ import type {
 } from '../../../shared/types';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
 import { AUTOMATION_MANIFEST, isAutomationType, isRetiredActionType } from '../../../shared/automation-manifest';
+import { uniqueName } from '../../automations/column-message';
 
 /**
  * Convert one column's `kangentic.json` entry into the automations it should
@@ -63,11 +64,28 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
   const rows: AutomationWriteInput[] = [];
 
   if (column.automations) {
+    // Names are unique PER COLUMN, across both groups, because that is what
+    // `idx_column_automations_name` enforces. A hand-written or teammate-authored
+    // file can easily carry "Notify" on enter and "Notify" on exit; left alone
+    // that throws inside `applyBoardConfigToDb`'s transaction and fails the
+    // WHOLE board reconcile on project open, not just this column. Renamed with
+    // a warning instead, matching how every other malformed row in `readRow` is
+    // handled: the file is reported, never allowed to take the board down.
+    const takenNames: string[] = [];
     for (const trigger of ['enter', 'exit'] as const) {
       const group = trigger === 'enter' ? column.automations.onEnter : column.automations.onExit;
       for (const entry of group ?? []) {
         const row = readRow(entry, trigger, column.name, warnings);
-        if (row) rows.push(row);
+        if (!row) continue;
+        const deduped = uniqueName(row.name, takenNames);
+        if (deduped !== row.name) {
+          warnings.push(
+            `"${column.name}" has more than one automation named "${row.name}". Renamed the later one to "${deduped}".`,
+          );
+          row.name = deduped;
+        }
+        takenNames.push(row.name);
+        rows.push(row);
       }
     }
   }
