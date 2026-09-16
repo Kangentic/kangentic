@@ -141,7 +141,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   notifySpawnBlocked: vi.fn(),
   spawnAgent: vi.fn(async () => {}),
   createTransitionEngine: vi.fn(() => ({
-    executeTransition: vi.fn(async () => {}),
+    executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
     resumeSuspendedSession: vi.fn(async () => {}),
   })),
   cleanupTaskResources: vi.fn(async () => {}),

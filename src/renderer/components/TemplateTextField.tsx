@@ -343,11 +343,15 @@ export function TemplateTextField({
         </div>
 
         {trigger && matches.length > 0 && (
-          // In flow rather than portaled, unlike the Template variable button's
-          // menu: this one is anchored to the field it is completing and the
-          // field is not inside a scroll container of its own, so there is no
-          // clip to escape. See `popover-escapes-clipping.md` for when that
-          // stops being true.
+          // The Template variable BUTTON's menu is a separate element and IS
+          // portaled. This one is the inline `{{` completer, anchored to the
+          // caret in the field it completes.
+          //
+          // popover-inflow-ok: no clipping ancestor at its only mount site.
+          // `EditAutomationDialog` is the sole consumer, and its panel root is
+          // `overflow-visible` (`BaseDialog.tsx`) while its body is the plain
+          // `px-4 py-4` branch, not the `rawBody` one that sets
+          // `overflow-hidden`. Re-check if the field gains a second consumer.
           <div
             data-testid={`${testId}-inline-picker`}
             className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-lg border border-edge bg-surface py-1 shadow-xl"

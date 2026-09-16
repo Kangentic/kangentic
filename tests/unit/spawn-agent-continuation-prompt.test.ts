@@ -67,7 +67,17 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+/**
+ * A column's message is an automation row now, delivered by the runner rather
+ * than read off `swimlanes.auto_command`. These tests still express it as a lane
+ * field because the axis they vary is continuation-vs-message precedence, so
+ * `makeSwimlane` records it here and the engine fake replays the runner's
+ * contract with it.
+ */
+const columnMessages = new Map<string, string>();
+
 function makeSwimlane(id: string, overrides: Partial<Swimlane> = {}): Swimlane {
+  if (overrides.auto_command) columnMessages.set(id, overrides.auto_command);
   return {
     id,
     name: `Lane ${id}`,
@@ -116,20 +126,45 @@ function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
   } as SessionRecord;
 }
 
-function makeDeps(args: { resumeRecord: SessionRecord | undefined }) {
-  const getById = vi.fn();
-  getById
-    .mockReturnValueOnce(makeTask({ session_id: null }))
-    .mockReturnValue(makeTask({ session_id: FRESH_PTY_SESSION_ID }));
+function makeDeps(args: { resumeRecord: SessionRecord | undefined; taskFields?: Partial<Task> }) {
+  // Keyed on whether the session was actually started, NOT on the call count:
+  // running the column's enter automations added a task read ahead of the
+  // fallback's own `if (afterAutomations.session_id) return` guard, and a
+  // once-then-forever fake silently fed that guard a spawned session.
+  let sessionStarted = false;
+  const getById = vi.fn(() => makeTask({
+    session_id: sessionStarted ? FRESH_PTY_SESSION_ID : null,
+    ...args.taskFields,
+  }));
 
   const tasks = { getById };
   const sessionRepo = {
     getLatestForTask: vi.fn(() => args.resumeRecord ?? null),
     getLatestForTaskByTypeAndIsolation: vi.fn(() => args.resumeRecord),
   };
+  // Stands in for the automations runner: it starts the agent for a
+  // `send_message` row that needs one, handing the row's text in as the
+  // candidate opening prompt, then asks the adapter to deliver it.
   const engine = {
-    executeTransition: vi.fn(async () => {}),
-    resumeSuspendedSession: vi.fn(async () => {}),
+    executeTransition: vi.fn(async (
+      _task: Task,
+      lane: Swimlane,
+      _trigger: string,
+      runOptions: {
+        startAgent: (pendingPrompt?: string) => Promise<void>;
+        deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
+        suppressAgentMessages?: boolean;
+      },
+    ) => {
+      const message = columnMessages.get(lane.id);
+      if (!message || runOptions.suppressAgentMessages) {
+        return { outcomes: [], failures: [], startedAgent: false };
+      }
+      await runOptions.startAgent(message);
+      await runOptions.deliverToAgent(message, 'immediate');
+      return { outcomes: [], failures: [], startedAgent: true };
+    }),
+    resumeSuspendedSession: vi.fn(async () => { sessionStarted = true; }),
   };
   const scheduleKeystrokes = vi.fn();
   const context = {
@@ -146,7 +181,9 @@ function makeDeps(args: { resumeRecord: SessionRecord | undefined }) {
     boardConfigManager: { getDefaultBaseBranch: vi.fn(() => undefined) },
   };
 
-  return { tasks, sessionRepo, engine, scheduleKeystrokes, context };
+  // The task spawnAgent is HANDED, not just the one `getById` returns: the
+  // task's own `auto_command` is read off that argument.
+  return { tasks, sessionRepo, engine, scheduleKeystrokes, context, taskFields: args.taskFields };
 }
 
 async function runSpawn(
@@ -159,7 +196,7 @@ async function runSpawn(
     engine: deps.engine as never,
     tasks: deps.tasks as never,
     sessionRepo: deps.sessionRepo as never,
-    task: makeTask({ swimlane_id: toLane.id, session_id: null }),
+    task: makeTask({ swimlane_id: toLane.id, session_id: null, ...deps.taskFields }),
     fromSwimlaneId: 'lane-planning',
     toLane,
     // Plan-exit moves originate from a non-To-Do column, so the task
@@ -177,6 +214,7 @@ function resumePromptArg(engine: ReturnType<typeof makeDeps>['engine']): unknown
 describe('spawnAgent continuationPrompt delivery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    columnMessages.clear();
   });
 
   it('resume with no auto_command: the continuation becomes the resume prompt', async () => {
@@ -228,11 +266,10 @@ describe('spawnAgent continuationPrompt delivery', () => {
     // reverting agent-spawn.ts to plain `toLane.auto_command` delivers
     // '/lane-command' here and fails.
     const executingLane = makeSwimlane(EXECUTING_LANE_ID, { auto_command: '/lane-command' });
-    const deps = makeDeps({ resumeRecord: makeRecord() });
-    deps.tasks.getById.mockReset();
-    deps.tasks.getById
-      .mockReturnValueOnce(makeTask({ session_id: null, auto_command: '/task-command' }))
-      .mockReturnValue(makeTask({ session_id: FRESH_PTY_SESSION_ID, auto_command: '/task-command' }));
+    const deps = makeDeps({
+      resumeRecord: makeRecord(),
+      taskFields: { auto_command: '/task-command' },
+    });
 
     await runSpawn(executingLane, deps, undefined);
 

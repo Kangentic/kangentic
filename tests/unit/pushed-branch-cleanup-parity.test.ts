@@ -176,11 +176,18 @@ describe('checkout-identity columns are cleared wherever branch_name is cleared'
   it('finds the known cleanup sites, so the scan cannot silently match nothing', () => {
     // Guards the guard. The scan is only as good as its trigger, so a refactor
     // that renamed the column or moved every site behind a helper would
-    // otherwise leave the test above passing over zero writes. Four sites:
-    // task-cleanup (the To Do reset and delete), transition-engine (the
-    // cleanup_worktree action), resource-cleanup (the Backlog sweep), and the
-    // shared missing-worktree demotion the two startup passes call.
-    expect(findBranchClearingWrites()).toHaveLength(4);
+    // otherwise leave the test above passing over zero writes. Three sites:
+    // task-cleanup (the To Do reset and delete), resource-cleanup (the Backlog
+    // sweep), and the shared missing-worktree demotion the two startup passes
+    // call.
+    //
+    // Was four. The fourth was transition-engine's `cleanup_worktree` action,
+    // retired with the automations migration because it did what the To Do move
+    // already does. Its behaviour did not move, it was always duplicated:
+    // `delete-task-worktree.test.ts` pins the surviving path's prepare-before-
+    // the-lock, BACKGROUND priority, head_sha capture and autoCleanup branch
+    // removal, in that order.
+    expect(findBranchClearingWrites()).toHaveLength(3);
   });
 });
 
@@ -228,9 +235,10 @@ describe('a captured head_sha rides along wherever branch_name is cleared', () =
   });
 
   it('finds the known cleanup sites, so the scan cannot silently match nothing', () => {
-    // Same guard-the-guard as the resolved_base_branch check above: the four
-    // known sites, none of them allowlisted.
-    expect(findBranchClearingWrites()).toHaveLength(4);
+    // Same guard-the-guard as the resolved_base_branch check above: the three
+    // known sites, none of them allowlisted. See that test for why this was
+    // four until the `cleanup_worktree` action was retired.
+    expect(findBranchClearingWrites()).toHaveLength(3);
     expect(HEAD_SHA_CAPTURE_ALLOWED_MISSING.size).toBe(0);
   });
 });

@@ -163,7 +163,12 @@ describe('handleCreateBoardProfile', () => {
       {
         name: 'Heavy',
         columns: {
-          Planning: { sessionTarget: 'isolated', autoCommandMode: 'deferred' },
+          // `autoCommandMode` used to ride along here. It is not a profile field
+          // any more: a column's message is an automation row, and automations
+          // are shared by every profile, so there is nothing for a per-profile
+          // delivery mode to apply to. See the matching pin in
+          // `mcp-profile-tools-schema.test.ts`.
+          Planning: { sessionTarget: 'isolated' },
           Executing: { permissionMode: null },
         },
       },
@@ -172,7 +177,6 @@ describe('handleCreateBoardProfile', () => {
 
     expect(stored.profiles[0].columns[PLANNING_ID]).toEqual({
       sessionTarget: 'isolated',
-      autoCommandMode: 'deferred',
     });
     const executing = stored.profiles[0].columns[EXECUTING_ID];
     expect(Object.prototype.hasOwnProperty.call(executing, 'permissionMode')).toBe(true);

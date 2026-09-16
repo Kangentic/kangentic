@@ -360,7 +360,7 @@ function AutomationRow({
       // those real controls, so the row click is an enhancement on top of a
       // keyboard path that already worked.
       onClick={readOnly ? undefined : () => onEdit(draft)}
-      className={`group flex items-center gap-2 rounded border border-edge-input bg-surface-control px-2 py-1.5 ${
+      className={`group flex select-none items-center gap-2 rounded border border-edge-input bg-surface-control px-2 py-1.5 ${
         readOnly ? '' : 'cursor-pointer hover:border-fg-faint'
       } ${isDragging ? 'z-10 shadow-lg' : ''}`}
     >
@@ -420,7 +420,7 @@ function AutomationRow({
         // token is near-white in the dark themes and near-black in the light
         // ones, so the strip lifts against a dark row and deepens against a
         // light one without a second rule.
-        className={`flex items-center self-stretch rounded-l -my-1.5 -ml-2 -mr-2 pl-2 pr-3 text-fg-faint transition-colors ${
+        className={`flex select-none items-center self-stretch rounded-l -my-1.5 -ml-2 -mr-2 pl-2 pr-3 text-fg-faint transition-colors ${
           reorderable ? 'cursor-grab group-hover:bg-fg/[0.08] group-hover:text-fg-tertiary active:cursor-grabbing' : ''
         }`}
       >

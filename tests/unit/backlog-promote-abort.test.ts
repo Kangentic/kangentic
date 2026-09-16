@@ -163,7 +163,7 @@ const mockEnsureTaskWorktree = vi.fn(async () => {});
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockSpawnAgent = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn(() => ({
-  executeTransition: vi.fn(async () => {}),
+  executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
   resumeSuspendedSession: vi.fn(async () => {}),
 }));
 const mockCleanupTaskResources = vi.fn(async () => {});

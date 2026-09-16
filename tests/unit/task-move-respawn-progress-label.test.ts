@@ -222,7 +222,12 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   mockGetProjectRepos.mockReturnValue({
     tasks: taskRepo,
     swimlanes: swimlaneRepo,
-    actions: { getTransitionsFor: vi.fn(() => []) },
+    // The column's message moved out of `swimlanes.auto_command` and into the
+    // column's first enabled `send_message` enter automation, so Phase 3 reads
+    // it through this repo rather than the retired `actions` one. These
+    // fixtures set no column message, so an empty list is the right shape.
+    automations: { listForColumn: vi.fn(() => []) },
+    automationRuns: { listForTask: vi.fn(() => []) },
     attachments: { deleteByTaskId: vi.fn(), getPathsForTask: vi.fn(() => []) },
   });
   return context;
