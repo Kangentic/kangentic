@@ -13,6 +13,7 @@ import {
 } from '../../src/renderer/components/monitor/monitor-view-model';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { MonitorSessionRow, MonitorView } from '../../src/shared/types';
+import { stripMarkdown } from '../../src/renderer/utils/strip-markdown';
 
 /**
  * The monitor's whole decision surface (bucketing, filtering, sorting, grouping,
@@ -135,6 +136,19 @@ describe('monitorSlotKind', () => {
     expect(monitorSlotKind(makeRow({ ...running, description: 'A task' }), null, true)).toBe('description');
     expect(monitorSlotKind(makeRow({ ...paused, description: 'A task' }), null, true)).toBe('description');
     expect(monitorSlotKind(makeRow({ ...running, description: null }), null, true)).toBe('peek');
+  });
+
+  it('counts a markdown-only description as a description, not a fall-through to the peek', () => {
+    // hasDescription is tested against the RAW field, before stripMarkdown: a
+    // description that is nothing but markdown syntax still counts as one, so
+    // the card prints the (visually empty) stripped result instead of a
+    // terminal peek the user did not ask for. Confirmed empirically against
+    // remove-markdown that this literal strips to '' - a rewrite to
+    // `stripMarkdown(row.description).length > 0` would still pass every other
+    // case in this file but flip this one to 'peek'.
+    const markdownOnly = '**  **';
+    expect(stripMarkdown(markdownOnly)).toBe('');
+    expect(monitorSlotKind(makeRow({ ...paused, description: markdownOnly }), null, false)).toBe('description');
   });
 
   it('never returns a trail for a row whose trail is empty', () => {

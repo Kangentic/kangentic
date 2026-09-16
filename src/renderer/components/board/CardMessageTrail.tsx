@@ -10,7 +10,7 @@ import type { AppConfig, AssistantMessageTrailEntry } from '../../../shared/type
  * (the shipped default), the newest message alone, wrapped to the slot's clamp,
  * for a reader who would rather have one whole thought than three openings.
  *
- * TONE carries nothing here. It used to: older lines kept the description's
+ * TONE carries nothing here. It used to. Older lines kept the description's
  * `fg-faint` and the newest was one step brighter, which was asked to mean both
  * "less important" and "live" and delivered neither. In `latest` mode it could
  * not even try, since the whole block IS the newest message. What separates the
@@ -39,6 +39,18 @@ import type { AppConfig, AssistantMessageTrailEntry } from '../../../shared/type
 
 /** Lines the slot holds: the clamp per card density (1, 3, 5), shared by both cards. */
 export type ExcerptLines = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * The clamp a card density asks for. One derivation, because both cards need the
+ * same answer and this file is the only module they both already import. Writing
+ * it twice is how the two surfaces drifted apart in the first place, and a fourth
+ * density would otherwise have to be remembered in two files.
+ */
+export function excerptLinesFor(cardDensity: AppConfig['cardDensity']): ExcerptLines {
+  if (cardDensity === 'compact') return 1;
+  if (cardDensity === 'comfortable') return 5;
+  return 3;
+}
 
 /** The description's own clamp at each line count, for the fallback that keeps content-sized. */
 export const EXCERPT_CLAMP_CLASS: Record<ExcerptLines, string> = {
