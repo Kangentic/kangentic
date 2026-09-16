@@ -7,13 +7,16 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
  * Version banner: `goose --version` prints `goose 1.10.0`.
  *
  * COLLISION HAZARD - read before touching `binaryName` or `parseVersion`:
- * `goose` is also the binary name of pressly/goose, a widely installed Go
- * database-migration tool (`go install github.com/pressly/goose/v3/cmd/goose`,
- * landing in `~/go/bin/goose`). Its banner is `goose version: v3.24.1`, so a
- * scan-anywhere `\d+\.\d+\.\d+` match extracts `3.24.1` from it and reports
- * the migration tool as Block's agent CLI. `parseVersion` therefore REQUIRES
- * the `goose ` product prefix followed immediately by a digit, which the
- * migration tool's `version:` token fails. This mirrors `GrokDetector`, where
+ * TWO other tools install a binary called `goose`.
+ *   - pressly/goose, a widely used Go database-migration tool
+ *     (`go install github.com/pressly/goose/v3/cmd/goose` -> `~/go/bin/goose`),
+ *     banner `goose version: v3.24.1`.
+ *   - the awesome-goose scaffolding framework, banner `goose version 0.0.0`.
+ * A scan-anywhere `\d+\.\d+\.\d+` match pulls a version out of both and reports
+ * them as Block's agent CLI, after which Kangentic spawns `goose run -t ... -s`
+ * against a tool with no such command. `parseVersion` therefore REQUIRES a
+ * DIGIT immediately after the product name, which both impostors fail because
+ * they put the literal word `version` there. This mirrors `GrokDetector`, where
  * the same anchoring keeps xAI's and Cursor's shared `agent` shim apart.
  *
  * Rejecting a foreign banner is not the end of detection: `AgentDetector`
@@ -37,10 +40,19 @@ export class GooseDetector extends AgentDetector {
 
 /**
  * Extract the version from `goose --version` output, or null when the banner
- * is not Block Goose's. `goose 1.10.0` -> `1.10.0`;
- * `goose version: v3.24.1` (pressly/goose) -> null.
+ * is not Block Goose's.
+ *
+ * The discriminator is the token right after the product name: Block's CLI is
+ * clap-generated, so the version follows immediately (`goose 1.10.0`), while
+ * both impostors put the literal word `version` there (`goose version: v3.24.1`,
+ * `goose version 0.0.0`). Requiring a digit in that slot separates them without
+ * needing to pin one exact banner, which matters because Goose's published docs
+ * show the `--version` COMMAND everywhere and its stdout nowhere. So the accept
+ * side is deliberately a little loose - `goose` or `goose-cli`, an optional `v`,
+ * case-insensitive - since a false negative here is a detectable "not found"
+ * while a false positive spawns the wrong binary.
  */
 export function parseGooseVersion(raw: string): string | null {
-  const match = raw.trim().match(/^goose\s+(\d[\w.+-]*)/i);
+  const match = raw.trim().match(/^goose(?:-cli)?\s+v?(\d[\w.+-]*)/i);
   return match ? match[1] : null;
 }

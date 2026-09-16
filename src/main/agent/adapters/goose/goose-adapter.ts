@@ -167,8 +167,9 @@ export class GooseAdapter implements AgentAdapter {
     // claim, not a runtime guarantee. Without the fallback an unrecognized
     // value yields `{ GOOSE_MODE: undefined }`, which reaches the PTY env as
     // the literal string "undefined" and makes Goose fall back to its OWN
-    // default rather than Kangentic's - silently ignoring the column's
-    // permission setting. Degrade to this adapter's declared default instead.
+    // default. Its docs give that default as AUTONOMOUS, so the failure mode
+    // is not "ignores the column's permission setting", it is "silently runs
+    // unattended". Degrade to this adapter's declared default instead.
     const gooseMode = GOOSE_MODE_BY_PERMISSION[options.permissionMode]
       ?? GOOSE_MODE_BY_PERMISSION[this.defaultPermission];
     return { GOOSE_MODE: gooseMode };
