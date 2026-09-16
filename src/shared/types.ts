@@ -2603,6 +2603,13 @@ export interface DictationInfo {
   /** The resolved live + final model ids for the current selection. */
   selectedLiveModelId: string | null;
   selectedFinalModelId: string | null;
+  /** True once the `kangentic-dictation` utilityProcess worker has crashed
+   *  repeatedly and the restart policy has given up for this decay window -
+   *  push-to-talk has no fallback engine, so the settings panel surfaces
+   *  this rather than leaving it a silent dead end. */
+  workerUnavailable: boolean;
+  /** The newest crash's exit code + first error line, when `workerUnavailable`. */
+  workerError?: string;
 }
 
 /** Progress event for an in-flight model download. */

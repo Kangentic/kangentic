@@ -8,13 +8,13 @@ vi.mock('electron', () => ({
   app: { getGPUInfo: vi.fn(async () => ({ gpuDevice: [] })) },
 }));
 
-// The sherpa engine files import sherpa-onnx-node (a native binary). Those
-// engines are only instantiated inside the `build` closure returned by
-// selectEngine; we never call `.build()` in these tests, so an empty stub
-// for the native module is sufficient.
-vi.mock('sherpa-onnx-node', () => ({}));
+// engine-selection.ts is the main-resident half of the engine-registry
+// split (see DESKTOP-X / .claude/rules/dictation-out-of-process.md): it maps
+// a config to a serializable EngineSelection and never imports
+// sherpa-onnx-node, so unlike its predecessor this test needs no native-addon
+// stub at all.
 
-import { selectEngine } from '../../src/main/transcription/engines/engine-registry';
+import { computeEngineKey, selectEngine } from '../../src/main/transcription/engines/engine-selection';
 
 function makeProfile(overrides: Partial<DictationHardwareProfile> = {}): DictationHardwareProfile {
   return {
@@ -59,6 +59,14 @@ describe('selectEngine - remote mode', () => {
     );
     expect(result.liveModelId).toBe('streaming-zipformer-en');
   });
+
+  it('remote mode: isRemote is true, which engine-build.ts routes to RemoteOpenAiEngine', () => {
+    const result = selectEngine(
+      makeProfile(),
+      makeConfig({ engineMode: 'remote' }),
+    );
+    expect(result.isRemote).toBe(true);
+  });
 });
 
 describe('selectEngine - on-device (auto) mode', () => {
@@ -70,12 +78,24 @@ describe('selectEngine - on-device (auto) mode', () => {
     expect(result.id).toBe('hybrid');
   });
 
-  it('capable machine default: live slot is streaming-zipformer-en', () => {
+  it('auto mode: isRemote is false', () => {
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig(),
+    );
+    expect(result.isRemote).toBe(false);
+  });
+
+  it('capable machine default: live slot is streaming-zipformer-en, kind online-transducer', () => {
     const result = selectEngine(
       makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
       makeConfig(),
     );
     expect(result.liveModelId).toBe('streaming-zipformer-en');
+    // engine-build.ts routes purely off this field - no ModelDef ever
+    // crosses the process boundary - so a drift here silently mis-routes
+    // the worker's live-slot construction.
+    expect(result.liveModelKind).toBe('online-transducer');
   });
 
   it('capable machine default (accurate-base tier): final model is parakeet-tdt-0.6b-en', () => {
@@ -86,6 +106,24 @@ describe('selectEngine - on-device (auto) mode', () => {
       makeConfig(),
     );
     expect(result.finalModelId).toBe('parakeet-tdt-0.6b-en');
+  });
+
+  it('a chunked (offline) live model reports its own engineKind, not the transducer one', () => {
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ liveModelId: 'moonshine-tiny-en' }),
+    );
+    expect(result.liveModelId).toBe('moonshine-tiny-en');
+    expect(result.liveModelKind).toBe('offline-moonshine');
+  });
+
+  it('no live slot: liveModelKind is null alongside liveModelId', () => {
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ liveModelId: 'none' }),
+    );
+    expect(result.liveModelId).toBeNull();
+    expect(result.liveModelKind).toBeNull();
   });
 });
 
@@ -201,5 +239,59 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
       }),
     );
     expect(result.language).toBe('fr');
+  });
+});
+
+describe('computeEngineKey - the warm-engine LRU cache key', () => {
+  it('discriminates which slot carries the model: live=<model>/final=none differs from live=none/final=<that model>', () => {
+    // The function's own comment calls this out: both selections dedupe to the
+    // SAME single-model set, so a key built off the deduped model set alone
+    // would collide them into one cache entry even though they are different
+    // engines (a live-only streaming pass vs a final-only accurate pass).
+    const profile = makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' });
+    const liveOnlyConfig = makeConfig({ liveModelId: 'moonshine-tiny-en', modelId: 'none' });
+    const finalOnlyConfig = makeConfig({ liveModelId: 'none', modelId: 'moonshine-tiny-en' });
+    const liveOnly = selectEngine(profile, liveOnlyConfig);
+    const finalOnly = selectEngine(profile, finalOnlyConfig);
+
+    // Confirm the premise: both selections carry the same one model, in
+    // different slots.
+    expect(liveOnly.liveModelId).toBe('moonshine-tiny-en');
+    expect(liveOnly.finalModelId).toBeNull();
+    expect(finalOnly.liveModelId).toBeNull();
+    expect(finalOnly.finalModelId).toBe('moonshine-tiny-en');
+
+    const liveOnlyKey = computeEngineKey(liveOnly, liveOnlyConfig);
+    const finalOnlyKey = computeEngineKey(finalOnly, finalOnlyConfig);
+
+    expect(liveOnlyKey).not.toBe(finalOnlyKey);
+  });
+
+  it('is stable: two calls with an identical selection + config produce the same key', () => {
+    const profile = makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' });
+    const config = makeConfig({ liveModelId: 'moonshine-tiny-en', modelId: 'none' });
+    const selectionOne = selectEngine(profile, config);
+    const selectionTwo = selectEngine(profile, config);
+
+    expect(computeEngineKey(selectionOne, config)).toBe(computeEngineKey(selectionTwo, config));
+  });
+
+  it('a different remote endpoint changes the key even when the resolved selection is otherwise identical', () => {
+    // The Whisper-baked-in-language comment on the source also calls out
+    // config.remote (url/apiKey/model) as a direct input to the key, read
+    // straight off config rather than derived through EngineSelection.
+    const profile = makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' });
+    const configA = makeConfig({
+      engineMode: 'remote',
+      remote: { url: 'https://api.example.com/a', apiKey: 'key', model: 'gpt' },
+    });
+    const configB = makeConfig({
+      engineMode: 'remote',
+      remote: { url: 'https://api.example.com/b', apiKey: 'key', model: 'gpt' },
+    });
+    const selectionA = selectEngine(profile, configA);
+    const selectionB = selectEngine(profile, configB);
+
+    expect(computeEngineKey(selectionA, configA)).not.toBe(computeEngineKey(selectionB, configB));
   });
 });

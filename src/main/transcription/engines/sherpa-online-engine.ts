@@ -1,5 +1,4 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
@@ -7,15 +6,7 @@ import type {
   TranscriptionEngineSession,
 } from './transcription-engine';
 import { int16ToFloat32 } from '../audio/pcm';
-
-export const SHERPA_ONLINE_INFO: DictationEngineInfo = {
-  id: 'sherpa-onnx',
-  displayName: 'sherpa-onnx (streaming)',
-  streaming: true,
-  punctuation: false,
-  license: 'Apache-2.0',
-  requiresModelDownload: true,
-};
+import { SHERPA_ONLINE_INFO } from './engine-infos';
 
 /** 0.5 s of trailing silence flushes the transducer's last words on finalize. */
 const TAIL_PADDING = new Float32Array(8000);

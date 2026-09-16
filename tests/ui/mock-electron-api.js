@@ -2386,6 +2386,13 @@
       __stopCalls: [],
       stop: async function (dictationSessionId, expectedFrames) {
         window.electronAPI.dictation.__stopCalls.push({ dictationSessionId, expectedFrames });
+        // Test hook: window.__mockDictationStopError, a string, makes stop()
+        // reject with an Error carrying that message - so a spec can exercise
+        // useDictation's finalizeOnRelease() catch branch (a real engine fault
+        // decoding the utterance) without a real crash.
+        if (typeof window !== 'undefined' && window.__mockDictationStopError) {
+          throw new Error(window.__mockDictationStopError);
+        }
         return 'This is a test of dictation.';
       },
       __cancelCalls: [],
@@ -2423,7 +2430,12 @@
         return true;
       },
       getInfo: async function () {
-        return {
+        // Test hook: window.__mockDictationInfoOverrides merges over the
+        // defaults (e.g. { workerUnavailable: true, workerError: '...' } to
+        // exercise DictationTab's worker-crashed banner), matching the
+        // probePath() override idiom above.
+        var overrides = (typeof window !== 'undefined' && window.__mockDictationInfoOverrides) || {};
+        var defaults = {
           hardware: { cpuModel: 'Mock CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: true, gpu: 'none', gpuDescription: 'Integrated', platform: 'linux', arch: 'x64' },
           tier: 'accurate-base',
           selectedEngineId: 'stub',
@@ -2436,7 +2448,9 @@
           finalModels: [],
           selectedLiveModelId: null,
           selectedFinalModelId: null,
+          workerUnavailable: false,
         };
+        return Object.assign({}, defaults, overrides);
       },
       // Push-event subscribers. Tests drive these via window.__emitDictationPartial
       // (dictationSessionId, text) and window.__emitDictationFinal(...).

@@ -171,7 +171,7 @@ function collectVendorIds(raw: unknown): Set<number> {
 
 /**
  * Map a hardware profile to a coarse engine tier. The single heuristic;
- * `engine-registry.ts#selectEngine` consumes it (with the user's override).
+ * `engine-selection.ts#selectEngine` consumes it (with the user's override).
  * Reliable signals only - cores, RAM, and a known GPU backend. AVX2 is NOT a
  * gate (it is undetectable on Windows/macOS and whisper.cpp works without it).
  */

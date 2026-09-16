@@ -30,6 +30,8 @@ const {
   buildProbeScript,
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
+  DICTATION_WORKER_EXTERNALS,
+  DICTATION_WORKER_PROBE_DEPENDENCIES,
 } = require('../../build/verify-unpacked-worker.js');
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -245,5 +247,56 @@ describe('embed worker closure parity', () => {
       expect(filesEntries).toContain(`node_modules/${name}/**`);
     }
     expect(filesEntries).toContain('node_modules/@img/**');
+  });
+});
+
+describe('dictation worker closure parity (DESKTOP-X)', () => {
+  it('DICTATION_WORKER_EXTERNALS is exactly the bare imports in dictation-worker.ts (via engine-build.ts), and it is an esbuild external', () => {
+    // dictation-worker.ts itself imports sherpa-onnx-node only transitively
+    // (through engines/engine-build.ts -> the six engine implementations),
+    // not as a bare `from 'sherpa-onnx-node'` in the worker entry file
+    // itself, so this asserts the constant against the real esbuild
+    // `external` list rather than re-deriving it from a source scan the way
+    // the embed test does - the worker's own file has no bare import to scan.
+    expect(DICTATION_WORKER_EXTERNALS).toEqual(['sherpa-onnx-node']);
+
+    const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
+    const externalMatch = buildSource.match(/external:\s*\[([^\]]*)\]/);
+    expect(externalMatch).not.toBeNull();
+    const externals = [...(externalMatch?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    for (const name of DICTATION_WORKER_EXTERNALS) expect(externals).toContain(name);
+
+    // And the module scope of every engine file the worker's module graph
+    // reaches really does import it - the boundary this gate exists to
+    // protect only holds if these two facts stay true together.
+    const engineFiles = ['sherpa-online-engine.ts', 'sherpa-whisper-engine.ts', 'chunked-offline-engine.ts'];
+    for (const engineFile of engineFiles) {
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, 'src', 'main', 'transcription', 'engines', engineFile),
+        'utf8',
+      );
+      expect(source).toContain("from 'sherpa-onnx-node'");
+    }
+  });
+
+  it('dictation-worker.js is unpacked, and sherpa-onnx-node (+ its platform sibling packages) are placed in the asar and unpacked via the sherpa-onnx-*/** glob', () => {
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const asarUnpackMatch = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/);
+    expect(asarUnpackMatch).not.toBeNull();
+    const asarUnpack = asarUnpackMatch?.[1] ?? '';
+
+    expect(asarUnpack).toContain('.vite/build/dictation-worker.js');
+    // sherpa-onnx-node has no separate probe dependency (see the constant's
+    // definition): its native binding resolves via a RELATIVE require to its
+    // platform sibling package (sherpa-onnx-win-x64 etc), covered by the same
+    // glob as the package itself, so one glob entry protects both halves.
+    expect(DICTATION_WORKER_PROBE_DEPENDENCIES).toEqual([]);
+    expect(asarUnpack).toContain('"node_modules/sherpa-onnx-*/**"');
+
+    const filesMatch = config.match(/\nfiles:\n([\s\S]*?)\nasar: /);
+    expect(filesMatch).not.toBeNull();
+    const files = filesMatch?.[1] ?? '';
+    expect(files).toContain('"node_modules/sherpa-onnx-node/**"');
+    expect(files).toContain('"node_modules/sherpa-onnx-*/**"');
   });
 });

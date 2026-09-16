@@ -400,8 +400,19 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
     }),
+    // The dictation (sherpa-onnx) engine also runs in an Electron
+    // utilityProcess (see src/main/transcription/dictation-client.ts /
+    // DESKTOP-X), so it is bundled as its own entry next to the main
+    // bundle. `sherpa-onnx-node` stays external (already in
+    // esbuildCommon.external), resolved from node_modules at runtime so the
+    // native addon it loads resolves to a real on-disk path.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
+    }),
   ]);
-  console.log('[build] Main + preload + embed worker + line-count worker built');
+  console.log('[build] Main + preload + embed worker + line-count worker + dictation worker built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

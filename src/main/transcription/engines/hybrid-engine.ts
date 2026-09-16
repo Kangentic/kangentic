@@ -1,19 +1,10 @@
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
   TranscriptionEngine,
   TranscriptionEngineSession,
 } from './transcription-engine';
-
-export const SHERPA_HYBRID_INFO: DictationEngineInfo = {
-  id: 'hybrid',
-  displayName: 'Hybrid (live + accurate)',
-  streaming: true,
-  punctuation: true,
-  license: 'Apache-2.0 + MIT',
-  requiresModelDownload: true,
-};
+import { SHERPA_HYBRID_INFO } from './engine-infos';
 
 /** One slot of the hybrid: how to build the engine and which resolved model id
  *  it loads (`null` = loads nothing, e.g. the remote final). */

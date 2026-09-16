@@ -3,6 +3,7 @@ import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { PATHS } from '../../config/paths';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
+import { unpacked } from '../../utility-process/paths';
 import type { Embedder } from '../types';
 import type { EmbeddingModelDef } from './embedding-config';
 import type { MemoryAcceleration } from '../../../shared/types';
@@ -21,11 +22,6 @@ const IDLE_SHUTDOWN_MS = 5 * 60_000;
  *  disable semantic search until restart, with no in-app signal. */
 const MAX_CRASHES = 3;
 const SERVICE_NAME = 'kangentic-embeddings';
-
-/** Rewrite an in-asar path to its asar.unpacked twin when packaged. */
-function unpacked(absolutePath: string): string {
-  return app.isPackaged ? absolutePath.replace('app.asar', 'app.asar.unpacked') : absolutePath;
-}
 
 /**
  * The ordered onnxruntime execution providers to try for an acceleration

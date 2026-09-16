@@ -47,10 +47,17 @@ export interface TranscriptionEngineSession {
  * The pluggable transcription engine boundary. Implementations live under
  * `src/main/transcription/engines/` and follow the agent/board adapter
  * convention: nothing outside that folder branches on a specific engine id;
- * callers read `info` and the only mode-to-engine mapping is in
- * `engine-registry.ts`. The single `TranscriptionService` owns the active
- * engine and routes all audio (local renderer PCM today, a future mobile
- * client later) through `createSession(...).push(...)`.
+ * callers read `info`. The selection-to-engine mapping is split across a
+ * process boundary (see DESKTOP-X /
+ * .claude/rules/dictation-out-of-process.md): `engine-selection.ts` (main)
+ * maps a config to an `EngineSelection` - pure data, no `sherpa-onnx-node`
+ * import - and `engine-build.ts` (the `kangentic-dictation` utilityProcess
+ * worker only) is the one place that constructs a concrete engine from it.
+ * `TranscriptionService` (main) owns session bookkeeping and routes all
+ * audio (local renderer PCM today, a future mobile client later) to the
+ * worker via `DictationClient`; the engines themselves - and every
+ * `TranscriptionEngine` / `TranscriptionEngineSession` instance - live only
+ * in the worker.
  */
 export interface TranscriptionEngine {
   readonly info: DictationEngineInfo;

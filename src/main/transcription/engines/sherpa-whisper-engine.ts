@@ -1,5 +1,4 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
@@ -7,15 +6,7 @@ import type {
   TranscriptionEngineSession,
 } from './transcription-engine';
 import { concatInt16ToFloat32 } from '../audio/pcm';
-
-export const SHERPA_WHISPER_INFO: DictationEngineInfo = {
-  id: 'whisper-cpp',
-  displayName: 'Accurate (offline)',
-  streaming: false,
-  punctuation: true,
-  license: 'CC-BY-4.0 / MIT',
-  requiresModelDownload: true,
-};
+import { SHERPA_WHISPER_INFO } from './engine-infos';
 
 /**
  * The accurate offline path, model-driven via sherpa-onnx `OfflineRecognizer`.
