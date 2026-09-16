@@ -24,6 +24,22 @@ import type { PtyKillReport } from '../../src/main/pty/shutdown/session-shutdown
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const INDEX_SOURCE = fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 'utf-8');
 
+// Read alongside INDEX_SOURCE (not imported) for the same reason INDEX_SOURCE
+// itself is read as text: TranscriptionService pulls in the hardware-detection
+// and model-download graph, and DictationClient's module-level
+// `dictationClient` singleton forks a real utilityProcess.fork reference
+// chain. A static scan proves the two properties this file cares about
+// (the dispose call is wired in, and dispose stays synchronous) without
+// needing either module to actually construct or run.
+const TRANSCRIPTION_SERVICE_SOURCE = fs.readFileSync(
+  path.join(REPO_ROOT, 'src/main/transcription/transcription-service.ts'),
+  'utf-8',
+);
+const DICTATION_CLIENT_SOURCE = fs.readFileSync(
+  path.join(REPO_ROOT, 'src/main/transcription/dictation-client.ts'),
+  'utf-8',
+);
+
 /**
  * Slices from `searchFromIndex` through the matching close brace of the
  * first brace-delimited block that starts at or after it, counting brace
@@ -519,5 +535,93 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
     expect(region, 'no event may be fired from the quit path: it cannot land').not.toContain('trackEvent(');
     expect(region, 'no heartbeat may be fired from the quit path: it cannot land').not.toContain('trackHeartbeat(');
     expect(region, 'performShutdown must stay synchronous').not.toContain('await ');
+  });
+
+  /**
+   * Sentry DESKTOP-X: an unhandled C++ exception inside sherpa-onnx-node, the
+   * dictation engine's native module, used to crash whatever process it ran
+   * in. The fix moved the engine into the kangentic-dictation utilityProcess
+   * worker, but that only closes the hole if the worker is torn down BEFORE
+   * Electron's own quit sequence reaches it - the exact ordering this test
+   * pins. Nothing else in the repo exercises the real
+   * getShutdownDependencies() closure (getOptionalIpcContext() needs a live
+   * IPC context, which only exists inside a running Electron app), so
+   * deleting the dispose call fails no other test. The sibling
+   * lineCountClient.dispose() call has the identical exposure and is pinned
+   * alongside it.
+   *
+   * Red-green: this test was run against src/main/index.ts with
+   * `getOptionalIpcContext()?.transcriptionService.dispose();` removed from
+   * getShutdownDependencies() and observed to fail on the first expectation
+   * below; the line was then restored and the test observed to pass again.
+   */
+  it('disposes the dictation worker (and the line-count worker) inside the shutdown cleanup closure, before Electron tears the app down', () => {
+    const start = INDEX_SOURCE.indexOf('function getShutdownDependencies(');
+    expect(start, 'src/main/index.ts must define getShutdownDependencies()').toBeGreaterThan(-1);
+    const region = sliceBalancedBlock(INDEX_SOURCE, start);
+
+    expect(
+      region,
+      'the dictation worker must be disposed inside the shutdown cleanup closure; without it a ' +
+        'native fault in sherpa-onnx-node survives into the app own teardown instead of being ' +
+        'torn down first (Sentry DESKTOP-X)',
+    ).toContain('getOptionalIpcContext()?.transcriptionService.dispose();');
+    expect(
+      region,
+      'the line-count worker has the identical exposure and must be disposed alongside it',
+    ).toContain('lineCountClient.dispose();');
+
+    // The closure above is reachable only if performShutdown actually spreads
+    // it into the synchronous cleanup it runs; otherwise the two dispose
+    // calls above are dead code nothing on the quit path ever calls.
+    const performShutdownStart = INDEX_SOURCE.indexOf('function performShutdown(');
+    expect(performShutdownStart, 'performShutdown must exist in src/main/index.ts').toBeGreaterThan(-1);
+    const performShutdownRegion = sliceBalancedBlock(INDEX_SOURCE, performShutdownStart);
+    expect(
+      performShutdownRegion,
+      'getShutdownDependencies() must be spread into the synchronous cleanup performShutdown runs',
+    ).toContain('...getShutdownDependencies()');
+  });
+
+  /**
+   * A dispose() on this path that awaits anything would let Electron continue
+   * its own teardown while the worker kill is still in flight - the exact
+   * ordering gap DESKTOP-X exists to close, reopened from a different angle.
+   * Static source checks rather than an imported-and-invoked dispose(): see
+   * the comment above TRANSCRIPTION_SERVICE_SOURCE / DICTATION_CLIENT_SOURCE
+   * for why the modules are read as text instead of imported here.
+   */
+  it('keeps TranscriptionService.dispose and DictationClient.dispose synchronous, with no awaited work', () => {
+    expect(
+      TRANSCRIPTION_SERVICE_SOURCE,
+      'TranscriptionService.dispose must not be declared async',
+    ).not.toContain('async dispose(');
+    const transcriptionDisposeStart = TRANSCRIPTION_SERVICE_SOURCE.indexOf('dispose(): void {');
+    expect(
+      transcriptionDisposeStart,
+      'TranscriptionService.dispose must exist as a synchronous void method',
+    ).toBeGreaterThan(-1);
+    const transcriptionDisposeRegion = sliceBalancedBlock(TRANSCRIPTION_SERVICE_SOURCE, transcriptionDisposeStart);
+    expect(
+      transcriptionDisposeRegion,
+      'TranscriptionService.dispose must not await anything; the before-quit path that calls it ' +
+        'synchronously cannot wait on a promise',
+    ).not.toContain('await ');
+
+    expect(
+      DICTATION_CLIENT_SOURCE,
+      'DictationClient.dispose must not be declared async',
+    ).not.toContain('async dispose(');
+    const dictationDisposeStart = DICTATION_CLIENT_SOURCE.indexOf('dispose(): void {');
+    expect(
+      dictationDisposeStart,
+      'DictationClient.dispose must exist as a synchronous void method',
+    ).toBeGreaterThan(-1);
+    const dictationDisposeRegion = sliceBalancedBlock(DICTATION_CLIENT_SOURCE, dictationDisposeStart);
+    expect(
+      dictationDisposeRegion,
+      'DictationClient.dispose must not await anything either, or the worker kill it triggers ' +
+        'could still be in flight when Electron continues tearing the app down',
+    ).not.toContain('await ');
   });
 });
