@@ -5753,6 +5753,16 @@ export interface ElectronAPI {
     unsubscribeDiff: (worktreePath: string) => void;
     onDiffChanged: (callback: () => void) => () => void;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
+    /**
+     * Warm the throttled all-remotes fetch for a worktree, so a `checkPendingChanges`
+     * that follows within the throttle window either skips its own fetch or joins the
+     * one already in flight and pays only its remainder. Fire-and-forget: never rejects,
+     * never prompts (non-interactive git), and shares the background scheduler's cache
+     * and its `git.autoFetchIntervalMinutes` setting, so it is a no-op when the user has
+     * turned background fetching off. The board calls it when a drag of a worktree-backed
+     * card begins, so a Done drop's probe is not starting a fetch after the release.
+     */
+    prefetchRemotes: (checkPath: string) => Promise<void>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
     worktreeHead: (input: GitWorktreeHeadInput) => Promise<GitWorktreeHeadResult>;
     commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;

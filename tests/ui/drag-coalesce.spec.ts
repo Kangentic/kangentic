@@ -3,15 +3,17 @@ import { launchPage, waitForBoard, createProject, createTask } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 /**
- * Drag-jank gate: while a board drag is active, non-positional session-store
- * pushes (spawn progress, activity, ...) must be HELD by the coalescer so the
- * initializing TaskCard does not re-render mid-drag (which would force dnd-kit
- * to re-measure on the pointer-move thread). They flush on drag end.
+ * Drag liveness gate: while a board drag is active, session-store pushes (spawn
+ * progress, activity, usage, ...) must NOT be held. The coalescer parks only
+ * background reloads for the length of a gesture; a push applies immediately, so
+ * an unrelated card keeps reporting while another card is dragged. What must not
+ * happen is the applied push changing that card's HEIGHT, which is the one thing
+ * that makes dnd-kit re-measure mid-drag.
  *
- * Asserting at the store level is the clean proxy: if the held update never
- * reaches the session store during the drag, the subscribed card cannot
- * re-render from it. We verify the value is unchanged during the drag and
- * applied immediately after the drop.
+ * Asserting at the store level is the clean proxy for "applied": if the value
+ * reaches the session store during the drag, the subscribed card re-rendered from
+ * it. The height assertion is the guard against the re-render becoming a
+ * re-measure.
  */
 
 const runId = Date.now();

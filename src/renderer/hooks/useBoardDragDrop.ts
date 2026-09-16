@@ -228,11 +228,13 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // Two-tier collision detection for task drags:
     // Tier 1: rectIntersection on column sortable containers (full visual column rects)
     // Tier 2: closestCenter scoped to the detected column (precise insertion positioning)
+    //
+    // Cost, measured on the production build (2026-09-16 drag audit, event timing
+    // on a 27-card board): the whole pointermove handler, this callback included,
+    // runs under 0.2ms. The filter passes below are not worth caching across the
+    // gesture; the one pass that was wasted on the common path (the lane list only
+    // the fallback reads) now lives in that branch.
     const activeColumn = findSwimlane(String(args.active.id));
-    const swimlaneContainers = args.droppableContainers.filter((container) => {
-      const containerId = String(container.id);
-      return !containerId.startsWith('column:') && swimlaneIds.has(containerId);
-    });
 
     // Tier 1: which column does the card overlap?
     // Uses column: sortable containers (full visual column rects) rather than
@@ -263,12 +265,11 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     }
 
     // Fallback: pointer in gap between columns - closestCenter against other swimlanes
-    return closestCenter({
-      ...args,
-      droppableContainers: swimlaneContainers.filter(
-        (container) => String(container.id) !== activeColumn,
-      ),
+    const otherSwimlaneContainers = args.droppableContainers.filter((container) => {
+      const containerId = String(container.id);
+      return !containerId.startsWith('column:') && swimlaneIds.has(containerId) && containerId !== activeColumn;
     });
+    return closestCenter({ ...args, droppableContainers: otherSwimlaneContainers });
   }, [findSwimlane, doneLaneId, swimlaneIds]);
 
   /** Toggle .drop-highlight class on swimlane DOM elements without React re-render. */
@@ -323,9 +324,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // Reset for this drag. handleDragOver re-derives it before any drop fires,
     // so a stale value carried over between drags is harmless.
     overDoneRef.current = false;
-    // Gate non-positional session-store updates for the duration of the drag so
-    // an in-flight spawn can't re-render a sortable card and force dnd-kit to
-    // re-measure on the pointer-move thread. Flushed in handleDragEnd/Cancel.
+    // Park background reloads for the duration of the drag (session pushes still
+    // apply; only a full reload re-measures a lane). Flushed in handleDragEnd/Cancel.
     beginBoardDrag();
     dragInFlightRef.current = true;
     const id = event.active.id as string;
@@ -340,6 +340,15 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
           dragOriginRef.current = task.swimlane_id;
           const sourceElement = document.querySelector(`[data-task-id="${id}"]`);
           dragStartRectRef.current = sourceElement?.getBoundingClientRect() ?? null;
+          // A worktree-backed card may be heading for Done, whose pending-changes
+          // probe fetches remotes after the release (the sticky part of a Done drop:
+          // 640 to 1150ms on the dogfooding instance against a 500ms fly). Start that
+          // fetch now, under the gesture, so the probe either finds it cached or joins
+          // it already in flight. Fire-and-forget and non-interactive; it cannot fail
+          // the drag, and main skips it when background fetching is turned off.
+          if (task.worktree_path) {
+            void window.electronAPI.git.prefetchRemotes(task.worktree_path).catch(() => {});
+          }
         }
       }
     }

@@ -219,3 +219,89 @@ describe('event-loop-lag monitor', () => {
     expect(secondReport.recentSpikes).toHaveLength(1);
   });
 });
+
+/**
+ * `timeSyncWork` is the attribution half: the drift sampler above says WHEN
+ * the loop blocked, and the labelled spans say WHAT. The threshold is 50ms and
+ * the ring holds 60 entries. Recording is skipped entirely while the monitor
+ * is not running, which is what keeps a production build at one boolean check.
+ */
+describe('timeSyncWork attribution ring', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function loadMonitor() {
+    return import('../../src/main/diagnostics/event-loop-lag');
+  }
+
+  /** Make performance.now() advance by `stepMs` on every call. */
+  function stepClock(stepMs: number): void {
+    let fakeNow = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      const value = fakeNow;
+      fakeNow += stepMs;
+      return value;
+    });
+  }
+
+  it('passes the work value through and records nothing while the monitor is stopped', async () => {
+    const { timeSyncWork, getEventLoopLagReport } = await loadMonitor();
+    const nowSpy = vi.spyOn(performance, 'now');
+    expect(timeSyncWork('unmonitored', () => 42)).toBe(42);
+    // No clock reads at all: the stopped-monitor path is a single boolean check.
+    expect(nowSpy).not.toHaveBeenCalled();
+    expect(getEventLoopLagReport().recentSlowSyncWork).toHaveLength(0);
+  });
+
+  it('records a span at or over the threshold with its label, and skips a fast one', async () => {
+    const { startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, getEventLoopLagReport } =
+      await loadMonitor();
+    // Every clock read advances 30ms: start -> end of one span is 30ms (skipped).
+    stepClock(30);
+    startEventLoopLagMonitor();
+    expect(timeSyncWork('fast', () => 'ok')).toBe('ok');
+    expect(getEventLoopLagReport().recentSlowSyncWork).toHaveLength(0);
+
+    // Two clock reads per span at 30ms each puts a nested read past the threshold.
+    stepClock(60);
+    timeSyncWork('slow', () => undefined);
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+    expect(report.slowSyncThresholdMs).toBe(50);
+    expect(report.recentSlowSyncWork).toHaveLength(1);
+    expect(report.recentSlowSyncWork[0].label).toBe('slow');
+    expect(report.recentSlowSyncWork[0].ms).toBe(60);
+    expect(report.recentSlowSyncWork[0].at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('still records a span whose work throws, and rethrows it', async () => {
+    const { startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, getEventLoopLagReport } =
+      await loadMonitor();
+    stepClock(80);
+    startEventLoopLagMonitor();
+    expect(() => timeSyncWork('throwing', () => { throw new Error('boom'); })).toThrow('boom');
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+    expect(report.recentSlowSyncWork.map((span) => span.label)).toEqual(['throwing']);
+  });
+
+  it('evicts the oldest span once the ring exceeds 60 entries', async () => {
+    const { startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, getEventLoopLagReport } =
+      await loadMonitor();
+    stepClock(50);
+    startEventLoopLagMonitor();
+    for (let index = 0; index < 61; index++) timeSyncWork(`span-${index}`, () => undefined);
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+    expect(report.recentSlowSyncWork).toHaveLength(60);
+    expect(report.recentSlowSyncWork[0].label).toBe('span-1');
+    expect(report.recentSlowSyncWork[59].label).toBe('span-60');
+  });
+});

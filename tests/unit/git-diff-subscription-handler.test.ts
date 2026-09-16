@@ -300,3 +300,98 @@ describe('registerGitDiffHandlers GIT_WORKTREE_HEAD', () => {
     expect(result).toEqual({ branch: 'feature/auth', sha: 'abc1234def' });
   });
 });
+
+/**
+ * GIT_PREFETCH_REMOTES: the head start the board fires when a drag of a
+ * worktree-backed card begins, so the Done-drop probe is not the thing that
+ * starts a remote fetch (measured 640 to 1150ms on the dogfooding instance
+ * against a 500ms card flight - docs/board-drag-perf-audit.md).
+ *
+ * The gate is the load-bearing part and the reason these tests exist: the
+ * endpoint honours the SAME per-project setting the background scheduler reads,
+ * so a user who turned background fetching off gets no fetch from dragging a
+ * card. Nothing else can catch that regressing - the UI tier drives the mock
+ * bridge, which never runs this handler at all.
+ */
+describe('registerGitDiffHandlers GIT_PREFETCH_REMOTES gate', () => {
+  type PrefetchHandler = (event: unknown, checkPath: unknown) => Promise<void>;
+
+  const WORKTREE_PATH = '/mock/worktrees/task-a';
+  const PROJECT_PATH = '/mock/project';
+  let getEffectiveConfig: ReturnType<typeof vi.fn>;
+
+  /** Mount the handlers with an auto-fetch interval, then return the prefetch handler. */
+  function mountWithInterval(autoFetchIntervalMinutes: number | null): PrefetchHandler {
+    vi.clearAllMocks();
+    vi.mocked(fetchAllRemotesIfStale).mockResolvedValue(undefined);
+    getEffectiveConfig = vi.fn(() => ({ git: { autoFetchIntervalMinutes } }));
+    const context = {
+      mainWindow: {},
+      diffWatcher: { subscribe: vi.fn(() => vi.fn()) },
+      currentProjectPath: PROJECT_PATH,
+      configManager: { getEffectiveConfig },
+    } as unknown as IpcContext;
+    registerGitDiffHandlers(context);
+    const entry = mockHandle.mock.calls.find((call) => call[0] === IPC.GIT_PREFETCH_REMOTES);
+    if (!entry) throw new Error('ipcMain.handle was never called with IPC.GIT_PREFETCH_REMOTES');
+    return entry[1] as PrefetchHandler;
+  }
+
+  it('fetches non-interactively for the given worktree when auto-fetch is on', async () => {
+    const handler = mountWithInterval(5);
+
+    await handler(null, WORKTREE_PATH);
+
+    // Non-interactive: a drag cannot be allowed to raise a credential prompt.
+    expect(fetchAllRemotesIfStale).toHaveBeenCalledWith(WORKTREE_PATH, { nonInteractive: true });
+    // Resolved against the current project, so a project override of the
+    // interval applies rather than the global value alone.
+    expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
+  });
+
+  it.each([
+    ['null (off)', null],
+    ['zero', 0],
+    ['negative', -1],
+  ])('does not fetch when the auto-fetch interval is %s', async (_label, interval) => {
+    const handler = mountWithInterval(interval);
+
+    await handler(null, WORKTREE_PATH);
+
+    expect(fetchAllRemotesIfStale).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a non-string', 42],
+    ['undefined', undefined],
+  ])('ignores %s as a path without touching the network', async (_label, checkPath) => {
+    const handler = mountWithInterval(5);
+
+    await handler(null, checkPath);
+
+    expect(fetchAllRemotesIfStale).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the global config when no project is open', async () => {
+    vi.clearAllMocks();
+    vi.mocked(fetchAllRemotesIfStale).mockResolvedValue(undefined);
+    getEffectiveConfig = vi.fn(() => ({ git: { autoFetchIntervalMinutes: 5 } }));
+    const context = {
+      mainWindow: {},
+      diffWatcher: { subscribe: vi.fn(() => vi.fn()) },
+      currentProjectPath: null,
+      configManager: { getEffectiveConfig },
+    } as unknown as IpcContext;
+    registerGitDiffHandlers(context);
+    const entry = mockHandle.mock.calls.find((call) => call[0] === IPC.GIT_PREFETCH_REMOTES);
+    const handler = entry![1] as PrefetchHandler;
+
+    await handler(null, WORKTREE_PATH);
+
+    // `undefined`, not `null`: getEffectiveConfig treats a missing path as
+    // "global only", and passing null would read as a path.
+    expect(getEffectiveConfig).toHaveBeenCalledWith(undefined);
+    expect(fetchAllRemotesIfStale).toHaveBeenCalledWith(WORKTREE_PATH, { nonInteractive: true });
+  });
+});

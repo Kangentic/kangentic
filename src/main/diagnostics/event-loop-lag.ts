@@ -15,6 +15,18 @@
  * timer is `unref`'d so it never keeps the process alive past a clean quit.
  * Started only in dev (gated by `__KANGENTIC_DEV__` at the call site); read via
  * the inspection server's `/event-loop-lag` route.
+ *
+ * The drift sampler says WHEN the loop blocked, never WHAT blocked it: a spike
+ * is a timestamp and a duration. The 2026-09-16 board-drag audit found five
+ * blocks of 929 to 1160ms in one afternoon with nothing in the IPC log or the
+ * console log inside their windows, which is exactly the shape of unlogged
+ * synchronous work (a sync sqlite transaction, a sync file read). So the known
+ * synchronous suspects wrap themselves in `timeSyncWork`, which records any
+ * span at or over `SLOW_SYNC_THRESHOLD_MS` into a second ring the same report
+ * carries as `recentSlowSyncWork`. Join the two rings by wall clock: a spike
+ * whose window contains a labelled span is attributed, one with no span is a
+ * suspect that is not wrapped yet. Recording is skipped entirely while the
+ * monitor is not running, so a production build pays one boolean check.
  */
 
 export interface EventLoopLagSpike {
@@ -22,6 +34,15 @@ export interface EventLoopLagSpike {
   at: string;
   /** How long the event loop was blocked beyond the expected interval, in ms. */
   lagMs: number;
+}
+
+export interface SlowSyncWork {
+  /** UTC ISO timestamp of when the span ENDED (the moment it was recorded). */
+  at: string;
+  /** The label the wrapping site chose, e.g. `metrics-snapshot`. */
+  label: string;
+  /** The span's duration in ms. */
+  ms: number;
 }
 
 export interface EventLoopLagReport {
@@ -38,11 +59,17 @@ export interface EventLoopLagReport {
   spikeCount: number;
   /** The most recent stalls (bounded ring, newest last). */
   recentSpikes: EventLoopLagSpike[];
+  /** Spans wrapped in `timeSyncWork` had to reach this many ms to be recorded. */
+  slowSyncThresholdMs: number;
+  /** The most recent slow synchronous spans (bounded ring, newest last). */
+  recentSlowSyncWork: SlowSyncWork[];
 }
 
 const SAMPLE_INTERVAL_MS = 100;
 const SPIKE_THRESHOLD_MS = 75;
 const RING_SIZE = 120;
+const SLOW_SYNC_THRESHOLD_MS = 50;
+const SLOW_SYNC_RING_SIZE = 60;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let startedAtMs: number | null = null;
@@ -51,6 +78,28 @@ let samples = 0;
 let maxLagMs = 0;
 let spikeCount = 0;
 const recentSpikes: EventLoopLagSpike[] = [];
+const recentSlowSyncWork: SlowSyncWork[] = [];
+
+/**
+ * Run a synchronous piece of main-process work and, while the monitor is
+ * running, record it into `recentSlowSyncWork` if it took at least
+ * `SLOW_SYNC_THRESHOLD_MS`. The work's return value and any throw pass through
+ * unchanged; a throwing span is still recorded, since a slow failure blocks the
+ * loop exactly as long as a slow success.
+ */
+export function timeSyncWork<T>(label: string, work: () => T): T {
+  if (timer === null) return work();
+  const startedAt = performance.now();
+  try {
+    return work();
+  } finally {
+    const elapsed = performance.now() - startedAt;
+    if (elapsed >= SLOW_SYNC_THRESHOLD_MS) {
+      recentSlowSyncWork.push({ at: new Date().toISOString(), label, ms: Math.round(elapsed) });
+      while (recentSlowSyncWork.length > SLOW_SYNC_RING_SIZE) recentSlowSyncWork.shift();
+    }
+  }
+}
 
 export function startEventLoopLagMonitor(): void {
   if (timer) return;
@@ -89,5 +138,7 @@ export function getEventLoopLagReport(): EventLoopLagReport {
     maxLagMs: Math.round(maxLagMs),
     spikeCount,
     recentSpikes: [...recentSpikes],
+    slowSyncThresholdMs: SLOW_SYNC_THRESHOLD_MS,
+    recentSlowSyncWork: [...recentSlowSyncWork],
   };
 }

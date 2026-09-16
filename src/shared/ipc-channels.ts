@@ -202,6 +202,7 @@ export const IPC = {
   GIT_DIFF_UNSUBSCRIBE: 'git:diffUnsubscribe',
   GIT_DIFF_CHANGED: 'git:diffChanged',
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
+  GIT_PREFETCH_REMOTES: 'git:prefetchRemotes',
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
   GIT_WORKTREE_HEAD: 'git:worktreeHead',
   GIT_COMMIT_GRAPH: 'git:commitGraph',

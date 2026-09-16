@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { FileWatcher } from './file-watcher';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { SessionUsage, SessionEvent, AdapterRuntimeStrategy } from '../../../shared/types';
 
 /**
@@ -144,9 +145,12 @@ export class StatusFileReader {
       // decode changes. Sessions without a hook still need the file
       // deleted but don't need change notifications.
       if (statusFileHook) {
+        // Both change handlers below read synchronously on the main thread,
+        // once per file change per running session: the dev lag monitor
+        // records a read that runs long (see event-loop-lag.ts).
         state.statusWatcher = new FileWatcher({
           filePath: statusOutputPath,
-          onChange: () => this.handleStatusChange(sessionId),
+          onChange: () => timeSyncWork('status-file:status', () => this.handleStatusChange(sessionId)),
           debounceMs: 100,
         });
         // Immediately read any existing status.json (e.g. resumed sessions).
@@ -170,7 +174,7 @@ export class StatusFileReader {
 
       state.eventsWatcher = new FileWatcher({
         filePath: eventsOutputPath,
-        onChange: () => this.handleEventsChange(sessionId),
+        onChange: () => timeSyncWork('status-file:events', () => this.handleEventsChange(sessionId)),
         debounceMs: 50,
         isStale: () => {
           try {

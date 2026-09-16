@@ -403,6 +403,7 @@ const api: ElectronAPI = {
     subscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_SUBSCRIBE, worktreePath),
     unsubscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_UNSUBSCRIBE, worktreePath),
     checkPendingChanges: (input) => ipcRenderer.invoke(IPC.GIT_CHECK_PENDING_CHANGES, input),
+    prefetchRemotes: (checkPath) => ipcRenderer.invoke(IPC.GIT_PREFETCH_REMOTES, checkPath),
     branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
     worktreeHead: (input) => ipcRenderer.invoke(IPC.GIT_WORKTREE_HEAD, input),
     commitGraph: (input) => ipcRenderer.invoke(IPC.GIT_COMMIT_GRAPH, input),
