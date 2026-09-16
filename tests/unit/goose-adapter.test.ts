@@ -162,28 +162,43 @@ describe('GooseAdapter', () => {
       expect(result.version).toBeNull();
     });
 
-    it('rejects the Go migration tool that publishes the same `goose` binary name', async () => {
+    it.each([
+      ['pressly/goose, the Go migration tool', 'goose version: v3.24.1'],
+      ['the awesome-goose scaffolding framework', 'goose version 0.0.0'],
+    ])('rejects %s, which publishes the same `goose` binary name', async (_label, banner) => {
       // THE BINARY-NAME COLLISION, and the reason parseVersion is anchored.
-      // pressly/goose is a widely installed Go database-migration CLI that
-      // installs as `goose` (`go install github.com/pressly/goose/v3/cmd/goose`
-      // -> ~/go/bin/goose). Its banner is `goose version: v3.24.1`, so a
-      // scan-anywhere /\d+\.\d+\.\d+/ pulls `3.24.1` out of it and reports the
-      // migration tool as Block's agent CLI - after which Kangentic spawns
-      // `goose run -t "<prompt>" -s` against a tool that has no such command.
-      // Requiring a digit right after the `goose ` product name rejects it,
-      // the same anchoring GrokDetector uses for the shared `agent` shim.
-      mockVersionResult = 'goose version: v3.24.1';
+      // Both of these install a binary called `goose` and print a
+      // MAJOR.MINOR.PATCH run, so a scan-anywhere /\d+\.\d+\.\d+/ accepts them
+      // and Kangentic then spawns `goose run -t "<prompt>" -s` against a tool
+      // with no such command. Both put the literal word `version` where Block's
+      // clap banner puts the digits, which is what the anchor keys off - the
+      // same discriminator GrokDetector uses for the shared `agent` shim.
+      mockVersionResult = banner;
       const result = await adapter.detect('/custom/goose');
       expect(result.found).toBe(false);
       expect(result.version).toBeNull();
     });
 
-    it('accepts Block Goose banners', async () => {
-      for (const banner of ['goose 1.10.0', 'goose 1.10.0-rc.1', 'GOOSE 2.0.0']) {
+    it('accepts the Block Goose banner in every form its packaging plausibly prints', async () => {
+      // Goose's published docs show the `--version` COMMAND and never its
+      // stdout, so the accept side is deliberately wider than one pinned
+      // string: a false negative here surfaces as a diagnosable "not found"
+      // with the raw line logged, while a false positive spawns the wrong
+      // binary. All of these still carry a digit right after the product name,
+      // so none of them weakens the rejection above.
+      for (const banner of [
+        'goose 1.10.0',
+        'goose v1.10.0',
+        'goose-cli 1.10.0',
+        'goose 1.10.0 (3cd0d0cbce)',
+        'goose 1.10.0-rc.1',
+        'GOOSE 2.0.0',
+      ]) {
         adapter.invalidateDetectionCache();
         mockVersionResult = banner;
         const result = await adapter.detect('/custom/goose');
         expect(result.found, `banner ${banner} should be accepted`).toBe(true);
+        expect(result.version, `banner ${banner}`).toMatch(/^\d/);
       }
     });
 
