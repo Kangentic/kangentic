@@ -45,8 +45,6 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. |
 | `hydrateForImport(repository, issues)` | optional | Fetch deferred per-item detail for the SELECTED import set and fold it into each body, called at import time only. Lets a provider keep the list fetch cheap. Implemented by Azure DevOps to fetch work item comments (one `az rest` per item) for just the items being imported instead of every listed one. |
 | `listExternalIds(input)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL. Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
-
-Not every adapter honours `input.since`. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana and GitHub Projects ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
 | `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Takes `Array<FileAttachmentRef>` (see below). Implemented by Azure DevOps for `AttachedFile` relations and by Asana for inline images and uploaded attachments. |
 | `resolveLabel(repository)` | optional | Resolve a human-readable display label from a repository identifier, called by the backlog handler after a source is added (Asana: project GID to project name). Best-effort: returning `null`, or throwing, keeps the label the URL parser built. |
@@ -54,6 +52,8 @@ Not every adapter honours `input.since`. Azure DevOps maps it to a WIQL `[System
 | `listProjects(credentials)` | optional | Future: list boards/projects the user can pick from. |
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
 | `pushUpdates(tasks, credentials)` | optional | Future: write task updates back to the remote. |
+
+Not every adapter honours `input.since`. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana and GitHub Projects ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
 
 ### `FileAttachmentRef`
 
