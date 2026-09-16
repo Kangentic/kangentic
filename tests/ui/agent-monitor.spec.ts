@@ -267,6 +267,16 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   return { browser, page };
 }
 
+/** Write a global config field through the real path the settings controls use. */
+async function setConfig(page: Page, partial: Record<string, string>): Promise<void> {
+  await page.evaluate((value) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { getState: () => { updateConfig: (partial: Record<string, string>) => Promise<void> } } };
+    }).__zustandStores;
+    return stores?.config.getState().updateConfig(value);
+  }, partial);
+}
+
 async function openMonitor(page: Page): Promise<void> {
   await page.locator('[data-testid="agent-monitor-button"]').click();
   await page.locator('[data-testid="monitor-page"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -443,35 +453,47 @@ test.describe('agent monitor', () => {
       }));
 
       await expect(peek).toContainText('newest line');
-      // No labels on this row, so it gets the wider form and all three fit.
-      await expect(peek).toHaveAttribute('data-rows', '4');
+      // Three at the default density, which is the board card's clamp.
+      await expect(peek).toHaveAttribute('data-rows', '3');
       await expect(peek).toContainText('oldest line');
     } finally {
       await browser.close();
     }
   });
 
-  test('a labelled row gets the narrower two-row peek, and its labels still render beside it', async () => {
-    // sess-working is the fixture's one labelled row (see the comment on its
-    // seed). Everything else here has labels: [], so PEEK_ROWS_WITH_LABELS
-    // and the conditional LabelPills block (`row.labels.length > 0 && ...`)
-    // never ran before this test - a revert of either would go unnoticed.
+  test('the peek follows card density, the same setting the board card uses, not label presence', async () => {
+    // This used to be two rows on a labelled card and four on an unlabelled one,
+    // so two cards on the same grid showed different amounts for a reason the
+    // user never chose. sess-working is the fixture's one labelled row (see the
+    // comment on its seed); it must now match its unlabelled neighbour at every
+    // density, and its labels must still render beside the well.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
-      const card = page.locator('[data-session-id="sess-working"]');
-      await expect(card.locator('[data-testid="monitor-card-peek"]')).toHaveAttribute('data-rows', '2');
-      await expect(card.getByText('bug', { exact: true })).toBeVisible();
+      const labelled = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-peek"]');
+      const unlabelled = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]');
+      await expect(labelled).toHaveAttribute('data-rows', '3');
+      await expect(unlabelled).toHaveAttribute('data-rows', '3');
+      await expect(page.locator('[data-session-id="sess-working"]').getByText('bug', { exact: true })).toBeVisible();
+
+      await setConfig(page, { cardDensity: 'comfortable' });
+      await expect(labelled).toHaveAttribute('data-rows', '5');
+      await expect(unlabelled).toHaveAttribute('data-rows', '5');
+
+      await setConfig(page, { cardDensity: 'compact' });
+      await expect(labelled).toHaveAttribute('data-rows', '1');
+      await expect(unlabelled).toHaveAttribute('data-rows', '1');
     } finally {
       await browser.close();
     }
   });
 
-  test('the card slot follows Card Preview: agent messages without the well, the latest message, the description, then the peek', async () => {
+  test('the card slot follows Card Preview: the latest message, recent messages, the description, and the peek', async () => {
     // Parity with the board card: the Task tab's Card Preview setting decides
-    // what this slot prints, and the output peek is only the FALLBACK (the
-    // analogue of the board card falling back to its description).
+    // what this slot prints. A LIVE row shows what the agent is doing, its trail
+    // if it has spoken and the raw terminal peek otherwise; both render in the
+    // same well, so a live card always has one.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
@@ -487,21 +509,31 @@ test.describe('agent monitor', () => {
       }, value);
 
       // A trail lands for the task agent: the peek gives way to the agent's
-      // latest message (the default), wrapped to two rows since this row
-      // carries a label, with no well around it. The Command Terminal has no
-      // trail, so its peek stays.
+      // latest message (the default), wrapped to three rows at the default
+      // density, in the SAME well the peek was using. The Command Terminal has
+      // no trail, so its peek stays.
       await page.evaluate(() => window.__mockFireMessageTrail?.('sess-working', [
         { uuid: 'm1', ts: 1, text: 'Reading the buffer manager.' },
         { uuid: 'm2', ts: 2, text: 'Found the race in the drain path.' },
         { uuid: 'm3', ts: 3, text: 'Adding the guard now.' },
       ]));
       const trail = card.locator('[data-testid="monitor-card-trail"]');
+      // Two levels down: the trail root is the well, whose one child is the
+      // fixed-height box the lines sit in.
+      const trailLines = trail.locator('> div > div');
       await expect(trail).toHaveAttribute('data-mode', 'latest');
-      await expect(trail).toHaveAttribute('data-lines', '2');
-      await expect(trail.locator('> div')).toHaveText(['Adding the guard now.']);
-      await expect(trail.locator('> div')).toHaveClass(/line-clamp-2/);
+      await expect(trail).toHaveAttribute('data-lines', '3');
+      await expect(trailLines).toHaveText(['Adding the guard now.']);
+      await expect(trailLines).toHaveClass(/line-clamp-3/);
       await expect(card.locator('[data-testid="monitor-card-peek"]')).toHaveCount(0);
       await expect(terminalCard.locator('[data-testid="monitor-card-peek"]')).toContainText('nothing to commit');
+
+      // The trail and the peek are one container, which is the point: a reader
+      // scanning this grid sees one box meaning "the agent", not two.
+      await expect(trail).toHaveAttribute('data-terminal', 'true');
+      const wellClass = async (locator: ReturnType<Page['locator']>) => (await locator.getAttribute('class')) ?? '';
+      expect(await wellClass(trail)).toContain('bg-surface-hover/50');
+      expect(await wellClass(terminalCard.locator('[data-testid="monitor-card-peek"]'))).toContain('bg-surface-hover/50');
 
       // The cost gate follows the slot: once this row draws the trail, the
       // renderer stops asking main to sample its terminal, while the Command
@@ -514,10 +546,14 @@ test.describe('agent monitor', () => {
       await expect.poll(lastWanted).not.toContain('sess-working');
       await expect.poll(lastWanted).toContain('sess-command-terminal');
 
-      // Recent messages: one line each, newest last, in the same two rows.
+      // Recent messages: one line each, newest last, in the same three rows.
       await setCardPreview('agent-messages');
       await expect(trail).toHaveAttribute('data-mode', 'lines');
-      await expect(trail.locator('> div')).toHaveText(['Found the race in the drain path.', 'Adding the guard now.']);
+      await expect(trailLines).toHaveText([
+        'Reading the buffer manager.',
+        'Found the race in the drain path.',
+        'Adding the guard now.',
+      ]);
 
       // Task description: the row carries one after this snapshot, so the card
       // prints it in place of the trail; the terminal row has none and keeps
@@ -558,22 +594,54 @@ test.describe('agent monitor', () => {
     }
   });
 
-  test('the monitor card footer draws no rule above it, unlike the board card default', async () => {
-    // ContextUsageFooter's `divider` prop defaults to true (the board card's
-    // rule); MonitorCard passes divider={false} because its peek well already
-    // closes the content region above the footer. Nothing asserted that
-    // before this - reverting the prop passed silently. The board-card
-    // default (divider omitted, so `border-t` present) is proven by
-    // tests/ui/task-card-context-window.spec.ts's usageBar locator, which
-    // already renders that exact footer; adding the complementary assertion
-    // there is out of scope for this file.
+  test('the monitor card footer draws the same rule the board card does', async () => {
+    // This used to be the opposite assertion. MonitorCard passed divider={false}
+    // on the grounds that its peek well already closed the content region, which
+    // stopped being true once a card could show a plain description instead and
+    // land with nothing between its text and the model line. The two cards are
+    // one design, so the footer is the board card's, prop for prop.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
       const footer = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
       await expect(footer).toBeVisible();
-      await expect(footer).not.toHaveClass(/border-t/);
+      await expect(footer).toHaveClass(/border-t/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a paused row keeps its trail in the store but the card falls back to its description', async () => {
+    // The monitor half of the board card's live gate. A trail outlives its
+    // session, so without this a paused card printed agent prose under a
+    // CirclePause glyph with no activity mark and no filling bar to say so.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused'
+          ? Object.assign({}, row, { description: 'Paused: an Obsidian-like graph over the memory index.' })
+          : row
+      ))));
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-paused', [
+        { uuid: 'p1', ts: 1, text: 'Parking this until the retrieval index lands.' },
+      ]));
+
+      const card = page.locator('[data-session-id="sess-paused"]');
+      await expect(card.locator('[data-testid="monitor-card-description"]')).toContainText('Obsidian-like graph');
+      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
+      await expect(card).not.toContainText('Parking this until');
+
+      // The same trail on a RUNNING row does show, so this is the live gate and
+      // not the trail simply failing to arrive.
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-working', [
+        { uuid: 'w1', ts: 1, text: 'Parking this until the retrieval index lands.' },
+      ]));
+      await expect(
+        page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-trail"]'),
+      ).toContainText('Parking this until');
     } finally {
       await browser.close();
     }

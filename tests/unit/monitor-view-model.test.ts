@@ -4,6 +4,8 @@ import {
   bucketOf,
   filterRows,
   groupRows,
+  isLiveBucket,
+  monitorSlotKind,
   sortRows,
   summarize,
   toRenderUnits,
@@ -74,6 +76,69 @@ describe('bucketOf', () => {
 
   it('treats a running session with no reported activity as working', () => {
     expect(bucketOf(makeRow({ status: 'running', activity: null }))).toBe('working');
+  });
+});
+
+describe('isLiveBucket', () => {
+  it('counts an agent waiting on the user as live, and nothing parked', () => {
+    // The whole point: an agent that needs you is still ON the task. This is the
+    // condition the activity mark renders for, so the slot and the glyph agree.
+    expect(isLiveBucket('working')).toBe(true);
+    expect(isLiveBucket('needs-you')).toBe(true);
+    expect(isLiveBucket('idle')).toBe(false);
+    expect(isLiveBucket('finished')).toBe(false);
+  });
+
+  it('agrees with the buckets that draw an ActivityMark', () => {
+    // Pinned as a pair rather than by eye: `stateGlyphContent` draws a mark for
+    // `working` and `needs-you` and a lucide glyph for the rest, and a card that
+    // showed agent output under a paused glyph is the bug this prevents.
+    for (const bucket of BUCKET_ORDER) {
+      expect(isLiveBucket(bucket)).toBe(bucket === 'working' || bucket === 'needs-you');
+    }
+  });
+});
+
+describe('monitorSlotKind', () => {
+  const running = { status: 'running', activity: 'thinking' } as const;
+  const paused = { status: 'suspended', activity: null } as const;
+
+  it('gives a live row its trail, and the terminal peek when it has not spoken', () => {
+    expect(monitorSlotKind(makeRow(running), 'latest', true)).toBe('trail');
+    expect(monitorSlotKind(makeRow(running), 'latest', false)).toBe('peek');
+    // Both render in the same well, so a live card always has one.
+    expect(monitorSlotKind(makeRow({ ...running, description: 'A task' }), 'latest', false)).toBe('peek');
+  });
+
+  it('sends a stopped row back to its description even when it still holds a trail', () => {
+    // The case the live gate exists for. A trail outlives its session, so this
+    // row genuinely has one; the card must still print what the TASK is.
+    expect(monitorSlotKind(makeRow({ ...paused, description: 'A task' }), 'latest', true)).toBe('description');
+    expect(monitorSlotKind(makeRow({ status: 'exited', description: 'A task' }), 'latest', true)).toBe('description');
+  });
+
+  it('falls to the peek when a stopped row has no description, as a Command Terminal has none', () => {
+    expect(monitorSlotKind(makeRow({ ...paused, description: null }), 'latest', true)).toBe('peek');
+  });
+
+  it('treats a missing or empty description as no description', () => {
+    // `makeRow` omits the field, which is `undefined` rather than `null`. A
+    // `!== null` test let that through and rendered an empty description slot.
+    expect(makeRow(paused).description).toBeUndefined();
+    expect(monitorSlotKind(makeRow(paused), 'latest', false)).toBe('peek');
+    expect(monitorSlotKind(makeRow({ ...paused, description: '' }), 'latest', false)).toBe('peek');
+  });
+
+  it('honours the description preview on every row, live or not', () => {
+    // Card Preview `description` is an explicit request, so it outranks the
+    // live/stopped split entirely.
+    expect(monitorSlotKind(makeRow({ ...running, description: 'A task' }), null, true)).toBe('description');
+    expect(monitorSlotKind(makeRow({ ...paused, description: 'A task' }), null, true)).toBe('description');
+    expect(monitorSlotKind(makeRow({ ...running, description: null }), null, true)).toBe('peek');
+  });
+
+  it('never returns a trail for a row whose trail is empty', () => {
+    expect(monitorSlotKind(makeRow(running), 'lines', false)).not.toBe('trail');
   });
 });
 

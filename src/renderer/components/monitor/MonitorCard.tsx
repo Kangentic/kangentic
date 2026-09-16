@@ -7,12 +7,19 @@ import { LabelPills, Pill } from '../Pill';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
-import { CardMessageTrail, EXCERPT_CLAMP_CLASS, TRAIL_HEIGHT_CLASS, trailModeFor, type ExcerptLines } from '../board/CardMessageTrail';
+import {
+  CardMessageTrail,
+  EXCERPT_CLAMP_CLASS,
+  TRAIL_HEIGHT_CLASS,
+  TRAIL_WELL_CLASS,
+  trailModeFor,
+  type ExcerptLines,
+} from '../board/CardMessageTrail';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
-import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
+import { bucketOf, formatMonitorStatus, monitorSlotKind, needsUser } from './monitor-view-model';
 
 /**
  * One agent session, rendered as the board's task card.
@@ -23,19 +30,22 @@ import { bucketOf, formatMonitorStatus, needsUser } from './monitor-view-model';
  * drift). A user arriving here should recognise the object immediately rather
  * than learn a second card.
  *
- * Three departures from the board card, each earning its place:
+ * Everything between the title row and the footer is now IDENTICAL to the board
+ * card: the same slot, the same well, the same fixed heights off the same
+ * `cardDensity`, the same live condition. Seven things used to differ for no
+ * reason anyone could name (row count driven by label presence rather than
+ * density, `mt-2` against `mt-1`, a fixed-height description, a looser
+ * description test, a 15px glyph, no footer divider, density-blind padding) and
+ * each has been moved onto the board card's value. Do not reintroduce one here
+ * without changing the board card too: these are one design on two surfaces.
+ *
+ * Three departures remain, each earning its place:
  *   - an eyebrow line naming the owning project and column (the cross-project bit)
  *   - the live activity line ("Idle for 5m - Claude is waiting for your input")
  *     as a right-aligned eyebrow pill, which is what this view exists to surface
- *   - a live OUTPUT PEEK as the slot's FALLBACK where the board card falls back
- *     to its task description. The slot itself follows the same Card Preview
- *     setting the board card does (`cardPreview`): the agent's recent messages
- *     or its latest message, rendered through the shared `CardMessageTrail` with
- *     no well, so a user who set the preference on the Task tab sees it honored
- *     here. Only when that yields nothing (the description mode, a Command
- *     Terminal, an agent that has not said anything yet) does the peek show,
- *     because a description reads the same every time you look at it and a
- *     terminal has none at all. See `OutputPeek` below.
+ *   - a live OUTPUT PEEK as a THIRD slot source, which the board has no data for.
+ *     `monitorSlotKind` owns the choice between the three; see it for the
+ *     ordering and why a live row never falls back to its description.
  */
 
 interface MonitorCardProps {
@@ -61,11 +71,12 @@ interface MonitorCardProps {
  * case it exists for. Wrapping once rather than per branch is what stops a future branch
  * from silently opting out.
  *
- * The slot is 15 in every state, one px wider than the two lucide branches draw at, so the
- * glyph column no longer jitters between 15 and 14 as a session finishes.
+ * The slot is 16 in every state, matching the board card's mark exactly and staying wider
+ * than the two lucide branches draw at, so the glyph column no longer jitters as a session
+ * finishes.
  */
 function StateGlyph({ row }: { row: MonitorSessionRow }) {
-  return <IconSlot size={15} className="shrink-0">{stateGlyphContent(row)}</IconSlot>;
+  return <IconSlot size={16} className="shrink-0">{stateGlyphContent(row)}</IconSlot>;
 }
 
 function stateGlyphContent(row: MonitorSessionRow) {
@@ -100,7 +111,7 @@ function stateGlyphContent(row: MonitorSessionRow) {
     return (
       <ActivityMark
         mark={mark}
-        size={15}
+        size={16}
         className={needsYou ? 'text-attention' : 'text-active'}
         aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
       />
@@ -153,8 +164,22 @@ function stateGlyphContent(row: MonitorSessionRow) {
  *     row taller, so quiet neighbours inherited a big empty well.
  *
  * Fixed removes both: the card's height no longer depends on what the terminal
- * happens to be saying. Three rows normally, two when label pills also need
- * space, so the card lands on roughly the same total height either way.
+ * happens to be saying.
+ *
+ * HOW MANY rows is no longer this component's decision. It used to be two when
+ * the card had label pills and four when it did not, a local trade that made a
+ * labelled card show half as much as its neighbour on the same grid. It is now
+ * the card density the board card already uses, so one setting sizes this slot
+ * on both surfaces.
+ *
+ * The well itself is `TRAIL_WELL_CLASS`, imported rather than repeated, because
+ * the agent's message trail renders in the same box and this is the one screen
+ * that can show both on adjacent cards. That the trail took this treatment
+ * overrules an earlier note here saying it deliberately should not: the reason
+ * given was that the trail is prose and the peek is bytes, but both are the
+ * agent talking, and a reader scanning the grid is better served by one
+ * container meaning "machine output" than by two. Prose wraps and terminal
+ * lines do not, which is the difference that still earns its keep.
  *
  * Lines are TRIMMED to what fits before rendering rather than overflowed into a
  * clip. That is what allows top alignment: clipping a top-aligned box would drop
@@ -162,30 +187,15 @@ function stateGlyphContent(row: MonitorSessionRow) {
  * the oldest instead, and `overflow-hidden` then only guards against a font or
  * zoom change, never against normal content.
  */
-const PEEK_ROWS_WITH_LABELS = 2;
-/**
- * Four, not three, because the row a peek line replaces is not the same height as
- * the one it gives up. A label block costs about 28px (pills plus their margin)
- * while a peek row costs 16, so trading labels for a SINGLE extra row left an
- * unlabelled card roughly 12px short of its labelled neighbours and banked the
- * difference as a gap above the footer. Two extra rows overshoots by about 4px
- * instead, which is the closer fit and small enough to disappear.
- */
-const PEEK_ROWS_WITHOUT_LABELS = 4;
-
-/** `leading-4` (16px per row) is what makes these exact. Keep them in step with
- *  `TRAIL_HEIGHT_CLASS`, which the trail and description forms of the same slot use. */
-const PEEK_HEIGHT_CLASS: Record<number, string> = { 2: 'h-8', 3: 'h-12', 4: 'h-16' };
-
-function OutputPeek({ lines, rows }: { lines: string[]; rows: number }) {
+function OutputPeek({ lines, rows }: { lines: string[]; rows: ExcerptLines }) {
   if (lines.length === 0) return null;
   return (
     <div
-      className="mt-2 rounded bg-surface-hover/50 px-2 py-1.5 font-mono text-xs leading-4 text-fg-muted"
+      className={`${TRAIL_WELL_CLASS} text-fg-muted`}
       data-testid="monitor-card-peek"
       data-rows={rows}
     >
-      <div className={`overflow-hidden ${PEEK_HEIGHT_CLASS[rows] ?? 'h-12'}`}>
+      <div className={`overflow-hidden ${TRAIL_HEIGHT_CLASS[rows]}`}>
         {lines.slice(-rows).map((line, index) => (
           <div key={index} className="whitespace-pre overflow-hidden text-ellipsis">{line}</div>
         ))}
@@ -263,16 +273,20 @@ function MonitorFullCard({
   // this window's `syncSessions` seeds it), keyed by session so another row's
   // line does not re-render this card.
   const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  const cardDensity = useConfigStore((state) => state.config.cardDensity);
   const messageTrail = useSessionStore(
     useCallback(
       (state: ReturnType<typeof useSessionStore.getState>) => state.sessionMessageTrails[row.sessionId],
       [row.sessionId],
     ),
   );
-  const slotRows: ExcerptLines = row.labels.length > 0 ? PEEK_ROWS_WITH_LABELS : PEEK_ROWS_WITHOUT_LABELS;
+  // The board card's clamp, off the same setting, rather than a row count this
+  // card decided for itself. See the note on `MonitorFullCard` above.
+  const isComfortable = cardDensity === 'comfortable';
+  const slotRows: ExcerptLines = cardDensity === 'compact' ? 1 : isComfortable ? 5 : 3;
   const trailMode = trailModeFor(cardPreview);
-  const shownTrail = trailMode && messageTrail && messageTrail.length > 0 ? messageTrail : null;
-  const shownDescription = !trailMode && row.description ? stripMarkdown(row.description) : null;
+  const hasTrail = Boolean(messageTrail && messageTrail.length > 0);
+  const slotKind = monitorSlotKind(row, trailMode, hasTrail);
 
   return (
     <div
@@ -281,7 +295,7 @@ function MonitorFullCard({
       onClick={() => onOpen(row)}
       onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
       onContextMenu={handleContextMenu}
-      className="border border-edge rounded-md bg-surface-raised p-2.5 min-w-0 flex flex-col cursor-pointer transition-colors hover:border-edge-input text-left"
+      className={`border border-edge rounded-md bg-surface-raised ${isComfortable ? 'p-3' : 'p-2.5'} min-w-0 flex flex-col cursor-pointer transition-colors hover:border-edge-input text-left`}
       data-testid="monitor-card"
       data-session-id={row.sessionId}
       data-project-id={row.projectId}
@@ -353,31 +367,33 @@ function MonitorFullCard({
         </div>
       )}
 
-      {/* No well around the trail or the description: the well marks monospace
-          machine output as a different KIND of thing (see `OutputPeek`), and
-          these are prose in the board card's own tones, so they read as the
-          board card does. Same fixed height as the well, so the choice of mode
-          never changes a card's height. */}
-      {shownTrail && trailMode ? (
-        <div className="mt-2">
+      {/* The board card's slot, exactly: `mt-1`, the agent's output in the well,
+          a content-sized description otherwise. `monitorSlotKind` decides which,
+          and `MonitorBody` asks it the same question to name the rows main
+          should keep sampling a peek for. */}
+      {slotKind === 'trail' && trailMode && messageTrail ? (
+        <div className="mt-1">
           <CardMessageTrail
-            entries={shownTrail}
+            entries={messageTrail}
             lines={slotRows}
             mode={trailMode}
-            olderLineClass="text-fg-faint"
-            newestLineClass="text-fg-muted"
+            lineClass="text-fg-muted"
+            terminal
             testId="monitor-card-trail"
           />
         </div>
-      ) : shownDescription !== null ? (
-        /* `!== null`, not truthy: a description that strips to nothing still
-           counts as "has a description" here, the same predicate MonitorBody
-           uses to decide which rows main should sample a peek for. */
-        <div className={`mt-2 ${TRAIL_HEIGHT_CLASS[slotRows]}`} data-testid="monitor-card-description" data-lines={slotRows}>
-          <div className={`text-xs text-fg-faint ${EXCERPT_CLAMP_CLASS[slotRows]}`}>{shownDescription}</div>
+      ) : slotKind === 'description' ? (
+        <div
+          className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[slotRows]}`}
+          data-testid="monitor-card-description"
+          data-lines={slotRows}
+        >
+          {stripMarkdown(row.description ?? '')}
         </div>
       ) : (
-        <OutputPeek lines={row.outputPeek} rows={slotRows} />
+        <div className="mt-1">
+          <OutputPeek lines={row.outputPeek} rows={slotRows} />
+        </div>
       )}
 
       {row.labels.length > 0 && (
@@ -392,11 +408,12 @@ function MonitorFullCard({
           the footers on one line across the row. */}
       <div className="flex-1" />
 
-      {/* The board card's own footer component, not a copy of it. Its rule is off
-          here: the peek's shaded well already closes the content region, and on a
-          card with no label pills the well's bottom edge and the rule land within
-          a few pixels of each other. The board card keeps the rule, having no
-          well of its own to do that job. */}
+      {/* The board card's own footer component, not a copy of it, and now with
+          its rule on for the same reason the board card has one. It used to be
+          off here on the grounds that the peek's well already closed the content
+          region, which stopped being a reason the moment a card could show a
+          description instead and land with nothing between its text and the
+          model line. */}
       {/* `'-'` on an unresolved model, matching MonitorTable's Model column for the
           same null. This slot names the MODEL; the table surfaces the agent in a
           separate Agent column, which the card has no room for. If agent identity
@@ -407,7 +424,6 @@ function MonitorFullCard({
         percent={row.contextPercent ?? 0}
         windowKnown={row.contextPercent !== null}
         unknownLabel="-"
-        divider={false}
         testId="monitor-card-usage"
       />
     </div>
