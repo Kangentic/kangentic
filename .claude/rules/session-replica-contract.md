@@ -43,12 +43,22 @@ a black terminal with a populated context bar instead of the edit form.
   mid-gap). Session ids are minted once per spawn, so both tests are unambiguous.
 - **A todo-role task is sessionless.** Main tears the session down on every move into a todo-role
   column and both spawn chokepoints refuse the To Do and Done roles regardless of `auto_spawn`. The
-  renderer therefore treats any row for such a task as stale: `taskDetailSurfaceFor(kind, laneRole)`
-  takes the lane as a required parameter and is `'inert'` there, `TaskCard` decides edit mode
-  through that classifier, and `useTaskSessionState` resolves the session to null. Do not add a
-  store-level reconciler that drops rows by lane: the board's `tasks` can lag main by a debounced
-  reload, and a live session spawned by an agent-driven move out of To Do would be dropped for that
-  window.
+  renderer therefore treats a STALE row for such a task as stale:
+  `taskDetailSurfaceFor(kind, laneRole)` takes the lane as a required parameter and is `'inert'`
+  there, `TaskCard` decides edit mode through that classifier, and `useTaskSessionState` resolves
+  the session to null.
+
+  **The lane never suppresses a LIVE session**, because the lane itself can be behind. The board's
+  `tasks` only move on a `loadBoard()`, so a move made without the board store's optimistic write
+  (an agent-driven or MCP move, a raw `tasks.move`) leaves the card and the detail window reading
+  the OLD lane while main has already moved the task and spawned its agent. The bound is therefore
+  liveness, not the lane alone: `KIND_IS_LIVE_SESSION` in `task-progress.ts` exempts the row-backed
+  live kinds, and the hook exempts a row whose status is live (`isLiveSessionStatus`). A
+  `preparing` LABEL is not a live row and stays suppressed.
+
+  That is the same hazard that rules out a store-level reconciler dropping rows by lane, and it is
+  easy to reintroduce one layer up: the first version of this change suppressed on the lane alone
+  in the render path, and three E2E terminal specs caught it blanking a live agent's terminal.
 - **An intentional exit is not a status.** `sessions.onExit` returns early for an intentional exit
   because it cannot tell a suspend from a hard end; a main path that ends a session deliberately
   must follow with the push that says what happened: `suspend()` (a `suspended` status),

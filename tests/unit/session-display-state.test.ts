@@ -236,10 +236,26 @@ describe('the lane classifier: a To Do task is sessionless whatever the store sa
     expect(laneHoldsSession(undefined)).toBe(true);
   });
 
-  it('makes every kind inert in a todo lane, including the ones that would paint a terminal or an overlay', () => {
-    for (const kind of ALL_KINDS) {
+  it('makes every STALE kind inert in a todo lane, including the ones that would paint a terminal or an overlay', () => {
+    // 'exited' is #661 itself: the phantom row the teardown re-seeded.
+    // 'preparing' is a lingering spawn-progress LABEL with no live session.
+    // 'suspended' and 'none' have nothing live behind them either.
+    for (const kind of ['none', 'preparing', 'suspended', 'exited'] as const) {
       expect(taskDetailSurfaceFor(kind, 'todo')).toBe('inert');
     }
+  });
+
+  it('never suppresses a LIVE session in a todo lane, because the lane can be behind', () => {
+    // The board's `tasks` only move on a loadBoard(), so a move made without
+    // the board store's optimistic write (an agent-driven or MCP move, a raw
+    // `tasks.move`) leaves the window reading the OLD lane while main has
+    // already moved the task and spawned its agent. Suppressing on the lane
+    // alone blanked that live terminal for the whole window, which three E2E
+    // terminal specs caught. A live row is main's own truth arriving by push,
+    // so it outranks a lane read from a list that may be stale.
+    expect(taskDetailSurfaceFor('running', 'todo')).toBe('terminal');
+    expect(taskDetailSurfaceFor('initializing', 'todo')).toBe('terminal');
+    expect(taskDetailSurfaceFor('queued', 'todo')).toBe('queued-placeholder');
   });
 
   it('leaves every other lane on the kind table', () => {
@@ -265,12 +281,17 @@ describe('the lane classifier: a To Do task is sessionless whatever the store sa
     expect(source).toMatch(/taskDetailSurfaceFor\(displayState\.kind,\s*laneRole\)\s*===\s*'inert'/);
   });
 
-  it('useTaskSessionState resolves the session through laneHoldsSession', () => {
+  it('useTaskSessionState resolves the session through laneHoldsSession, bounded by liveness', () => {
     const source = fs.readFileSync(
       path.join(repoRoot, 'src/renderer/components/dialogs/task-detail/useTaskSessionState.ts'),
       'utf8',
     );
     expect(source).toContain('laneHoldsSession(input.currentSwimlaneRole)');
+    // The liveness bound is the half that is easy to drop in a refactor, and
+    // dropping it blanks a live terminal whenever the board list is behind
+    // main (three E2E terminal specs caught exactly that). The hook has no
+    // unit tier of its own, so pin it by source.
+    expect(source).toContain('!holdsSession && !isLiveSessionStatus(resolved.status)');
   });
 
   // TaskDetailBody's queued-placeholder branch cannot be pinned behaviorally

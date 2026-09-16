@@ -143,19 +143,48 @@ export function laneHoldsSession(laneRole: SwimlaneRole | null | undefined): boo
 }
 
 /**
+ * Whether a display kind is backed by a LIVE session row, as opposed to a
+ * stale row or a label.
+ *
+ * This is what bounds the lane override below. The renderer's board `tasks`
+ * can lag main: a move made through `tasks.move` without the board store's
+ * optimistic write (an agent-driven move, an MCP move, a raw IPC call) leaves
+ * the card on its old lane until the next `loadBoard()`, while main has
+ * already moved the task AND spawned its agent. Suppressing on the lane alone
+ * therefore blanked a live terminal for that whole window, which is the same
+ * "the board list lags main" hazard that rules out a lane-based reconciler in
+ * the store (see .claude/rules/session-replica-contract.md).
+ *
+ * A live row is main's own truth, arriving by push, so it outranks a lane read
+ * from a list that may be behind. Everything else defers to the lane: an
+ * `exited` or `suspended` row, or a `preparing` label with no live session, is
+ * exactly what a todo-role task holds when it is stale.
+ */
+const KIND_IS_LIVE_SESSION = {
+  running: true,
+  queued: true,
+  initializing: true,
+  // A spawn-progress LABEL, not a session row. Main clears it on a move into a
+  // todo lane; a lingering one must not paint a launch overlay there.
+  preparing: false,
+  suspended: false,
+  exited: false,
+  none: false,
+} satisfies Record<SessionDisplayState['kind'], boolean>;
+
+/**
  * The task-detail face for a display kind in a lane. Total by construction.
  *
- * The lane comes first in the decision: a lane that holds no session paints
- * nothing session-shaped whatever the kind says, because in such a lane the
- * kind can only be describing a stale row or a stale spawn label. The lane is
- * a required parameter so a call site cannot forget it and fall back to the
- * kind alone, which is how a To Do card came to open a terminal.
+ * A lane that holds no session paints nothing session-shaped, UNLESS the kind
+ * is backed by a live session row (see `KIND_IS_LIVE_SESSION`). The lane is a
+ * required parameter so a call site cannot forget it and fall back to the kind
+ * alone, which is how a To Do card came to open a dead terminal (#661).
  */
 export function taskDetailSurfaceFor(
   kind: SessionDisplayState['kind'],
   laneRole: SwimlaneRole | null | undefined,
 ): TaskDetailSurface {
-  if (!laneHoldsSession(laneRole)) return 'inert';
+  if (!laneHoldsSession(laneRole) && !KIND_IS_LIVE_SESSION[kind]) return 'inert';
   return TASK_DETAIL_SURFACE[kind];
 }
 

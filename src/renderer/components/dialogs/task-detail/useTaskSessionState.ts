@@ -3,6 +3,7 @@ import { useSessionStore } from '../../../stores/session-store';
 import { findSessionForTask } from '../../../stores/session-store/session-index';
 import { useTaskProgress, isActiveKind, hasSessionLifecycle, laneHoldsSession } from '../../../utils/task-progress';
 import { isActive, requiresUserInteraction } from '../../../../shared/activity-state';
+import { isLiveSessionStatus } from '../../../../shared/session-liveness';
 import { resumeBlockReason } from '../../../../shared/session-resume-eligibility';
 import type { Task, Session, SwimlaneRole } from '../../../../shared/types';
 
@@ -54,20 +55,31 @@ export function useTaskSessionState(input: {
    *  so it must not claim the session: the bottom panel is free to show it. */
   dormant?: boolean;
 }): TaskSessionState {
-  // A lane that holds no session (To Do) resolves to null outright, whatever
-  // the store says: main tears the session down on every move into it, so any
-  // row still keyed to this task is stale (#661). Resolving it here, at the
-  // one place the window learns its session, is what makes every consumer
-  // agree at once - no terminal claim, no reconcile probe, and Cancel / Save
-  // / Delete in useTaskActions see the task as sessionless.
+  // A lane that holds no session (To Do) resolves a STALE row to null: main
+  // tears the session down on every move into it, so a row still keyed to such
+  // a task is stale (#661). Resolving it here, at the one place the window
+  // learns its session, is what makes every consumer agree at once - no
+  // terminal claim, no reconcile probe, and Cancel / Save / Delete in
+  // useTaskActions see the task as sessionless.
+  //
+  // A LIVE row is never suppressed, because the lane can be behind. The board's
+  // `tasks` only move on a `loadBoard()`, so a move made without the board
+  // store's optimistic write (an agent-driven or MCP move, a raw `tasks.move`)
+  // leaves this window reading the OLD lane while main has already moved the
+  // task and spawned its agent. Nulling then blanks a live terminal for that
+  // whole window. Same hazard that rules out a lane-based reconciler in the
+  // store; see .claude/rules/session-replica-contract.md.
   const holdsSession = laneHoldsSession(input.currentSwimlaneRole);
   // Live-preferring, never first-wins: main lists a stale suspended row ahead
   // of the live PTY when one has leaked, and taking the first match painted
   // the Resume overlay over a running agent while the board card, which
   // resolves through the index, showed it running.
-  const session = useSessionStore((state) =>
-    holdsSession ? (findSessionForTask(state.sessions, input.task.id) ?? null) : null,
-  );
+  const session = useSessionStore((state) => {
+    const resolved = findSessionForTask(state.sessions, input.task.id) ?? null;
+    if (!resolved) return null;
+    if (!holdsSession && !isLiveSessionStatus(resolved.status)) return null;
+    return resolved;
+  });
   const reconcileSession = useSessionStore((state) => state.reconcileSession);
 
   const displayState = useTaskProgress(input.task.id, session?.id);
