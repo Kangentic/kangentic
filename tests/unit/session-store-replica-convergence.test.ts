@@ -237,6 +237,19 @@ class MainModel {
     this.removeRow(sessionId);
   }
 
+  /** The `cleanup_worktree` shape: kill + awaitExit, KEEP the registry row,
+   *  then `announceSessionEnded` re-emits it on 'session-changed' with its
+   *  resolved status. The kill's own exit is intentional, so the renderer
+   *  ignores it and this status push is the ONLY thing that corrects the
+   *  replica; a bare kill left the card spinning for an agent that was gone. */
+  announceEnded(sessionId: string): void {
+    const row = this.registry.get(sessionId);
+    if (!row || row.status !== 'running') return;
+    row.status = 'exited';
+    renderer.onExit(sessionId, -1, true);
+    renderer.onStatus(toSession(row));
+  }
+
   usageTick(sessionId: string): void {
     const row = this.registry.get(sessionId);
     if (!row || row.status !== 'running') return;
@@ -294,7 +307,8 @@ async function runSequence(seed: number, steps: number): Promise<void> {
     if (roll < 0.22) main.spawn(main.pick(TASKS)!);
     else if (roll < 0.34 && runningRow) main.suspend(runningRow.id);
     else if (roll < 0.40 && runningRow) main.crash(runningRow.id);
-    else if (roll < 0.56 && anyRow) main.moveToTodo(anyRow.taskId);
+    else if (roll < 0.52 && anyRow) main.moveToTodo(anyRow.taskId);
+    else if (roll < 0.56 && runningRow) main.announceEnded(runningRow.id);
     else if (roll < 0.64 && anyRow) main.removeDirect(anyRow.id);
     else if (roll < 0.76 && runningRow) main.usageTick(runningRow.id);
     else if (roll < 0.84 && runningRow) main.activityTick(runningRow.id);
@@ -383,6 +397,25 @@ describe('the renderer session store converges on main\'s registry', () => {
     expect(useSessionStore.getState().sessions).toHaveLength(1);
     main.removeDirect(row.id);
     assertConverged(main, 80);
+  });
+
+  it('a kill that KEEPS its row is corrected by announceSessionEnded, not left running', () => {
+    // The cleanup_worktree seam. The kill's exit is intentional, so App.tsx
+    // ignores it; without the announcement the replica stays on 'running' and
+    // the card keeps its spinner for an agent that is gone. Main-side tests
+    // pin that the announcement fires; this pins that the renderer acts on it.
+    const main = new MainModel(mulberry32(424));
+    main.spawn('task-a');
+    const row = main.rows()[0];
+    main.usageTick(row.id);
+
+    main.announceEnded(row.id);
+
+    assertConverged(main, 424);
+    const replicaRow = useSessionStore.getState().sessions.find((session) => session.id === row.id);
+    expect(replicaRow?.status).toBe('exited');
+    // The row is KEPT, so its usage stays readable beside the finished terminal.
+    expect(row.id in useSessionStore.getState().sessionUsage).toBe(true);
   });
 
   it('a stale sync straddling a To Do move does not resurrect the removed row', async () => {
