@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
 // sherpa-onnx-node, so unlike its predecessor this test needs no native-addon
 // stub at all.
 
-import { computeEngineKey, selectEngine } from '../../src/main/transcription/engines/engine-selection';
+import { computeEngineKey, listEngineInfos, selectEngine } from '../../src/main/transcription/engines/engine-selection';
 
 function makeProfile(overrides: Partial<DictationHardwareProfile> = {}): DictationHardwareProfile {
   return {
@@ -239,6 +239,30 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
       }),
     );
     expect(result.language).toBe('fr');
+  });
+});
+
+describe('listEngineInfos - user-facing engine catalogue for the settings panel', () => {
+  // The six DictationEngineInfo constants moved out of their engine files
+  // (each used to declare its own alongside its sherpa-onnx-node import) and
+  // into engine-infos.ts, a pure-data file with no engine construction. That
+  // hoist has no assertion anywhere: transcription-service tests mock
+  // listEngineInfos() away entirely, and engine-selection.test.ts never
+  // called it before. This pins what the settings panel actually gets back.
+
+  it('returns exactly the four user-selectable engines, excluding the internal stub', () => {
+    const ids = listEngineInfos().map((info) => info.id);
+    expect(ids).toEqual(['hybrid', 'whisper-cpp', 'sherpa-onnx', 'remote-openai']);
+  });
+
+  it('excludes the stub engine (test-only, never user-selectable)', () => {
+    const ids = listEngineInfos().map((info) => info.id);
+    expect(ids).not.toContain('stub');
+  });
+
+  it('excludes chunked-offline (an internal live-model choice, not a standalone selectable engine)', () => {
+    const ids = listEngineInfos().map((info) => info.id);
+    expect(ids).not.toContain('chunked-offline');
   });
 });
 
