@@ -30,6 +30,7 @@ import path from 'node:path';
 import { bytesToHex, CAPABILITY_VERBS, hexToBytes } from '@kangentic/protocol';
 import type { BridgeIdentity } from './identity';
 import { addOrReplaceDevice, loadRoster } from './roster-store';
+import { safeWriteJson } from '../safe-write';
 
 const DESKTOP_FILE = 'desktop.json';
 const PHONE_FILE = 'phone.json';
@@ -93,12 +94,13 @@ export class DevQuickPair {
 
   private publishDesktopFile(): void {
     const identity = this.deps.getIdentity();
-    fs.mkdirSync(devPairingDir(), { recursive: true });
     const payload = {
       desktopStaticPublicKey: bytesToHex(identity.staticKeyPair.publicKey),
       relayUrl: this.deps.getRelayUrl(),
     };
-    fs.writeFileSync(path.join(devPairingDir(), DESKTOP_FILE), `${JSON.stringify(payload, null, 2)}\n`);
+    // Degrades rather than throws (see safe-write.ts) - dev-only either way,
+    // and reconcile()'s own try/catch already tolerated a write failure here.
+    safeWriteJson(path.join(devPairingDir(), DESKTOP_FILE), payload, 'mobile_bridge_dev_quick_pair');
   }
 
   private readPhoneFile(): PhoneFilePayload | null {

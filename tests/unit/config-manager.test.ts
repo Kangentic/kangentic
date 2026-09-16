@@ -750,6 +750,66 @@ describe('Config Manager -- load() parse-validity guard', () => {
   );
 });
 
+describe('Config Manager -- unwritable data directory (DESKTOP-14/DESKTOP-13)', () => {
+  // A FILE sitting where a directory needs to be created makes mkdirSync fail
+  // with ENOTDIR/ENOENT reliably on every OS - the same "data directory
+  // unwritable" failure class as the Sentry install (a relocated userData on a
+  // removable volume), without depending on chmod/permission semantics that
+  // differ between POSIX and Windows.
+
+  it('save() does not throw, returns false, and keeps serving the in-memory value; a later successful write persists both changes', async () => {
+    const blockerPath = path.join(tmpDir, 'blocker');
+    fs.writeFileSync(blockerPath, '');
+    process.env.KANGENTIC_DATA_DIR = path.join(blockerPath, 'config-dir');
+    vi.resetModules();
+    const cm = await createConfigManager();
+
+    let persisted = true;
+    expect(() => { persisted = cm.save({ theme: 'dark' }); }).not.toThrow();
+    expect(persisted).toBe(false);
+    // The failed write must not roll back the value that was already
+    // accepted into memory - this is what lets the session keep working.
+    expect(cm.load().theme).toBe('dark');
+
+    // Remove the blocking file so the same directory can now be created, and
+    // confirm the next successful write carries BOTH the earlier-failed
+    // value and the new one - nothing set during the outage is lost.
+    fs.rmSync(blockerPath, { force: true });
+    expect(cm.save({ sidebarVisible: false })).toBe(true);
+
+    const onDisk = JSON.parse(
+      fs.readFileSync(path.join(blockerPath, 'config-dir', 'config.json'), 'utf-8'),
+    );
+    expect(onDisk.theme).toBe('dark');
+    expect(onDisk.sidebarVisible).toBe(false);
+  });
+
+  it('saveProjectOverrides() does not throw and returns false when the project directory cannot be created', async () => {
+    const cm = await createConfigManager();
+    const blockerPath = path.join(tmpDir, 'project-blocker');
+    fs.writeFileSync(blockerPath, '');
+
+    // saveProjectOverrides writes to <projectPath>/.kangentic/config.json, so
+    // passing a FILE as the project path makes that subdirectory uncreatable.
+    let persisted = true;
+    expect(() => { persisted = cm.saveProjectOverrides(blockerPath, { theme: 'dark' }); }).not.toThrow();
+    expect(persisted).toBe(false);
+  });
+
+  it('load() on an unwritable data directory does not throw and falls back to defaults', async () => {
+    const blockerPath = path.join(tmpDir, 'blocker2');
+    fs.writeFileSync(blockerPath, '');
+    process.env.KANGENTIC_DATA_DIR = path.join(blockerPath, 'config-dir');
+    vi.resetModules();
+    const { ConfigManager } = await import('../../src/main/config/config-manager');
+    const { DEFAULT_CONFIG } = await import('../../src/shared/types');
+    const cm = new ConfigManager();
+
+    expect(() => cm.load()).not.toThrow();
+    expect(cm.load().theme).toBe(DEFAULT_CONFIG.theme);
+  });
+});
+
 describe('Config Manager -- terminal.colors replace semantics', () => {
   it('removing a slot key from a later save() actually clears it, not deep-merges it back', async () => {
     const cm = await createConfigManager();

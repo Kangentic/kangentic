@@ -149,6 +149,11 @@ export function registerSystemHandlers(context: IpcContext): void {
     // stays in theme/settings sync (they subscribe through config.onChanged in
     // usePopOutBootstrap). The main window is a harmless extra recipient: it does not
     // subscribe, updating its own config store optimistically at the config.set call site.
+    //
+    // Fires regardless of whether the write reached disk: the in-memory config changed
+    // either way (configManager.save() keeps serving it - see write-failure-notice.ts),
+    // so every window's optimistic read should still match. A write failure is reported
+    // separately, through config:writeFailed, not by skipping this broadcast.
     broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
   });
 
@@ -157,9 +162,14 @@ export function registerSystemHandlers(context: IpcContext): void {
   // so the final window-layout write goes through sendSync, which blocks the renderer until
   // configManager.save() (a synchronous fs write) has persisted it. Intentionally minimal:
   // no runtime re-apply or detection invalidation, both irrelevant during shutdown.
+  //
+  // returnValue carries whether the write actually reached disk (previously hardcoded
+  // true): a throw here used to leave returnValue unassigned, so the channel reported
+  // success and failure identically. Nothing reads it yet: the preload bridge discards the
+  // sendSync result and `ElectronAPI.config.setSync` returns void. The user-facing half is
+  // the CONFIG_WRITE_FAILED toast safeWriteJson already pushes.
   ipcMain.on(IPC.CONFIG_SET_SYNC, (event, config) => {
-    context.configManager.save(config);
-    event.returnValue = true;
+    event.returnValue = context.configManager.save(config);
   });
 
   ipcMain.handle(IPC.CONFIG_GET_PROJECT, () => {
@@ -174,6 +184,7 @@ export function registerSystemHandlers(context: IpcContext): void {
     // A per-project override changes the EFFECTIVE config open pop-outs read (the Changes
     // surface reads git.defaultBaseBranch, which is project-overridable), so fan the same
     // bare signal CONFIG_SET does so they re-fetch instead of diffing a stale base branch.
+    // Same "fires either way" reasoning as CONFIG_SET's broadcast above.
     broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
   });
 
@@ -220,8 +231,13 @@ export function registerSystemHandlers(context: IpcContext): void {
     for (const project of projects) {
       const existing = context.configManager.loadProjectOverrides(project.path) || {};
       const merged = deepMergeConfig(existing, partial);
-      context.configManager.saveProjectOverrides(project.path, merged);
-      updatedCount++;
+      // One unwritable project's directory must not abort the sync for its siblings,
+      // and must not count as "updated" - saveProjectOverrides() no longer throws
+      // (see write-failure-notice.ts), so this loop needs its own per-project check
+      // to keep the returned count honest.
+      if (context.configManager.saveProjectOverrides(project.path, merged)) {
+        updatedCount++;
+      }
     }
     if (context.currentProjectPath) {
       applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);

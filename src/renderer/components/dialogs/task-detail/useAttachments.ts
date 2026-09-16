@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useToastStore } from '../../../stores/toast-store';
+import { describeIpcError } from '../../../lib/ipc-error';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex, openAttachmentWithToast } from '../attachment-utils';
 import { compressClipboardImage } from '../image-compress';
 import type { TaskAttachment } from '../../../../shared/types';
@@ -91,6 +92,10 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
       updateAttachmentCount(taskId, 1);
     } catch (error) {
       console.error('Failed to add attachment:', error);
+      useToastStore.getState().addToast({
+        message: `Couldn't add "${filename}": ${describeIpcError(error)}`,
+        variant: 'warning',
+      });
     }
   }, [taskId, updateAttachmentCount]);
 
@@ -101,6 +106,10 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
       updateAttachmentCount(taskId, -1);
     } catch (error) {
       console.error('Failed to remove attachment:', error);
+      useToastStore.getState().addToast({
+        message: `Couldn't remove the attachment: ${describeIpcError(error)}`,
+        variant: 'warning',
+      });
     }
   }, [taskId, updateAttachmentCount]);
 

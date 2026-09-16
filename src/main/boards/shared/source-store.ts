@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { ExternalSource, ImportSource } from '../../../shared/types';
+import { safeWriteJson } from '../../safe-write';
 
 interface ProjectImportConfig {
   importSources?: ImportSource[];
@@ -106,11 +107,6 @@ export class ImportSourceStore {
   }
 
   private writeConfig(config: ProjectImportConfig): void {
-    const directory = path.dirname(this.configPath);
-    if (!fs.existsSync(directory)) {
-      fs.mkdirSync(directory, { recursive: true });
-    }
-
     let existing: Record<string, unknown> = {};
     try {
       const raw = fs.readFileSync(this.configPath, 'utf-8');
@@ -120,6 +116,9 @@ export class ImportSourceStore {
     }
 
     existing.importSources = config.importSources;
-    fs.writeFileSync(this.configPath, JSON.stringify(existing, null, 2));
+    // Degrades rather than throws: an unwritable project directory must not
+    // reject the add/remove/updateLabel call the renderer is waiting on. The
+    // shared write-failure-notice latch tells the user once (see safe-write.ts).
+    safeWriteJson(this.configPath, existing, 'import_source');
   }
 }

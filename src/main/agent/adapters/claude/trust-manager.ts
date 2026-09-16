@@ -74,6 +74,11 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
     hasTrustDialogAccepted: true,
   };
 
+  // sync-write-ok: this must throw, not degrade - a swallowed failure here
+  // would spawn Claude into a trust prompt neither the CLI nor the user is
+  // ready for. ensureWorktreeTrust's caller (the spawn preamble via
+  // ensureTrust) already reports and notifies (notifySpawnBlocked) on throw;
+  // only a claude-json-lock timeout, a distinct failure class, is swallowed.
   fs.writeFileSync(claudeJsonPath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -122,5 +127,7 @@ function ensureMcpServerTrustSync(projectPath: string): void {
   }
 
   entry.enabledMcpjsonServers = [...enabledServers, 'kangentic'];
+  // sync-write-ok: same reason as ensureWorktreeTrustSync's write above - must
+  // throw, not degrade, so the spawn preamble can report and notify.
   fs.writeFileSync(claudeJsonPath, JSON.stringify(data, null, 2), 'utf-8');
 }

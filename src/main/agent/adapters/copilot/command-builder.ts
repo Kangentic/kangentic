@@ -163,7 +163,12 @@ export class CopilotCommandBuilder {
         },
       },
     };
+    // sync-write-ok: this must throw, not degrade - the path below is passed
+    // straight to --additional-mcp-config, so a swallowed failure would spawn
+    // Copilot pointed at a config file that does not exist. The spawn preamble
+    // already reports and notifies (notifySpawnBlocked) on throw.
     fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
+    // sync-write-ok: same reason as the mkdir above.
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
     return [
       '--additional-mcp-config',

@@ -12,6 +12,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
+import { describeIpcError } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from '../dialogs/AttachmentChipStrip';
@@ -215,6 +216,10 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
         setAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
       }).catch((error: unknown) => {
         console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
+        useToastStore.getState().addToast({
+          message: `Couldn't remove the attachment: ${describeIpcError(error)}`,
+          variant: 'warning',
+        });
       });
     } else {
       URL.revokeObjectURL(target.previewUrl);
@@ -325,6 +330,17 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
         if (!isSavedAttachment(attachment)) URL.revokeObjectURL(attachment.previewUrl);
       });
       onClose();
+    } catch (error) {
+      // Previously unhandled: a rejected create/update (including a pending
+      // attachment write failing inside it) reached only the global
+      // unhandledrejection analytics listener, with nothing shown to the
+      // user. The dialog stays open so the title/description/attachments
+      // are not lost and the user can retry.
+      console.error('[NewBacklogTaskDialog] Failed to save backlog task:', error);
+      useToastStore.getState().addToast({
+        message: `Couldn't save backlog task: ${describeIpcError(error)}`,
+        variant: 'error',
+      });
     } finally {
       setSubmitting(false);
     }

@@ -2609,6 +2609,23 @@
         return 0;
       },
       onChanged: function (/* callback() */) { return noop; },
+      onWriteFailed: function (callback) {
+        // Tests fire this via window.__mockFireConfigWriteFailed(message).
+        if (!window.__mockConfigWriteFailedListeners) window.__mockConfigWriteFailedListeners = [];
+        window.__mockConfigWriteFailedListeners.push(callback);
+        if (!window.__mockFireConfigWriteFailed) {
+          window.__mockFireConfigWriteFailed = function (message) {
+            var listeners = (window.__mockConfigWriteFailedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(message); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockConfigWriteFailedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
     },
 
     keybindings: {

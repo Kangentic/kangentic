@@ -16,6 +16,17 @@ The config directory (`<configDir>`) is platform-specific:
 - **macOS:** `~/Library/Application Support/kangentic/`
 - **Linux:** `~/.config/kangentic/`
 
+A config write that cannot reach disk (an unwritable data directory - a relocated userData on a
+removable volume, say) never throws: `ConfigManager.save()` / `saveProjectOverrides()` route
+through `safeWriteJson` (`src/main/safe-write.ts`) and return `false` rather than raise. The two
+degrade differently. Global `save()` already updated its in-memory config before attempting the
+write, so it keeps serving the change for the rest of the session even though the write failed.
+`saveProjectOverrides()` holds no cache: a failed project-override write leaves
+`.kangentic/config.json` with its previous contents, so the change is lost rather than merely
+unpersisted, and a later read serves the old value until a write to that project succeeds. Either
+way, the user is told once per failing write source via the `config:writeFailed` push (below),
+latched in `src/main/config/write-failure-notice.ts` until a later write to that source succeeds.
+
 ## Settings Panel
 
 The panel uses a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
@@ -728,6 +739,7 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `config:getProjectByPath` | Get project-level overrides by project path |
 | `config:setProjectByPath` | Update project-level overrides by project path |
 | `config:syncDefaultToProjects` | Sync changed default values to all existing projects (deep merge) |
+| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, at most once per failing source until a later write to that source succeeds |
 | `boardConfig:exists` | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |

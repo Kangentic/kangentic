@@ -364,6 +364,10 @@ export class CommandBuilder {
         },
       };
       const mcpConfigPath = path.join(sessionDir, 'mcp.json');
+      // sync-write-ok: this must throw, not degrade - a swallowed failure here
+      // would spawn Claude with no MCP config, silently missing every
+      // kangentic_* tool. The spawn preamble already reports and notifies
+      // (notifySpawnBlocked) on any throw from buildCommand.
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
       this.lastMcpConfigPath = mcpConfigPath;
 
@@ -398,6 +402,10 @@ export class CommandBuilder {
 
     // Write merged settings to <sessionDir>/settings.json (used with --settings flag)
     const mergedPath = path.join(sessionDir, 'settings.json');
+    // sync-write-ok: this must throw, not degrade - buildCommand hands this
+    // path straight to `--settings`, so a swallowed failure would spawn Claude
+    // pointed at a settings file that does not exist. The spawn preamble
+    // already reports and notifies (notifySpawnBlocked) on any throw here.
     fs.writeFileSync(mergedPath, JSON.stringify(merged, null, 2));
 
     return mergedPath;

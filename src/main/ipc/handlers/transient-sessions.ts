@@ -108,6 +108,13 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     // Create session directory for status/events bridge files so the
     // shimmer overlay can detect when Claude Code is ready.
     const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', transientTaskId);
+    // sync-write-ok: this must throw, not degrade, for the same reason as
+    // prepare-spawn.ts's session directory - a Command Terminal with no
+    // session directory has nowhere to write status/events. This handler
+    // already throws plain Errors above for earlier preconditions (no
+    // project open, CLI not found), and both of spawnTransientSession's
+    // renderer callers (CommandTerminalWindow.tsx) already catch and toast
+    // any rejection of this invoke.
     fs.mkdirSync(sessionDirectory, { recursive: true });
     const statusOutputPath = path.join(sessionDirectory, 'status.json');
     const eventsOutputPath = path.join(sessionDirectory, 'activity.json');

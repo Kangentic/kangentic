@@ -99,6 +99,12 @@ export async function downloadModelFiles(
   destDir: string,
   onProgress: (progress: DownloadProgress) => void,
 ): Promise<void> {
+  // sync-write-ok: this must throw, not degrade - a model directory that
+  // cannot be created leaves nowhere for the download below to land. Both of
+  // transcription-service.ts's callers (buildAndLoad, prewarm) already wrap
+  // their ensureModels() call in a try/catch that emits a `status: 'error'`
+  // model-progress event (surfaced in the Dictation settings tab) and
+  // re-throws.
   fs.mkdirSync(destDir, { recursive: true });
   const totalBytes = Math.max(1, Math.round(model.approxSizeMb * 1024 * 1024));
   let downloadedBytes = 0;
@@ -110,6 +116,7 @@ export async function downloadModelFiles(
     }
     // Nested file paths (e.g. `<model-id>/onnx/model_quantized.onnx`) need their
     // parent created; dictation models are flat, so this is a no-op for them.
+    // sync-write-ok: same reason as the mkdir above.
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
     await downloadFileTo(fileSpec.url, destPath, (delta) => {
       downloadedBytes += delta;

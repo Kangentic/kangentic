@@ -362,6 +362,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.CONFIG_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.CONFIG_CHANGED, handler);
     },
+    onWriteFailed: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+      ipcRenderer.on(IPC.CONFIG_WRITE_FAILED, handler);
+      return () => ipcRenderer.removeListener(IPC.CONFIG_WRITE_FAILED, handler);
+    },
   },
 
   keybindings: {

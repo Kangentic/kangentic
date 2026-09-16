@@ -266,7 +266,7 @@ from a host's complete mounted set, never accumulated from claim/release - see
 | `detail:syncOwned` | send | A host reports the COMPLETE set of details it currently owns, derived from its window store. Replaces a claim/release pair: a lost or out-of-order message cannot strand a claim, which used to make a task permanently unopenable. Owns, not merely mounts: a window RETAINED for a backgrounded project stays mounted but is excluded, since it is holding a Browser pane's guest alive rather than presenting that task's detail, and leaving it in would block the Agent Monitor from hosting the same task. Main reconciles per `(webContentsId, host)`. |
 | `detail:remoteOwners` | on | Main publishing which details are held by a DIFFERENT renderer, filtered per recipient. Terminal ownership ("one xterm per PTY") was renderer-local, so a detail hosted in the detached monitor left the main window free to mount a second xterm on the same live PTY. Only main sees both sides. |
 
-### Config (10 channels)
+### Config (11 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
@@ -278,7 +278,8 @@ from a host's complete mounted set, never accumulated from claim/release - see
 | `config:getProjectByPath` | invoke | Fetch project overrides by filesystem path |
 | `config:setProjectByPath` | invoke | Update project overrides by filesystem path |
 | `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs |
-| `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` persists; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
+| `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` is applied; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
+| `config:writeFailed` | on | Push to the main window only, not broadcast to pop-outs (`ToastContainer` mounts in `AppLayout` alone, so a pop-out has no toast host): a synchronous write to the data directory failed, so the change applies to this session but will not persist. Carries the user-facing message. Latched per failing source in `src/main/config/write-failure-notice.ts`, so it fires at most once until a later write to that source succeeds (Sentry DESKTOP-14/DESKTOP-13) |
 
 ### Keybindings (1 channel)
 | Channel | Pattern | Purpose |

@@ -58,7 +58,12 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
 
   entries[resolvedPath] = 'TRUST_FOLDER';
 
+  // sync-write-ok: this must throw, not degrade - a swallowed failure here
+  // would spawn Qwen into a folder-trust prompt neither the CLI nor the user
+  // is ready for. ensureTrust's caller (the spawn preamble) already reports
+  // and notifies (notifySpawnBlocked) on throw.
   fs.mkdirSync(qwenDir, { recursive: true });
+  // sync-write-ok: same reason as the mkdir above.
   fs.writeFileSync(trustedFoldersPath, JSON.stringify(entries, null, 2), 'utf-8');
 }
 
