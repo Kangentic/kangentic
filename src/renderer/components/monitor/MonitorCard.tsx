@@ -195,7 +195,7 @@ function OutputPeek({ lines, rows }: { lines: string[]; rows: ExcerptLines }) {
     // site, because this component returns null on an empty peek and a wrapper
     // would still draw its margin for a live row whose agent has said nothing.
     <div
-      className={`mt-1 ${TRAIL_WELL_CLASS} text-fg-muted`}
+      className={`mt-1 ${TRAIL_WELL_CLASS} text-fg-muted select-text`}
       data-testid="monitor-card-peek"
       data-rows={rows}
     >
@@ -249,10 +249,10 @@ function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: M
         <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
       )}
       <span className="text-sm text-fg font-medium truncate min-w-0 flex-1">{row.taskTitle}</span>
-      <span className="shrink-0 font-mono text-xs text-fg-muted">
+      <span className="shrink-0 font-mono text-xs text-fg-muted select-text">
         {row.displayId === null ? '' : `#${row.displayId}`}
       </span>
-      <span className={`text-xs truncate min-w-0 max-w-[30ch] ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
+      <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
         {activityLine}
       </span>
       {row.status !== 'exited' && (
@@ -354,7 +354,7 @@ function MonitorFullCard({
           {row.taskTitle}
         </div>
         {row.displayId !== null && (
-          <span className="shrink-0 font-mono text-xs text-fg-muted" data-testid="monitor-card-display-id">
+          <span className="shrink-0 font-mono text-xs text-fg-muted select-text" data-testid="monitor-card-display-id">
             #{row.displayId}
           </span>
         )}
@@ -377,7 +377,10 @@ function MonitorFullCard({
           and `MonitorBody` asks it the same question to name the rows main
           should keep sampling a peek for. */}
       {slotKind === 'trail' && trailMode && messageTrail ? (
-        <div className="mt-1">
+        // `select-text` here rather than inside CardMessageTrail: the board card
+        // renders the same component on a drag source, where selectable text is
+        // the thing the card's own `select-none` exists to stop.
+        <div className="mt-1 select-text">
           <CardMessageTrail
             entries={messageTrail}
             lines={slotRows}

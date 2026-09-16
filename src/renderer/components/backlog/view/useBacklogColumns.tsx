@@ -46,6 +46,7 @@ export function useBacklogColumns(input: {
       label: '',
       width: 'w-[40px]',
       render: (item) => (
+        // select-none-ok: the label wraps a bare checkbox and renders no text.
         <label className="flex items-center justify-center p-1 cursor-pointer" onClick={(event) => event.stopPropagation()}>
           <input
             type="checkbox"
