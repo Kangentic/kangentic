@@ -821,6 +821,57 @@ test.describe('Column automations', () => {
     expect(Math.abs(offsets.only! - offsets.first!)).toBeLessThan(0.5);
   });
 
+  test('a dragged row stops at the bottom of its own group', async () => {
+    test.slow();
+    await seedColumn('Executing', [
+      { name: 'First', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
+      { name: 'Second', type: 'run_script', trigger: 'enter', config: { script: 'echo 2' } },
+      { name: 'Exit one', type: 'run_script', trigger: 'exit', config: { script: 'echo 3' } },
+      { name: 'Exit two', type: 'run_script', trigger: 'exit', config: { script: 'echo 4' } },
+    ]);
+    await openColumn('Executing');
+
+    const enterGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="enter"]');
+    const groupBottom = await enterGroup.locator('ul').evaluate((node) => node.getBoundingClientRect().bottom);
+    const exitRowTop = await row('Exit one').evaluate((node) => node.getBoundingClientRect().top);
+
+    const handleBox = await row('First').locator('[data-drag-handle]').boundingBox();
+    if (!handleBox) throw new Error('Row did not lay out');
+    const startX = handleBox.x + handleBox.width / 2;
+    const startY = handleBox.y + handleBox.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX, startY + 8, { steps: 3 });
+    // Far past the On exit heading, into the other group's rows, which is what
+    // the row used to follow the pointer into.
+    await page.mouse.move(startX, exitRowTop + 400, { steps: 20 });
+    await page.waitForTimeout(200);
+
+    const draggedBottom = await row('First').evaluate((node) => node.getBoundingClientRect().bottom);
+
+    // Walked back to where it started before releasing, so the drop lands the row
+    // on itself and changes nothing. What is under test is how far the row may
+    // travel, not where it ends up, and a drop at the far position reorders the
+    // group and leaves the Column Manager dirty for whatever runs next. Escape
+    // was tried for this and is worse: it cancels the drag AND closes the dialog,
+    // so the release then clicks whatever was under the pointer.
+    await page.mouse.move(startX, startY, { steps: 10 });
+    await page.mouse.up();
+    await page.mouse.move(10, 10);
+
+    // dnd-kit arms a capture-phase click suppressor on drop, so the NEXT click
+    // anywhere is swallowed. Left alone, that click is afterEach's Cancel, the
+    // Column Manager stays open, and the failure surfaces in the following
+    // test's setup rather than here. Spending it on the dialog's own title
+    // keeps the damage inside this test.
+    await dialog().locator('h3').first().click();
+
+    // A pixel of slack for the float, and no more: the row must stop at its own
+    // group's last row rather than travelling into On exit's.
+    expect(draggedBottom).toBeLessThanOrEqual(groupBottom + 1);
+  });
+
   test('dragging a row down cannot scroll the pane into empty space', async () => {
     test.slow();
     await seedColumn('Executing', [
@@ -859,6 +910,10 @@ test.describe('Column automations', () => {
     const held = await metrics();
     await page.mouse.up();
     await page.mouse.move(10, 10);
+    // Spend dnd-kit's post-drop click suppressor here rather than letting it eat
+    // afterEach's Cancel, which leaves the Column Manager open and fails the NEXT
+    // test's setup instead of this one.
+    await dialog().locator('h3').first().click();
 
     expect(held).toEqual({ scrollTop: 0, overflow: 0 });
   });
