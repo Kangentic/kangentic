@@ -116,14 +116,14 @@ function monitorPreConfig(): string {
     window.__mockMonitorRows = [
       {
         // The one labelled row in the fixture. Every other row here has
-        // labels: [], which meant only PEEK_ROWS_WITHOUT_LABELS (the 4-row
-        // well) and the unconditional label block ever rendered - the
-        // narrower 2-row well and the now-conditional LabelPills block
-        // (row.labels.length > 0 && ...) went unexercised. Put on
-        // sess-working rather than a new row: a new row would shift every
-        // count-based assertion in this file (cards/tableRows/liveOnly
-        // counts), while adding a label to an existing row changes nothing
-        // any other test checks.
+        // labels: [], so the conditional LabelPills block
+        // (row.labels.length > 0 && ...) went unexercised without it. It also
+        // gives the density test a labelled card to compare against an
+        // unlabelled one, which is what proves the well no longer sizes itself
+        // off label presence. Put on sess-working rather than a new row. A new
+        // row would shift every count-based assertion in this file
+        // (cards/tableRows/liveOnly counts), while adding a label to an
+        // existing row changes nothing any other test checks.
         sessionId: 'sess-working', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
         taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: ['npm run typecheck', 'no errors'], displayId: 142,
         columnName: 'Testing', commandTerminalBranch: null, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
@@ -642,6 +642,39 @@ test.describe('agent monitor', () => {
       await expect(
         page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-trail"]'),
       ).toContainText('Parking this until');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a suspended row with no description keeps its peek sampled after it gains a trail', async () => {
+    // The other half of the live gate, at the wanted-list level rather than the
+    // render level. sess-paused has no description, so monitorSlotKind resolves
+    // it to 'peek' whether or not it holds a trail, and MonitorBody must keep
+    // asking main to sample its terminal output (a Command Terminal is the real
+    // case: it can be suspended/exited and never has a description at all). The
+    // old wanted-list check (`if (trailMode && trail && trail.length > 0)
+    // continue;`) dropped ANY trailed row regardless of live-ness, which is the
+    // regression this pins.
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      const lastWanted = () => page.evaluate(() => {
+        const calls = (window.electronAPI.monitor as unknown as { __peekWantedCalls: Array<string[] | null> })
+          .__peekWantedCalls;
+        return calls.length === 0 ? null : calls[calls.length - 1];
+      });
+
+      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-paused', [
+        { uuid: 'sp1', ts: 1, text: 'Should never render: this row is not live.' },
+      ]));
+      await page.evaluate(() => window.__mockFireMonitorPeek({ 'sess-paused': ['queued build output'] }));
+
+      const card = page.locator('[data-session-id="sess-paused"]');
+      await expect(card.locator('[data-testid="monitor-card-peek"]')).toContainText('queued build output');
+      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
+      await expect.poll(lastWanted).toContain('sess-paused');
     } finally {
       await browser.close();
     }

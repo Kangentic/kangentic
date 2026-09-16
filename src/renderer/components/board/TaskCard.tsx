@@ -18,7 +18,7 @@ import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/f
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
-import { CardMessageTrail, EXCERPT_CLAMP_CLASS, trailModeFor, type ExcerptLines } from './CardMessageTrail';
+import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';
@@ -269,13 +269,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           </div>
           {/* This card is dimmer overall, so its trail keeps the `text-fg-faint`
               one step above its `text-fg-disabled` description rather than the
-              full card's muted tone. The well is the same either way: it marks
+              full card's muted tone. The well is the same either way. It marks
               agent output, and that does not get quieter because the card is.
               This path is the Done column's completed list (`DoneSwimlane`), the
               only caller that passes `compact`. It is reached only by a RUNNING
               session, and moving a task into Done suspends its agent, so in
               practice this branch draws during the move and not after it. Kept
-              rather than deleted because "in practice" is not "never": the
+              rather than deleted because "in practice" is not "never". The
               suspend is asynchronous, and a card that rendered a bare trail
               during that window would be the exact mismatch this change removes. */}
           {shownTrail && trailMode ? (
@@ -336,8 +336,9 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const isComfortableDensity = boardDensity === 'comfortable';
   // The description slot's clamp per density. Compact used to print no excerpt
   // at all; it now always shows exactly one line, so a compact board still says
-  // what each agent is doing.
-  const excerptLines: ExcerptLines = isCompactDensity ? 1 : isComfortableDensity ? 5 : 3;
+  // what each agent is doing. Shared with the monitor card through
+  // `excerptLinesFor`, so the two surfaces cannot clamp differently.
+  const excerptLines = excerptLinesFor(boardDensity);
 
   return (
     <>

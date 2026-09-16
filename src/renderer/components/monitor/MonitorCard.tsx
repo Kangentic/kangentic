@@ -10,6 +10,7 @@ import { ContextUsageFooter } from '../board/ContextUsageFooter';
 import {
   CardMessageTrail,
   EXCERPT_CLAMP_CLASS,
+  excerptLinesFor,
   TRAIL_HEIGHT_CLASS,
   TRAIL_WELL_CLASS,
   trailModeFor,
@@ -190,8 +191,11 @@ function stateGlyphContent(row: MonitorSessionRow) {
 function OutputPeek({ lines, rows }: { lines: string[]; rows: ExcerptLines }) {
   if (lines.length === 0) return null;
   return (
+    // The slot's own `mt-1` lives here rather than on a wrapper at the call
+    // site, because this component returns null on an empty peek and a wrapper
+    // would still draw its margin for a live row whose agent has said nothing.
     <div
-      className={`${TRAIL_WELL_CLASS} text-fg-muted`}
+      className={`mt-1 ${TRAIL_WELL_CLASS} text-fg-muted`}
       data-testid="monitor-card-peek"
       data-rows={rows}
     >
@@ -280,10 +284,11 @@ function MonitorFullCard({
       [row.sessionId],
     ),
   );
-  // The board card's clamp, off the same setting, rather than a row count this
-  // card decided for itself. See the note on `MonitorFullCard` above.
+  // The board card's clamp, off the same setting and through the same helper,
+  // rather than a row count this card decided for itself. See the note on
+  // `MonitorFullCard` above.
   const isComfortable = cardDensity === 'comfortable';
-  const slotRows: ExcerptLines = cardDensity === 'compact' ? 1 : isComfortable ? 5 : 3;
+  const slotRows = excerptLinesFor(cardDensity);
   const trailMode = trailModeFor(cardPreview);
   const hasTrail = Boolean(messageTrail && messageTrail.length > 0);
   const slotKind = monitorSlotKind(row, trailMode, hasTrail);
@@ -391,9 +396,7 @@ function MonitorFullCard({
           {stripMarkdown(row.description ?? '')}
         </div>
       ) : (
-        <div className="mt-1">
-          <OutputPeek lines={row.outputPeek} rows={slotRows} />
-        </div>
+        <OutputPeek lines={row.outputPeek} rows={slotRows} />
       )}
 
       {row.labels.length > 0 && (
