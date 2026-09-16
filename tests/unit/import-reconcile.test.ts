@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ExternalIssue, ExternalSource } from '../../src/shared/types';
+import type { ExternalIssue, ExternalSource, ImportReconcileResult } from '../../src/shared/types';
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -92,6 +92,7 @@ vi.mock('../../src/main/boards/adapters/asana', () => ({ registerAsanaIpcHandler
 
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { IPC } from '../../src/shared/ipc-channels';
+import { getProjectDb } from '../../src/main/db/database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 function makeIssue(overrides: Partial<ExternalIssue> = {}): ExternalIssue {
@@ -120,6 +121,17 @@ function reconcileHandler() {
   const handler = capturedHandlers.get(IPC.BACKLOG_IMPORT_RECONCILE);
   if (!handler) throw new Error('reconcile handler not registered');
   return handler;
+}
+
+/**
+ * Flushes the microtask queue so a promise chain built from mocked async work
+ * (a fetch resolver, plus the `.then`/`.catch`/`.finally` hops `serializeReconcile`
+ * chains underneath it) has fully settled before the next assertion. Node drains
+ * every pending microtask before running the next macrotask, so one `setImmediate`
+ * round trip is enough regardless of how many hops are chained.
+ */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 beforeEach(() => {
@@ -257,6 +269,24 @@ describe('importReconcile', () => {
     );
   });
 
+  // `Date.now() - new Date('not-a-date').getTime()` is NaN, and `NaN > threshold`
+  // is false, so an unparseable timestamp must never read as "overdue". Escalating
+  // here would silently promote every incremental reconcile to a full re-fetch for
+  // a provider with no cheap id-list, the opposite of the staleness comment's intent.
+  it('does not escalate to a full pass when oldestFetchedAt is an unparseable timestamp', async () => {
+    cacheRepoMock.count.mockReturnValue(3);
+    cacheRepoMock.getWatermark.mockReturnValue('2026-03-01T00:00:00.000Z');
+    cacheRepoMock.getOldestFetchedAt.mockReturnValue('not-a-date');
+    // no adapter.listExternalIds
+
+    await reconcileHandler()(null, { ...INPUT, mode: 'incremental' });
+
+    expect(adapter.fetch).toHaveBeenCalledWith(
+      expect.objectContaining({ since: '2026-03-01T00:00:00.000Z' }),
+      expect.any(Function),
+    );
+  });
+
   // The watermark must never advance past items that never landed, so a failure on
   // any page has to discard the whole round rather than commit the pages before it.
   it('commits nothing when a later page of the fetch rejects', async () => {
@@ -357,6 +387,32 @@ describe('importReconcile', () => {
     expect(result.issues.find((issue) => issue.externalId === '1')?.alreadyImported).toBe(true);
     expect(result.issues.find((issue) => issue.externalId === '2')?.alreadyImported).toBe(false);
   });
+
+  // `stampAlreadyImported`'s `if (issues.length === 0) return issues;` short-circuit
+  // is untested by every other case here, which all seed a non-empty cache.
+  it('does not query already-imported ids when the reconciled cache is empty', async () => {
+    cacheRepoMock.getForSource.mockReturnValue([]);
+
+    await reconcileHandler()(null, { ...INPUT, mode: 'full' });
+
+    expect(backlogRepoMock.findByExternalIds).not.toHaveBeenCalled();
+  });
+
+  // input.projectId exists so a project switch between the click and the handler's
+  // dispatch cannot point the read at another project's database (see its doc
+  // comment on ImportCacheQuery). The INPUT constant never sets it, so every other
+  // test here only exercises the ambient fallback.
+  it('reads the explicit projectId over the ambient current project', async () => {
+    await reconcileHandler()(null, { ...INPUT, projectId: 'proj-OTHER', mode: 'full' });
+
+    expect(vi.mocked(getProjectDb)).toHaveBeenCalledWith('proj-OTHER');
+  });
+
+  it('falls back to the ambient current project when projectId is omitted', async () => {
+    await reconcileHandler()(null, { ...INPUT, mode: 'full' });
+
+    expect(vi.mocked(getProjectDb)).toHaveBeenCalledWith('proj-1');
+  });
 });
 
 describe('importGetCached', () => {
@@ -370,5 +426,120 @@ describe('importGetCached', () => {
 
     expect(adapter.fetch).not.toHaveBeenCalled();
     expect(result.issues[0].alreadyImported).toBe(true);
+  });
+
+  it('does not query already-imported ids when the cache is empty', async () => {
+    cacheRepoMock.getForSource.mockReturnValue([]);
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_IMPORT_GET_CACHED);
+    if (!handler) throw new Error('getCached handler not registered');
+    const result = await handler(null, INPUT) as { issues: ExternalIssue[] };
+
+    expect(backlogRepoMock.findByExternalIds).not.toHaveBeenCalled();
+    expect(result.issues).toEqual([]);
+  });
+
+  it('reads the explicit projectId over the ambient current project', async () => {
+    const handler = capturedHandlers.get(IPC.BACKLOG_IMPORT_GET_CACHED);
+    if (!handler) throw new Error('getCached handler not registered');
+
+    await handler(null, { ...INPUT, projectId: 'proj-OTHER' });
+
+    expect(vi.mocked(getProjectDb)).toHaveBeenCalledWith('proj-OTHER');
+  });
+
+  it('falls back to the ambient current project when projectId is omitted', async () => {
+    const handler = capturedHandlers.get(IPC.BACKLOG_IMPORT_GET_CACHED);
+    if (!handler) throw new Error('getCached handler not registered');
+
+    await handler(null, INPUT);
+
+    expect(vi.mocked(getProjectDb)).toHaveBeenCalledWith('proj-1');
+  });
+});
+
+describe('serializeReconcile chaining', () => {
+  // These three tests exercise `serializeReconcile` itself (backlog.ts around lines
+  // 90-103). Every other test in this file calls the reconcile handler exactly
+  // once, so deleting `serializeReconcile` entirely and calling `run()` directly
+  // would still pass the rest of the suite.
+
+  it('runs two overlapping reconciles for the same key sequentially: the second only starts fetching after the first has committed its cache write', async () => {
+    const fetchResolvers: Array<(result: { issues: ExternalIssue[]; totalCount: number; hasNextPage: boolean }) => void> = [];
+    adapter.fetch = vi.fn(() => new Promise((resolve) => { fetchResolvers.push(resolve); }));
+
+    const firstReconcile = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+    await flush();
+    expect(adapter.fetch).toHaveBeenCalledTimes(1);
+
+    const secondReconcile = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+    await flush();
+    // The second reconcile is queued behind the first: its fetch must not have
+    // started yet. Without chaining, both would start immediately and could
+    // interleave their cache writes.
+    expect(adapter.fetch).toHaveBeenCalledTimes(1);
+    expect(cacheRepoMock.upsertMany).not.toHaveBeenCalled();
+
+    fetchResolvers[0]({ issues: [], totalCount: 0, hasNextPage: false });
+    await flush();
+    // The first reconcile's cache write must land before the second reconcile's
+    // fetch begins - otherwise the second's upsert could commit between the
+    // first's keep-list snapshot and its prune, and the first would delete rows
+    // the second just wrote.
+    expect(cacheRepoMock.upsertMany).toHaveBeenCalledTimes(1);
+    expect(adapter.fetch).toHaveBeenCalledTimes(2);
+
+    fetchResolvers[1]({ issues: [], totalCount: 0, hasNextPage: false });
+    await Promise.all([firstReconcile, secondReconcile]);
+    expect(cacheRepoMock.upsertMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('resolves the follower normally even when its leader (same key) rejects', async () => {
+    adapter.fetch = vi.fn()
+      .mockRejectedValueOnce(new Error('leader fetch failed'))
+      .mockResolvedValueOnce({ issues: [], totalCount: 0, hasNextPage: false });
+
+    const leader = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+    const follower = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+
+    await expect(leader).rejects.toThrow('leader fetch failed');
+    const result = await follower as ImportReconcileResult;
+    expect(result).toEqual(expect.objectContaining({ added: 0, updated: 0, removed: 0 }));
+  });
+
+  it('keeps the map entry pointed at the still-running reconcile, so a third overlapping call chains behind it rather than starting in parallel', async () => {
+    const fetchResolvers: Array<(result: { issues: ExternalIssue[]; totalCount: number; hasNextPage: boolean }) => void> = [];
+    adapter.fetch = vi.fn(() => new Promise((resolve) => { fetchResolvers.push(resolve); }));
+
+    const first = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+    await flush();
+    expect(adapter.fetch).toHaveBeenCalledTimes(1);
+
+    const second = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+    await flush();
+    expect(adapter.fetch).toHaveBeenCalledTimes(1);
+
+    // Resolve and let the FIRST settle. Its own cleanup fires here; if the
+    // in-flight map's entry were deleted unconditionally instead of only when it
+    // is still the current one, the second's entry would be wiped even though
+    // the second is still running.
+    fetchResolvers[0]({ issues: [], totalCount: 0, hasNextPage: false });
+    await flush();
+    await first;
+    expect(adapter.fetch).toHaveBeenCalledTimes(2);
+
+    // A third overlapping call must chain behind the still-running second, not
+    // start immediately - which is what would happen if the first's cleanup had
+    // wrongly cleared the map entry the second call is relying on.
+    const third = reconcileHandler()(null, { ...INPUT, mode: 'full' });
+    await flush();
+    expect(adapter.fetch).toHaveBeenCalledTimes(2);
+
+    fetchResolvers[1]({ issues: [], totalCount: 0, hasNextPage: false });
+    await flush();
+    expect(adapter.fetch).toHaveBeenCalledTimes(3);
+
+    fetchResolvers[2]({ issues: [], totalCount: 0, hasNextPage: false });
+    await Promise.all([first, second, third]);
   });
 });

@@ -34,6 +34,9 @@
  * 16-21. The search box matches exactly the fields the row prints (id with/without
  *     '#', the URL-derived id for projects, label, assignee), never the body, and
  *     honors the field separators and the anchored leading-'#' strip.
+ * 22. importExecute's `detailUnavailable` count (set when a per-item detail hydrate,
+ *     e.g. Azure DevOps comments, failed for some imported items) is surfaced in the
+ *     success toast rather than degrading silently.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, createProject, collectPageErrors } from './helpers';
@@ -885,6 +888,85 @@ test.describe('ImportDialog - filter and reconcile behaviour', () => {
     await expect(page.getByText('No items found')).toBeVisible({ timeout: 3000 });
     await expect(page.locator('[data-testid="import-empty-state-message"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="import-clear-filters-btn"]')).toHaveCount(0);
+
+    await browser.close();
+  });
+});
+
+test.describe('ImportDialog - execute result toast', () => {
+  test.beforeEach(async ({ }, testInfo) => {
+    testInfo.setTimeout(30000);
+  });
+
+  // The whole user-visible payoff of reporting a failed per-item detail hydrate
+  // (e.g. Azure DevOps comments) instead of degrading silently: the import still
+  // succeeds, but the toast has to say which items are missing their detail so
+  // it does not read as a clean, complete import.
+  test('a truthy detailUnavailable on the execute result is reported in the success toast', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+    await seedReconcile(page, [
+      makeIssue({ externalId: 'detail-unavailable-1', title: 'Item whose comment hydrate failed' }),
+    ]);
+    await page.evaluate(() => {
+      (window as unknown as { __mockImportExecutePreset?: unknown }).__mockImportExecutePreset = {
+        imported: 1,
+        skippedDuplicates: 0,
+        skippedAttachments: 0,
+        detailUnavailable: 1,
+        items: [],
+      };
+    });
+
+    await createProject(page, 'import-detail-unavailable-test');
+    await openImportDialog(page);
+
+    const issueRow = page.locator('[data-testid="import-issue-detail-unavailable-1"]');
+    await expect(issueRow).toBeVisible();
+    await issueRow.locator('input[type="checkbox"]').click();
+
+    const importButton = page.locator('[data-testid="import-execute-btn"]');
+    await expect(importButton).toBeEnabled();
+    await importButton.click();
+
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'comments unavailable for 1' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast).toContainText('Imported 1 item');
+
+    await browser.close();
+  });
+
+  test('an absent detailUnavailable on the execute result reports no comment-unavailable segment', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+    await seedReconcile(page, [
+      makeIssue({ externalId: 'detail-available-1', title: 'Item whose comment hydrate succeeded' }),
+    ]);
+    await page.evaluate(() => {
+      (window as unknown as { __mockImportExecutePreset?: unknown }).__mockImportExecutePreset = {
+        imported: 1,
+        skippedDuplicates: 0,
+        skippedAttachments: 0,
+        items: [],
+      };
+    });
+
+    await createProject(page, 'import-detail-available-test');
+    await openImportDialog(page);
+
+    const issueRow = page.locator('[data-testid="import-issue-detail-available-1"]');
+    await expect(issueRow).toBeVisible();
+    await issueRow.locator('input[type="checkbox"]').click();
+
+    const importButton = page.locator('[data-testid="import-execute-btn"]');
+    await expect(importButton).toBeEnabled();
+    await importButton.click();
+
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Imported 1 item' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast).not.toContainText('comments unavailable');
 
     await browser.close();
   });

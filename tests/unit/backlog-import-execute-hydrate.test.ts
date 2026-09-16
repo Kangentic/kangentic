@@ -178,4 +178,32 @@ describe('importExecute - hydrateForImport branch', () => {
       expect.objectContaining({ description: 'Plain body' }),
     );
   });
+
+  // The import loop iterates issuesToImport (hydrateForImport's result), while
+  // alreadyImportedIds was computed from the ORIGINAL input.issues. Nothing else
+  // here checks what happens when the two disagree in order or count.
+  it('imports the hydrateForImport result in ITS OWN order and count, even when reordered and shorter than the input', async () => {
+    const firstIssue = makeIssue({ externalId: '1', title: 'Issue One', body: 'Body one' });
+    const secondIssue = makeIssue({ externalId: '2', title: 'Issue Two', body: 'Body two' });
+    const thirdIssue = makeIssue({ externalId: '3', title: 'Issue Three', body: 'Body three' });
+
+    // Reordered (third then first) AND missing the second issue entirely.
+    adapter.hydrateForImport = vi.fn(async () => [thirdIssue, firstIssue]);
+
+    const result = await executeHandler()(null, {
+      source: 'azure_devops',
+      repository: 'my-org/my-project',
+      issues: [firstIssue, secondIssue, thirdIssue],
+    }) as { items: unknown[] };
+
+    expect(backlogRepoMock.create).toHaveBeenCalledTimes(2);
+    expect(backlogRepoMock.create.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ externalId: '3', description: 'Body three' }),
+    );
+    expect(backlogRepoMock.create.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ externalId: '1', description: 'Body one' }),
+    );
+    // Reflects the RETURNED count, not input.issues.length (which is 3).
+    expect(result.items).toHaveLength(2);
+  });
 });
