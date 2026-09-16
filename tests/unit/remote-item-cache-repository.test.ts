@@ -19,6 +19,7 @@ interface CacheRow {
   repository: string;
   external_id: string;
   remote_updated_at: string;
+  state_category: string;
   payload: string;
   fetched_at: string;
 }
@@ -60,15 +61,15 @@ function createFakeDb(): Database.Database {
         },
         run: (...args: unknown[]) => {
           if (sql.trimStart().startsWith('INSERT')) {
-            const [external_source, repository, external_id, remote_updated_at, payload, fetched_at] =
+            const [external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at] =
               args as string[];
             const existing = rows.find(
               (row) => row.external_source === external_source && row.repository === repository && row.external_id === external_id,
             );
             if (existing) {
-              Object.assign(existing, { remote_updated_at, payload, fetched_at });
+              Object.assign(existing, { remote_updated_at, state_category, payload, fetched_at });
             } else {
-              rows.push({ external_source, repository, external_id, remote_updated_at, payload, fetched_at });
+              rows.push({ external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at });
             }
           } else if (sql.includes('DELETE') && sql.includes('external_id = ?')) {
             const [external_source, repository, external_id] = args as string[];
@@ -201,8 +202,8 @@ describe('RemoteItemCacheRepository', () => {
     // Bypass upsertMany's JSON.stringify to plant a corrupted payload (e.g. a
     // partial write from a crash) alongside the valid rows.
     db.prepare(
-      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(SOURCE, REPO, '3', '2026-01-03T00:00:00.000Z', '{not valid json', '2026-02-01T00:00:00.000Z');
+      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(SOURCE, REPO, '3', '2026-01-03T00:00:00.000Z', 'open', '{not valid json', '2026-02-01T00:00:00.000Z');
 
     let issues: ExternalIssue[] = [];
     expect(() => { issues = corruptRepo.getForSource(SOURCE, REPO); }).not.toThrow();
@@ -220,8 +221,8 @@ describe('RemoteItemCacheRepository', () => {
 
     const { stateCategory: _dropped, ...withoutCategory } = makeIssue({ externalId: '2' });
     db.prepare(
-      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(SOURCE, REPO, '2', '2026-01-03T00:00:00.000Z', JSON.stringify(withoutCategory), '2026-02-01T00:00:00.000Z');
+      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(SOURCE, REPO, '2', '2026-01-03T00:00:00.000Z', 'open', JSON.stringify(withoutCategory), '2026-02-01T00:00:00.000Z');
 
     expect(skewRepo.getForSource(SOURCE, REPO).map((issue) => issue.externalId)).toEqual(['1']);
   });

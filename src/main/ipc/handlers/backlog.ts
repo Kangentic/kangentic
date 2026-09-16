@@ -461,7 +461,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // never goes stale. The others prune only on a full pass, so escalate one when
     // the cache has gone too long without it (MIN(fetched_at) is the last time a
     // full pass stamped every row). An unparseable timestamp compares NaN and
-    // simply does not escalate.
+    // simply does not escalate. One case stays escalated for good: if the remote
+    // really does empty out, nothing is upserted, so MIN(fetched_at) never advances
+    // and every open re-fetches. That is the deliberate cost of never pruning
+    // against an empty set - a full fetch of nothing is cheap, and the alternative
+    // was deleting the cache on a transient failure.
     const oldestFetchedAt = cacheRepo.getOldestFetchedAt(input.source, input.repository);
     const overdueForFullPass = !adapter.listExternalIds
       && oldestFetchedAt !== undefined
