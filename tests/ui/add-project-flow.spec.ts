@@ -153,4 +153,56 @@ test.describe('Add project flow', () => {
 
     await dismissOnboardingChecklist(page);
   });
+
+  test('does not show the git-setup toasts when an already-registered reopen fails', async () => {
+    ({ browser, page } = await launchPage());
+    await createProject(page, 'add-project-reopen-fail-existing');
+
+    // probePath deliberately does NOT report alreadyRegisteredProjectId, even
+    // though the picked path exactly matches the existing project's own path
+    // - this exercises openProjectByPath's OWN dedup (a normalized path
+    // match against the renderer's project list) rather than the earlier
+    // alreadyRegisteredProjectId short-circuit, which returns before ever
+    // reaching ensureGit or openProjectByPath.
+    await page.evaluate(() => {
+      (window as unknown as { __mockProbePathOverrides: Record<string, unknown> }).__mockProbePathOverrides = {
+        alreadyRegisteredProjectId: null,
+      };
+      (window as unknown as { __mockEnsureGitResult: Record<string, unknown> }).__mockEnsureGitResult = {
+        ok: true,
+        created: true,
+        error: null,
+      };
+      (window as unknown as { __mockFolderPath: string }).__mockFolderPath =
+        '/mock/projects/add-project-reopen-fail-existing';
+      window.electronAPI.projects.open = async function () {
+        throw new Error('Simulated reopen failure');
+      };
+    });
+
+    await page.locator('[data-testid="sidebar-new-project-button"]').click();
+
+    // Positive signal the reopen actually ran and failed (openProject's own
+    // toast), so the absence of the git toasts below is not just "nothing
+    // ran yet".
+    await expect(
+      page.locator('[data-testid="toast"]').filter({ hasText: 'Could not open that project' }),
+    ).toBeVisible({ timeout: 5000 });
+
+    // One-shot counts, not expect(...).toHaveCount(0): toasts auto-dismiss
+    // after their configured duration, so a retrying assertion would keep
+    // polling past that window and report "0" once a wrongly-shown git
+    // toast had already expired on its own, masking the bug this test
+    // exists to catch.
+    const gitCreatedToastCount = await page
+      .locator('[data-testid="toast"]')
+      .filter({ hasText: 'Started a git repo in this folder' })
+      .count();
+    expect(gitCreatedToastCount).toBe(0);
+    const gitFailedToastCount = await page
+      .locator('[data-testid="toast"]')
+      .filter({ hasText: 'Could not set up git here' })
+      .count();
+    expect(gitFailedToastCount).toBe(0);
+  });
 });
