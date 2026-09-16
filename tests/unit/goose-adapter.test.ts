@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
-import { ActivityDetection } from '../../src/shared/types';
+import { ActivityDetection, DEFAULT_CONFIG } from '../../src/shared/types';
 import {
   agentDisplayName,
   agentShortName,
@@ -105,11 +105,23 @@ describe('GooseAdapter', () => {
 
   it('declares the exact permission dropdown entries (KEEP IN SYNC with tests/ui/mock-electron-api.js)', () => {
     expect(adapter.permissions).toEqual([
-      { mode: 'plan', label: 'Plan (Chat Only, Read-Only)' },
+      { mode: 'plan', label: 'Plan (Chat Only, No File Access)' },
       { mode: 'default', label: 'Default (Smart Approve)' },
-      { mode: 'acceptEdits', label: 'Auto Edit (Approve Edits)' },
       { mode: 'bypassPermissions', label: 'Auto (Skip All Approvals)' },
     ]);
+  });
+
+  it('offers no dropdown entry that grants more autonomy than its label promises', () => {
+    // Goose has three reachable modes (chat / smart_approve / auto), so three
+    // entries. Two entries resolving to one GOOSE_MODE is the regression this
+    // guards: `acceptEdits` mapped to `auto` once made "Auto Edit (Approve
+    // Edits)" behave exactly like "Auto (Skip All Approvals)", handing full
+    // shell autonomy to whoever picked the edit-scoped-sounding option.
+    const modesOffered = adapter.permissions.map(
+      (entry) => adapter.buildEnv(makeOptions({ permissionMode: entry.mode }))?.GOOSE_MODE,
+    );
+    expect(new Set(modesOffered).size).toBe(adapter.permissions.length);
+    expect(adapter.permissions.map((entry) => entry.mode)).not.toContain('acceptEdits');
   });
 
   it('uses PTY-only activity detection at runtime (no hooks)', () => {
@@ -150,17 +162,29 @@ describe('GooseAdapter', () => {
       expect(result.version).toBeNull();
     });
 
-    it('extracts the version from anywhere in the wrapper text, not just a fixed prefix', async () => {
-      // parseVersion scans for the first MAJOR.MINOR.PATCH run instead of
-      // stripping a fixed "goose " prefix, because wrapper text varies
-      // between builds/packaging (detector.ts docstring). Every other test
-      // in this file uses 'goose 1.10.0', where a naive prefix-strip would
-      // coincidentally produce the same result - this fixture puts the
-      // version after other text so only the scan-anywhere regex passes.
-      mockVersionResult = 'Goose CLI version 1.10.0 (build 42)';
+    it('rejects the Go migration tool that publishes the same `goose` binary name', async () => {
+      // THE BINARY-NAME COLLISION, and the reason parseVersion is anchored.
+      // pressly/goose is a widely installed Go database-migration CLI that
+      // installs as `goose` (`go install github.com/pressly/goose/v3/cmd/goose`
+      // -> ~/go/bin/goose). Its banner is `goose version: v3.24.1`, so a
+      // scan-anywhere /\d+\.\d+\.\d+/ pulls `3.24.1` out of it and reports the
+      // migration tool as Block's agent CLI - after which Kangentic spawns
+      // `goose run -t "<prompt>" -s` against a tool that has no such command.
+      // Requiring a digit right after the `goose ` product name rejects it,
+      // the same anchoring GrokDetector uses for the shared `agent` shim.
+      mockVersionResult = 'goose version: v3.24.1';
       const result = await adapter.detect('/custom/goose');
-      expect(result.found).toBe(true);
-      expect(result.version).toBe('1.10.0');
+      expect(result.found).toBe(false);
+      expect(result.version).toBeNull();
+    });
+
+    it('accepts Block Goose banners', async () => {
+      for (const banner of ['goose 1.10.0', 'goose 1.10.0-rc.1', 'GOOSE 2.0.0']) {
+        adapter.invalidateDetectionCache();
+        mockVersionResult = banner;
+        const result = await adapter.detect('/custom/goose');
+        expect(result.found, `banner ${banner} should be accepted`).toBe(true);
+      }
     });
 
     it('caches detection result', async () => {
@@ -231,6 +255,26 @@ describe('GooseAdapter', () => {
       expect(command).toBe(`${quoted} session -r -n abc-123`);
     });
 
+    it('drops -s for a nonInteractive spawn so the run exits instead of parking', () => {
+      // `nonInteractive` is a real spawn_agent action config key
+      // (ActionConfig.nonInteractive -> transition-engine -> SpawnCommandOptions).
+      // `goose run -t <prompt>` without -s is already the headless one-shot
+      // form, so honouring the flag costs nothing; ignoring it left a
+      // fire-and-forget automation sitting in an interactive session forever.
+      const command = adapter.buildCommand(makeOptions({
+        prompt: 'Fix the bug',
+        nonInteractive: true,
+        shell: 'bash',
+      }));
+      expect(command).toContain('-t');
+      expect(command.split(' ')).not.toContain('-s');
+    });
+
+    it('keeps -s when nonInteractive is not set', () => {
+      const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug', shell: 'bash' }));
+      expect(command.split(' ')).toContain('-s');
+    });
+
     it('omits --name when no session id is present', () => {
       const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug' }));
       expect(command).not.toContain('-n');
@@ -294,7 +338,7 @@ describe('GooseAdapter', () => {
       plan: 'chat',
       dontAsk: 'chat',
       default: 'smart_approve',
-      acceptEdits: 'auto',
+      acceptEdits: 'smart_approve',
       auto: 'auto',
       bypassPermissions: 'auto',
     };
@@ -305,6 +349,34 @@ describe('GooseAdapter', () => {
         expect(env).toEqual({ GOOSE_MODE: expected[mode] });
       });
     }
+
+    it('does not hand the SHIPPED DEFAULT permission mode a fully unattended Goose', () => {
+      // `DEFAULT_CONFIG.agent.permissionMode` is 'acceptEdits' and
+      // `resolveEffectivePermissionMode` falls through task -> lane -> that
+      // global without consulting `adapter.permissions`. So whatever
+      // 'acceptEdits' maps to IS the out-of-the-box spawn for every Goose
+      // session on a fresh install. `auto` there means no approval on shell
+      // commands, chosen by nobody. Goose has no edits-auto/commands-ask mode,
+      // so it must resolve DOWN, never up.
+      expect(DEFAULT_CONFIG.agent.permissionMode).toBe('acceptEdits');
+      const shippedDefaultEnv = adapter.buildEnv(
+        makeOptions({ permissionMode: DEFAULT_CONFIG.agent.permissionMode }),
+      );
+      expect(shippedDefaultEnv).not.toEqual({ GOOSE_MODE: 'auto' });
+      expect(shippedDefaultEnv).toEqual({ GOOSE_MODE: 'smart_approve' });
+    });
+
+    it('degrades to the adapter default rather than emitting GOOSE_MODE=undefined', () => {
+      // `permission_mode` is an unconstrained TEXT column read back through a
+      // bare cast, so the PermissionMode union is a compile-time claim only. A
+      // legacy or hand-edited row reaching buildEnv must not produce
+      // `{ GOOSE_MODE: undefined }`, which the PTY env turns into the literal
+      // "undefined" and Goose then ignores in favour of its own default.
+      const env = adapter.buildEnv(makeOptions({
+        permissionMode: 'someRetiredMode' as PermissionMode,
+      }));
+      expect(env).toEqual({ GOOSE_MODE: 'smart_approve' });
+    });
   });
 
   // -- No-op methods ----------------------------------------------------------
@@ -346,8 +418,14 @@ describe('GooseAdapter', () => {
 
   // -- getExitSequence --------------------------------------------------------
 
-  it('exit sequence is Ctrl+C', () => {
-    expect(adapter.getExitSequence()).toEqual(['\x03']);
+  it('exit sequence interrupts, then exits explicitly', () => {
+    // Ctrl+C alone is not enough. Goose's Ctrl+C exits only when the input
+    // line is already empty; mid-turn it just interrupts the request. A kill
+    // usually lands mid-turn (a card moving to Done while the agent works),
+    // so a lone '\x03' leaves the session alive until the teardown grace
+    // expires and the PTY is force-killed. '/exit\r' is what actually ends it,
+    // matching Ollama's REPL exit sequence.
+    expect(adapter.getExitSequence()).toEqual(['\x03', '/exit\r']);
   });
 
   // -- interpolateTemplate ----------------------------------------------------

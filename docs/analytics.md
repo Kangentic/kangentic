@@ -67,7 +67,7 @@ counts only a search whose query actually embedded (a lexical fallback is not a 
 `board_integration` counts an import fetch or execute through any provider, and `pull_request`
 counts a PR actually linked to a task, never the automatic sweeps that find nothing.
 
-`agent` is the adapter id from a fixed allowlist (`claude`, `codex`, `gemini`, `qwen`, `opencode`, `aider`, `cursor`, `warp`, `copilot`, `kimi`, `droid`, `ollama`, `grok`, `antigravity`). `model` is the CLI-level model identifier the agent itself reports through its status output (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`).
+`agent` is the adapter id from a fixed allowlist (`claude`, `codex`, `gemini`, `qwen`, `opencode`, `aider`, `cursor`, `warp`, `copilot`, `kimi`, `droid`, `ollama`, `grok`, `antigravity`, `goose`). `model` is the CLI-level model identifier the agent itself reports through its status output (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`).
 
 `model` is only present on events fired *after* the agent has emitted at least one status update, which means it is omitted on `session_spawn` (model is unknown at spawn time) and may also be omitted on `session_exit` / `task_complete` for very short sessions that exited before the agent reported a model.
 
