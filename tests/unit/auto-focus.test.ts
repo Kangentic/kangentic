@@ -259,4 +259,51 @@ describe('resolveAutoFocusTarget', () => {
       })).toBe('B');
     });
   });
+
+  // A reason-only refresh on `session:activity`
+  describe('when the push carries a moved reason but an unchanged state', () => {
+    // These two are the same call apart from `previousState`. The pair is the
+    // point: the state the resolver is handed is identical, so only the previous
+    // value can tell a transition from a refresh.
+    const viewedSessionGoesThinking = {
+      sessionId: 'A',
+      newState: 'thinking' as ActivityState,
+      currentActiveSessionId: 'A',
+      ownedSessionIds: new Set<string>(),
+      sessionActivity: { A: 'thinking', B: 'permission' } as Record<string, ActivityState>,
+      sessions: [makeSession('A'), makeSession('B')],
+    };
+
+    it('returns null, so a working session does not pull the panel away repeatedly', () => {
+      // Main pushes this ~100 times across a fan-out while the state holds at
+      // thinking. Every one of them would otherwise switch the user off the
+      // session they deliberately navigated back to.
+      expect(resolveAutoFocusTarget({
+        ...viewedSessionGoesThinking,
+        previousState: 'thinking',
+      })).toBeNull();
+    });
+
+    it('still switches when that same state is a real transition', () => {
+      expect(resolveAutoFocusTarget({
+        ...viewedSessionGoesThinking,
+        previousState: 'idle',
+      })).toBe('B');
+    });
+
+    it('treats a session the store has not seen yet as a first sighting, not a refresh', () => {
+      // `sessionActivity[id]` is undefined before the first push for a session,
+      // and that push is a real arrival. Reading undefined as "unchanged" would
+      // silently drop auto-focus for every session's first state.
+      expect(resolveAutoFocusTarget({
+        sessionId: 'B',
+        newState: 'idle',
+        previousState: undefined,
+        currentActiveSessionId: 'A',
+        ownedSessionIds: new Set(),
+        sessionActivity: { A: 'thinking' },
+        sessions: [makeSession('A'), makeSession('B')],
+      })).toBe('B');
+    });
+  });
 });

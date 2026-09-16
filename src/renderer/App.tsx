@@ -496,6 +496,10 @@ export function App() {
         // so the write and its reads must stay atomic - deferring the body as
         // one thunk preserves that read-after-write.
         enqueueSessionUpdate(() => {
+          // Read the prior state BEFORE the write: this channel now also carries
+          // a reason-only refresh (same state, moved reason kind), and auto-focus
+          // below must not treat one as a transition. See the gate at its call.
+          const previousState = useSessionStore.getState().sessionActivity[sessionId];
           updateActivity(sessionId, state, reason);
 
           // Patch the monitor's matching row in place. This is why the monitor
@@ -512,11 +516,15 @@ export function App() {
           // Auto-focus: switch the bottom panel to the most recently idle session
           // (only for current project sessions). Treat 'permission' like 'idle'
           // for focus rules - the agent is paused, the user should see it.
+          //
+          // `previousState` is what makes a reason-only refresh on this channel a
+          // no-op here: the resolver returns null when the state did not move.
           if (isCurrentProject && config.autoFocusIdleSession) {
             const projectSessions = sessionStore.sessions.filter((s) => s.projectId === activeProjectId);
             const target = resolveAutoFocusTarget({
               sessionId,
               newState: state,
+              previousState,
               currentActiveSessionId: sessionStore.activeSessionId,
               // Both owner sources, not just this renderer's windows: a detail hosted in
               // the detached monitor has no tab here either, and making it the active tab

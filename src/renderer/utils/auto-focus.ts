@@ -5,6 +5,11 @@ import { requiresUserInteraction } from '../../shared/activity-state';
 interface AutoFocusInput {
   sessionId: string;
   newState: ActivityState;
+  /** What this session's state was before the push, so a reason-only refresh can be
+   *  told from a real transition. `session:activity` carries both: main emits it on
+   *  a state change AND when only the reason's kind moves mid-turn. Undefined for a
+   *  session the store has not seen yet, which is a first sighting, not a no-op. */
+  previousState: ActivityState | undefined;
   currentActiveSessionId: string | null;
   /** Sessions whose terminal a task-detail window hosts (`derivePanelSessions().owned`).
    *  The panel shows no tab for them, so they are not switch targets. */
@@ -20,10 +25,20 @@ interface AutoFocusInput {
  * or null if no switch is needed.
  */
 export function resolveAutoFocusTarget(input: AutoFocusInput): string | null {
-  const { sessionId, newState, currentActiveSessionId, ownedSessionIds, sessionActivity, sessions } = input;
+  const { sessionId, newState, previousState, currentActiveSessionId, ownedSessionIds, sessionActivity, sessions } = input;
 
   // Activity tab is sacred -- never switch away from it
   if (currentActiveSessionId === ACTIVITY_TAB) {
+    return null;
+  }
+
+  // A reason-only refresh is not a focus event. The state held, so whatever this
+  // resolver decided when it last moved still stands. Without this, a session the
+  // user is watching pulls the panel away on every reason kind change for as long
+  // as it keeps working (176 of them across the recorded 9-way fan-out), each time
+  // the user navigates back to it. A real transition always moves the value, so
+  // nothing that fired before this existed stops firing.
+  if (previousState === newState) {
     return null;
   }
 
