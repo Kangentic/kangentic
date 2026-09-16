@@ -971,3 +971,46 @@ test.describe('ImportDialog - execute result toast', () => {
     await browser.close();
   });
 });
+
+test.describe('ImportPopover - collapse scoped to its mount site', () => {
+  test.beforeEach(async ({ }, testInfo) => {
+    testInfo.setTimeout(30000);
+  });
+
+  // ImportPopover has two mount sites: ViewToggle's toolbar (which passes
+  // `collapse` so the trigger sheds its text as the row narrows) and
+  // BacklogView's empty state (which deliberately passes none, since that mount
+  // has no `@container` ancestor and the collapse classes' base state would win
+  // permanently). Three sibling specs (asana-auth, import-attachments, and this
+  // file's own tests above) all use `.first()` on the shared test id, which is
+  // correct for opening the popover but never distinguishes the two triggers -
+  // this is the one place that does.
+  test('the empty-state trigger keeps its text at a width where the toolbar trigger goes icon-only', async () => {
+    const { browser, page } = await launchPage();
+
+    await createProject(page, 'import-popover-empty-state-mount-test');
+    await page.locator('[data-testid="view-toggle-backlog"]').click();
+    await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 10000 });
+
+    // The app's own floor (`minWidth: 900`, src/main/index.ts). The mock's
+    // default sidebar width is 224px, leaving the toolbar row well under the
+    // backlog branch's 920px filterControl threshold (toolbar-collapse.ts), so
+    // the toolbar's own Import Tasks trigger goes icon-only here.
+    await page.setViewportSize({ width: 900, height: 600 });
+
+    // A freshly created project has no backlog items, so BOTH mount sites are
+    // in the DOM at once: ViewToggle mounts before BacklogView in AppLayout, so
+    // the toolbar trigger is first and the empty-state trigger is second.
+    const triggers = page.locator('[data-testid="import-sources-btn"]');
+    await expect(triggers).toHaveCount(2, { timeout: 5000 });
+
+    const toolbarTrigger = triggers.first();
+    await expect(toolbarTrigger.locator('span')).toBeHidden();
+
+    const emptyStateTrigger = triggers.last();
+    await expect(emptyStateTrigger.locator('span')).toBeVisible();
+    await expect(emptyStateTrigger).toContainText('Import Tasks');
+
+    await browser.close();
+  });
+});

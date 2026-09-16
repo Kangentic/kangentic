@@ -146,6 +146,33 @@ test.describe('SegmentedControl', () => {
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
   });
 
+  test('an option with no ariaLabel exposes its label text as its accessible name', async () => {
+    // Board passes no `ariaLabel`, so this is the plain
+    // `aria-label={option.ariaLabel ?? option.label}` fallback every option gets -
+    // the Backlog option's own override is covered separately below.
+    await expect(boardOption()).toHaveAttribute('aria-label', 'Board');
+  });
+
+  test("the Backlog option's accessible name spells out its item count", async () => {
+    // A fresh project seeds no backlog items, so the option's name starts as the
+    // bare label. The `CountBadge` in `trailing` contributes nothing to the
+    // accessible name once it comes from `ariaLabel` instead of the rendered
+    // text, so both branches of ViewToggle's ternary need their own assertion.
+    await expect(backlogOption()).toHaveAttribute('aria-label', 'Backlog');
+
+    await page.evaluate(async () => {
+      await window.electronAPI.backlog.create({ title: 'Alpha backlog item' });
+      await window.electronAPI.backlog.create({ title: 'Beta backlog item' });
+      await window.electronAPI.backlog.create({ title: 'Gamma backlog item' });
+      const stores = (window as unknown as {
+        __zustandStores: { backlog: { getState: () => { loadBacklog: () => Promise<void> } } };
+      }).__zustandStores;
+      await stores.backlog.getState().loadBacklog();
+    });
+
+    await expect(backlogOption()).toHaveAttribute('aria-label', 'Backlog, 3 items');
+  });
+
   test('slides the thumb onto the selected option', async () => {
     const thumb = group().locator('.kng-segmented-thumb');
     await expect(thumb).toBeAttached();
