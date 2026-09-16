@@ -564,53 +564,19 @@ describe('handleUpdateColumn - enum narrowing on the unvalidated path', () => {
 // handleGetColumnDetail - auto-command timing
 // ---------------------------------------------------------------------------
 
-describe('handleGetColumnDetail - auto-command timing', () => {
-  it('reports a deferred timing alongside the command it applies to', () => {
-    const swimlaneRow = makeSwimlaneRow({
-      auto_command: '/code-review',
-      auto_command_mode: 'deferred',
-    });
-    const db = createMockDb([swimlaneRow]);
-    const context = createMockContext(db);
-
-    const result = handleGetColumnDetail({ column: 'To Do' }, context);
-
-    expect(result.success).toBe(true);
-    expect(result.message).toContain('Auto-command timing: deferred (wait for the current turn)');
-    expect((result.data as Record<string, unknown>).autoCommandMode).toBe('deferred');
-  });
-
-  it('reports immediate timing when the column is at the default', () => {
-    const swimlaneRow = makeSwimlaneRow({
-      auto_command: '/code-review',
-      auto_command_mode: 'immediate',
-    });
-    const db = createMockDb([swimlaneRow]);
-    const context = createMockContext(db);
-
-    const result = handleGetColumnDetail({ column: 'To Do' }, context);
-
-    expect(result.success).toBe(true);
-    expect(result.message).toContain('Auto-command timing: immediate');
-    expect((result.data as Record<string, unknown>).autoCommandMode).toBe('immediate');
-  });
-
-  it('omits the timing line entirely when the column has no auto-command', () => {
-    // The mode is inert without a command, so printing it would read as a
-    // setting that does something on this column.
-    const swimlaneRow = makeSwimlaneRow({
-      auto_command: null,
-      auto_command_mode: 'deferred',
-    });
-    const db = createMockDb([swimlaneRow]);
-    const context = createMockContext(db);
-
-    const result = handleGetColumnDetail({ column: 'To Do' }, context);
-
-    expect(result.success).toBe(true);
-    expect(result.message).not.toContain('Auto-command timing');
-  });
-});
+// The "auto-command timing" trio that used to sit here seeded
+// `swimlanes.auto_command` / `auto_command_mode` and asserted an
+// "Auto-command timing: ..." line in the detail output. Both the source and the
+// line are gone: a column's message is its first enabled `send_message` enter
+// automation now, and `handleGetColumnDetail` reads it through
+// `AutomationRepository` + `resolveColumnMessage`, printing "Message to agent:"
+// followed by the column's On enter / On exit lists. Seeding the retired lane
+// fields would assert over a row nothing reads.
+//
+// Covered where it lives now, in `automation-commands.test.ts`: "reports a
+// column's rows with their type, trigger, and settings", "echoes back the
+// message it actually wrote, not the retired lane field", and "applies
+// autoCommandMode to the row".
 
 // ---------------------------------------------------------------------------
 // The session-track pairing, on the mock harness.

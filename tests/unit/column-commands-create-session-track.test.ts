@@ -147,24 +147,18 @@ describe('handleCreateColumn - session track pairing', () => {
   });
 });
 
-describe('handleCreateColumn - auto-command timing', () => {
-  it('persists a deferred timing', () => {
-    const result = handleCreateColumn(
-      { name: 'Review', autoCommand: '/code-review', autoCommandMode: 'deferred' },
-      makeContext(),
-    );
-
-    expect(result.success).toBe(true);
-    expect(createdInput().auto_command_mode).toBe('deferred');
-  });
-
-  it('leaves the timing to the column default when the caller omits it', () => {
-    const result = handleCreateColumn({ name: 'Review', autoCommand: '/code-review' }, makeContext());
-
-    expect(result.success).toBe(true);
-    expect(createdInput().auto_command_mode).toBeUndefined();
-  });
-});
+// The "auto-command timing" pair that used to sit here asserted
+// `swimlanes.auto_command_mode` on the created row. That column is retired: the
+// automations migration blanks it and no delivery path reads it, so those two
+// tests would now pass over a write nothing consumes, which is the exact
+// silent-success shape the automations work set out to end.
+//
+// The behaviour moved, it was not dropped. `automation-commands.test.ts` pins
+// it where it lives now, against the message automation the engine actually
+// reads: "gives a newly created column its message too", "applies
+// autoCommandMode to the row", and "refuses an unrecognized autoCommandMode on
+// create rather than coercing it to immediate". `column-message-write.test.ts`
+// covers `setColumnMessage` / `setColumnMessageMode` underneath those.
 
 describe('handleCreateColumn - enum narrowing on the unvalidated path', () => {
   // Same loop as the update-path guard in column-commands-description.test.ts.

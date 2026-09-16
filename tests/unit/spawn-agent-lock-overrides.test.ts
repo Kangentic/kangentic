@@ -145,8 +145,22 @@ function makeDeps(args: { latestSession: unknown; task: Task }) {
     getLatestForTask: vi.fn(() => args.latestSession),
     getLatestForTaskByTypeAndIsolation: vi.fn(() => undefined),
   };
+  // `executeTransition` takes an options object now, not a positional
+  // `agentOverride`. The resolved agent still reaches this leg, inside the
+  // `legacySpawnAgent` closure the runner calls for a legacy `spawn_agent` row,
+  // so the fake invokes that closure and records the agent it forwards.
+  const runLegacySpawnAgent = vi.fn(async () => {});
   const engine = {
-    executeTransition: vi.fn(async () => {}),
+    executeTransition: vi.fn(async (
+      _task: unknown,
+      _lane: unknown,
+      _trigger: string,
+      runOptions: { legacySpawnAgent: (config: Record<string, unknown>) => Promise<void> },
+    ) => {
+      await runOptions.legacySpawnAgent({});
+      return { outcomes: [], failures: [], startedAgent: false };
+    }),
+    runLegacySpawnAgent,
     resumeSuspendedSession: vi.fn(async () => {}),
   };
   const context = {
@@ -438,10 +452,11 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
     expect(deps.tasks.update).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID, agent_override: 'codex' }),
     );
-    // The resolved agent reaches the engine on BOTH legs: the transition
-    // (agentOverride is the 7th argument) and the fallback resume (6th).
+    // The resolved agent reaches the engine on BOTH legs: the transition (now
+    // through the legacySpawnAgent closure, 5th argument) and the fallback
+    // resume (6th).
     expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
-    expect(deps.engine.executeTransition.mock.calls[0][6]).toBe('codex');
+    expect(deps.engine.runLegacySpawnAgent.mock.calls[0][4]).toBe('codex');
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('codex');
   });
@@ -462,7 +477,7 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
 
     expect(deps.tasks.update).not.toHaveBeenCalled();
     expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
-    expect(deps.engine.executeTransition.mock.calls[0][6]).toBe('claude');
+    expect(deps.engine.runLegacySpawnAgent.mock.calls[0][4]).toBe('claude');
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(deps.engine.resumeSuspendedSession.mock.calls[0][5]).toBe('claude');
   });

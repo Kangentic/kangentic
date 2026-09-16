@@ -58,6 +58,42 @@ vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({})),
 }));
 
+/**
+ * The column's message moved out of `swimlanes.auto_command` and into the
+ * column's first enabled `send_message` enter automation, so `spawnAgent` reads
+ * it through `AutomationRepository` now. The matrix these tests vary is
+ * {main, isolated} x {fresh-promptless, fresh-with-task-prompt, resume}, not
+ * where the message is stored, so they keep expressing it as a lane field and
+ * `makeSwimlane` seeds the row the read path actually uses. The db mock above
+ * returns `{}`, which has no `prepare`, so the repository itself is faked.
+ */
+const columnMessages = vi.hoisted(() => new Map<string, string>());
+
+vi.mock('../../src/main/db/repositories/automation-repository', () => ({
+  AutomationRepository: class {
+    listForColumn(swimlaneId: string) {
+      const message = columnMessages.get(swimlaneId);
+      if (!message) return [];
+      return [{
+        id: `automation-${swimlaneId}`,
+        swimlane_id: swimlaneId,
+        name: 'Message',
+        type: 'send_message' as const,
+        trigger: 'enter' as const,
+        position: 0,
+        enabled: true,
+        config: { message, mode: 'immediate' as const },
+        created_at: '2025-01-01T00:00:00.000Z',
+        updated_at: '2025-01-01T00:00:00.000Z',
+      }];
+    }
+  },
+}));
+
+beforeEach(() => {
+  columnMessages.clear();
+});
+
 vi.mock('../../src/main/db/repositories/handoff-repository', () => ({
   HandoffRepository: class {
     insert = vi.fn(() => ({ id: 'handoff-rec-1' }));
@@ -108,6 +144,10 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 function makeSwimlane(id: string, overrides: Partial<Swimlane> = {}): Swimlane {
+  // `auto_command` is this file's shorthand for "this column sends a message".
+  // The field itself is retired, so seed the automation the engine reads while
+  // leaving it set, which also proves the lane field is no longer the source.
+  if (overrides.auto_command) columnMessages.set(id, overrides.auto_command);
   return {
     id,
     name: `Lane ${id}`,
@@ -177,19 +217,52 @@ function makeDeps(args: {
    */
   attachments?: { getPathsForTask: ReturnType<typeof vi.fn> };
 }) {
-  const getById = vi.fn();
-  getById
-    .mockReturnValueOnce(makeTask({ session_id: null, ...args.taskFields }))
-    .mockReturnValue(makeTask({ session_id: FRESH_PTY_SESSION_ID, ...args.taskFields }));
+  // Keyed on whether the session has actually been started, NOT on the call
+  // count. This used to hand back a session-less task on the FIRST call and a
+  // spawned one on every call after, which silently coupled the fixture to how
+  // many times `spawnAgent` happens to read the task. Running the column's
+  // enter automations added a read ahead of the fallback's own
+  // `if (afterAutomations.session_id) return` guard, so the guard saw a spawned
+  // session, returned early, and every assertion in this file failed at once
+  // while the production path was correct.
+  let sessionStarted = false;
+  const getById = vi.fn(() => makeTask({
+    session_id: sessionStarted ? FRESH_PTY_SESSION_ID : null,
+    ...args.taskFields,
+  }));
 
   const tasks = { getById };
   const sessionRepo = {
     getLatestForTask: vi.fn(() => args.manualPauseRecord),
     getLatestForTaskByTypeAndIsolation: vi.fn(() => args.resumeRecord),
   };
+  // Stands in for the automations runner, which is what now carries a column's
+  // message to the spawn. The real runner starts the agent for a `send_message`
+  // row that needs one, handing the row's text in as the candidate opening
+  // prompt, and then asks the adapter to deliver it; `deliverToAgent` no-ops
+  // when the spawn already took that exact string as its prompt. Reproducing
+  // both calls here is what keeps the prompt-slot-vs-keystroke matrix below
+  // testing the real branch, rather than a fallback that never sees a message.
   const engine = {
-    executeTransition: vi.fn(async () => {}),
-    resumeSuspendedSession: vi.fn(async () => {}),
+    executeTransition: vi.fn(async (
+      _task: Task,
+      lane: Swimlane,
+      _trigger: string,
+      runOptions: {
+        startAgent: (pendingPrompt?: string) => Promise<void>;
+        deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
+        suppressAgentMessages?: boolean;
+      },
+    ) => {
+      const message = columnMessages.get(lane.id);
+      if (!message || runOptions.suppressAgentMessages) {
+        return { outcomes: [], failures: [], startedAgent: false };
+      }
+      await runOptions.startAgent(message);
+      await runOptions.deliverToAgent(message, 'immediate');
+      return { outcomes: [], failures: [], startedAgent: true };
+    }),
+    resumeSuspendedSession: vi.fn(async () => { sessionStarted = true; }),
   };
   const scheduleKeystrokes = vi.fn();
   // mainWindow and projectRepo are only accessed when options.projectId is set
@@ -211,7 +284,18 @@ function makeDeps(args: {
     boardConfigManager: { getDefaultBaseBranch: vi.fn(() => undefined) },
   };
 
-  return { tasks, sessionRepo, engine, scheduleKeystrokes, context, attachments: args.attachments };
+  return {
+    tasks,
+    sessionRepo,
+    engine,
+    scheduleKeystrokes,
+    context,
+    attachments: args.attachments,
+    // The task spawnAgent is HANDED, not just the one `getById` returns. The
+    // task's own `auto_command` is read off that argument, so the two have to
+    // agree or a per-task command set here would never be seen.
+    taskFields: args.taskFields,
+  };
 }
 
 async function runSpawn(
@@ -227,7 +311,7 @@ async function runSpawn(
     engine: deps.engine as never,
     tasks: deps.tasks as never,
     sessionRepo: deps.sessionRepo as never,
-    task: makeTask({ swimlane_id: toLane.id, session_id: null }),
+    task: makeTask({ swimlane_id: toLane.id, session_id: null, ...deps.taskFields }),
     fromSwimlaneId: EXEC_LANE_ID,
     toLane,
     skipPromptTemplate,
@@ -273,18 +357,22 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
   });
 
   it('ISOLATED + fresh: a {{baseBranch}} placeholder in the auto_command interpolates the task base branch into the initial prompt', async () => {
-    // The isolated Code Review column ships `/code-review {{baseBranch}}` so the
-    // review is scoped against the branch the task actually forked from, not a
-    // guessed default. Verifies resolveTaskTemplateVars + interpolateTaskTemplate
-    // wire task.base_branch through to the delivered command.
-    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, {
-      session_target: 'isolated',
-      auto_command: '/code-review {{baseBranch}}',
-    });
+    // `/code-review {{baseBranch}}` scopes the review against the branch the
+    // task actually forked from, not a guessed default. Verifies
+    // resolveAutoCommandVars + interpolateTaskTemplate wire task.base_branch
+    // through to the delivered command.
+    //
+    // On the TASK's command, which is the one `agent-spawn` still interpolates
+    // itself. A COLUMN's message is an automation field now, so the runner
+    // substitutes it through `interpolateAutomationConfig` against the engine's
+    // own template vars, and this file mocks the engine. The three variables
+    // these tests pin are resolved by the same `resolveTaskTemplateVars` on
+    // both paths.
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, { session_target: 'isolated' });
     const deps = makeDeps({
       manualPauseRecord: null,
       resumeRecord: undefined,
-      taskFields: { base_branch: 'develop' },
+      taskFields: { base_branch: 'develop', auto_command: '/code-review {{baseBranch}}' },
     });
 
     await runSpawn(isolatedLane, deps, true);
@@ -294,14 +382,11 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
   });
 
   it('ISOLATED + fresh: a null task.base_branch falls back to the effective project default, not empty (regression: base_branch is a per-task OVERRIDE, not the resolved value)', async () => {
-    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, {
-      session_target: 'isolated',
-      auto_command: '/code-review {{baseBranch}}',
-    });
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, { session_target: 'isolated' });
     const deps = makeDeps({
       manualPauseRecord: null,
       resumeRecord: undefined,
-      taskFields: { base_branch: null },
+      taskFields: { base_branch: null, auto_command: '/code-review {{baseBranch}}' },
     });
 
     await runSpawn(isolatedLane, deps, true);
@@ -317,15 +402,13 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     // actually threads through spawnAgent -> resolveAutoCommandVars ->
     // resolveTaskTemplateVars -> interpolateTaskTemplate, and is not silently
     // dropped (which would leave {{attachments}} resolving to []).
-    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, {
-      session_target: 'isolated',
-      auto_command: '/code-review {{attachments}}',
-    });
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, { session_target: 'isolated' });
     const getPathsForTask = vi.fn(() => ['/mock/a.png', '/mock/b.png']);
     const deps = makeDeps({
       manualPauseRecord: null,
       resumeRecord: undefined,
       attachments: { getPathsForTask },
+      taskFields: { auto_command: '/code-review {{attachments}}' },
     });
 
     await runSpawn(isolatedLane, deps, true);
@@ -350,14 +433,14 @@ describe('spawnAgent auto_command injection (isolation-scoped resume check)', ()
     // was never exercised with a real value. The task's worktree_path is given
     // a value DISTINCT from options.projectPath so a regression that swapped
     // the two (or dropped the field, resolving '') could not pass vacuously.
-    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, {
-      session_target: 'isolated',
-      auto_command: '/code-review {{projectPath}}',
-    });
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, { session_target: 'isolated' });
     const deps = makeDeps({
       manualPauseRecord: null,
       resumeRecord: undefined,
-      taskFields: { worktree_path: '/mock/worktrees/my-task' },
+      taskFields: {
+        worktree_path: '/mock/worktrees/my-task',
+        auto_command: '/code-review {{projectPath}}',
+      },
     });
 
     await runSpawn(isolatedLane, deps, true, false, undefined, '/mock/main-project');

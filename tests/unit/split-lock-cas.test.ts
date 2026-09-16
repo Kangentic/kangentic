@@ -279,7 +279,7 @@ describe('TASK_MOVE split-lock CAS', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
@@ -422,7 +422,7 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
@@ -539,7 +539,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 
@@ -733,7 +733,7 @@ describe('TASK_MOVE Phase 2 worktree error - revert locked micro-step', () => {
     });
 
     mockCreateTransitionEngine.mockReturnValue({
-      executeTransition: vi.fn(async () => {}),
+      executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
       resumeSuspendedSession: vi.fn(async () => {}),
     });
 

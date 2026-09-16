@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const hoisted = vi.hoisted(() => ({
   resumeSuspendedSession: vi.fn(async () => {}),
-  executeTransition: vi.fn(async () => {}),
+  executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
   getProjectRepos: vi.fn(),
   applyProfileToLane: vi.fn((lane: unknown) => lane),
   loadTaskProfile: vi.fn(() => null),

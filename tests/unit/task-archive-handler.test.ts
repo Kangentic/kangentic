@@ -288,7 +288,7 @@ function createMockSwimlaneRepo(swimlanes: MockSwimlane[]): MockSwimlaneRepo {
 
 function createMockEngine(): MockEngine {
   return {
-    executeTransition: vi.fn(async () => {}),
+    executeTransition: vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
     resumeSuspendedSession: vi.fn(async () => {}),
   };
 }

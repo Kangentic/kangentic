@@ -196,20 +196,19 @@ describe('PROFILE_ENTRY_SCHEMA literal parity with the shared strategy types', (
     expect(new Set(options)).toEqual(new Set(Object.keys(EXPECTED_SESSION_TARGETS)));
   });
 
-  it('autoCommandMode accepts exactly the AutoCommandMode union', () => {
-    // autoCommandMode was added to PROFILE_ENTRY_SCHEMA as its own inline
-    // z.enum(['immediate', 'deferred']) literal, the exact shape that drifted
-    // to 'always_create' for sessionSpawnStrategy above. Nothing else in the
-    // suite reads this schema: mcp-column-field-parity.test.ts pins
-    // autoCommandMode's literal against the shared union too, but only for the
-    // column tools (task-tools.ts) - a separate registration with its own
-    // separate inline enum, not this one.
+  it('exposes neither autoCommand nor autoCommandMode: a profile cannot re-point a column message', () => {
+    // Both used to be profile overlays on `swimlanes.auto_command`, and this
+    // test used to pin autoCommandMode's inline enum against the shared union.
+    // The column's message is an automation row now, and automations are shared
+    // by EVERY profile, which is what the Column Manager's pane says and why its
+    // list is read-only under one. `resolveColumnMessage` reads the row with no
+    // profile overlay over it, so a schema still advertising these two would
+    // accept a value nothing could ever apply, which is the silent-success
+    // failure this subsystem was built to end.
     const server = makeServerWithProfileTools();
-    const options = getProfileEntryEnumOptions(
-      server.getInputSchema('kangentic_create_board_profile'),
-      'autoCommandMode',
-    );
-    expect(options).toEqual(readStringUnionMembers('AutoCommandMode'));
+    const schema = server.getInputSchema('kangentic_create_board_profile');
+    expect(() => getProfileEntryEnumOptions(schema, 'autoCommandMode')).toThrow(/no field "autoCommandMode"/);
+    expect(() => getProfileEntryEnumOptions(schema, 'autoCommand')).toThrow(/no field "autoCommand"/);
   });
 
   // Behavioral pin through the WHOLE wire contract (the record and
