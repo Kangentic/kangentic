@@ -7,7 +7,8 @@ import { ActivityDetection } from '../../../../shared/types';
 
 /**
  * Goose CLI adapter - integrates Block's Goose agent CLI (`goose`)
- * (https://github.com/block/goose) behind the generic AgentAdapter interface.
+ * (https://github.com/aaif-goose/goose) behind the generic AgentAdapter
+ * interface.
  *
  * Goose is a thin FIRST-PASS integration, close to Warp/Oz: no hooks wired, no
  * structured status/event output, no trust mechanism, and no settings merging.
@@ -181,11 +182,10 @@ export class GooseAdapter implements AgentAdapter {
 
   /**
    * Runtime strategy: this adapter wires no hooks and reads no structured
-   * status output (see the class docstring - Goose HAS hooks, they are just
-   * not wired yet), so
-   * activity is PTY-only with the silence timer, like Warp. The session id is
-   * caller-supplied (see supportsCallerSessionId), so no capture strategy is
-   * needed.
+   * status output, so activity is PTY-only with the silence timer, like Warp.
+   * Goose HAS a hook system; it is just not wired yet (see the class
+   * docstring). The session id is caller-supplied (see
+   * supportsCallerSessionId), so no capture strategy is needed.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     activity: ActivityDetection.pty(),

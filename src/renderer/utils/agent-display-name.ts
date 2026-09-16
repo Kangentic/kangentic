@@ -96,7 +96,7 @@ const AGENT_META: Record<string, AgentMeta> = {
   goose: {
     display: 'Goose CLI',
     short: 'Goose',
-    installUrl: 'https://github.com/block/goose',
+    installUrl: 'https://github.com/aaif-goose/goose',
   },
 };
 

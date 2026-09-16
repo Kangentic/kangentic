@@ -64,7 +64,7 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Grok Build | `[mcp_servers.kangentic]` sentinel block in `<cwd>/.grok/config.toml` with `${KANGENTIC_MCP_URL}` + `${KANGENTIC_MCP_TOKEN}`, plus `--allow "MCPTool(kangentic__*)"` pre-approval | process env (file holds only var names - the URL too, so the block is fully static) |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
 | Antigravity CLI | Workspace plugin `<cwd>/.agents/plugins/kangentic/` (`serverUrl` + `X-Kangentic-Token` header; streamable HTTP, connects at the first agent turn) | project file, stripped on exit |
-| Cursor, Oz CLI | Not wired | n/a |
+| Cursor, Oz CLI, Goose CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
 
 The project-file rows (Gemini, Qwen, Droid, Grok, Antigravity) are additionally hidden from git while untracked: when Kangentic creates the file, the builder seeds it into the local `.git/info/exclude` so it never shows in `git status` and cannot ride a `git add -A` (shared mechanism in `src/main/agent/shared/git-exclude.ts`; a pre-existing user file keeps its git visibility).
@@ -875,6 +875,7 @@ Structured-format support by agent:
 | Aider | no (no per-session native history) | yes |
 | Warp, Cursor, Copilot | no (history location unknown) | yes |
 | Ollama | no (no per-session history for `ollama run`) | yes |
+| Goose | no (adapter parses no transcript) | yes |
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
