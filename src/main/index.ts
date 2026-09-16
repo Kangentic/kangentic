@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
+import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
+import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { resolvePreviewTaskLabel } from '../devtools/main/preview-task-title';
@@ -28,7 +30,7 @@ import { decideSecondInstanceAction, isStartupComplete, markStartupComplete, sho
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
-import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser } from './analytics/error-reporting';
+import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
 import { readPendingGpuEscalation, clearGpuEscalation } from './diagnostics/gpu-health';
@@ -701,6 +703,11 @@ let mcpServerHandle: McpHttpServerHandle | null = null;
 let mcpServerSettled = false;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let runUptimeCheckpointInterval: ReturnType<typeof setInterval> | null = null;
+let stopHostMemorySampler: (() => void) | null = null;
+// DESKTOP-16 bounded-reload guard for the main window's render-process-gone
+// handler below. See renderer-recovery.ts for why the decision logic lives
+// in its own testable module rather than inline here.
+const rendererReloadGate = createRendererReloadGate();
 
 // Parse --cwd=<path> from command line args
 function getCwdArg(): string | null {
@@ -1125,6 +1132,50 @@ const createWindow = () => {
       reason: details.reason,
       exitCode: details.exitCode,
     });
+
+    // DESKTOP-16: an OOM/crashed renderer is usually the HOST running out of
+    // memory around us, not a bug on the page (see host-memory.ts's header).
+    // Agents live in main - a PTY survives a renderer death untouched - so
+    // recovering costs the user a repaint, never their work. Reload instead
+    // of leaving a dead, blank window with no explanation.
+    if (!isRecoverableRendererDeath(details.reason)) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    if (rendererReloadGate.tryReload()) {
+      if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+        mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+      } else {
+        mainWindow.loadFile(resolveRendererIndexPath(MAIN_WINDOW_VITE_NAME));
+      }
+      return;
+    }
+
+    // Past the bound: a fresh renderer died too, so reloading again would
+    // just spin. Say so, with the last known headroom, rather than leaving a
+    // blank window with nothing to explain it. Suppressed under E2E, where a
+    // modal has nobody to click it.
+    if (isE2ETest) return;
+    const sample = getLastHostMemorySample();
+    const detail = [
+      `The window crashed (${details.reason}) and could not recover after `
+        + `${RENDERER_RELOAD_MAX} attempts in ${RENDERER_RELOAD_WINDOW_MS / 60_000} minutes.`,
+      formatHostMemoryDetailLine(sample),
+      'Your agents are still running in the background. Restart Kangentic to reconnect to them.',
+    ].filter((line): line is string => line !== null).join('\n\n');
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const options: Electron.MessageBoxOptions = {
+      type: 'error',
+      title: 'Kangentic',
+      message: "Kangentic's window stopped responding",
+      detail,
+      buttons: ['OK'],
+    };
+    void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)).catch(
+      (dialogError) => {
+        // A dialog that cannot open must not become the crash it was reporting.
+        console.error('[APP] Failed to show the renderer-recovery-failed dialog:', dialogError);
+      }
+    );
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -1584,6 +1635,32 @@ app.whenReady().then(async () => {
   runUptimeCheckpointInterval = setInterval(() => checkpointRunUptime(), RUN_UPTIME_CHECKPOINT_INTERVAL_MS);
   runUptimeCheckpointInterval.unref();
 
+  // Host memory pressure sampling (Sentry DESKTOP-16): armed here, before
+  // createWindow()/registerAllIpc() below, but its first real tick is 60s
+  // away - by then mainWindow and the session manager both exist, the same
+  // ordering the heartbeat and run-uptime timers already rely on. The
+  // sampler itself is synchronous and side-effect-free
+  // (`process.getSystemMemoryInfo()`), so arming it this early is harmless
+  // even though nothing reads a sample until the first tick.
+  stopHostMemorySampler = startHostMemorySampler({
+    // getSessionManager() throws if registerAllIpc() has not run yet; that
+    // should never be true by the time a tick fires 60s+ after this is
+    // armed, but the fallback keeps a degenerate early-startup failure from
+    // becoming a recurring uncaught-exception report every tick.
+    getActiveAgentCount: () => {
+      try {
+        return getSessionManager().getSessionCounts().active;
+      } catch {
+        return 0;
+      }
+    },
+    onSample: (sample) => setHostMemoryContext(sample),
+    onPressure: (sample, activeAgentCount) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send(IPC.HOST_MEMORY_PRESSURE, { sample, activeAgentCount });
+    },
+  });
+
   // This span MUST stay one unbroken synchronous block. createWindow() calls
   // mainWindow.loadURL() internally, so the renderer starts loading before
   // initUpdater/initAnnouncements have registered their channels; only the
@@ -1927,6 +2004,12 @@ function getShutdownDependencies() {
       if (runUptimeCheckpointInterval) {
         clearInterval(runUptimeCheckpointInterval);
         runUptimeCheckpointInterval = null;
+      }
+      // Synchronous (clearInterval), so this needs no drain - see
+      // .claude/rules/synchronous-shutdown.md.
+      if (stopHostMemorySampler) {
+        stopHostMemorySampler();
+        stopHostMemorySampler = null;
       }
       // Stop the background PR-refresh and remote-fetch timers (both
       // .unref()'d, but clear them explicitly so no tick fires mid-shutdown).

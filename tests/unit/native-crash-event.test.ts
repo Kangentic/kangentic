@@ -328,7 +328,23 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
         timeDateStamp: CRASH_TIME_STAMP,
       })
     );
-    const decision = correctNativeCrashEvent(nativeEvent(), identity, WINDOWS_CONTEXT);
+    // host_memory (DESKTOP-16) is a TOP-LEVEL context, not nested under app -
+    // set it directly rather than through nativeEvent()'s overrides param,
+    // which replaces `contexts` wholesale instead of merging into it.
+    const event = nativeEvent();
+    event.contexts = {
+      ...event.contexts,
+      host_memory: {
+        ts: '2026-09-08T15:07:00.000Z',
+        platform: 'win32',
+        commitLimitBytes: 96_432_717_824,
+        commitRemainingBytes: 2_256_896,
+        physicalTotalBytes: 34_060_931_072,
+        physicalFreeBytes: 5_005_045_760,
+      },
+    };
+
+    const decision = correctNativeCrashEvent(event, identity, WINDOWS_CONTEXT);
 
     expect(decision.action).toBe('keep');
     if (decision.action !== 'keep') return;
@@ -337,6 +353,10 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
     expect(decision.event.contexts?.app?.app_start_time).toBeUndefined();
     expect(decision.event.contexts?.app?.app_memory).toBeUndefined();
     expect(decision.event.contexts?.app?.free_memory).toBeUndefined();
+    // DESKTOP-16: the uploading run's host memory context must be pruned the
+    // same way app_memory/free_memory are, since it describes the machine at
+    // upload time, not at the crashed run's time.
+    expect(decision.event.contexts?.host_memory).toBeUndefined();
     // The fields that describe the machine rather than the run survive.
     expect(decision.event.contexts?.app?.app_arch).toBe('x64');
     expect(decision.event.contexts?.native_crash).toMatchObject({
@@ -356,16 +376,28 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
         timeDateStamp: CRASH_TIME_STAMP,
       })
     );
-    const decision = correctNativeCrashEvent(
-      nativeEvent({
-        contexts: { app: { app_version: '0.39.0', app_start_time: '2026-09-08T08:12:26.709Z' } },
-      }),
-      identity,
-      WINDOWS_CONTEXT
-    );
+    const hostMemory = {
+      ts: '2026-09-08T08:12:00.000Z',
+      platform: 'win32',
+      commitLimitBytes: 96_432_717_824,
+      commitRemainingBytes: 50_000_000_000,
+      physicalTotalBytes: 34_060_931_072,
+      physicalFreeBytes: 5_005_045_760,
+    };
+    const event = nativeEvent({
+      contexts: { app: { app_version: '0.39.0', app_start_time: '2026-09-08T08:12:26.709Z' } },
+    });
+    event.contexts = { ...event.contexts, host_memory: { ...hostMemory } };
+    const decision = correctNativeCrashEvent(event, identity, WINDOWS_CONTEXT);
 
     expect(decision.action).toBe('keep');
     if (decision.action !== 'keep') return;
+    // The negative companion to the reattribution case above: when the app
+    // context does NOT describe the uploader, host_memory must survive
+    // untouched - proving the delete is gated on describesTheUploader, not
+    // unconditional. Compared against an independent literal, not the
+    // mutated event's own object, so this cannot pass by tautology.
+    expect(decision.event.contexts?.host_memory).toEqual(hostMemory);
     expect(decision.event.release).toBe('Kangentic@0.39.0');
     expect(decision.event.contexts?.app?.app_start_time).toBe('2026-09-08T08:12:26.709Z');
     expect(decision.event.contexts?.native_crash).toMatchObject({

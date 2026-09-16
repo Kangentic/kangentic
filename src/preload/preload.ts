@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -543,6 +543,14 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, info: UpdateDownloadedInfo) => callback(info);
       ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
       return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
+    },
+  },
+
+  hostMemory: {
+    onPressure: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryPressureEvent) => callback(payload);
+      ipcRenderer.on(IPC.HOST_MEMORY_PRESSURE, handler);
+      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_PRESSURE, handler);
     },
   },
 

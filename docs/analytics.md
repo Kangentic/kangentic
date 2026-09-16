@@ -269,6 +269,17 @@ in one Sentry org, one triage surface.
   `inherit` default, a packaged GUI build sent the worker's uncaught-exception dump nowhere, so
   every DESKTOP-H event could only say "exit code 1". Content lives in the context, never in a
   tag or the message, so grouping is unchanged.
+- **Host memory pressure carries a `host_memory` context on every event** (`setHostMemoryContext`,
+  `src/main/diagnostics/host-memory.ts`; DESKTOP-16 was a renderer OOM where the crashing process
+  held 179 MB while the host had 2.15 MB of Windows commit remaining out of an 89.8 GB limit - a
+  minimal reading like that took a multi-hour investigation to establish because the diagnosis
+  lived only in the minidump's `chromium_stability_report`, not on the event proper). The main
+  process samples `process.getSystemMemoryInfo()` every 60s and calls `Sentry.setContext` on the
+  ambient scope (not `beforeSend`, which is already `filterNativeCrashEvent` below and has no
+  transaction for `setMeasurement` to hang on), so whatever event fires next - including a native
+  crash - carries the freshest sample. `correctNativeCrashEvent` prunes `host_memory` under the
+  same stale-dump condition as `app_memory`/`free_memory`, since a startup-found dump can otherwise
+  present the uploading launch's memory as the crash's.
 - **User-configuration errors are the one deliberate exclusion.** `reportHandledError`
   early-returns on a `UserConfigurationError` (`src/shared/user-configuration-error.ts`). A
   missing agent CLI (`AgentCliNotFoundError`) is the user's environment, not a defect we can ship

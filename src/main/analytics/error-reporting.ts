@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/electron/main';
 import type { ErrorEvent, EventHint } from '@sentry/electron/main';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
 import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
+import type { HostMemorySample } from '../../shared/types';
 import { trackEvent } from './analytics';
 import {
   correctNativeCrashEvent,
@@ -112,6 +113,28 @@ export function reportHandledError(
     });
   } catch {
     // Error reporting must never cascade into the failing path itself
+  }
+}
+
+/**
+ * Attach the latest host memory sample (Sentry DESKTOP-16) to the persisted
+ * Sentry scope, so whatever event fires next - including a native crash,
+ * which has no other route into `contexts` - carries it. Deliberately not a
+ * `beforeSend` hook: `beforeSend` is already `filterNativeCrashEvent`
+ * (below), and tracing/replay are off (see `initErrorReporting`'s doc
+ * comment), so there is no transaction for `setMeasurement` to hang on.
+ * `setContext` on the ambient scope is the plain route. Composes with
+ * `correctNativeCrashEvent`'s stale-dump correction in
+ * `native-crash-event.ts`, which prunes this context the same way it prunes
+ * `app_memory`/`free_memory` when a startup-found dump's app context turns
+ * out to describe the uploading run rather than the crashed one.
+ */
+export function setHostMemoryContext(sample: HostMemorySample): void {
+  if (!active) return;
+  try {
+    Sentry.setContext('host_memory', { ...sample });
+  } catch {
+    // Never disrupt the sampler for telemetry
   }
 }
 

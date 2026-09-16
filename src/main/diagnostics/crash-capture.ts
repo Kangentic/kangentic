@@ -6,6 +6,8 @@ import type { CrashRecord } from '../../shared/types';
 import { resolveCrashRecord } from './source-map-resolver';
 import { isBenignStreamWriteError } from './benign-stream-error';
 import { recordGpuProcessGone } from './gpu-health';
+import { getLastHostMemorySample } from './host-memory';
+import { PATHS } from '../config/paths';
 
 /**
  * Captures fatal-error events from main, preload, and renderer and persists
@@ -83,6 +85,8 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
   // webContents). We attach to all of them.
   app.on('web-contents-created', (_event, webContents) => {
     webContents.on('render-process-gone', (_evt, details) => {
+      // DESKTOP-16: read synchronously, never re-sample - crash time is not
+      // the moment to call an OS API that may itself need to allocate.
       writeRecord(options.getProjectRoot(), {
         ts: new Date().toISOString(),
         kind: 'render-process-gone',
@@ -90,7 +94,7 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
         message: `Render process gone: ${details.reason}`,
         stack: null,
         origin: safeGetUrl(webContents),
-        context: { reason: details.reason, exitCode: details.exitCode },
+        context: { reason: details.reason, exitCode: details.exitCode, hostMemory: getLastHostMemorySample() },
         versions: getVersions(),
       });
     });
@@ -143,12 +147,16 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
 }
 
 function writeRecord(projectRoot: string | null, record: CrashRecord): void {
-  if (!projectRoot) return;
   // Resolve bundled-chunk URLs in the stack back to original source
   // file:line:col (V1 is a passthrough; replacing the resolver body adds
   // real source-map lookup with no caller changes).
   const resolved = resolveCrashRecord(record);
-  const directory = path.join(projectRoot, '.kangentic', 'logs', 'crashes');
+  // No project open (or none yet at startup): fall back to the app's own
+  // config dir rather than dropping the record. A crash is exactly the kind
+  // of event that must not silently go missing because nothing was open.
+  const directory = projectRoot
+    ? path.join(projectRoot, '.kangentic', 'logs', 'crashes')
+    : path.join(PATHS.configDir, 'logs', 'crashes');
   try {
     fs.mkdirSync(directory, { recursive: true });
   } catch {

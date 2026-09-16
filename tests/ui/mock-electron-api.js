@@ -472,6 +472,15 @@
     listeners.forEach(function (fn) { fn(info); });
   };
 
+  // Host memory pressure test hooks (Sentry DESKTOP-16), same eager pattern
+  // as the update-downloaded hooks above: `__mockFireHostMemoryPressure`
+  // exists before any renderer subscriber has registered.
+  window.__mockHostMemoryPressureListeners = [];
+  window.__mockFireHostMemoryPressure = function (event) {
+    var listeners = window.__mockHostMemoryPressureListeners.slice();
+    listeners.forEach(function (fn) { fn(event); });
+  };
+
   // Announcements test hooks: installed eagerly for the same reason as the
   // update-downloaded hooks above. `__mockFireAnnouncementsChanged(active,
   // history)` also updates `__mockActiveAnnouncements` /
@@ -3896,6 +3905,17 @@
         window.__mockUpdateDownloadedListeners.push(callback);
         return function () {
           var listeners = window.__mockUpdateDownloadedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+    },
+
+    hostMemory: {
+      onPressure: function (callback) {
+        window.__mockHostMemoryPressureListeners.push(callback);
+        return function () {
+          var listeners = window.__mockHostMemoryPressureListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
