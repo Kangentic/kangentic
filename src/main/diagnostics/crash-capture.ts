@@ -132,7 +132,7 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
     recordGpuProcessGone(options.gpuHealthFilePath, details.reason, details.exitCode, app.getVersion(), {
       // gpu-health.ts stays Electron-free (matches run-uptime.ts), so it
       // takes a plain record rather than Electron's GPUFeatureStatus type.
-      getFeatureStatus: () => app.getGPUFeatureStatus() as unknown as Record<string, string>,
+      getFeatureStatus: () => ({ ...app.getGPUFeatureStatus() }),
     });
   });
 

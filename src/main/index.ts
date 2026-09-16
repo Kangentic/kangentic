@@ -98,6 +98,12 @@ mark('process_start');
 // production via __KANGENTIC_DEV__.
 if (__KANGENTIC_DEV__) startEventLoopLagMonitor();
 
+// The GPU health escalation record. One constant, because the crash-capture
+// path below WRITES it and the whenReady block far below READS and clears it:
+// two independent path.join calls would diverge silently, with no compile or
+// test failure to catch it.
+const GPU_HEALTH_FILE_PATH = path.join(PATHS.configDir, 'gpu-health.json');
+
 // Install product diagnostics (log mirror, crash capture, IPC recorder,
 // debug-dump path resolver) BEFORE any IPC handler registers. The recorder
 // patches `ipcMain.handle` once and every subsequent registration flows
@@ -114,7 +120,7 @@ installDiagnostics({
     safeReadDeveloperFlag('persistConsoleLogs'),
   getRecordIpcTraffic: () =>
     safeReadDeveloperFlag('recordIpcTraffic'),
-  gpuHealthFilePath: path.join(PATHS.configDir, 'gpu-health.json'),
+  gpuHealthFilePath: GPU_HEALTH_FILE_PATH,
 });
 
 function safeReadDeveloperFlag(key: DeveloperFlagKey): boolean {
@@ -1671,10 +1677,9 @@ app.whenReady().then(async () => {
   // local crash JSONs under .kangentic/logs/crashes/ and the Aptabase
   // gpu_process_gone count exist independent of this report.
   try {
-    const gpuHealthFilePath = path.join(PATHS.configDir, 'gpu-health.json');
-    const pendingGpuEscalation = readPendingGpuEscalation(gpuHealthFilePath);
+    const pendingGpuEscalation = readPendingGpuEscalation(GPU_HEALTH_FILE_PATH);
     if (pendingGpuEscalation) {
-      clearGpuEscalation(gpuHealthFilePath);
+      clearGpuEscalation(GPU_HEALTH_FILE_PATH);
       reportHandledError(
         new Error(
           `GPU process exited repeatedly (reason ${pendingGpuEscalation.reason}, exit code ${pendingGpuEscalation.exitCode ?? 'unknown'})`

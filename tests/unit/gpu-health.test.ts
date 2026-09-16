@@ -21,8 +21,20 @@ import path from 'node:path';
  *     done only after a successful report).
  */
 
-const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+const { mockTrackEvent, atomicWriteJsonSpy } = vi.hoisted(() => ({
+  mockTrackEvent: vi.fn(),
+  atomicWriteJsonSpy: vi.fn(),
+}));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: mockTrackEvent }));
+// Delegates to the REAL atomicWriteJson by default, so every existing test in
+// this file keeps exercising the real write path. Only the writeEscalation
+// fallback test below overrides one call with mockImplementationOnce, which
+// self-clears after that single call and falls back to the delegation.
+vi.mock('../../src/main/config/board-config/atomic-write', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/config/board-config/atomic-write')>();
+  atomicWriteJsonSpy.mockImplementation(actual.atomicWriteJson);
+  return { ...actual, atomicWriteJson: atomicWriteJsonSpy };
+});
 
 import {
   recordGpuProcessGone,
@@ -50,6 +62,10 @@ let escalationPath: string;
 beforeEach(() => {
   resetGpuHealthForTests();
   mockTrackEvent.mockClear();
+  // mockClear, not mockReset: mockReset would strip the delegation to the
+  // real atomicWriteJson set up above, silently switching every other test
+  // in this file onto the fs.writeFileSync fallback without going red.
+  atomicWriteJsonSpy.mockClear();
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-gpu-health-'));
   escalationPath = path.join(tempDir, 'gpu-health.json');
 });
@@ -186,6 +202,66 @@ describe('recordGpuProcessGone', () => {
     });
   });
 
+  /**
+   * The sibling of the test above, across a decay boundary. The existing
+   * "sends at most two Aptabase events per run" test never crosses a decay
+   * reset, and the existing decay-boundary test ("latches once three deaths
+   * land inside the decay window...") never asserts on trackEvent - so
+   * nothing pinned that a SECOND escalation incident, later in the same run,
+   * does not tick a third and fourth gpu_process_gone event. trackedPhases is
+   * the module-level per-run gate that makes this true; decayIfQuiet
+   * deliberately does not clear it (see the module's own comment above
+   * `trackedPhases`), which is exactly what this test pins.
+   *
+   * Both incidents are asserted independently (firstAt, count) before the
+   * trackEvent count check, so "called exactly twice" is conditional on two
+   * REAL escalations having occurred, not on the second group failing to
+   * latch at all.
+   */
+  it('sends exactly two Aptabase events across a run with two decay-separated latch incidents, never a third or fourth', () => {
+    const clock = makeClock();
+    const options = { now: clock.now, maxCrashes: 3, decayMs: 300_000 };
+
+    recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', options);
+    clock.advance(1_000);
+    recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', options);
+    clock.advance(1_000);
+    recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', options);
+
+    const firstEscalation = readPendingGpuEscalation(escalationPath);
+    expect(firstEscalation?.firstAt).toBe(new Date(START_MS).toISOString());
+    expect(firstEscalation?.count).toBe(3);
+
+    // Longer than decayMs, so the in-memory crash count resets before the
+    // next death lands - but trackedPhases must survive this reset.
+    clock.advance(300_001);
+    const secondIncidentStartMs = clock.now();
+    recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', options);
+    clock.advance(1_000);
+    recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', options);
+    clock.advance(1_000);
+    recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', options);
+
+    const secondEscalation = readPendingGpuEscalation(escalationPath);
+    // A genuinely new incident (a fresh firstAt after the decay reset), not a
+    // stale read of the first record.
+    expect(secondEscalation?.firstAt).toBe(new Date(secondIncidentStartMs).toISOString());
+    expect(secondEscalation?.count).toBe(3);
+    expect(secondEscalation?.firstAt).not.toBe(firstEscalation?.firstAt);
+
+    expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+    expect(mockTrackEvent).toHaveBeenNthCalledWith(1, 'gpu_process_gone', {
+      reason: 'crashed',
+      exitCode: 1,
+      phase: 'first',
+    });
+    expect(mockTrackEvent).toHaveBeenNthCalledWith(2, 'gpu_process_gone', {
+      reason: 'crashed',
+      exitCode: 1,
+      phase: 'latched',
+    });
+  });
+
   it('respects a configured maxCrashes and decayMs instead of always using the defaults', () => {
     const clock = makeClock();
     recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', { now: clock.now, maxCrashes: 1 });
@@ -208,6 +284,72 @@ describe('recordGpuProcessGone', () => {
       recordGpuProcessGone(nestedPath, 'crashed', 1, '0.41.0', { now: clock.now, maxCrashes: 1 }),
     ).not.toThrow();
     expect(readPendingGpuEscalation(nestedPath)?.count).toBe(1);
+  });
+});
+
+/**
+ * writeEscalation's own doc comment claims "Never throws". Three guarded
+ * paths back that claim; this suite exercises the two that matter most for a
+ * running app (an unwritable directory, and an atomic-write failure that
+ * still has to leave a readable record) plus the "even the fallback fails"
+ * give-up case.
+ */
+describe('writeEscalation failure paths (the "Never throws" contract)', () => {
+  it('does not throw and writes nothing when the escalation directory cannot be created (a path component is an existing file, not a directory)', () => {
+    // fs.mkdirSync(dirname, { recursive: true }) cannot create a directory
+    // inside something that is itself a plain file - the mkdir call throws,
+    // and the guarded catch must swallow it before anything is written.
+    const blockingFilePath = path.join(tempDir, 'not-a-directory');
+    fs.writeFileSync(blockingFilePath, 'this is a file, not a directory');
+    const blockedEscalationPath = path.join(blockingFilePath, 'nested', 'gpu-health.json');
+    const clock = makeClock();
+
+    expect(() =>
+      recordGpuProcessGone(blockedEscalationPath, 'crashed', 1, '0.41.0', { now: clock.now, maxCrashes: 1 }),
+    ).not.toThrow();
+    expect(fs.existsSync(blockedEscalationPath)).toBe(false);
+    expect(readPendingGpuEscalation(blockedEscalationPath)).toBeNull();
+  });
+
+  it('falls back to a plain writeFileSync and still leaves a readable record when atomicWriteJson throws', () => {
+    // Consumed after this one call, so every OTHER test in the file keeps
+    // going through the real atomicWriteJson via the delegating mock.
+    atomicWriteJsonSpy.mockImplementationOnce(() => {
+      throw new Error('rename failed mid-write');
+    });
+    const clock = makeClock();
+
+    expect(() =>
+      recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', { now: clock.now, maxCrashes: 1 }),
+    ).not.toThrow();
+
+    // Proves the fallback actually engaged, not merely that nothing threw:
+    // atomicWriteJson was attempted (and failed) before the record became
+    // readable via the plain fs.writeFileSync path.
+    expect(atomicWriteJsonSpy).toHaveBeenCalledTimes(1);
+    expect(readPendingGpuEscalation(escalationPath)).toEqual({
+      reason: 'crashed',
+      exitCode: 1,
+      count: 1,
+      firstAt: new Date(START_MS).toISOString(),
+      lastAt: new Date(START_MS).toISOString(),
+      appVersion: '0.41.0',
+      featureStatus: {},
+    });
+  });
+
+  it('gives up silently when the writeFileSync fallback also fails (a directory sits where the record file should go)', () => {
+    // No mocking needed: a directory at the escalation path makes the real
+    // atomicWriteJson fail naturally (its tmp-file write succeeds, but
+    // renaming a file onto an existing directory throws), and then the plain
+    // fs.writeFileSync fallback fails the same way writing directly to it -
+    // exercising both guarded catches with real fs behavior.
+    fs.mkdirSync(escalationPath);
+    const clock = makeClock();
+
+    expect(() =>
+      recordGpuProcessGone(escalationPath, 'crashed', 1, '0.41.0', { now: clock.now, maxCrashes: 1 }),
+    ).not.toThrow();
   });
 });
 

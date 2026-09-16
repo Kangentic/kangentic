@@ -86,13 +86,13 @@ type CrashPhase = 'first' | 'latched';
 let crashCount = 0;
 let firstCrashAt: number | null = null;
 let lastCrashAt: number | null = null;
-/** Gates the Aptabase 'latched' phase to once per run, mirroring
- *  UtilityRestartPolicy's `reportedLatch`. Does NOT gate the escalation
- *  write itself: the file keeps updating on every death after the latch too
- *  (see GpuEscalationRecord.count), only the telemetry tick is once. */
-let latched = false;
 /** Per-run Aptabase phase gate, mirroring restart-policy.ts's
- *  `trackedCrashPhases` (there keyed by service; GPU has only one). */
+ *  `trackedCrashPhases` (there keyed by service; GPU has only one). This
+ *  Set alone is what holds the telemetry to two ticks per run: it is NOT
+ *  cleared by a decay reset, so a second escalation later in the same run
+ *  updates the record without ticking Aptabase again. It does not gate the
+ *  escalation WRITE, which keeps updating on every death after the latch
+ *  (see GpuEscalationRecord.count). */
 const trackedPhases = new Set<CrashPhase>();
 
 /** Forget all module state (vitest shares module instances). */
@@ -100,7 +100,6 @@ export function resetGpuHealthForTests(): void {
   crashCount = 0;
   firstCrashAt = null;
   lastCrashAt = null;
-  latched = false;
   trackedPhases.clear();
 }
 
@@ -110,7 +109,6 @@ function decayIfQuiet(nowMs: number, decayMs: number): void {
   crashCount = 0;
   firstCrashAt = null;
   lastCrashAt = null;
-  latched = false;
 }
 
 function trackPhaseOnce(phase: CrashPhase, reason: string, exitCode: number | null): void {
@@ -173,10 +171,7 @@ export function recordGpuProcessGone(
   trackPhaseOnce('first', reason, normalizedExitCode);
 
   if (crashCount >= maxCrashes) {
-    if (!latched) {
-      latched = true;
-      trackPhaseOnce('latched', reason, normalizedExitCode);
-    }
+    trackPhaseOnce('latched', reason, normalizedExitCode);
     writeEscalation(filePath, {
       reason,
       exitCode: normalizedExitCode,
