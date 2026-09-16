@@ -113,12 +113,18 @@ export class RemoteItemCacheRepository {
     const existing = this.cachedIds(source, repository);
     let added = 0;
     let updated = 0;
+    // `state_category` duplicates the `stateCategory` inside `payload`, which is
+    // the copy the dialog actually filters on. It stays written because the column
+    // is NOT NULL and the table is created with `IF NOT EXISTS`: any database that
+    // already has the table keeps its original shape, so omitting the column here
+    // would fail the NOT NULL constraint on every upsert rather than migrate it.
     const statement = this.db.prepare(`
       INSERT INTO remote_item_cache
-        (external_source, repository, external_id, remote_updated_at, payload, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+        (external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(external_source, repository, external_id) DO UPDATE SET
         remote_updated_at = excluded.remote_updated_at,
+        state_category = excluded.state_category,
         payload = excluded.payload,
         fetched_at = excluded.fetched_at
     `);
@@ -128,7 +134,8 @@ export class RemoteItemCacheRepository {
         else added++;
         const payload = JSON.stringify({ ...issue, alreadyImported: false });
         statement.run(
-          source, repository, issue.externalId, normalizeRemoteTimestamp(issue.updatedAt), payload, fetchedAt,
+          source, repository, issue.externalId, normalizeRemoteTimestamp(issue.updatedAt),
+          issue.stateCategory, payload, fetchedAt,
         );
       }
     });
