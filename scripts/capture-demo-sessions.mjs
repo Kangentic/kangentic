@@ -220,6 +220,14 @@ function geometryFor(entry) {
   return forAgent(geometry.taskWindow);
 }
 
+/** Does this capture record a Command Terminal, whose session the dataset marks transient? */
+function isTransientCapture(entry) {
+  if (entry.kind === 'terminal') return true;
+  if (entry.kind !== 'session') return false;
+  const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+  return !!(session && session.transient);
+}
+
 function runCapture(entry, cwd) {
   const out = path.join(fixturesDir, entry.file);
   const { cols, rows } = geometryFor(entry);
@@ -237,6 +245,10 @@ function runCapture(entry, cwd) {
   if (entry.timeout) args.push('--timeout', String(entry.timeout));
   if (entry.stopAfter) args.push('--stop-after', String(entry.stopAfter));
   if (entry.stopWhen) args.push('--stop-when', entry.stopWhen);
+  // Which sessions are transient is the dataset's fact, not something the capture script can see
+  // from a prompt, so the decision is made here. MessageTrailTracker skips a transient session, so
+  // a Command Terminal shows no message trail on the desktop and must show none in the demo.
+  if (isTransientCapture(entry)) args.push('--no-message-trail');
   if (entry.kind === 'session') {
     // The frame at the moment the live frame opens this session at, when it is shown as working.
     const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);

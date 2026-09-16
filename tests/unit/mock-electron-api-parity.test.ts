@@ -299,9 +299,18 @@ describe('mock-electron-api implements the whole ElectronAPI interface', () => {
     expect(declared.namespaces.length).toBeGreaterThan(MINIMUM_NAMESPACE_COUNT);
     expect(declared.methods.length).toBeGreaterThan(MINIMUM_METHOD_COUNT);
     expect(new Set(declared.methods).size).toBe(declared.methods.length);
-    // The one documented optional namespace. Its absence from the required set
-    // must come from the optional filter, not from a parser gap; if `dev` is
-    // ever removed from the interface, drop this line with it.
-    expect(declared.skippedOptional).toContain('dev');
+    // Every optional member is EXEMPT from the parity assertion above, so the skip list is the
+    // hole in this file's guarantee and has to be a decision rather than a side effect. It grew
+    // silently once already: #648 added sessions.getMessageTrails and sessions.onMessageTrail as
+    // optional, so the mock was never required to implement them, and the web demo shipped a
+    // feature that rendered nothing. Pin the list, and make a new optional member a deliberate act.
+    expect([...declared.skippedOptional].sort()).toEqual([
+      // A whole namespace, present only in dev builds.
+      'dev',
+      // Optional because a running preload can predate them; the mock implements both, and
+      // tests/unit/demo-message-trail-seeded.test.ts is what checks they return something.
+      'sessions.getMessageTrails',
+      'sessions.onMessageTrail',
+    ].sort());
   });
 });

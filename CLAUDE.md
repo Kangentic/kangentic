@@ -61,7 +61,9 @@ scripts/          # Build and dev scripts
 - `npm run make` - Build installer (NSIS on Windows, DMG on macOS, deb/rpm on Linux)
 - `npm run build:demo` - Build the renderer for a plain browser into `dist/demo/` (the web demo
   the site and docs embed; see `demo/README.md`). `npm run test:demo` smoke-tests that build;
-  `npm run demo:measure` reports its weight and boot timings.
+  `npm run demo:serve` serves it for a manual look (open `/demo/stage.html`); `npm run demo:measure`
+  reports its weight and boot timings. This is the WEB build, not `/preview`, which launches the
+  Electron desktop app and serves none of it.
 
 **Worktrees need `npm install`:** Git worktrees do not share `node_modules/` with the main
 repo. Always run `npm install` in a worktree before running any npm scripts (`npm run

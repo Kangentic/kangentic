@@ -21,7 +21,9 @@ three things staying in step, and each is enforced rather than remembered.
 
 - **Every method on `ElectronAPI` has a mock implementation.** A bridge method the mock lacks is
   a silent runtime failure in the web build. Add the mock method in the same change that adds the
-  interface member.
+  interface member. An OPTIONAL member (`foo?:`) is exempt from the parity test by construction,
+  so the skip list is pinned: adding one is a decision, not a side effect. That list grew silently
+  once, which is how the message trail reached the demo with no mock data behind it.
 - **Demo behaviour lives outside `src/renderer`.** The URL contract, the config overrides, the
   still and embed styles, and the scene applier are `demo/boot.js` and the scene registry
   (`tests/captures/scenes.ts`); the fixed-size host a direct visit lands on is `demo/stage.html`.
@@ -46,6 +48,18 @@ three things staying in step, and each is enforced rather than remembered.
   the Monitor therefore change at the moment a window would show the answer land, not when the
   visitor happens to open one. A still frame paints that same opening moment, so a capture and the
   live frame start from the same place.
+- **A card's own text is recorded too, and a mock that answers with nothing is not parity.** Card
+  Preview defaults to `agent-latest-message`, so a card prints the agent's newest message rather
+  than the description. That prose is in the agent's transcript, never in the terminal bytes. Each
+  recording carries a `messageTrail`, derived by importing main's own parsers and
+  `assistantMessagePreviews`, on the recording's own clock. It is seeded before the renderer
+  mounts, and the rest is scheduled from there.
+  Unlike the timelines this cannot be recomputed from a recording, so the
+  lines are committed and the guard asserts presence. A trail that is legitimately empty (no
+  transcript parser for that agent, a transient Command Terminal, a capture whose prose was all
+  thinking blocks) is enumerated with its reason rather than left to read as a gap. This is the
+  shape to watch for on every new data-backed card surface: the bridge method existing and
+  returning nothing passes every structural check while the feature is invisible.
 - **What the Monitor shows moving is recorded too.** A card's output peek changes as the agent
   works, so each recording carries the timeline of those changes (`peekTimeline`), derived from
   its own stream by one shared module and sampled to a readable cadence with no random number in
@@ -73,6 +87,11 @@ three things staying in step, and each is enforced rather than remembered.
 - **Test (mechanical, CI):** `tests/unit/demo-fixtures-sanitized.test.ts` scans every recording
   and the dataset modules for a home directory, a user name, an email address, a temp path, or a
   client name. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-message-trail-seeded.test.ts` fails when a recording
+  carries no `messageTrail` key, when one is empty without a named reason, when a named reason has
+  gone stale, when a line sits outside its recording's span, and when the applier or the loader
+  stops reading them. It is the answer to the parity test passing on a mock that answers with
+  nothing. Runs via `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots every bootable scene from a
   static server and asserts the marker, the embed and theme parameters, the error card for an
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
@@ -80,7 +99,9 @@ three things staying in step, and each is enforced rather than remembered.
   peeks change while a still frame's do not, that `loop=1` brings a finished session back and its
   absence leaves it finished, that a terminal on a grid its recording does not fit plays its
   frames and leaves its session working (including the board's bottom panel, where no grid could
-  fit), and that a drag into an
+  fit), that a board card and a Monitor card draw the agent message trail in place of the
+  description and the output peek while a session with no trail still draws its peek, and that a
+  drag into an
   auto-spawn column and a new Command Terminal each start a session whose bytes arrive through
   the mock's data path. Runs as the `demo` job in `.github/workflows/ci.yml` and again inside
   `.github/workflows/deploy-demo.yml` before the Pages deploy.
