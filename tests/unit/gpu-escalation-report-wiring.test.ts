@@ -184,4 +184,42 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
       "featureStatusOnReport must be sourced from a LIVE app.getGPUFeatureStatus() call made at report time, not from the persisted record - the reporting boot's GPU mode may already differ from the escalating run's",
     ).toContain('featureStatusOnReport: app.getGPUFeatureStatus()');
   });
+
+  it('reports the escalation only after setErrorReportingUser(clientId) has run, so the install id correlates it with a minidump of the same crash', () => {
+    // Uses INDEX_CODE (comment-stripped), not tryBlock/INDEX_SOURCE: the
+    // block's own comment narrates "Must run AFTER setErrorReportingUser
+    // above", so a raw-source indexOf could bind to that prose instead of
+    // the real call and the comparison would pass regardless of the actual
+    // call order.
+    const setUserIndex = INDEX_CODE.indexOf('setErrorReportingUser(clientId)');
+    const readIndex = INDEX_CODE.indexOf('readPendingGpuEscalation(GPU_HEALTH_FILE_PATH)');
+    expect(setUserIndex, 'src/main/index.ts must still call setErrorReportingUser(clientId)').toBeGreaterThan(-1);
+    expect(readIndex, 'src/main/index.ts must still call readPendingGpuEscalation(GPU_HEALTH_FILE_PATH)').toBeGreaterThan(-1);
+    expect(
+      setUserIndex,
+      "setErrorReportingUser(clientId) must run BEFORE the escalation is read/reported - the block's own comment says the install id is what correlates the report with a minidump of the same crash, so reporting before the user is set would send an uncorrelated event",
+    ).toBeLessThan(readIndex);
+  });
+
+  it("sources escalatedInVersion from the persisted record's own appVersion, not from the reporting run's live app.getVersion()", () => {
+    const tryBlock = escalationReportTryBlock();
+
+    expect(
+      tryBlock,
+      'escalatedInVersion must read pendingGpuEscalation.appVersion - the app version that PRODUCED the escalation, not the one doing the reporting. Confusing the two misattributes a still-crashing build to a version that has since been fixed.',
+    ).toContain('escalatedInVersion: pendingGpuEscalation.appVersion');
+    expect(
+      tryBlock,
+      'escalatedInVersion must not be sourced from a live app.getVersion() call - that would silently report the CURRENT (reporting) build instead of the one that actually escalated',
+    ).not.toContain('escalatedInVersion: app.getVersion()');
+  });
+
+  it("sources previousRunExit from previousRunProps.lastRunExit with an 'unknown' fallback, the exact field name and sentinel that already drifted once (commit cf620796)", () => {
+    const tryBlock = escalationReportTryBlock();
+
+    expect(
+      tryBlock,
+      "previousRunExit must read previousRunProps.lastRunExit ?? 'unknown' - this is what lets a report distinguish the DESKTOP-W shape (the escalating run ended in an abrupt process kill) from the DESKTOP-15 shape (Chromium recovered on its own); a wrong field name or a different sentinel silently breaks that distinction without any type error, since previousRunProps is a loosely-typed Record",
+    ).toContain("previousRunExit: previousRunProps.lastRunExit ?? 'unknown'");
+  });
 });
