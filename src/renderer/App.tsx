@@ -11,6 +11,7 @@ import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { useUpdaterStore } from './stores/updater-store';
+import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
@@ -137,6 +138,12 @@ export function App() {
       useUpdaterStore.getState().receiveUpdate(info);
     });
 
+    // Host memory pressure (Sentry DESKTOP-16): a rare, edge-triggered push
+    // from main's sampler - see stores/host-memory-store.ts.
+    const cleanupHostMemoryListener = window.electronAPI.hostMemory?.onPressure((event) => {
+      useHostMemoryStore.getState().receivePressureEvent(event);
+    });
+
     // Announcements: hydrate the active list (the first poll may have landed
     // before this renderer mounted) and the local archive (which, unlike the
     // in-memory active list, is non-empty before the first poll and offline),
@@ -157,6 +164,7 @@ export function App() {
       cleanupListChanged?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
+      cleanupHostMemoryListener?.();
       cleanupAnnouncementsChanged?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once

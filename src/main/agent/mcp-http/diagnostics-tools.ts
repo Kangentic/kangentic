@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import { getProcessMetrics } from '../../diagnostics/process-metrics';
+import { PATHS } from '../../config/paths';
 import { ROTATED_FILE_SUFFIX } from '../../diagnostics/async-file-queue';
 import { enumerateWorktrees } from '../../git/worktree-list';
 import type { CrashRecord, IpcLogEntry, LogEntry } from '../../../shared/types';
@@ -90,7 +91,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_get_recent_crashes',
     {
       description:
-        'List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`. Each record contains the timestamp, kind (main-uncaught-exception, render-process-gone, gpu-process-gone, preload-error, renderer-window-error, etc.), source-mapped stack, and version info captured at crash time. Always-on capture; no toggle required. Pass `project` to inspect another project\'s crashes.',
+        'List recent crash records from `<projectRoot>/.kangentic/logs/crashes/`, merged with the app\'s global config-dir fallback (crash-capture.ts writes there when no project was open at crash time, e.g. at very first launch). Each record contains the timestamp, kind (main-uncaught-exception, render-process-gone, gpu-process-gone, preload-error, renderer-window-error, etc.), source-mapped stack, and version info captured at crash time. Always-on capture; no toggle required. Pass `project` to inspect another project\'s crashes.',
       inputSchema: z.object({
         limit: z
           .number()
@@ -113,18 +114,35 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         return errorResult(resolved.error);
       }
       const projectPath = resolved.context.getProjectPath();
-      const directory = path.join(projectPath, '.kangentic', 'logs', 'crashes');
-      let files: string[];
-      try {
-        files = fs.readdirSync(directory).filter((name) => name.endsWith('.json'));
-      } catch {
+      // Two directories: the per-project one (the normal case), and the
+      // app's global config dir, where crash-capture.ts falls back when no
+      // project was open at crash time (e.g. a startup crash before any
+      // project loaded). Merged so neither location is a blind spot for
+      // this tool - see crash-capture.ts's `writeRecord`.
+      const directories = [
+        path.join(projectPath, '.kangentic', 'logs', 'crashes'),
+        path.join(PATHS.configDir, 'logs', 'crashes'),
+      ];
+      const files: { directory: string; name: string }[] = [];
+      for (const directory of directories) {
+        try {
+          for (const name of fs.readdirSync(directory)) {
+            if (name.endsWith('.json')) files.push({ directory, name });
+          }
+        } catch {
+          // Directory does not exist yet (no crash written there) - fine.
+        }
+      }
+      if (files.length === 0) {
         return textResult(`No crashes recorded${project ? ` for project ${project}` : ''}.`);
       }
       // Filenames are derived from ISO timestamps with `:` and `.` swapped to
-      // `-`. Lexicographic descending sort matches reverse-chronological.
-      files.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+      // `-`. Lexicographic descending sort matches reverse-chronological,
+      // and holds across the two directories since both use the same stamp
+      // format - only the directory differs, never the naming.
+      files.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
       const records: CrashRecord[] = [];
-      for (const name of files) {
+      for (const { directory, name } of files) {
         if (records.length >= (limit ?? 10)) break;
         try {
           const raw = fs.readFileSync(path.join(directory, name), 'utf-8');

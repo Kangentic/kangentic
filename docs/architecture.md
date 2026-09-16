@@ -10,6 +10,17 @@ Electron app with two processes:
 
 Context isolation is enabled -- the renderer has no direct access to Node.js APIs.
 
+### Renderer crash recovery
+
+A recoverable renderer death (`render-process-gone` with reason `oom` or `crashed`, never
+`clean-exit` or `killed`) reloads the main window automatically instead of leaving it dead and
+blank. PTY sessions live in main and are untouched by a renderer-only crash, so a reload costs the
+user a repaint, not their work. Reloads are bounded (`RENDERER_RELOAD_MAX` per
+`RENDERER_RELOAD_WINDOW_MS`, `src/main/diagnostics/renderer-recovery.ts`): a machine still starved
+of memory would kill a freshly reloaded renderer too, so past the bound a native dialog explains
+what happened instead of retrying forever. See `src/main/diagnostics/host-memory.ts` (Sentry
+DESKTOP-16) for the host memory pressure sampler this pairs with.
+
 ## Data Flow
 
 ```
@@ -446,6 +457,11 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 
+### Host memory pressure (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
+
 ### Announcements (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -477,7 +493,7 @@ Conversation-memory semantic layer (Smart-mode search). See the Memory settings 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. |
-| `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`. Always-on - no toggle. |
+| `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`, falling back to the app's own config directory when no project is open (a crash must never be silently dropped for that reason). Always-on - no toggle. |
 
 ### Dictation (14 channels)
 By-session-id, not task-scoped (no `projectId`), in the same category as `session:write`.

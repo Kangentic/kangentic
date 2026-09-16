@@ -36,6 +36,10 @@ const mocks = vi.hoisted(() => {
     sentryMock: {
       init: vi.fn(),
       setUser: vi.fn(),
+      // Top-level Sentry.setContext, distinct from the scope-level setContextSpy
+      // passed into withScope's callback below (used only by reportHandledError's
+      // per-error contexts). setHostMemoryContext calls the top-level one.
+      setContext: vi.fn(),
       captureException: vi.fn(),
       withScope: vi.fn(
         (
@@ -121,6 +125,7 @@ describe('error reporting runtime behavior (module-state gated)', () => {
   beforeEach(() => {
     mocks.sentryMock.init.mockClear();
     mocks.sentryMock.setUser.mockClear();
+    mocks.sentryMock.setContext.mockClear();
     mocks.sentryMock.captureException.mockClear();
     mocks.sentryMock.withScope.mockClear();
     mocks.setTagSpy.mockClear();
@@ -290,6 +295,44 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       errorReporting.setErrorReportingUser('client-abc-123');
 
       expect(mocks.sentryMock.setUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setHostMemoryContext (Sentry DESKTOP-16)', () => {
+    const sample = {
+      ts: '2026-09-16T14:24:24.000Z',
+      platform: 'win32' as const,
+      commitLimitBytes: 96_432_717_824,
+      commitRemainingBytes: 2_256_896,
+      physicalTotalBytes: 34_060_931_072,
+      physicalFreeBytes: 5_005_045_760,
+    };
+
+    it('forwards the sample to Sentry.setContext("host_memory", ...) only when active', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.setHostMemoryContext(sample);
+
+      expect(mocks.sentryMock.setContext).toHaveBeenCalledTimes(1);
+      expect(mocks.sentryMock.setContext).toHaveBeenCalledWith('host_memory', sample);
+    });
+
+    it('makes no call when the module was never initialized', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.setHostMemoryContext(sample);
+
+      expect(mocks.sentryMock.setContext).not.toHaveBeenCalled();
+    });
+
+    it('swallows a throw from Sentry.setContext instead of propagating - this runs on a 60s timer, so a propagating throw would recur for the life of the process', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      mocks.sentryMock.setContext.mockImplementationOnce(() => {
+        throw new Error('sentry transport exploded');
+      });
+
+      expect(() => errorReporting.setHostMemoryContext(sample)).not.toThrow();
     });
   });
 

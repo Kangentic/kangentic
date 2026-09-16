@@ -3665,6 +3665,30 @@ export interface UpdateDownloadedInfo {
   releaseNotes: string;
 }
 
+// === Host memory pressure (Sentry DESKTOP-16) ===
+
+/** A single reading of host-level memory. See `src/main/diagnostics/host-memory.ts`
+ *  for what `commitLimitBytes` / `commitRemainingBytes` mean and why they are
+ *  null on every platform but Windows. */
+export interface HostMemorySample {
+  ts: string;
+  platform: NodeJS.Platform;
+  /** Windows commit limit; null on every other platform. */
+  commitLimitBytes: number | null;
+  /** Windows commit remaining; null on every other platform. */
+  commitRemainingBytes: number | null;
+  physicalTotalBytes: number;
+  physicalFreeBytes: number;
+}
+
+/** Pushed when host commit headroom crosses below the warning threshold (an
+ *  edge-triggered, hysteresis-gated event - see `evaluateHostMemoryPressure`).
+ *  Not a per-tick heartbeat. */
+export interface HostMemoryPressureEvent {
+  sample: HostMemorySample;
+  activeAgentCount: number;
+}
+
 // === Backlog ===
 
 export type BacklogPriority = 0 | 1 | 2 | 3 | 4;
@@ -5836,6 +5860,12 @@ export interface ElectronAPI {
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
   };
 
+  // Host memory pressure (Sentry DESKTOP-16): a push-only notification, no
+  // corresponding invoke - main owns the sampler and decides when to fire.
+  hostMemory: {
+    onPressure: (callback: (event: HostMemoryPressureEvent) => void) => () => void;
+  };
+
   // Announcements (remote feed; active = filtered for this client in main.
   // history = the local archive sidecar, which also owns per-entry read-state)
   announcements: {
@@ -6523,7 +6553,8 @@ export interface CrashRecord {
   stack: string | null;
   /** Renderer-window URL or main-process module path at the time of error. */
   origin: string | null;
-  /** Additional context (e.g. render-process-gone reason+exitCode). */
+  /** Additional context (e.g. render-process-gone reason+exitCode, plus the
+   *  last `HostMemorySample` for a render-process-gone record). */
   context: Record<string, unknown> | null;
   /** Versions captured for bug-report reproducibility. */
   versions: { kangentic: string; electron: string; node: string; chrome: string };

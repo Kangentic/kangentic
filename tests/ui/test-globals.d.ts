@@ -59,6 +59,11 @@ declare global {
     __mockMonitorRows?: Array<Record<string, unknown> & { sessionId: string }>;
     /** Replaces the monitor rows and pushes a `monitor:changed` snapshot to every subscriber. Installed once `monitor.onChanged` has a subscriber. */
     __mockFireMonitorChanged?: (rows: Array<Record<string, unknown> & { sessionId: string }>) => void;
+
+    /** Subscribers registered via `hostMemory.onPressure`; fired by `__mockFireHostMemoryPressure`. Installed eagerly at mock-bootstrap time (Sentry DESKTOP-16). */
+    __mockHostMemoryPressureListeners?: Array<(event: import('../../src/shared/types').HostMemoryPressureEvent) => void>;
+    /** Fires the host-memory-pressure push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
+    __mockFireHostMemoryPressure?: (event: import('../../src/shared/types').HostMemoryPressureEvent) => void;
   }
 }
 

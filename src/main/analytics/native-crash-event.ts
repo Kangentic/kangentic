@@ -480,6 +480,12 @@ export function correctNativeCrashEvent(
         delete appContext.app_start_time;
         delete appContext.app_memory;
         delete appContext.free_memory;
+        // DESKTOP-16: `host_memory` (error-reporting.ts's setHostMemoryContext)
+        // is a top-level context, not nested under `app`, but it has the exact
+        // same hazard as app_memory/free_memory above - a startup-found dump's
+        // persisted scope can describe the UPLOADING run's memory rather than
+        // the crashed run's. Prune it under the same condition.
+        delete event.contexts?.host_memory;
         scopeCorrected = true;
       }
     }
