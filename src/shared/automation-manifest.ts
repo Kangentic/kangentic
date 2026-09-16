@@ -13,6 +13,7 @@
  * a renderer-side map, the pattern `utils/swimlane-icons.tsx` already uses for
  * persisted column icons.
  */
+import { NEVER_AUTO_SPAWN_ROLES } from './types';
 import type { AutoCommandMode, AutomationTrigger, AutomationType, SwimlaneRole } from './types';
 
 /** A capability an automation needs from its column before it can run. */
@@ -317,7 +318,17 @@ export function canColumnRun(
   column: AutomationColumnFacts,
   trigger: AutomationTrigger,
 ): AutomationRunnability {
-  if (trigger === 'enter' && (column.role === 'todo' || column.role === 'done')) {
+  // Reads `NEVER_AUTO_SPAWN_ROLES` rather than naming todo and done again. The
+  // two rules are NOT the same concept and this is not derived from that one:
+  // `spawnAgent` refuses those roles an agent, while this refuses them an ENTER
+  // automation of any type, which is a product decision (To Do and Done take
+  // exit rows only). They happen to name the same two system columns, and
+  // spelling that pair out twice is how the promise above stops being true - a
+  // third system role would be added to one set and silently missed by the
+  // other, leaving the board offering a row the engine will never run.
+  // A future role has to decide BOTH questions; sharing the set is what forces
+  // whoever adds it to come here and say so.
+  if (trigger === 'enter' && column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role)) {
     return { ok: false, reason: 'Nothing runs when a task enters To Do or Done.' };
   }
   if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {

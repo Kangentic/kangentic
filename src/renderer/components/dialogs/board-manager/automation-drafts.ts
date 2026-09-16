@@ -207,14 +207,6 @@ export function setEnabled(drafts: AutomationDraft[], id: string, enabled: boole
   return drafts.map((draft) => (draft.id === id ? { ...draft, enabled } : draft));
 }
 
-export function setTrigger(drafts: AutomationDraft[], id: string, trigger: AutomationTrigger): AutomationDraft[] {
-  const moving = drafts.find((draft) => draft.id === id);
-  if (!moving || moving.trigger === trigger) return drafts;
-  // Appended to the end of the destination group, which is where the eye
-  // expects a row that just arrived.
-  return [...drafts.filter((draft) => draft.id !== id), { ...moving, trigger }];
-}
-
 /**
  * Move a row to a new index WITHIN its group, or across into the other group.
  *
@@ -566,12 +558,9 @@ export function detectTemplateVariableTrigger(
   return null;
 }
 
+/** Shared by `parseHeaderLines`. No field declares `kind: 'lines'` today. */
 export function parseLineList(value: string): string[] {
   return value.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
-}
-
-export function formatLineList(lines: string[] | undefined): string {
-  return (lines ?? []).join('\n');
 }
 
 /** `Name: Value` per line, which is the format the webhook Headers hint promises. */
