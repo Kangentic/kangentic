@@ -226,6 +226,27 @@ test.describe('ImportDialog - filter and reconcile behaviour', () => {
     await browser.close();
   });
 
+  // The cache read is an optimization, not a dependency: it runs alongside the CLI
+  // check now, so a failure there must not strand the dialog on its spinner. The
+  // reconcile is what actually has to populate it.
+  test('a cache-read failure is non-fatal and the reconcile still populates the list', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+    await page.evaluate(() => { window.__mockImportGetCachedFailUntilCleared = true; });
+    await seedReconcile(page, [makeIssue({ externalId: 'issue-501', title: 'Arrived via reconcile' })]);
+
+    await createProject(page, 'import-cache-read-failure');
+    await openImportDialog(page);
+
+    await expect(page.locator('[data-testid="import-issue-issue-501"]')).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.locator('[data-testid="import-dialog"]').getByRole('button', { name: 'Retry' }),
+    ).toHaveCount(0);
+
+    await browser.close();
+  });
+
   test('clearFilters clears the client-side filter without triggering a reconcile', async () => {
     const { browser, page } = await launchPage();
 

@@ -19,7 +19,6 @@ interface CacheRow {
   repository: string;
   external_id: string;
   remote_updated_at: string;
-  state_category: string;
   payload: string;
   fetched_at: string;
 }
@@ -50,6 +49,10 @@ function createFakeDb(): Database.Database {
             const values = match(args).map((row) => row.remote_updated_at);
             return { watermark: values.length ? values.reduce((a, b) => (a > b ? a : b)) : null };
           }
+          if (sql.includes('MIN(fetched_at)')) {
+            const values = match(args).map((row) => row.fetched_at);
+            return { oldest: values.length ? values.reduce((a, b) => (a < b ? a : b)) : null };
+          }
           if (sql.includes('COUNT(*)')) {
             return { c: match(args).length };
           }
@@ -57,15 +60,15 @@ function createFakeDb(): Database.Database {
         },
         run: (...args: unknown[]) => {
           if (sql.trimStart().startsWith('INSERT')) {
-            const [external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at] =
+            const [external_source, repository, external_id, remote_updated_at, payload, fetched_at] =
               args as string[];
             const existing = rows.find(
               (row) => row.external_source === external_source && row.repository === repository && row.external_id === external_id,
             );
             if (existing) {
-              Object.assign(existing, { remote_updated_at, state_category, payload, fetched_at });
+              Object.assign(existing, { remote_updated_at, payload, fetched_at });
             } else {
-              rows.push({ external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at });
+              rows.push({ external_source, repository, external_id, remote_updated_at, payload, fetched_at });
             }
           } else if (sql.includes('DELETE') && sql.includes('external_id = ?')) {
             const [external_source, repository, external_id] = args as string[];
@@ -198,12 +201,88 @@ describe('RemoteItemCacheRepository', () => {
     // Bypass upsertMany's JSON.stringify to plant a corrupted payload (e.g. a
     // partial write from a crash) alongside the valid rows.
     db.prepare(
-      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(SOURCE, REPO, '3', '2026-01-03T00:00:00.000Z', 'open', '{not valid json', '2026-02-01T00:00:00.000Z');
+      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(SOURCE, REPO, '3', '2026-01-03T00:00:00.000Z', '{not valid json', '2026-02-01T00:00:00.000Z');
 
     let issues: ExternalIssue[] = [];
     expect(() => { issues = corruptRepo.getForSource(SOURCE, REPO); }).not.toThrow();
     expect(issues.map((issue) => issue.externalId).sort()).toEqual(['1', '2']);
+  });
+
+  // A payload can parse cleanly and still be unusable: a row written before a
+  // required field existed. The dialog filters Open/Closed on stateCategory, so a
+  // row missing it matches neither and disappears from both while still counting
+  // under All. Skipping it at the read keeps the two views consistent.
+  it('skips a row whose payload parses but carries no usable stateCategory', () => {
+    const db = createFakeDb();
+    const skewRepo = new RemoteItemCacheRepository(db);
+    skewRepo.upsertMany(SOURCE, REPO, [makeIssue({ externalId: '1' })], '2026-02-01T00:00:00.000Z');
+
+    const { stateCategory: _dropped, ...withoutCategory } = makeIssue({ externalId: '2' });
+    db.prepare(
+      'INSERT INTO remote_item_cache (external_source, repository, external_id, remote_updated_at, payload, fetched_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(SOURCE, REPO, '2', '2026-01-03T00:00:00.000Z', JSON.stringify(withoutCategory), '2026-02-01T00:00:00.000Z');
+
+    expect(skewRepo.getForSource(SOURCE, REPO).map((issue) => issue.externalId)).toEqual(['1']);
+  });
+
+  // The watermark drives the incremental `since`. If its WHERE clause were dropped
+  // it would return a MAX across every cached source, so a source whose newest
+  // change predates another source's would ask the remote for nothing.
+  it('scopes the watermark to one (source, repository), not a global MAX', () => {
+    repo.upsertMany(SOURCE, REPO, [
+      makeIssue({ externalId: '1', updatedAt: '2026-01-05T00:00:00.000Z' }),
+    ], '2026-02-01T00:00:00.000Z');
+    repo.upsertMany('github_issues', 'owner/repo', [
+      makeIssue({ externalId: '1', externalSource: 'github_issues', updatedAt: '2026-09-01T00:00:00.000Z' }),
+    ], '2026-02-01T00:00:00.000Z');
+
+    expect(repo.getWatermark(SOURCE, REPO)).toBe('2026-01-05T00:00:00.000Z');
+    expect(repo.getWatermark('github_issues', 'owner/repo')).toBe('2026-09-01T00:00:00.000Z');
+  });
+
+  // MAX runs on a TEXT column, so it compares lexicographically. Normalizing on
+  // write is what keeps that equal to chronological order.
+  it('canonicalizes remote_updated_at so a non-Z offset still sorts chronologically', () => {
+    repo.upsertMany(SOURCE, REPO, [
+      makeIssue({ externalId: '1', updatedAt: '2026-01-01T12:00:00.000Z' }),
+      // The same instant as above plus two hours, written in offset form. Compared
+      // as raw text '2026-01-01T14:00:00+02:00' would lose to the Z string.
+      makeIssue({ externalId: '2', updatedAt: '2026-01-01T16:00:00+02:00' }),
+    ], '2026-02-01T00:00:00.000Z');
+
+    expect(repo.getWatermark(SOURCE, REPO)).toBe('2026-01-01T14:00:00.000Z');
+  });
+
+  // MIN(fetched_at) is how the reconcile knows when a provider without a cheap id
+  // listing last had an authoritative pass: a full pass stamps every row with one
+  // sync time, an incremental one only re-stamps what it touched.
+  it('reports the oldest fetched_at, so a partial re-stamp does not look like a full pass', () => {
+    repo.upsertMany(SOURCE, REPO, [
+      makeIssue({ externalId: '1' }),
+      makeIssue({ externalId: '2' }),
+    ], '2026-02-01T00:00:00.000Z');
+    repo.upsertMany(SOURCE, REPO, [makeIssue({ externalId: '2' })], '2026-06-01T00:00:00.000Z');
+
+    expect(repo.getOldestFetchedAt(SOURCE, REPO)).toBe('2026-02-01T00:00:00.000Z');
+  });
+
+  it('reports no oldest fetched_at for an empty cache', () => {
+    expect(repo.getOldestFetchedAt(SOURCE, REPO)).toBeUndefined();
+  });
+
+  // Round trip with fields the earlier fixtures leave empty, so a field dropped
+  // from upsertMany's serialization would show up here.
+  it('round-trips labels, assignee, and a body with newlines and quotes', () => {
+    const body = 'line one\nline two with "quotes" and a \\ backslash';
+    repo.upsertMany(SOURCE, REPO, [
+      makeIssue({ externalId: '1', labels: ['bug', 'p1'], assignee: 'Ada Lovelace', body }),
+    ], '2026-02-01T00:00:00.000Z');
+
+    const [issue] = repo.getForSource(SOURCE, REPO);
+    expect(issue.labels).toEqual(['bug', 'p1']);
+    expect(issue.assignee).toBe('Ada Lovelace');
+    expect(issue.body).toBe(body);
   });
 
   it('scopes rows by (source, repository)', () => {

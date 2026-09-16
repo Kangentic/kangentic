@@ -118,13 +118,24 @@ export class AzureDevOpsAdapter implements BoardAdapter {
     });
   }
 
-  /** List every current work item id, for the reconcile's auto-prune sweep. */
+  /**
+   * List every current work item id, for the reconcile's auto-prune sweep. An
+   * empty result means the project genuinely has no work items, so a malformed
+   * repository reference THROWS rather than returning an empty list: the caller
+   * prunes against whatever comes back, and returning `[]` for "I could not parse
+   * this" would tell it the remote is empty and wipe the source's whole cache.
+   */
   async listExternalIds(input: { source: ExternalSource; repository: string }): Promise<string[]> {
     const [orgProject, iterationPath] = input.repository.split('::');
     const [organization, project] = orgProject.split('/');
-    if (!organization || !project) return [];
+    if (!organization || !project) {
+      throw new Error(`Malformed Azure DevOps repository reference: ${input.repository}`);
+    }
     const ids = await this.azure.fetchWorkItemIds(organization, project, iterationPath);
-    return ids.map(String);
+    // Enforce the contract here as well as at the CLI parse: an id that is not a
+    // real number stringifies to something no cached row carries, so it would drop
+    // a live item out of the prune keep-list and delete it.
+    return ids.filter((id) => typeof id === 'number' && Number.isFinite(id)).map(String);
   }
 
   async downloadImages(markdownBody: string): Promise<{ attachments: DownloadedAttachment[]; skippedCount: number }> {

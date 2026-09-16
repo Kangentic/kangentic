@@ -2,6 +2,35 @@ import type Database from 'better-sqlite3';
 import type { ExternalIssue, ExternalSource } from '../../../shared/types';
 
 /**
+ * Canonicalize a provider timestamp to UTC ISO 8601 before it becomes a
+ * `remote_updated_at` value. The column is TEXT, so `MAX()` and `ORDER BY`
+ * compare it lexicographically: a provider that ever emitted an offset form
+ * (`+02:00`) or a different sub-second precision would sort against the `Z`
+ * forms wrongly and hand the reconcile a watermark that skips items. Every live
+ * adapter emits `Z` today, so this normalizes what is already canonical rather
+ * than fixing a live bug, and an unparseable value is kept verbatim so a new
+ * provider's format is visible rather than silently rewritten to an epoch.
+ */
+function normalizeRemoteTimestamp(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
+/**
+ * A cached payload is JSON we wrote, but it is still a parse boundary: the row
+ * may predate a field the current `ExternalIssue` requires. Check the two fields
+ * the dialog cannot function without rather than casting blind - a row whose
+ * `stateCategory` is missing or unrecognized would otherwise match neither the
+ * Open nor the Closed filter and vanish from both while still showing under All.
+ */
+function isUsableCachedIssue(value: unknown): value is ExternalIssue {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<ExternalIssue>;
+  return typeof candidate.externalId === 'string'
+    && (candidate.stateCategory === 'open' || candidate.stateCategory === 'closed');
+}
+
+/**
  * Persistent cache of remote board items (the `remote_item_cache` table) for the
  * Import dialog, keyed by (external_source, repository, external_id). Lets the
  * dialog paint instantly on open and reconcile only items changed since the
@@ -20,14 +49,33 @@ export class RemoteItemCacheRepository {
     ).all(source, repository) as Array<{ payload: string }>;
     const issues: ExternalIssue[] = [];
     for (const row of rows) {
+      let parsed: unknown;
       try {
-        issues.push(JSON.parse(row.payload) as ExternalIssue);
+        parsed = JSON.parse(row.payload);
       } catch {
         // A corrupted payload (e.g. a partial write from a crash) must not fail the
         // whole source's read; skip the bad row so the rest of the cache still paints.
+        continue;
       }
+      // Same reasoning for a payload that parses but no longer matches the shape.
+      if (isUsableCachedIssue(parsed)) issues.push(parsed);
     }
     return issues;
+  }
+
+  /**
+   * The oldest `fetched_at` still in the cache for a source. A full reconcile
+   * stamps every row with one sync time, so this is when the cache was last known
+   * complete: an incremental pass only re-stamps the rows it touched, leaving the
+   * untouched ones at the previous full sync. The reconcile uses it to decide when
+   * a provider with no cheap id listing is overdue for an authoritative pass.
+   * Undefined when the cache is empty.
+   */
+  getOldestFetchedAt(source: ExternalSource, repository: string): string | undefined {
+    const row = this.db.prepare(
+      'SELECT MIN(fetched_at) AS oldest FROM remote_item_cache WHERE external_source = ? AND repository = ?',
+    ).get(source, repository) as { oldest: string | null } | undefined;
+    return row?.oldest ?? undefined;
   }
 
   /**
@@ -67,11 +115,10 @@ export class RemoteItemCacheRepository {
     let updated = 0;
     const statement = this.db.prepare(`
       INSERT INTO remote_item_cache
-        (external_source, repository, external_id, remote_updated_at, state_category, payload, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (external_source, repository, external_id, remote_updated_at, payload, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(external_source, repository, external_id) DO UPDATE SET
         remote_updated_at = excluded.remote_updated_at,
-        state_category = excluded.state_category,
         payload = excluded.payload,
         fetched_at = excluded.fetched_at
     `);
@@ -81,7 +128,7 @@ export class RemoteItemCacheRepository {
         else added++;
         const payload = JSON.stringify({ ...issue, alreadyImported: false });
         statement.run(
-          source, repository, issue.externalId, issue.updatedAt, issue.stateCategory, payload, fetchedAt,
+          source, repository, issue.externalId, normalizeRemoteTimestamp(issue.updatedAt), payload, fetchedAt,
         );
       }
     });
@@ -108,7 +155,12 @@ export class RemoteItemCacheRepository {
     return toDelete.length;
   }
 
-  /** Drop every cached row for a source (used before a full re-seed). */
+  /**
+   * Drop every cached row for a source. The reconcile does not use this: a full
+   * pass prunes against its own fetched set instead, so the cache is never empty
+   * between the delete and the re-seed. Kept as the explicit reset primitive for
+   * tests and for a future "forget this source" action.
+   */
   clear(source: ExternalSource, repository: string): void {
     this.db.prepare(
       'DELETE FROM remote_item_cache WHERE external_source = ? AND repository = ?',

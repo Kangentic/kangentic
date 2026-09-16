@@ -24,6 +24,7 @@ import type {
   ExternalSource,
   ImportCacheQuery,
   ImportReconcileInput,
+  ImportReconcileResult,
   ImportExecuteInput,
   Task,
 } from '../../../shared/types';
@@ -65,6 +66,41 @@ function savePendingAttachments(
 
 /** Per-round-trip page size for the reconcile fetch (GitHub caps per_page at 100; ADO ignores it). */
 const RECONCILE_PAGE_SIZE = 100;
+
+/**
+ * How stale a cache may get before a provider with no cheap id listing is forced
+ * through a full, authoritative pass. Those providers only prune on a full
+ * reconcile, and the only user action that asks for one is the all-imported
+ * empty state's Refresh link, which a user who imports a subset never sees. Without
+ * this, an item deleted on the remote would stay in their Import dialog forever.
+ */
+const FULL_RECONCILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * In-flight reconciles keyed by (project, source, repository). Two reconciles for
+ * one key interleave destructively: the second's upsert can commit between the
+ * first's keep-list snapshot and its prune, so the first deletes rows the second
+ * just wrote. The renderer's own sequence token only orders one dialog's
+ * responses, and a second window is a second renderer. Chaining is enough here
+ * because a reconcile is idempotent, so the follower simply re-runs against
+ * whatever state the leader left.
+ */
+const inFlightReconciles = new Map<string, Promise<ImportReconcileResult>>();
+
+function serializeReconcile(
+  key: string,
+  run: () => Promise<ImportReconcileResult>,
+): Promise<ImportReconcileResult> {
+  const previous = inFlightReconciles.get(key);
+  // Swallow the predecessor's rejection: a failed reconcile must not fail the
+  // next one, it only has to finish first.
+  const chained = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(run);
+  inFlightReconciles.set(key, chained);
+  void chained.catch(() => undefined).finally(() => {
+    if (inFlightReconciles.get(key) === chained) inFlightReconciles.delete(key);
+  });
+  return chained;
+}
 
 /**
  * Re-stamp `alreadyImported` on cached issues from the live backlog. The flag is
@@ -389,8 +425,9 @@ export function registerBacklogHandlers(context: IpcContext): void {
   // Paint instantly from the persistent cache, no network. alreadyImported is
   // re-stamped from the live backlog so a just-imported item shows imported offline.
   ipcMain.handle(IPC.BACKLOG_IMPORT_GET_CACHED, (_, input: ImportCacheQuery) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
-    const db = getProjectDb(context.currentProjectId);
+    const projectId = input.projectId ?? context.currentProjectId;
+    if (!projectId) throw new Error('No project is currently open');
+    const db = getProjectDb(projectId);
     const cacheRepo = new RemoteItemCacheRepository(db);
     const backlogRepo = new BacklogRepository(db);
     const issues = cacheRepo.getForSource(input.source, input.repository);
@@ -401,15 +438,38 @@ export function registerBacklogHandlers(context: IpcContext): void {
   // items the remote no longer has, and return the full merged set. A 'full' mode
   // (or an empty cache) re-fetches everything.
   ipcMain.handle(IPC.BACKLOG_IMPORT_RECONCILE, async (_, input: ImportReconcileInput) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
-    const db = getProjectDb(context.currentProjectId);
+    const projectId = input.projectId ?? context.currentProjectId;
+    if (!projectId) throw new Error('No project is currently open');
+    return serializeReconcile(
+      `${projectId}::${input.source}::${input.repository}`,
+      () => runReconcile(projectId, input),
+    );
+  });
+
+  async function runReconcile(
+    projectId: string,
+    input: ImportReconcileInput,
+  ): Promise<ImportReconcileResult> {
+    const db = getProjectDb(projectId);
     const cacheRepo = new RemoteItemCacheRepository(db);
     const backlogRepo = new BacklogRepository(db);
     const adapter = boardRegistry.requireStable(input.source);
     const findAlreadyImported = (source: ExternalSource, externalIds: string[]) =>
       backlogRepo.findByExternalIds(source, externalIds);
 
-    const isFull = input.mode === 'full' || cacheRepo.count(input.source, input.repository) === 0;
+    // A provider with a cheap id listing prunes on every reconcile, so its cache
+    // never goes stale. The others prune only on a full pass, so escalate one when
+    // the cache has gone too long without it (MIN(fetched_at) is the last time a
+    // full pass stamped every row). An unparseable timestamp compares NaN and
+    // simply does not escalate.
+    const oldestFetchedAt = cacheRepo.getOldestFetchedAt(input.source, input.repository);
+    const overdueForFullPass = !adapter.listExternalIds
+      && oldestFetchedAt !== undefined
+      && Date.now() - new Date(oldestFetchedAt).getTime() > FULL_RECONCILE_MAX_AGE_MS;
+
+    const isFull = input.mode === 'full'
+      || cacheRepo.count(input.source, input.repository) === 0
+      || overdueForFullPass;
     const since = isFull ? undefined : cacheRepo.getWatermark(input.source, input.repository);
 
     // Fetch changed items across all states so the single cache bucket stays
@@ -442,12 +502,21 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // fetched items are already committed, so a prune failure (a transient CLI error on
     // the second call) must not fail the whole reconcile and hide the just-synced data;
     // degrade to no prune this round instead.
+    // An EMPTY authoritative set never prunes. "The remote really has nothing" and
+    // "the provider could not answer" arrive here as the same empty array, and
+    // pruning against it deletes every cached row for the source - the whole cache,
+    // silently, on a transient CLI hiccup. Skipping costs a stale row until the next
+    // pass returns a real answer; not skipping costs the cache this feature exists to
+    // keep. The asymmetry is what decides it, so an emptied remote clears its rows on
+    // the first pass that can actually say so.
     let removed = 0;
     try {
       if (adapter.listExternalIds) {
         const keepIds = await adapter.listExternalIds({ source: input.source, repository: input.repository });
-        removed = cacheRepo.pruneMissing(input.source, input.repository, keepIds);
-      } else if (isFull) {
+        if (keepIds.length > 0) {
+          removed = cacheRepo.pruneMissing(input.source, input.repository, keepIds);
+        }
+      } else if (isFull && toCache.length > 0) {
         removed = cacheRepo.pruneMissing(input.source, input.repository, toCache.map((issue) => issue.externalId));
       }
     } catch (error) {
@@ -456,7 +525,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
     const all = cacheRepo.getForSource(input.source, input.repository);
     return { issues: stampAlreadyImported(backlogRepo, input.source, all), added, updated, removed };
-  });
+  }
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {

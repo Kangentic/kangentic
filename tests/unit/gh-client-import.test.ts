@@ -109,14 +109,20 @@ describe('GitHubImporter.mapProjectItemsToExternalIssues - stateCategory bucketi
 });
 
 describe('GitHubImporter.fetchIssues - since query param', () => {
-  it('includes since=<iso> in the request URL when since is passed', async () => {
+  // The watermark is a MAX over timestamps we already hold, so an exclusive
+  // boundary would drop an item that changed in the same second as the newest one
+  // we cached, permanently - GitHub timestamps have one-second resolution, and
+  // GitHub documents `since` as "after". Azure DevOps's WIQL clause is an explicit
+  // `>=`, and both adapters feed the same watermark, so this side rewinds a second
+  // to match. Re-fetching a second of items upserts idempotently.
+  it('rewinds since by one second so the watermark boundary is inclusive', async () => {
     const importer = new GitHubImporter();
     await importer.fetchIssues('owner/repo', 1, 50, undefined, 'all', '2026-03-01T00:00:00.000Z');
 
     const apiArg = state.lastArgs.find((arg) => arg.startsWith('repos/'));
     expect(apiArg).toBeDefined();
     const query = new URLSearchParams(apiArg?.split('?')[1] ?? '');
-    expect(query.get('since')).toBe('2026-03-01T00:00:00.000Z');
+    expect(query.get('since')).toBe('2026-02-28T23:59:59.000Z');
   });
 
   it('omits since from the request URL when not passed', async () => {
