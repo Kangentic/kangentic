@@ -6,7 +6,7 @@
  * dependencies. Goose detection goes through the shared AgentDetector, so we
  * mock `which`, `node:fs`, and the shared `execVersion` probe.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
@@ -343,6 +343,38 @@ describe('GooseAdapter', () => {
         }));
         expect(command).toContain('Fix the bug\nAdd a regression test');
       });
+
+      // -- process.platform fallback (no shell provided) ---------------------
+      // buildCommand falls back to `process.platform === 'win32'` when no
+      // shell is supplied. The two tests below cover the unreached arm on CI
+      // (Linux) and the symmetrical arm on the team's Windows machines. Both
+      // are needed to ensure the branch is correct in both directions.
+      describe('process.platform fallback when no shell is specified', () => {
+        let savedPlatformDescriptor: PropertyDescriptor | undefined;
+
+        beforeEach(() => {
+          savedPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+        });
+
+        afterEach(() => {
+          if (savedPlatformDescriptor !== undefined) {
+            Object.defineProperty(process, 'platform', savedPlatformDescriptor);
+          }
+        });
+
+        it('replaces double quotes with single quotes on win32 when no shell is given', () => {
+          Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+          const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the "broken" test' }));
+          expect(command).not.toContain('"broken"');
+          expect(command).toContain("'broken'");
+        });
+
+        it('preserves double quotes on non-win32 platforms when no shell is given', () => {
+          Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+          const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the "broken" test' }));
+          expect(command).toContain('"broken"');
+        });
+      });
     });
   });
 
@@ -501,6 +533,6 @@ describe('agent-display-name - goose entry', () => {
   });
 
   it('agentInstallUrl returns the Goose repo URL for "goose"', () => {
-    expect(agentInstallUrl('goose')).toBe('https://github.com/block/goose');
+    expect(agentInstallUrl('goose')).toBe('https://github.com/aaif-goose/goose');
   });
 });

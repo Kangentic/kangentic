@@ -56,7 +56,7 @@
 
 ## Supported Agents
 
-Fourteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
+Fifteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per column and hand off context between them:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic)
 - [Codex CLI](https://developers.openai.com/codex/cli) (OpenAI)
@@ -71,6 +71,7 @@ Fourteen coding-agent CLIs, all first-class, on one Kanban board. Mix agents per
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started)
 - [Aider](https://aider.chat/)
 - [Oz CLI](https://docs.warp.dev/reference/cli/cli) (Warp)
+- [Goose CLI](https://github.com/aaif-goose/goose) (Block)
 - [Ollama](https://ollama.com) (local models)
 
 ## Supported Boards
