@@ -372,7 +372,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         parts.push(`${result.skippedAttachments} attachment${result.skippedAttachments !== 1 ? 's' : ''} skipped`);
       }
       if (result.detailUnavailable) {
-        parts.push(`comments unavailable for ${result.detailUnavailable}`);
+        parts.push(`comments unavailable for ${result.detailUnavailable} item${result.detailUnavailable !== 1 ? 's' : ''}`);
       }
       addToast({ message: parts.join(', '), variant: 'success' });
       loadBacklog();

@@ -73,10 +73,10 @@ function createFakeDb(): Database.Database {
             }
           } else if (sql.includes('DELETE') && sql.includes('external_id = ?')) {
             const [external_source, repository, external_id] = args as string[];
-            const idx = rows.findIndex(
+            const rowIndex = rows.findIndex(
               (row) => row.external_source === external_source && row.repository === repository && row.external_id === external_id,
             );
-            if (idx >= 0) rows.splice(idx, 1);
+            if (rowIndex >= 0) rows.splice(rowIndex, 1);
           } else if (sql.includes('DELETE')) {
             const [external_source, repository] = args as string[];
             for (let i = rows.length - 1; i >= 0; i--) {

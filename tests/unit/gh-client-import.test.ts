@@ -134,4 +134,19 @@ describe('GitHubImporter.fetchIssues - since query param', () => {
     const query = new URLSearchParams(apiArg?.split('?')[1] ?? '');
     expect(query.has('since')).toBe(false);
   });
+
+  // rewindOneSecond's Number.isNaN guard exists so a malformed watermark is never
+  // silently turned into an epoch date - `new Date('not-a-timestamp').getTime() - 1000`
+  // would otherwise re-fetch the entire remote history on every incremental sync.
+  // Passing the value through verbatim keeps the bad watermark visible (and the
+  // request harmless) instead of manufacturing a new, worse one.
+  it('passes through an unparseable since value verbatim instead of rewinding it', async () => {
+    const importer = new GitHubImporter();
+    await importer.fetchIssues('owner/repo', 1, 50, undefined, 'all', 'not-a-timestamp');
+
+    const apiArg = state.lastArgs.find((arg) => arg.startsWith('repos/'));
+    expect(apiArg).toBeDefined();
+    const query = new URLSearchParams(apiArg?.split('?')[1] ?? '');
+    expect(query.get('since')).toBe('not-a-timestamp');
+  });
 });
