@@ -1142,6 +1142,34 @@
           archivedTasks.push(archived);
           tasks.splice(idx, 1);
         }
+
+        // Mirror main-process behavior: a cross-column move into a todo-role
+        // lane tears the task's session down (cleanupTaskResources ->
+        // SessionManager.remove()), and main announces each removal on
+        // session:removed AFTER the renderer's own optimistic eviction has
+        // run. Splice in place: `sessions` is the closure array
+        // __mockPreConfigure hands out, so tests that hold a reference keep
+        // seeing the same array. The push is guarded on the helper being
+        // installed (it is, once App.tsx has subscribed).
+        if (targetLane && targetLane.role === 'todo' && oldSwimlaneId !== newSwimlaneId) {
+          var removedSessions = [];
+          for (var sessionIndex = sessions.length - 1; sessionIndex >= 0; sessionIndex--) {
+            if (sessions[sessionIndex].taskId === input.taskId) {
+              removedSessions.unshift(sessions[sessionIndex]);
+              sessions.splice(sessionIndex, 1);
+            }
+          }
+          tasks[idx] = Object.assign({}, tasks[idx], { session_id: null });
+          if (typeof window !== 'undefined' && window.__mockFireRemoved) {
+            removedSessions.forEach(function (removedSession) {
+              window.__mockFireRemoved(
+                removedSession.id,
+                Object.assign({}, removedSession),
+                removedSession.projectId,
+              );
+            });
+          }
+        }
       },
       cancelSpawn: async function (taskId) {
         // Record cancellations so UI tests can assert the stall toast's Cancel
@@ -1896,6 +1924,25 @@
         }
         return function () {
           var listeners = window.__mockStatusListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onRemoved: function (callback) {
+        // Tests can fire this via window.__mockFireRemoved(sessionId, session, projectId).
+        // The mock's own tasks.move fires it for a move into a todo-role
+        // column, mirroring SessionManager.remove() on the main side. The third
+        // argument matches the real preload, which forwards session.projectId.
+        if (!window.__mockRemovedListeners) window.__mockRemovedListeners = [];
+        window.__mockRemovedListeners.push(callback);
+        if (!window.__mockFireRemoved) {
+          window.__mockFireRemoved = function (sessionId, session, projectId) {
+            var listeners = (window.__mockRemovedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, session, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockRemovedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };

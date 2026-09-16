@@ -1,17 +1,27 @@
 /**
- * Unit tests for SessionManager.remove()'s 'session-changed' emit.
+ * Unit tests for SessionManager.remove()'s 'session-removed' emit.
  *
- * The bug: dragging a task out of To Do and back within a few seconds left
- * the renderer holding a `running` session row for a task main had fully
- * torn down. remove() deleted the registry row and emitted nothing, and the
- * only other channel (SESSION_EXIT) is deliberately suppressed for an
- * intentional exit (App.tsx), so nothing ever corrected a row resurrected by
- * a status push landing during the kill grace.
+ * The first bug (kangentic.com #80): dragging a task out of To Do and back
+ * within a few seconds left the renderer holding a `running` session row for
+ * a task main had fully torn down. remove() deleted the registry row and
+ * emitted nothing, and the only other channel (SESSION_EXIT) is deliberately
+ * suppressed for an intentional exit (App.tsx), so nothing ever corrected a
+ * row resurrected by a status push landing during the kill grace.
  *
- * The fix (session-manager.ts remove()) emits 'session-changed' with
- * status: 'exited' immediately before the registry row is deleted, so the
- * renderer's onStatus handler makes this row the task's only row
- * (withSessionUpserted) and the card stops painting a dead agent.
+ * The first fix emitted 'session-changed' with a forced `status: 'exited'`.
+ * That made the second bug (#661): the renderer's only handler for a status
+ * push is an UPSERT, so for a task moved to To Do, whose rows the renderer
+ * evicts optimistically the moment the move starts, the removal announcement
+ * re-inserted an exited row for a PTY, worktree, and session directory that
+ * no longer existed. The card opened a black terminal instead of the edit
+ * form, with the dead session's usage filling the context bar.
+ *
+ * remove() now announces the removal on its OWN event, 'session-removed'
+ * (broadcast as SESSION_REMOVED), emitted immediately before the registry
+ * row is deleted, and emits no 'session-changed' at all. The renderer drops
+ * the row and every per-session map entry keyed on the id. The cases below
+ * pin the emit's shape, ordering, and idempotence, and that the status
+ * channel stays silent.
  *
  * Modelled on session-manager-placeholder-emit.test.ts.
  */
@@ -45,6 +55,9 @@ import type { Session } from '../../src/shared/types';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
 
+const TASK_ID = 'task-remove-emit';
+const PROJECT_ID = 'project-remove-emit';
+
 describe('SessionManager.remove emit', () => {
   let manager: SessionManager;
 
@@ -53,12 +66,12 @@ describe('SessionManager.remove emit', () => {
     manager = new SessionManager();
   });
 
-  function seedRunningSession(id: string): void {
+  function seedRunningSession(id: string, taskId: string = TASK_ID): void {
     const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
     registryAccess.set(id, {
       id,
-      taskId: 'task-remove-emit',
-      projectId: 'project-remove-emit',
+      taskId,
+      projectId: PROJECT_ID,
       pty: null,
       status: 'running',
       shell: '',
@@ -71,10 +84,10 @@ describe('SessionManager.remove emit', () => {
     } as ManagedSession);
   }
 
-  it('emits session-changed exactly once when removing a live registry row', () => {
+  it('emits session-removed exactly once when removing a live registry row', () => {
     seedRunningSession('sess-remove-1');
     const emittedEvents: Array<{ sessionId: string; session: Session }> = [];
-    manager.on('session-changed', (sessionId: string, session: Session) => {
+    manager.on('session-removed', (sessionId: string, session: Session) => {
       emittedEvents.push({ sessionId, session });
     });
 
@@ -84,10 +97,10 @@ describe('SessionManager.remove emit', () => {
     expect(emittedEvents[0].sessionId).toBe('sess-remove-1');
   });
 
-  it('emitted session carries status exited, and the correct taskId/projectId', () => {
+  it('the emitted session carries the row\'s taskId and projectId, so a consumer can resolve the task', () => {
     seedRunningSession('sess-remove-2');
     const emittedSessions: Session[] = [];
-    manager.on('session-changed', (_sessionId: string, session: Session) => {
+    manager.on('session-removed', (_sessionId: string, session: Session) => {
       emittedSessions.push(session);
     });
 
@@ -95,15 +108,15 @@ describe('SessionManager.remove emit', () => {
 
     expect(emittedSessions).toHaveLength(1);
     const emitted = emittedSessions[0];
-    expect(emitted.status).toBe('exited');
-    expect(emitted.taskId).toBe('task-remove-emit');
-    expect(emitted.projectId).toBe('project-remove-emit');
+    expect(emitted.id).toBe('sess-remove-2');
+    expect(emitted.taskId).toBe(TASK_ID);
+    expect(emitted.projectId).toBe(PROJECT_ID);
   });
 
-  it('emits session-changed before the registry row is deleted (synchronous ordering)', () => {
+  it('emits session-removed before the registry row is deleted (synchronous ordering)', () => {
     seedRunningSession('sess-remove-3');
     let rowPresentDuringEmit = false;
-    manager.on('session-changed', (sessionId: string) => {
+    manager.on('session-removed', (sessionId: string) => {
       rowPresentDuringEmit = manager.getSession(sessionId) !== undefined;
     });
 
@@ -113,9 +126,24 @@ describe('SessionManager.remove emit', () => {
     expect(manager.getSession('sess-remove-3')).toBeUndefined();
   });
 
+  it('emits no session-changed: a removal is not a status change', () => {
+    // The #661 regression guard. A status push can only upsert in the
+    // renderer, so announcing a removal there re-seeds the row it reports
+    // gone. Reverting remove() to the forced-'exited' status emit reds this.
+    seedRunningSession('sess-remove-status');
+    const statusEmits: string[] = [];
+    manager.on('session-changed', (sessionId: string) => {
+      statusEmits.push(sessionId);
+    });
+
+    manager.remove('sess-remove-status');
+
+    expect(statusEmits).toEqual([]);
+  });
+
   it('emits nothing for an id that is already gone', () => {
     const emittedIds: string[] = [];
-    manager.on('session-changed', (sessionId: string) => {
+    manager.on('session-removed', (sessionId: string) => {
       emittedIds.push(sessionId);
     });
 
@@ -127,7 +155,7 @@ describe('SessionManager.remove emit', () => {
   it('a second remove() of the same id (removeByTaskId re-entry) emits only once', () => {
     seedRunningSession('sess-remove-4');
     const emittedIds: string[] = [];
-    manager.on('session-changed', (sessionId: string) => {
+    manager.on('session-removed', (sessionId: string) => {
       emittedIds.push(sessionId);
     });
 
@@ -135,5 +163,23 @@ describe('SessionManager.remove emit', () => {
     manager.remove('sess-remove-4');
 
     expect(emittedIds).toEqual(['sess-remove-4']);
+  });
+
+  it('removeByTaskId emits once per row the task held', () => {
+    // A task transiently holds two rows while a respawn is queued behind its
+    // suspended predecessor; the safety-net removeByTaskId in
+    // cleanupTaskSession must announce each of them.
+    seedRunningSession('sess-remove-5a');
+    seedRunningSession('sess-remove-5b');
+    const emittedIds: string[] = [];
+    manager.on('session-removed', (sessionId: string) => {
+      emittedIds.push(sessionId);
+    });
+
+    manager.removeByTaskId(TASK_ID);
+
+    expect(emittedIds.sort()).toEqual(['sess-remove-5a', 'sess-remove-5b']);
+    expect(manager.getSession('sess-remove-5a')).toBeUndefined();
+    expect(manager.getSession('sess-remove-5b')).toBeUndefined();
   });
 });

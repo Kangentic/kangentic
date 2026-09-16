@@ -225,4 +225,62 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     expect(sessionFilesRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
     expect(sessionIdRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
   });
+
+  it('announces the evicted exited row on session-removed, before the placeholder\'s status push', () => {
+    // Every row that leaves the registry announces it (remove() does the
+    // same). The placeholder's status push alone makes it the task's only row
+    // in the renderer, but only a removal drops the evicted id's per-session
+    // map entries; without it a dead session's usage stays behind under an id
+    // nothing references (#661's context bar, by another route).
+    const exitedSessionId = 'sess-exited-announce';
+    const registryAccess = (manager as unknown as { registry: SessionRegistry }).registry;
+    registryAccess.set(exitedSessionId, {
+      id: exitedSessionId,
+      taskId: 'task-exit-announce',
+      projectId: 'project-exit-announce',
+      pty: null,
+      status: 'exited',
+      shell: '',
+      cwd: '/mock/cwd',
+      startedAt: new Date().toISOString(),
+      exitCode: 1,
+      resuming: false,
+      transient: false,
+      exitSequence: ['\x03'],
+    } as ManagedSession);
+    const emitted: Array<{ event: string; sessionId: string; taskId: string }> = [];
+    manager.on('session-removed', (sessionId: string, session: Session) => {
+      emitted.push({ event: 'session-removed', sessionId, taskId: session.taskId });
+    });
+    manager.on('session-changed', (sessionId: string, session: Session) => {
+      emitted.push({ event: 'session-changed', sessionId, taskId: session.taskId });
+    });
+
+    const placeholder = manager.registerSuspendedPlaceholder({
+      taskId: 'task-exit-announce',
+      projectId: 'project-exit-announce',
+      cwd: '/mock/cwd',
+    });
+
+    expect(placeholder).not.toBeNull();
+    expect(emitted).toEqual([
+      { event: 'session-removed', sessionId: exitedSessionId, taskId: 'task-exit-announce' },
+      { event: 'session-changed', sessionId: placeholder!.id, taskId: 'task-exit-announce' },
+    ]);
+  });
+
+  it('emits no session-removed when there was no exited row to evict', () => {
+    const removedIds: string[] = [];
+    manager.on('session-removed', (sessionId: string) => {
+      removedIds.push(sessionId);
+    });
+
+    manager.registerSuspendedPlaceholder({
+      taskId: 'task-placeholder-clean',
+      projectId: 'project-placeholder-clean',
+      cwd: '/mock/cwd',
+    });
+
+    expect(removedIds).toEqual([]);
+  });
 });

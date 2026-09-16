@@ -190,6 +190,54 @@ describe('autoSpawnForTask: the auto_spawn guard reads the profile-folded lane',
   });
 });
 
+describe('autoSpawnForTask: a To Do or Done column never spawns, whatever its flag says', () => {
+  // The flag can land on a role lane: MCP `update_column` writes it with no
+  // role guard, and a Board Profile folds `autoSpawn` for any lane id. Every
+  // other spawn path gates on NEVER_AUTO_SPAWN_ROLES (task-move.ts branches
+  // on role, the startup and reconcile sweeps filter), but this chokepoint
+  // read the flag alone, so a task created into such a To Do column spawned
+  // a live agent behind a card the renderer treats as sessionless (#661).
+  it.each([['todo'], ['done']] as const)('does not spawn into a %s column with auto_spawn on', async (role) => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Created into a role column', swimlane_id: LANE_ID, profile_id: null,
+    });
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Created into a role column' }, LANE_ID);
+
+    // Pre-fix this reached the worktree phase: the role never entered the
+    // decision.
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
+
+  it('does not spawn when a profile turns auto_spawn on for a todo column', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: false, role: 'todo' }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Profiled into To Do', swimlane_id: LANE_ID, profile_id: 'p1',
+    });
+
+    await autoSpawnForTask(
+      makeContext([{ id: 'p1', name: 'Eager', columns: { [LANE_ID]: { autoSpawn: true } } }]),
+      'proj-1',
+      { id: TASK_ID, title: 'Profiled into To Do' },
+      LANE_ID,
+    );
+
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
+
+  it('still spawns into a custom column (role null) with auto_spawn on', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role: null }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Created into a working column', swimlane_id: LANE_ID, profile_id: null,
+    });
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Created into a working column' }, LANE_ID);
+
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('autoSpawnForTask: re-checks the task is still in the planned column', () => {
   it('does not spawn a task that left the column before this call was reached', async () => {
     // The lane this call was planned against wants agents...

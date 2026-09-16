@@ -245,6 +245,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_STATUS, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_STATUS, handler);
     },
+    onRemoved: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, session: Session, projectId?: string) => callback(sessionId, session, projectId);
+      ipcRenderer.on(IPC.SESSION_REMOVED, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_REMOVED, handler);
+    },
     onUsage: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: SessionUsage, projectId?: string) => callback(sessionId, data, projectId);
       ipcRenderer.on(IPC.SESSION_USAGE, handler);

@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useSessionStore } from '../stores/session-store';
 import { useBoardStore } from '../stores/board-store';
-import type { Session, SessionUsage, ActivityState, SessionDisplayState } from '../../shared/types';
+import type { Session, SessionUsage, ActivityState, SessionDisplayState, SwimlaneRole } from '../../shared/types';
 
 // ---------------------------------------------------------------------------
 // Unified task progress derivation
@@ -104,8 +104,58 @@ const TASK_DETAIL_SURFACE = {
   none: 'inert',
 } satisfies Record<SessionDisplayState['kind'], TaskDetailSurface>;
 
-/** The task-detail face for a display kind. Total by construction. */
-export function taskDetailSurfaceFor(kind: SessionDisplayState['kind']): TaskDetailSurface {
+// ---------------------------------------------------------------------------
+// Lane classification (compile-enforced)
+//
+// Whether a column's tasks can hold a session at all. A To Do task never does:
+// main clears `session_id` and tears the session down on every move into a
+// todo-role column (task-move.ts), and both spawn chokepoints refuse the role
+// (agent-spawn.ts), so a session row the renderer still holds for such a task
+// is stale by definition. The task moved to To Do in #661 kept an `exited` row
+// whose usage entry filled a context bar under a black terminal, and every
+// consumer that asked "is there anything session-shaped here?" said yes.
+//
+// `satisfies Record<SwimlaneRole, boolean>` makes a new role fail typecheck
+// until it is classified, like the display-kind tables below. A custom column
+// (`role: null`) holds sessions, and so does an unknown lane (`undefined`, a
+// monitor-hosted detail whose lane list has not loaded): the conservative
+// answer, since a wrong "no" hides a live terminal.
+// ---------------------------------------------------------------------------
+
+const LANE_HOLDS_SESSION = {
+  todo: false,
+  done: true,
+} satisfies Record<SwimlaneRole, boolean>;
+
+/**
+ * Whether a task in a lane with this role can hold a session.
+ *
+ * Not the same question as `laneMaySpawn` in `src/main/ipc/helpers/agent-spawn.ts`,
+ * which gates whether a lane may START an agent and so refuses BOTH roles in
+ * `NEVER_AUTO_SPAWN_ROLES`. The two deliberately disagree about `done`: a Done
+ * column never spawns a new agent, but a Done task keeps its finished row so its
+ * scrollback and summary stay readable. Do not unify them.
+ */
+export function laneHoldsSession(laneRole: SwimlaneRole | null | undefined): boolean {
+  // The `?? true` is for a role the type system never sees (a row read before
+  // `narrowSwimlaneRole` ran): unknown means "holds", never "hide".
+  return laneRole == null ? true : (LANE_HOLDS_SESSION[laneRole] ?? true);
+}
+
+/**
+ * The task-detail face for a display kind in a lane. Total by construction.
+ *
+ * The lane comes first in the decision: a lane that holds no session paints
+ * nothing session-shaped whatever the kind says, because in such a lane the
+ * kind can only be describing a stale row or a stale spawn label. The lane is
+ * a required parameter so a call site cannot forget it and fall back to the
+ * kind alone, which is how a To Do card came to open a terminal.
+ */
+export function taskDetailSurfaceFor(
+  kind: SessionDisplayState['kind'],
+  laneRole: SwimlaneRole | null | undefined,
+): TaskDetailSurface {
+  if (!laneHoldsSession(laneRole)) return 'inert';
   return TASK_DETAIL_SURFACE[kind];
 }
 

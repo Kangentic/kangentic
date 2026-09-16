@@ -159,6 +159,10 @@ export function registerMonitorHandlers(context: IpcContext): void {
   };
 
   context.sessionManager.on('session-changed', schedulePush);
+  // A direct remove (project delete, SESSION_RESET, an aborted spawn) leaves
+  // the registry with no 'exit' to ride; the detached monitor re-lists its
+  // session store on this push, which is what drops the row there.
+  context.sessionManager.on('session-removed', schedulePush);
   context.sessionManager.on('exit', schedulePush);
   context.boardEvents.onBoardChanged(schedulePush);
 

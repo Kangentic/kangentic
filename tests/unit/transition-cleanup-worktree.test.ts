@@ -62,6 +62,7 @@ function makeEngine(options: { autoCleanup?: boolean } = {}) {
   const sessionManager = {
     kill: vi.fn(),
     awaitExit: vi.fn(async () => {}),
+    announceSessionEnded: vi.fn(),
   };
   const getConfig = vi.fn(() => ({
     permissionMode: 'default',
@@ -118,6 +119,34 @@ describe('executeCleanupWorktree', () => {
     mockRemoveWorktree.mockResolvedValue(true);
     mockRemoveBranch.mockResolvedValue(undefined);
     mockReadWorktreeHead.mockResolvedValue({ branch: null, sha: null });
+  });
+
+  it('announces the killed session as ended, after its exit, so the renderer does not keep it running', async () => {
+    // A bare kill() emits only an intentional 'exit', which the renderer
+    // ignores, and this action keeps the registry row (it reclaims the
+    // worktree, not the session record). Without the announcement the card
+    // kept its spinner and the bottom panel its tab for an agent that was
+    // gone (session-replica-contract.md).
+    const { engine, sessionManager } = makeEngine();
+    const order: string[] = [];
+    sessionManager.kill.mockImplementation(() => { order.push('kill'); });
+    sessionManager.awaitExit.mockImplementation(async () => { order.push('awaitExit'); });
+    sessionManager.announceSessionEnded.mockImplementation(() => { order.push('announce'); });
+
+    await engine.executeTransition(makeTask({ session_id: 'sess-cleanup' }), 'lane-doing', 'lane-done');
+
+    expect(sessionManager.announceSessionEnded).toHaveBeenCalledWith('sess-cleanup');
+    // After the exit, never before: the announcement carries the resolved status.
+    expect(order).toEqual(['kill', 'awaitExit', 'announce']);
+  });
+
+  it('announces nothing for a task with no session', async () => {
+    const { engine, sessionManager } = makeEngine();
+
+    await engine.executeTransition(makeTask(), 'lane-doing', 'lane-done');
+
+    expect(sessionManager.kill).not.toHaveBeenCalled();
+    expect(sessionManager.announceSessionEnded).not.toHaveBeenCalled();
   });
 
   it('runs prepareWorktreeForRemoval BEFORE the git lock, at BACKGROUND priority', async () => {

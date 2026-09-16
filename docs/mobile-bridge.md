@@ -69,7 +69,7 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
     project-color.ts             # deterministic per-project accent color for read-board
   prompt-options-probe.ts     # pure parser: pending dialog's numbered option labels out of a serialized PTY frame
   board-event-bus.ts          # consolidated main-process board-mutation event stream (IpcContext.boardEvents)
-  session-lifecycle-feed.ts   # bridges SessionManager session-changed/exit edges onto the board-changed bus
+  session-lifecycle-feed.ts   # bridges SessionManager session-changed/session-removed/exit edges onto the board-changed bus
   mobile-bridge-service.ts    # top-level service: identity, roster, pairing, sessions, attachContext()
 ```
 

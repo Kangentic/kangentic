@@ -56,6 +56,16 @@ describe('SessionLifecycleBoardFeed', () => {
     ]);
   });
 
+  it('emits task-updated on session-removed, the last edge a torn-down session has', () => {
+    // A To Do reset or a task delete removes the row with no natural exit the
+    // phone could ride; the removal carries the same (id, Session) payload.
+    sessionManager.emit('session-removed', 'sess-1', sessionFixture({ status: 'exited' }));
+    expect(eventsEmitted()).toEqual([{ projectId: 'proj-1', change: 'task-updated', ids: ['task-1'] }]);
+
+    vi.advanceTimersByTime(1000);
+    expect(eventsEmitted()).toHaveLength(2);
+  });
+
   it('emits on exit, resolving the ids through the session-manager getters', () => {
     sessionManager.emit('exit', 'sess-1', 0, false);
     expect(sessionManager.getSessionTaskId).toHaveBeenCalledWith('sess-1');
@@ -106,6 +116,7 @@ describe('SessionLifecycleBoardFeed', () => {
 
     feed.dispose();
     expect(sessionManager.listenerCount('session-changed')).toBe(0);
+    expect(sessionManager.listenerCount('session-removed')).toBe(0);
     expect(sessionManager.listenerCount('exit')).toBe(0);
 
     vi.advanceTimersByTime(5000);
@@ -118,6 +129,7 @@ describe('SessionLifecycleBoardFeed', () => {
   it('start is idempotent: a double start never doubles the listeners', () => {
     feed.start();
     expect(sessionManager.listenerCount('session-changed')).toBe(1);
+    expect(sessionManager.listenerCount('session-removed')).toBe(1);
     expect(sessionManager.listenerCount('exit')).toBe(1);
   });
 });

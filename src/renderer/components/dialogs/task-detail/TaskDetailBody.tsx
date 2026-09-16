@@ -17,7 +17,7 @@ import { AttachmentChipStrip } from '../AttachmentChipStrip';
 import { isImageMediaType } from '../attachment-utils';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
-import type { Task, SessionDisplayState } from '../../../../shared/types';
+import type { Task, SessionDisplayState, SwimlaneRole } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
 import { useIsAgentDrivingSession } from '../../../stores/agent-drive-store';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
@@ -72,6 +72,9 @@ interface TaskDetailBodyProps {
   isArchived: boolean;
   isInTodo: boolean;
   isInDone: boolean;
+  /** The task's column role, for the lane-aware surface classifier: a todo-role
+   *  lane paints nothing session-shaped whatever `displayKind` says. */
+  laneRole: SwimlaneRole | null;
   hasSessionContext: boolean;
   sessionId: string | null;
   displayKind: SessionDisplayState['kind'];
@@ -115,6 +118,7 @@ export function TaskDetailBody({
   isArchived,
   isInTodo,
   isInDone,
+  laneRole,
   hasSessionContext,
   sessionId,
   displayKind,
@@ -393,8 +397,9 @@ export function TaskDetailBody({
   // denylist adopts every kind added later, which is how a restore came to paint
   // the outgoing session's dead terminal once 'preparing' started winning. The
   // table in task-progress.ts is compile-enforced, so a new kind cannot land
-  // here by default.
-  if (sessionId && taskDetailSurfaceFor(displayKind) === 'terminal') {
+  // here by default. The lane rides along so a To Do task, whose rows are only
+  // ever stale, cannot reach this branch on a row the store failed to drop.
+  if (sessionId && taskDetailSurfaceFor(displayKind, laneRole) === 'terminal') {
     // Browser, Changes, and the Description peek are mutually exclusive; when one
     // shares the row with the terminal, a draggable divider sets the per-task split.
     const showDivider = rightPanelPresent && !changesExpanded;
@@ -534,7 +539,7 @@ export function TaskDetailBody({
   }
 
   // Queued
-  if (taskDetailSurfaceFor(displayKind) === 'queued-placeholder') {
+  if (taskDetailSurfaceFor(displayKind, laneRole) === 'queued-placeholder') {
     return <QueuedPlaceholder sessionId={sessionId} />;
   }
 
@@ -542,7 +547,7 @@ export function TaskDetailBody({
   // exists. The terminal area is otherwise blank here, so mirror the board
   // card's launch treatment - a centered muted spinner + the spawn status
   // label - and keep PreSpawnContextBar pinned at the bottom.
-  if (taskDetailSurfaceFor(displayKind) === 'launch-overlay') {
+  if (taskDetailSurfaceFor(displayKind, laneRole) === 'launch-overlay') {
     // No session/PTY yet, so the only right panel that applies is the Description
     // peek (Browser needs a live session; Changes is not offered here). It rides
     // the same split so it survives the transition into the running terminal.

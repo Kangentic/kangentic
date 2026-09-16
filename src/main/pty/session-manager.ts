@@ -1404,23 +1404,31 @@ export class SessionManager extends EventEmitter {
     this.kill(sessionId);
     // Full cleanup including file deletion - the session is not coming back.
     this.sessionFiles.detachAndDelete(sessionId);
-    // Announce the removal as a STATUS change before the row disappears.
+    // Announce the removal as its OWN fact, before the row disappears, so the
+    // payload still carries taskId / projectId.
     //
     // kill() nulls session.pty synchronously but never touches status for a
     // PTY-backed session (a young session's real exit can still be up to
     // KILL_GRACE_MS away), and the renderer's SESSION_EXIT handler
     // deliberately ignores an intentional exit (App.tsx) so it never
-    // self-corrects. Without this push a caller that reaches remove() before
-    // the natural 'exit' - or a syncSessions() that lands mid-grace - leaves
-    // the renderer holding a 'running' row for a session that no longer
-    // exists anywhere in main: the board keeps painting a spinner and the
-    // bottom panel keeps a tab for an agent that is gone. Forcing 'exited'
-    // here (rather than trusting whatever the row already carries) covers
-    // both the awaited-exit case, where onExit already set it, and the
-    // direct-remove case (project deletion), where it has not.
+    // self-corrects. Without a push a caller that reaches remove() before the
+    // natural 'exit' - or a syncSessions() that lands mid-grace - leaves the
+    // renderer holding a 'running' row for a session that no longer exists
+    // anywhere in main: the board keeps painting a spinner and the bottom
+    // panel keeps a tab for an agent that is gone.
+    //
+    // This used to be a 'session-changed' emit carrying a forced 'exited'
+    // status. That channel's only renderer handler is an UPSERT, so for a task
+    // moved to To Do (whose rows the renderer evicts optimistically the moment
+    // the move starts) the removal announcement re-inserted an exited row for
+    // a PTY, worktree, and session directory that no longer existed, and its
+    // usage entry filled a context bar under a black terminal (#661). A
+    // removal and a status change cannot share one channel: the renderer
+    // drops this id, and every per-session map entry keyed on it, on
+    // 'session-removed' (SESSION_REMOVED). Covers the awaited-exit case and
+    // the direct-remove case (project deletion, SESSION_RESET) alike.
     if (session) {
-      session.status = 'exited';
-      this.emit('session-changed', sessionId, toSession(session));
+      this.emit('session-removed', sessionId, toSession(session));
     }
     this.registry.delete(sessionId);
     this.clearSessionCaches(sessionId);
@@ -1461,6 +1469,32 @@ export class SessionManager extends EventEmitter {
    */
   removeByTaskId(taskId: string): void {
     for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
+  }
+
+  /**
+   * Announce a session a caller ended with `kill()` + `awaitExit()` and is
+   * KEEPING in the registry (no `remove()`, no `suspend()`): re-emit the row
+   * on 'session-changed' with its resolved status. The PTY's natural exit
+   * emits only 'exit', which the renderer ignores for an intentional end (it
+   * cannot tell a suspend from a hard end without racing the suspended status
+   * push), so without this the renderer's replica stays at 'running' for a
+   * session main knows is finished: the card keeps its spinner and the bottom
+   * panel its tab. `remove()` and `suspend()` announce themselves, and
+   * `retireAgentlessSession` does the same inline; the cleanup_worktree
+   * transition action is the caller here. Every kill site is classified by
+   * `tests/unit/session-kill-followup.test.ts`. See
+   * .claude/rules/session-replica-contract.md.
+   */
+  announceSessionEnded(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    if (session.status === 'running' || session.status === 'queued') {
+      // awaitExit resolved without onExit stamping the row (its safety
+      // timeout, or a PTY-less row): the session is ended either way.
+      session.status = 'exited';
+      if (session.exitCode === null) session.exitCode = -1;
+    }
+    this.emit('session-changed', sessionId, toSession(session));
   }
 
   /**
@@ -2206,6 +2240,11 @@ export class SessionManager extends EventEmitter {
       disposeAdapterAttachment(exitedRow);
       this.sessionFiles.removeSession(exitedRow.id);
       this.clearSessionCaches(exitedRow.id);
+      // A row that leaves the registry announces it, here as in remove(): the
+      // placeholder's own status push below makes it the task's only row in the
+      // renderer, but only a removal push drops the evicted id's per-session
+      // map entries (usage, activity, events) with it.
+      this.emit('session-removed', exitedRow.id, toSession(exitedRow));
     }
     this.emit('session-changed', session.id, session);
     return session;

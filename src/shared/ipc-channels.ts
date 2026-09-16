@@ -120,6 +120,7 @@ export const IPC = {
   SESSION_MESSAGE_TRAIL: 'session:messageTrail',
   SESSION_GET_MESSAGE_TRAILS: 'session:getMessageTrails',
   SESSION_STATUS: 'session:status',
+  SESSION_REMOVED: 'session:removed',
   SESSION_SUSPEND: 'session:suspend',
   SESSION_RESUME: 'session:resume',
   SESSION_RECONCILE: 'session:reconcile',

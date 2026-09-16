@@ -610,6 +610,29 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  // A session left the registry for good (SessionManager.remove()). Its own
+  // channel, never SESSION_STATUS: the renderer's status handler can only
+  // upsert, so a removal announced there re-seeded the row it was reporting
+  // gone (#661). The renderer drops the row and its per-session maps by id.
+  context.sessionManager.on('session-removed', (sessionId: string, session: Session) => {
+    // Drop anything this session left in the background buffers above. A
+    // non-focused session's usage and events are held here for up to
+    // BACKGROUND_FLUSH_MS, so without this the timer fires AFTER the removal
+    // and broadcasts a usage tick for a session the renderer has already
+    // dropped, writing `sessionUsage[id]` back under a row that no longer
+    // exists. That is the stale context bar of #661 arriving two seconds late,
+    // and no amount of renderer-side scrubbing can prevent it: the push is
+    // legitimate as far as the renderer can tell. Purging at the source also
+    // covers every other consumer of the channel, not just the board store.
+    bufferedUsage.delete(sessionId);
+    for (let eventIndex = bufferedEvents.length - 1; eventIndex >= 0; eventIndex--) {
+      if (bufferedEvents[eventIndex].sessionId === sessionId) bufferedEvents.splice(eventIndex, 1);
+    }
+    if (!context.mainWindow.isDestroyed()) {
+      broadcast(context.mainWindow, IPC.SESSION_REMOVED, sessionId, session, session.projectId);
+    }
+  });
+
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!context.mainWindow.isDestroyed()) {

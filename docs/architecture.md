@@ -183,7 +183,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (41 channels)
+### Sessions (42 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -215,6 +215,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:firstOutput` | on | The adapter's readiness escape matched (Claude: cursor-hide `\x1b[?25l`), lifting the shimmer overlay. A heuristic, not proof the agent is up - a shell preamble can carry the same escape (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
+| `session:removed` | on | Session left main's registry for good (`SessionManager.remove()`: a To Do reset, a task or project delete, a session reset, an aborted spawn). Carries the row's last `Session` snapshot and `projectId`. Its own channel because the status handler can only upsert; the renderer drops the row and every per-session map entry keyed on the id. The main-side handler also purges that session from the background usage and event buffers, so a tick held for `BACKGROUND_FLUSH_MS` cannot flush after the removal and write its numbers back under a row the renderer has dropped |
 | `session:usage` | on | Usage data updated (includes `projectId`) |
 | `session:activity` | on | Activity state or reason changed (includes `projectId`, `taskId`). Two main-side emitters feed this one channel: `activity` on a real state transition, and `activity-reason` when the state holds but the reason's kind moves (a fan-out starting mid-turn, say). Only the first reaches the desktop notifier, the mobile push notifier, turn-completion auto-move, and the activity-interval recorder, which all read an `activity` emit as a transition. |
 | `session:event` | on | Structured event (includes `projectId`) |

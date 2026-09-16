@@ -213,6 +213,15 @@ export interface CoreSessionSlice {
   setPendingTuiAnchor: (anchor: PendingTuiAnchor | null) => void;
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
+  /**
+   * Forget a session main has removed from its registry (the
+   * `sessions.onRemoved` push): drop its row, the index entry, and every
+   * per-session map entry keyed on its id. A no-op that returns the same state
+   * reference when this renderer holds nothing for the id. This is the one
+   * writer that can take a row OUT on a push; `upsertSession` can only put one
+   * in, which is why a removal must never arrive on the status channel.
+   */
+  removeSession: (sessionId: string) => void;
   updateUsage: (sessionId: string, data: SessionUsage) => void;
   markFirstOutput: (sessionId: string) => void;
   updateActivity: (sessionId: string, state: ActivityState, reason?: ActivityReason) => void;

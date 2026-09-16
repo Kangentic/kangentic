@@ -297,6 +297,24 @@ describe('MessageTrailTracker', () => {
     expect(trailTracker.snapshot()).toEqual({});
   });
 
+  it('drops the trail the moment the registry announces the removal, without waiting for a snapshot', async () => {
+    fs.writeFileSync(file, assistantLine('a1', 'first'));
+    const trailTracker = startTracker(windowAdapter({ 'agent-s1': file }, calls));
+    manager.emit('event', 's1', { ts: 1, type: 'idle' });
+    await waitUntil(() => pushes.length === 1);
+    expect(texts(trailTracker.snapshot()['s1'] ?? [])).toEqual(['first']);
+
+    // The session is deliberately still LISTED (a stale registry read), so the
+    // lazy prune inside snapshot() would keep it; only the eager drop on the
+    // removal push can take it, and its trailing timer with it.
+    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+    manager.emit('session-removed', 's1', fakeSession('s1'));
+
+    expect(trailTracker.snapshot()['s1']).toBeUndefined();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
+  });
+
   it('re-anchors on the new file when the agent session id changes, keeping the trail', async () => {
     const secondFile = path.join(tmpDir, 'forked.jsonl');
     fs.writeFileSync(file, assistantLine('a1', 'from the first file'));
