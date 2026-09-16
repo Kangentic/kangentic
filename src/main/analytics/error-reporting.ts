@@ -266,6 +266,20 @@ export function initErrorReporting(): void {
         // those must keep reporting. The breadcrumb survives this filter, so an
         // Electron-internal utility crash still shows as context on later events.
         /'Utility' process exited with/,
+        // The SDK's own childProcessIntegration also captures every GPU
+        // process exit, tagged only with the process type and reason, the
+        // same un-attributable shape as the Utility case above. Scoped to
+        // 'abnormal-exit' deliberately, narrower than the Utility filter:
+        // Chromium's own crash-limit fallback (RecordProcessCrash) can walk
+        // several GPU launch failures before it gives up, so a 'launch-failed'
+        // GPU death that Chromium survives still reaches Sentry as a real
+        // backstop - the one case gpu-health.ts's own next-boot report cannot
+        // be verified to cover (LOG(FATAL) kills the process before that
+        // report's async POST would complete, the same reason no
+        // 'launch-failed' GPU event has ever arrived here). 'abnormal-exit'
+        // alone is what DESKTOP-15 is: the reason Chromium's own recovery
+        // (a lone crash it relaunches past) fires this integration at all.
+        /'GPU' process exited with 'abnormal-exit'/,
         // Renderer errors that are known-benign and outside our control. Shared
         // with the monaco error funnel (monacoConfig.ts) and the UI-test
         // collector (tests/ui/helpers.ts) so one registry drives all three.

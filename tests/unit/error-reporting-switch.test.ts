@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createRequire } from 'node:module';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const mocks = vi.hoisted(() => {
   const setTagSpy = vi.fn();
@@ -336,6 +339,22 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       // integration and array, and must keep reporting.
       expect(matches("'renderer' process exited with 'crashed'")).toBe(false);
 
+      // The same SDK integration's GPU variant (DESKTOP-15): a lone GPU
+      // crash Chromium recovers from on its own is un-attributable noise.
+      expect(matches("'GPU' process exited with 'abnormal-exit'")).toBe(true);
+      // Deliberately narrower than the Utility filter (unanchored, matches
+      // any reason): a GPU 'launch-failed' keeps reporting as a backstop,
+      // because gpu-health.ts's own next-boot report of the same class
+      // cannot be verified to fire when LOG(FATAL) kills the process first.
+      // A later broadening to match every GPU reason is a deliberate act,
+      // not a silent side effect of some other change.
+      expect(matches("'GPU' process exited with 'launch-failed'")).toBe(false);
+      expect(matches("'GPU' process exited with 'crashed'")).toBe(false);
+      // Our own next-boot self-report must not collide with the filter it
+      // exists to replace: no quotes around GPU, so the pattern above cannot
+      // match it even loosely.
+      expect(matches("GPU process exited repeatedly (reason abnormal-exit, exit code 1)")).toBe(false);
+
       // The benign-renderer-error registry is spread in, so a pattern added
       // there is filtered here too. The monaco funnel normally swallows these
       // first; this is the backstop for anything that escapes it.
@@ -476,5 +495,48 @@ describe('error reporting runtime behavior (module-state gated)', () => {
         module: 'ffprobe',
       });
     });
+  });
+});
+
+/**
+ * The GPU and Utility `ignoreErrors` entries both match a third-party SDK's
+ * message template by hand, so either goes quietly blind if @sentry/electron
+ * reformats it or changes which reasons it captures by default. Every
+ * hand-written case above would stay green through either change. This reads
+ * the installed package and fails instead - the same trap
+ * updater-error-classifier.test.ts's "against the installed electron-updater
+ * source" block exists for.
+ */
+describe('against the installed @sentry/electron source', () => {
+  const requireFromTest = createRequire(import.meta.url);
+  // The package's `exports` map only publishes the `main` entry point itself
+  // (the subpath error-reporting.ts imports), not the integrations/ folder
+  // underneath it - so resolve relative to that entry's directory instead of
+  // requiring the internal file directly.
+  const mainEntryDir = path.dirname(requireFromTest.resolve('@sentry/electron/main'));
+  const childProcessSource = fs.readFileSync(
+    path.join(mainEntryDir, 'integrations', 'child-process.js'),
+    'utf-8',
+  );
+
+  it('still formats the message as `\'<process>\' process exited with \'<reason>\'`, the shape both filters match', () => {
+    expect(childProcessSource).toContain(
+      "const message = `'${process}' process exited with '${reason}'`;",
+    );
+  });
+
+  it('still captures exactly abnormal-exit, launch-failed, and integrity-failure by default', () => {
+    const eventsMatch = /events:\s*\[([^\]]*)\]/.exec(childProcessSource);
+    expect(eventsMatch).not.toBeNull();
+    const capturedReasons = (eventsMatch as RegExpExecArray)[1]
+      .split(',')
+      .map((entry) => entry.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+
+    // If this ever fails because a new reason was added, the ignoreErrors
+    // filter above needs a deliberate decision about that reason too, not a
+    // silent pass-through - see error-reporting.ts's comment on why the GPU
+    // filter is scoped to 'abnormal-exit' alone.
+    expect(capturedReasons.sort()).toEqual(['abnormal-exit', 'integrity-failure', 'launch-failed']);
   });
 });

@@ -31,6 +31,7 @@ import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, s
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
+import { readPendingGpuEscalation, clearGpuEscalation } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
@@ -113,6 +114,7 @@ installDiagnostics({
     safeReadDeveloperFlag('persistConsoleLogs'),
   getRecordIpcTraffic: () =>
     safeReadDeveloperFlag('recordIpcTraffic'),
+  gpuHealthFilePath: path.join(PATHS.configDir, 'gpu-health.json'),
 });
 
 function safeReadDeveloperFlag(key: DeveloperFlagKey): boolean {
@@ -1649,6 +1651,71 @@ app.whenReady().then(async () => {
   // installs count (no-op unless error reporting initialized).
   setErrorReportingUser(clientId);
 
+  const previousRunProps = previousRunLaunchProps();
+
+  // A GPU health escalation (repeated GPU process deaths within one launch,
+  // possibly ending in the browser process being killed - gpu-health.ts)
+  // latches to disk rather than reporting live, because LOG(FATAL) can kill
+  // the process before an async Sentry POST queued at that moment would ever
+  // complete. Report it now instead, on the launch that follows. Must run
+  // AFTER setErrorReportingUser above (the install id is what correlates
+  // this with a minidump of the same crash) and after initRunUptimeTracking
+  // (previousRunProps reads that module's state); app.getGPUFeatureStatus()
+  // needs the app ready, which this whole block already is. Wrapped
+  // defensively so a telemetry-only failure here can never disrupt startup.
+  //
+  // Reported once per escalation: cleared before the report, so a run with
+  // error reporting OFF (the kill switch, or KANGENTIC_ERROR_REPORTING=0)
+  // still consumes it silently rather than queuing it for a later launch
+  // that might have reporting on. That loses only the Sentry issue - the
+  // local crash JSONs under .kangentic/logs/crashes/ and the Aptabase
+  // gpu_process_gone count exist independent of this report.
+  try {
+    const gpuHealthFilePath = path.join(PATHS.configDir, 'gpu-health.json');
+    const pendingGpuEscalation = readPendingGpuEscalation(gpuHealthFilePath);
+    if (pendingGpuEscalation) {
+      clearGpuEscalation(gpuHealthFilePath);
+      reportHandledError(
+        new Error(
+          `GPU process exited repeatedly (reason ${pendingGpuEscalation.reason}, exit code ${pendingGpuEscalation.exitCode ?? 'unknown'})`
+        ),
+        {
+          source: 'gpu_process',
+          reason: pendingGpuEscalation.reason,
+          exitCode: String(pendingGpuEscalation.exitCode ?? 'unknown'),
+          crashCount: String(pendingGpuEscalation.count),
+        },
+        // Content goes in a context, never a tag, matching restart-policy.ts.
+        // previousRunExit separates the two shapes seen so far: 'abrupt'
+        // means the escalating run ended in a browser-process kill
+        // (DESKTOP-W's shape); 'clean' or 'failsafe' means Chromium
+        // recovered on its own (DESKTOP-15's). TWO feature-status reads,
+        // deliberately not one: featureStatusAtEscalation is what Chromium's
+        // GPU mode was AT THE DEATH that produced this record (captured back
+        // when it was written); featureStatusOnReport is what it is on THIS
+        // boot, which may already differ (a machine that recovers on its own,
+        // or one still stuck) - reporting only the live read would silently
+        // claim to describe the failure while actually describing whatever
+        // came up afterwards.
+        {
+          gpu_process: {
+            reason: pendingGpuEscalation.reason,
+            exitCode: pendingGpuEscalation.exitCode,
+            count: pendingGpuEscalation.count,
+            firstAt: pendingGpuEscalation.firstAt,
+            lastAt: pendingGpuEscalation.lastAt,
+            escalatedInVersion: pendingGpuEscalation.appVersion,
+            featureStatusAtEscalation: pendingGpuEscalation.featureStatus,
+            featureStatusOnReport: app.getGPUFeatureStatus(),
+            previousRunExit: previousRunProps.lastRunExit ?? 'unknown',
+          },
+        },
+      );
+    }
+  } catch (error) {
+    console.error('[GPU-HEALTH] Failed to report a pending escalation:', error);
+  }
+
   // Fire app_launch event (analytics initialized before app.whenReady above).
   // trackEvent is a no-op if analytics is disabled, so no guard needed here.
   // clientId is attached explicitly here (the one authoritative per-launch
@@ -1660,7 +1727,7 @@ app.whenReady().then(async () => {
     platform: process.platform,
     arch: process.arch,
     clientId,
-    ...previousRunLaunchProps(),
+    ...previousRunProps,
   });
   // Once per run: which global settings differ from their defaults. Reads the
   // global config only, never a project's overrides, since there may be no

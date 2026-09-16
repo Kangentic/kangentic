@@ -202,6 +202,36 @@ macOS builds use hardened runtime with `build/entitlements.plist` providing JIT,
 
 The deb package declares `depends` on Electron's required system libraries (`libnss3`, `libatk-bridge2.0-0`, `libgtk-3-0`, `libgbm1`, `libasound2t64 | libasound2`, `libdrm2`, `libxshmfence1`); the alternation covers Ubuntu 24.04+'s rename of `libasound2` to `libasound2t64`. The rpm package declares `depends` as `.so` soname capabilities (`libnss3.so()(64bit)`, `libatk-1.0.so.0()(64bit)`, `libgtk-3.so.0()(64bit)`, `libgbm.so.1()(64bit)`, `libasound.so.2()(64bit)`, `libdrm.so.2()(64bit)`, `libxshmfence.so.1()(64bit)`) rather than package names, because RPM package names differ per distro (Fedora `libxshmfence` vs. openSUSE `libxshmfence1`) while every distro's rpmbuild auto-generates a `Provides:` for the soname itself. See `.claude/rules/linux-package-dependencies.md`. Without these, the app crashes on launch, or fails to install at all, on fresh Linux installations.
 
+## GPU Process on Linux
+
+Two Sentry issues on one Ubuntu 24.04 install (DESKTOP-W, a `LOG(FATAL)` browser-process kill, and
+DESKTOP-15, a recovered GPU death three days later) both trace to the GPU process failing to
+*launch*, not to a crashing driver. `--disable-gpu` (what `app.disableHardwareAcceleration()`
+appends) is not a fix for that class, and was deliberately not added anywhere in the codebase for
+it - the reasoning is worth keeping so a future GPU issue does not re-derive it and ship the flag
+that does not work.
+
+Chromium's own fallback ladder (`content/browser/gpu/gpu_data_manager_impl_private.cc`,
+`GpuDataManagerImplPrivate::InitializeGpuModes`) pushes `DISPLAY_COMPOSITOR` and, if allowed,
+`SOFTWARE_GL` onto `fallback_modes_` **before** checking `--disable-gpu`, and
+`FallBackToNextGpuMode` pops from the back. So the pop order is hardware GL -> `SOFTWARE_GL` ->
+`DISPLAY_COMPOSITOR` -> empty list -> `LOG(FATAL)`
+(`IntentionallyCrashBrowserForUnusableGpuProcess`, whose message - `"GPU process isn't usable.
+Goodbye."` - is exactly what DESKTOP-W's minidump carried). Reaching the fatal means the two
+software-only modes had already been current and had already failed to launch. `--disable-gpu`
+skips straight to `SOFTWARE_GL` in that same list, so on a machine that failed there it reaches the
+identical `LOG(FATAL)`, only faster. The top frame in DESKTOP-W's stack is `OnProcessLaunchFailed`,
+not a crash handler, which points at a process-*launch* failure (sandbox, seccomp/AppArmor, a
+container or hardened kernel, a missing or broken mesa/libva) rather than a driver fault; a launch
+failure is not something a rendering-mode fallback flag can route around. The only Electron switch
+that skips a GPU child launch entirely is `--in-process-gpu`, which trades a GPU hang for an app
+hang and is a separate, higher-risk decision from anything shipped for these two issues.
+
+What did ship: `src/main/diagnostics/gpu-health.ts` counts repeated GPU `child-process-gone` deaths
+and, once they cross a threshold, writes a durable escalation for the NEXT launch to report to
+Sentry rather than live - `LOG(FATAL)` can kill the process before a live report's async transport
+completes. See "Error Reporting" in [analytics.md](analytics.md) for the full mechanism.
+
 ## Auto-Update Platform Guard
 
 Auto-update via `electron-updater` runs on **all three platforms**. The guard in `src/main/updater.ts` checks `app.isPackaged` only, so the sole exclusion is dev mode.
