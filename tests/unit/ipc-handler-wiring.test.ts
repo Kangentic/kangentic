@@ -330,3 +330,75 @@ describe('IPC handler wiring: TASK_GET_SPAWN_PROGRESS return shape', () => {
     expect(result['task-shape-check']).not.toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Helper: find the SessionManager listener registered for a given event name.
+// ---------------------------------------------------------------------------
+
+function getEmitterListener(
+  context: ReturnType<typeof makeContext>,
+  event: string,
+): ((...args: unknown[]) => void) | undefined {
+  const call = context.sessionManager.on.mock.calls.find(
+    (candidate): candidate is [string, (...args: unknown[]) => void] => candidate[0] === event,
+  );
+  return call?.[1];
+}
+
+describe('IPC handler wiring: the reason-only activity refresh', () => {
+  // The engine reports a materially-changed reason on a SEPARATE callback from a
+  // real activity transition, because everything already listening to 'activity'
+  // reads that event as "the state changed": the interval recorder opens and
+  // closes session_activity_intervals rows off it, and the desktop notifier
+  // decides whether to notify. That separation is only worth anything if
+  // sessions.ts still gets the reason to the renderer, and nothing else in the
+  // suite touches this glue - the engine's own tests never load sessions.ts, and
+  // the UI specs run against the mock preload.
+
+  it('broadcasts SESSION_ACTIVITY for an activity-reason emit', () => {
+    const context = makeContext();
+    context.sessionManager.getSessionProjectId = vi.fn(() => 'proj-9');
+    context.sessionManager.getSessionTaskId = vi.fn(() => 'task-9');
+    registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+
+    const listener = getEmitterListener(context, 'activity-reason');
+    expect(listener, 'sessions.ts must listen for activity-reason').toBeDefined();
+
+    const reason = { kind: 'subagent', depth: 8 };
+    listener?.('sess-9', 'thinking', reason);
+
+    // The same channel a real transition uses: the renderer's reducer stores
+    // state and reason together, so a second channel would only duplicate it.
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.SESSION_ACTIVITY,
+      'sess-9',
+      'thinking',
+      reason,
+      'proj-9',
+      'task-9',
+    );
+  });
+
+  it('does not broadcast an activity-reason emit once the main window is destroyed', () => {
+    const context = makeContext();
+    context.mainWindow.isDestroyed = vi.fn(() => true);
+    registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+
+    getEmitterListener(context, 'activity-reason')?.('sess-9', 'thinking', { kind: 'turn-active' });
+
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  it('registers activity and activity-reason as SEPARATE listeners', () => {
+    // A reason refresh routed onto 'activity' would reach the interval recorder
+    // and the notifier as though the session had changed state. Asserting both
+    // names are registered is what makes that regression fail here rather than
+    // as a corrupted interval table nobody looks at.
+    const context = makeContext();
+    registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+
+    const events = context.sessionManager.on.mock.calls.map((candidate) => candidate[0]);
+    expect(events).toContain('activity');
+    expect(events).toContain('activity-reason');
+  });
+});

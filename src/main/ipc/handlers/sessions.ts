@@ -463,6 +463,23 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  // A reason-only refresh rides the SAME channel a real transition does: the
+  // renderer's reducer stores state and reason together, and the state it
+  // re-sends is the unchanged current one, so a second channel would only
+  // duplicate that reducer. It is a separate EMITTER, though: the other nine
+  // listeners on 'activity' read that event as "the state changed", and several
+  // act on it (push notifications, desktop toasts, auto-move on turn
+  // completion). See the emit site in `session-manager.ts`.
+  context.sessionManager.on(
+    'activity-reason',
+    (sessionId: string, state: string, reason: unknown) => {
+      if (context.mainWindow.isDestroyed()) return;
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      const taskId = context.sessionManager.getSessionTaskId(sessionId);
+      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId);
+    },
+  );
+
   context.sessionManager.on('activity', (sessionId: string, state: string, reason: unknown) => {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
