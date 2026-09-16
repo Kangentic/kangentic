@@ -388,6 +388,9 @@ export function buildDemoPreConfig(options: {
   ends?: Record<string, { durationMs: number; stopReason: string }>;
   openFrames?: Record<string, { serialized: string; peek: string[] }>;
   peekTimelines?: Record<string, Array<{ t: number; lines: string[] }>>;
+  messageTrails?: Record<string, Array<{ t: number; uuid: string; ts: number; text: string }>>;
+  /** How many trail lines main keeps per session (MESSAGE_TRAIL_MAX_ENTRIES), so a replay slices as it does. */
+  messageTrailMaxEntries?: number;
   liveTailMs?: number;
   currentProjectId?: string;
   appVersion?: string;
@@ -423,6 +426,14 @@ export function buildDemoPreConfig(options: {
   // How each working session's Monitor peek changes as its recording plays (loadDemoPeekTimelines):
   // the motion a Monitor card shows on the desktop, on the recording's own clock.
   const peekTimelines = options.peekTimelines ?? {};
+  // What each session's agent said, on the recording's own clock (loadDemoMessageTrails). The
+  // board card's default Card Preview prints the newest line, so this is the card's own text and
+  // it moves with the replay. A session absent here legitimately has none; see the loader.
+  const messageTrails = options.messageTrails ?? {};
+  // Both real callers pass MESSAGE_TRAIL_MAX_ENTRIES. It is restated rather than imported because
+  // this module must stay free of Node imports (scripts/capture-demo-sessions.mjs loads it through
+  // Node's own type stripping), and the tracker reaches node:events and node:fs.
+  const messageTrailMaxEntries = options.messageTrailMaxEntries ?? 5;
   // Every session with a terminal replays a recording; there is no hand-authored fallback. A
   // missing one would be a blank terminal in the frame and in every capture, so it fails the
   // build and the rig instead.
@@ -444,6 +455,8 @@ export function buildDemoPreConfig(options: {
       var peeks = ${JSON.stringify(peeks)};
       var openFrames = ${JSON.stringify(openFrames)};
       var peekTimelines = ${JSON.stringify(peekTimelines)};
+      var messageTrails = ${JSON.stringify(messageTrails)};
+      var messageTrailMaxEntries = ${JSON.stringify(messageTrailMaxEntries)};
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
@@ -459,6 +472,26 @@ export function buildDemoPreConfig(options: {
       // The mock's live state (its session, task, and swimlane arrays), kept so a visitor's
       // drag or click can add a session the way the main process would.
       var mockState = null;
+
+      // The trail a session has shown by a given moment of its replay: every line up to then,
+      // keeping the newest few, which is exactly what MessageTrailTracker.merge pushes.
+      function trailAt(sessionId, offsetMs) {
+        var all = messageTrails[sessionId] || [];
+        var visible = [];
+        for (var index = 0; index < all.length; index++) {
+          if (all[index].t > offsetMs) break;
+          visible.push({ uuid: all[index].uuid, ts: all[index].ts, text: all[index].text });
+        }
+        return visible.slice(-messageTrailMaxEntries);
+      }
+      // Where a session's replay opens: a working session opens its recording a tail before the
+      // end, and every other one is already at its end, so it shows the line its agent finished on.
+      function replayOpensAt(session) {
+        var end = data.ends[session.id];
+        var duration = end ? end.durationMs : Infinity;
+        var tail = session.activity === 'thinking' ? (session.liveTailMs || data.liveTailMs) : 0;
+        return Math.max(0, duration - tail);
+      }
 
       window.__mockPreConfigure(function (state) {
         data.groups.forEach(function (group) {
@@ -509,6 +542,11 @@ export function buildDemoPreConfig(options: {
             transient: session.transient || false, branch: session.commandTerminalBranch || null,
           });
           if (session.activity) state.activityCache[session.id] = session.activity;
+          // Seeded BEFORE the renderer mounts, not pushed after: syncSessions reconciles the store
+          // against the getMessageTrails() snapshot, so a push-only seed would be dropped, and a
+          // card would paint its description first and then flip.
+          var seededTrail = trailAt(session.id, replayOpensAt(session));
+          if (seededTrail.length > 0) state.messageTrailCache[session.id] = seededTrail;
           state.eventCache[session.id] = session.events.map(function (event) {
             return { ts: now - event.minutesAgo * 60000, type: 'tool_start', tool: event.tool, detail: event.detail };
           });
@@ -654,6 +692,18 @@ export function buildDemoPreConfig(options: {
         window.__mockMonitorRows = rows;
         if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
       }
+      // The card's own text as the replay reaches each line, announced the way main announces it
+      // (session:messageTrail). The cache is written too, so a re-sync agrees with the push.
+      function setMessageTrail(sessionId, offsetMs) {
+        var entries = trailAt(sessionId, offsetMs);
+        // An EMPTY trail is set, not skipped. A recording shorter than the tail opens before its
+        // first line, so a loop=1 restart has to take the card back to its description rather than
+        // leave it on the summary the previous cycle ended with.
+        if (entries.length === 0 && !(sessionId in messageTrails)) return;
+        var row = sessionById(sessionId);
+        if (mockState) mockState.messageTrailCache[sessionId] = entries;
+        if (window.__mockFireMessageTrail) window.__mockFireMessageTrail(sessionId, entries, row ? row.projectId : undefined);
+      }
       function setMonitorPeek(sessionId, peek) {
         var changed = false;
         var rows = (window.__mockMonitorRows || []).map(function (row) {
@@ -679,6 +729,13 @@ export function buildDemoPreConfig(options: {
           var delay = entry.startedAt + change.t - Date.now();
           if (delay < 0) return;
           replayTimers[sessionId].push(setTimeout(function () { setMonitorPeek(sessionId, change.lines); }, delay));
+        });
+        // The card's message trail rides the same clock, so the line a visitor reads changes at the
+        // moment the terminal shows the answer land, whether or not a terminal is open.
+        (messageTrails[sessionId] || []).forEach(function (line) {
+          var delay = entry.startedAt + line.t - Date.now();
+          if (delay < 0) return;
+          replayTimers[sessionId].push(setTimeout(function () { setMessageTrail(sessionId, line.t); }, delay));
         });
         // When the replay reaches the recording's end: the Monitor's output peek becomes the
         // recording's own last displayed lines, and a session whose agent finished flips to
@@ -707,6 +764,9 @@ export function buildDemoPreConfig(options: {
         startSession(sessionId);
         var open = openFrames[sessionId];
         setMonitorPeek(sessionId, open ? open.peek : []);
+        // Back to the line the cycle opens on, so the card replays the same progression rather
+        // than staying on the summary the last cycle ended with.
+        setMessageTrail(sessionId, Math.max(0, clock.durationMs - entry.tail));
         if (entry.mounted && recordingCache[entry.file]) {
           recordingCache[entry.file].then(function (recording) {
             if (entry.frameOnly) {

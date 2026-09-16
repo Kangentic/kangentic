@@ -2819,6 +2819,44 @@
       "frame": "  \u001b[38;2;177;185;249mCancelSubscriptionResponse\u001b[0m, plus \u001b[38;2;177;185;249mApiError \u001b[0mfor the 401/429/404 bodies. Shapes are declared standalone rather than imported from \u001b[38;2;177;185;249mserver/store.ts\u001b[0m, so the  \r\n  client\u001b[1Ctree\u001b[1Cstays\u001b[1Cdecoupled\u001b[1Cfrom\u001b[1Cthe\u001b[1Cserver\u001b[1Ctree.\r\n\r\n\u001b[2CRoutes are collected in an \u001b[38;2;177;185;249mApiRoutes \u001b[0mmap keyed by \u001b[38;2;177;185;249m'METHOD /path-pattern'\u001b[1C\u001b[0m(the\u001b[1Cliteral\u001b[1Cpattern,\u001b[1C\u001b[38;2;177;185;249m:id\u001b[1C\u001b[0mand\u001b[1Call),\u001b[1Ceach\u001b[1Centry\u001b[1Cdeclaring\u001b[1C\u001b[38;2;177;185;249mparams\u001b[0m/\u001b[38;2;177;185;249mbody\u001b[1C\u001b[0monly\u001b[1Cwhen\r\n\u001b[2Cthe\u001b[1Croute\u001b[1Ctakes\u001b[1Cthem.\r\n\r\n  \u001b[38;2;177;185;249;1msrc/lib/http-client.ts\u001b[0m — \u001b[38;2;177;185;249mapiFetch \u001b[0mis now generic over that map: \u001b[38;2;177;185;249mapiFetch<R extends ApiRoute>(route, ...options) \u001b[0mreturns \u001b[38;2;177;185;249mRouteResponse<R> \u001b[0mwith no        \r\n  explicit type argument. Method comes from the key, the URL is built from the pattern plus \u001b[38;2;177;185;249mparams \u001b[0m(URL-encoded), and \u001b[38;2;177;185;249mbody \u001b[0mis JSON-stringified with a     \r\n  content-type header when present. Routes with neither params nor body take no second argument; routes with either require it. \u001b[38;2;177;185;249mretryWithBackoff \u001b[0mand the  \r\n  throw-on-\u001b[38;2;177;185;249m!ok \u001b[0mbehavior are untouched.\r\n\r\n  \u001b[38;2;177;185;249;1msrc/App.tsx\u001b[0m — local \u001b[38;2;177;185;249mSubscription \u001b[0minterface deleted in favor of the API type; the call is now \u001b[38;2;177;185;249mapiFetch('GET /subscriptions') \u001b[0mand the WebSocket cast uses \r\n  the shared type.\r\n\r\n  Verification:\r\n  - \u001b[38;2;177;185;249mnpm run typecheck \u001b[0m— clean, against a clean pre-edit baseline I captured first.\r\n  - \u001b[38;2;177;185;249mnpm test \u001b[0m— 4 tests, 2 files, passing. Worth being plain: the suite covers \u001b[38;2;177;185;249mjwt \u001b[0mand \u001b[38;2;177;185;249mrate-limit \u001b[0monly and imports none of the files I changed, so it isn't\r\n    evidence for this work. The typecheck was the real gate. I temporarily added an inference-assertion file that confirmed each route infers its exact   \r\n    response type and that missing params, missing body, an unknown route, and a body on a bodyless route are all compile errors; it passed, and I removed\r\n    it.\r\n\r\n  Two things to flag:\r\n  - \u001b[38;2;177;185;249mapiFetch\u001b[0m's signature is a breaking change (\u001b[38;2;177;185;249mapiFetch<T>(path, init) \u001b[0m→ \u001b[38;2;177;185;249mapiFetch('METHOD /pattern', options)\u001b[0m). No other call sites exist today — a stale \r\n    one would have failed the typecheck.\r\n  - The old local \u001b[38;2;177;185;249mSubscription \u001b[0min \u001b[38;2;177;185;249mApp.tsx \u001b[0mwas wrong: it omitted \u001b[38;2;177;185;249muserId\u001b[0m, which the server does send since handlers return store objects verbatim, and      \r\n    widened \u001b[38;2;177;185;249mplan\u001b[0m/\u001b[38;2;177;185;249mstatus \u001b[0mto \u001b[38;2;177;185;249mstring\u001b[0m. Those are now the server's unions.\r\n\r\n  Known limitation, not fixed: nothing binds \u001b[38;2;177;185;249mserver/routes.ts \u001b[0mto these types, so a server-side shape change won't break the client build. That's the cost \r\n  of keeping the client types self-contained.\r\n\r\n\u001b[38;2;153;153;153m✻ Crunched for 3m 25s · done 8:16 PM\r\n\r\n\u001b[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\u001b[0m❯ \u001b[2mcommit this\r\n\u001b[38;2;136;136;136;22m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\u001b[0m  \u001b[38;2;175;135;255m⏵⏵ accept edits on \u001b[38;2;153;153;153m(shift+tab to cycle) · ← 1 agent\u001b[96C\u001b[38;2;78;186;101;4m/rc\u001b[0m  \u001b[2A\u001b[152D\u001b[?2004h\u001b[?1004h"
     }
   ],
+  "messageTrail": [
+    {
+      "t": 2039,
+      "uuid": "61f1cc76-e11b-4150-9bbe-7e88d1edeb46",
+      "ts": 1789258412761,
+      "text": "I'll start by orienting myself in the codebase."
+    },
+    {
+      "t": 85983,
+      "uuid": "ea79729f-8d8e-4b48-827c-20c489e86f66",
+      "ts": 1789258496705,
+      "text": "Baseline typecheck is clean. Writing the types file."
+    },
+    {
+      "t": 92239,
+      "uuid": "ca2dbd9e-3f17-43f2-a9db-e8ca207cf3d2",
+      "ts": 1789258502961,
+      "text": "Now the client:"
+    },
+    {
+      "t": 97074,
+      "uuid": "4c771670-6603-4541-9ca5-513589d728e1",
+      "ts": 1789258507796,
+      "text": "Now App.tsx:"
+    },
+    {
+      "t": 105571,
+      "uuid": "5841058b-b9ff-42da-8fbc-fb43b7ec42cc",
+      "ts": 1789258516293,
+      "text": "Inference and the negative cases all check out. Removing the scratch file and running the suites."
+    },
+    {
+      "t": 205858,
+      "uuid": "2fa5f290-4308-4332-b6ef-72c06a44f021",
+      "ts": 1789258616580,
+      "text": "Done. src/types/api.ts (new) — the wire contract for all five routes: LoginRequest/LoginResponse, MeResponse, Subscription, Invoice, the list responses, CancelSubscriptionResponse, plus ApiError for the 401/429/404 bodies. Shapes are declared standalone rather than imported from server/store.ts, so the client tree stays decoupled from the server tree. Routes are collected in an ApiRoutes map keyed"
+    }
+  ],
   "changes": {
     "files": [
       {

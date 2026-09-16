@@ -19,8 +19,28 @@ npm run build:demo                    # dist/demo/, base path /demo/
 npm run build:demo -- --base=/kangentic/   # what the GitHub Pages deploy runs
 npm run test:demo                     # the demo smoke tier against dist/demo/
 npm run demo:measure                  # bundle weight, boot timings, frames-per-page cost
-npm run demo:measure -- --serve       # serve dist/demo/ and stay up for a manual look
+npm run demo:serve                    # serve dist/demo/ and stay up for a manual look
+npm run capture                       # the marketing PNGs, into a gitignored captures/<timestamp>/
 ```
+
+`demo:serve` prints a board URL. The one to open for a look is `stage.html`, the fixed-size host a
+direct visit lands on; `?view=` picks the scene and the rest of the URL contract is below.
+
+```
+http://127.0.0.1:<port>/demo/stage.html                       the board, framed at 1600x1000
+http://127.0.0.1:<port>/demo/?view=monitor&embed=1&stage=0    the Agent Monitor, edge to edge
+http://127.0.0.1:<port>/demo/?view=board&still=1&stage=0      no clock, what a capture shoots
+```
+
+This is NOT `/preview`. That launches the Electron desktop app against its own scratch board and
+serves none of this; the web build is a separate artifact and needs a static server.
+
+**A dataset change is not finished until the captures are re-run.** The web demo rebuilds itself on
+every release (`deploy-demo.yml`), and the marketing PNGs do not: no workflow runs `npm run capture`.
+Both seed `demo-dataset.ts`, so anything that changes what a card says lands in the live embed on its
+own and leaves the site's screenshots behind until someone regenerates them by hand.
+`tests/unit/demo-dataset-consumer-parity.test.ts` keeps the two SEEDS in step; it cannot know when a
+PNG was last shot.
 
 `scripts/build-demo.js` pins `NODE_ENV=production` before Vite starts; a bare
 `vite build --config demo/vite.config.mts` from a shell that exports `development` is refused,
@@ -294,6 +314,38 @@ A recording made before either timeline existed gets both from
 disk. Same module as the capture script (`scripts/lib/demo-replay-timelines.js`), so a backfilled
 recording and a fresh one agree; no agent, no API credit, and no re-record.
 
+### The agent's message trail
+
+Card Preview defaults to `agent-latest-message`, so a default install prints the agent's newest
+message on each board card where the description used to be, and the Monitor does the same. That
+text is not in the terminal bytes in any recoverable form: the stream carries TUI chrome, and
+parsing prose back out of it is the fragile path this whole file exists to avoid. It comes from
+the agent's own transcript, which is what main reads (`src/main/agent/message-trail-tracker.ts`).
+
+Each recording therefore carries a `messageTrail`: every prose-bearing assistant message, collapsed
+to one plain line, on the stream's own clock. The derivation
+(`tests/captures/helpers/message-trail-extract.ts`) imports main's per-agent transcript parsers and
+its `assistantMessagePreviews`, so a change to what counts as decoration reaches the demo and the
+desktop together. `capturedAt` is the END of a capture, so a line's offset is
+`entryTs - (capturedAt - durationMs)`, the same clock `peekTimeline` uses. The seed puts the lines
+already played into `messageTrailCache` before the renderer mounts, because `syncSessions`
+reconciles the store against the `getMessageTrails()` snapshot and a push-only seed would be
+dropped; the rest ride `scheduleSessionClock` beside the peeks.
+
+Eleven of the sixteen sessions carry one. The other five show a description, exactly as they would
+on the desktop: Cursor and Copilot have no transcript parser at all, a Command Terminal's session is
+transient and `MessageTrailTracker` skips those, and the Gemini capture put all its prose in
+thinking blocks, which `assistantMessagePreviews` excludes. A card with a trail draws it INSTEAD of
+the output peek on the Monitor, because `MonitorBody` drops such a session from the wanted peek set,
+so the peek machinery above now shows only for the sessions with no trail.
+
+Backfilling this is NOT reproducible the way the timelines are. The transcripts live on the machine
+that made the recordings, so the derived lines are committed into the recording files,
+`node scripts/backfill-demo-message-trails.mjs` is a one-time rescue for what is already on disk,
+and `tests/unit/demo-message-trail-seeded.test.ts` asserts the trails are PRESENT rather than
+recomputing them. Going forward the capture script derives one per run; a transient session's
+capture is told not to (`--no-message-trail`), since the matrix driver is what knows which those are.
+
 The main process is not in a browser, so what its transition engine would start is recorded
 too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a hand list:
 
@@ -396,24 +448,26 @@ static server on localhost, warm disk.
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1752 KB | 484 KB |
+| index (the renderer) | 1757 KB | 485 KB |
 | xterm | 452 KB | 116 KB |
-| demo-seed.js (the sample install: opening and final frames, diffs, peek timelines) | 631 KB | 101 KB |
-| mock-electron-api.js (the bridge) | 200 KB | 45 KB |
+| demo-seed.js (the sample install: opening and final frames, diffs, peek timelines, message trails) | 646 KB | 108 KB |
+| mock-electron-api.js (the bridge) | 203 KB | 46 KB |
 | react-vendor | 185 KB | 57 KB |
-| index.css + xterm.css | 110 KB | 18 KB |
-| Pill + datetime chunks | 84 KB | 28 KB |
-| demo-boot.js + demo-scenes.js | 21 KB | 7 KB |
-| **Eager total** | | **857 KB** |
+| index.css + xterm.css | 111 KB | 18 KB |
+| Pill + datetime chunks | 84 KB | 29 KB |
+| demo-boot.js + demo-scenes.js | 23 KB | 8 KB |
+| **Eager total** | | **867 KB** |
 
 The whole `dist/demo/assets` is 16.2 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
 `demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
-it is the one eager file that grows with the dataset (101 KB gzipped for 16 sessions and 10
+it is the one eager file that grows with the dataset (108 KB gzipped for 16 sessions and 10
 diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
-from, and 3 KB more when they gained their peek timelines, which is what makes the Monitor move
-without a terminal open. The 36 recordings under `recordings/` are 35.6 MB raw and 886 KB gzipped
+from. It grew 3 KB more when they gained their peek timelines, which is what makes the Monitor
+move without a terminal open. It grew 7 KB more for the agent message trails, which are what the
+board cards themselves say under the default Card Preview.
+The 36 recordings under `recordings/` are 35.6 MB raw and 886 KB gzipped
 in total, fetched one at a time as terminals mount, so none of it is on the boot path. Each
 carries its timed stream and its frame timeline, and the frames are roughly half that weight: they
 are what makes a terminal live on a grid the bytes cannot address, which is every display scale

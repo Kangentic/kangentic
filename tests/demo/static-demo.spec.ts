@@ -269,6 +269,39 @@ async function countPeekChanges(page: Page, sessionId: string, spanMs: number): 
   }), { id: sessionId, span: spanMs });
 }
 
+/** The message trail a session's Monitor card is rendering right now, empty when it draws none. */
+function readTrail(page: Page, sessionId: string): Promise<string> {
+  return page.evaluate((id) => {
+    // Scoped to the card: a terminal tab in the board's bottom panel carries the same id.
+    const card = document.querySelector(`[data-testid="monitor-card"][data-session-id="${id}"]`);
+    return card?.querySelector('[data-testid="monitor-card-trail"]')?.textContent ?? '';
+  }, sessionId);
+}
+
+/**
+ * How many DISTINCT message trails a session's Monitor CARD renders over the given span.
+ *
+ * The rendered text, not the mock's state: the point of the trail is what a visitor reads on the
+ * card, and the peek counterpart above deliberately measures the row instead.
+ */
+async function countTrailChanges(page: Page, sessionId: string, spanMs: number): Promise<number> {
+  return page.evaluate(({ id, span }) => new Promise<number>((resolve) => {
+    let previous: string | null = null;
+    let changes = 0;
+    const read = (): string => {
+      // Scoped to the card: a terminal tab in the board's bottom panel carries the same id.
+      const card = document.querySelector(`[data-testid="monitor-card"][data-session-id="${id}"]`);
+      return card?.querySelector('[data-testid="monitor-card-trail"]')?.textContent ?? '';
+    };
+    const timer = setInterval(() => {
+      const text = read();
+      if (previous !== null && text !== previous) changes += 1;
+      previous = text;
+    }, 100);
+    setTimeout(() => { clearInterval(timer); resolve(changes); }, span);
+  }), { id: sessionId, span: spanMs });
+}
+
 /**
  * A task-detail window on "Add rate limiting", whose session the board seeds IDLE. Same shape as
  * the task scene's workspace, so the window mounts its terminal on the grid the recording fits
@@ -428,11 +461,16 @@ test('a still paints a working session at the moment the live frame opens it', a
 });
 
 test('a live Monitor changes its output peeks as the recordings play, and a still does not', async ({ page }) => {
-  // A Monitor card shows the last lines its session's terminal is displaying, and on the desktop
+  // A Monitor row carries the last lines its session's terminal is displaying, and on the desktop
   // those change as the agent works. The frame schedules the recording's own changes on the same
-  // clock it replays the bytes on, so the card moves without a terminal being open anywhere. A
+  // clock it replays the bytes on, so the row moves without a terminal being open anywhere. A
   // still has no clock, so its rows must sit exactly where the seed put them: a capture that
   // shot a moving target would give the hero figures a different Monitor every run.
+  //
+  // This reads the ROW STATE the mock publishes, not the rendered card. Since the Card Preview
+  // default is agent-latest-message, a card whose session has a message trail draws the trail and
+  // never the peek (MonitorBody drops it from the wanted set); only a session with no trail draws
+  // a peek. The card side of both is asserted in the message-trail test below.
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await gotoScene(page, { view: 'monitor', embed: '1' });
   await SCENE_MARKERS.monitor(page);
@@ -441,6 +479,65 @@ test('a live Monitor changes its output peeks as the recordings play, and a stil
   await gotoScene(page, { view: 'monitor', embed: '1', still: '1' });
   await SCENE_MARKERS.monitor(page);
   expect(await countPeekChanges(page, 'sess-cw-api-client', 6_000)).toBe(0);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('cards show the agent message trail the recordings carry, and it moves on the session clock', async ({ page }) => {
+  // The Card Preview default is agent-latest-message, so a default install prints the agent's
+  // newest message where the description used to be. The demo seeds that from each recording's own
+  // transcript, on the recording's own clock, so a visitor sees what an install does. Before the
+  // trails were seeded every card here fell back to its description and the demo silently showed
+  // behaviour no install produces.
+  //
+  // Three scene loads plus a 60s poll, so the worst case is around 85s. 90s left barely ten
+  // seconds of margin, and CI's runner boots the bundle slower than this machine does.
+  test.setTimeout(120_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'board' });
+  await SCENE_MARKERS.board(page);
+
+  // A board card with a trail draws it INSTEAD of the description, which is the whole change.
+  const middlewareCard = page.locator('[data-task-id="task-cw-middleware"]').first();
+  await expect(middlewareCard.getByTestId('task-card-trail')).toBeVisible();
+  await expect(middlewareCard.getByTestId('task-card-description')).toHaveCount(0);
+  const seededLine = (await middlewareCard.getByTestId('task-card-trail').innerText()).trim();
+  expect(seededLine.length).toBeGreaterThan(0);
+
+  // The snapshot backs the seed, which is what makes it durable: syncSessions reconciles the store
+  // against getMessageTrails(), so a trail only pushed would be dropped on the next re-sync.
+  const snapshotSessions = await page.evaluate(async () => {
+    const api = (window as unknown as { electronAPI: { sessions: { getMessageTrails?: () => Promise<Record<string, unknown[]>> } } }).electronAPI;
+    const trails = (await api.sessions.getMessageTrails?.()) ?? {};
+    return Object.entries(trails).filter(([, entries]) => entries.length > 0).map(([id]) => id);
+  });
+  expect(snapshotSessions).toContain('sess-cw-middleware');
+
+  // On the Monitor, the same session draws the trail and NOT the output peek, because MonitorBody
+  // stops asking for a peek once a row has one. A session whose agent has no transcript at all
+  // (Copilot here) still draws its peek, which is what the desktop does.
+  await gotoScene(page, { view: 'monitor', embed: '1' });
+  await SCENE_MARKERS.monitor(page);
+  // Scoped to the card: a session's id is also on its terminal tab in the board's bottom panel,
+  // which sits earlier in the document, so an unscoped data-session-id lands on the tab.
+  const trailCard = page.locator('[data-testid="monitor-card"][data-session-id="sess-cw-api-client"]');
+  await expect(trailCard.getByTestId('monitor-card-trail')).toBeVisible();
+  await expect(trailCard.getByTestId('monitor-card-peek')).toHaveCount(0);
+  const peekCard = page.locator('[data-testid="monitor-card"][data-session-id="sess-ob-currency-a11y"]');
+  await expect(peekCard.getByTestId('monitor-card-peek')).toBeVisible();
+  await expect(peekCard.getByTestId('monitor-card-trail')).toHaveCount(0);
+
+  // The api-client recording carries five more lines after the moment its live frame opens, so the
+  // card changes while the visitor watches, on the same clock the terminal replays on. Polled for
+  // the change rather than counted over a fixed span: the clock's offsets are the recording's, but
+  // when it starts relative to the page rides on how long the bundle takes to boot.
+  const openingLine = await readTrail(page, 'sess-cw-api-client');
+  expect(openingLine.length).toBeGreaterThan(0);
+  await expect.poll(() => readTrail(page, 'sess-cw-api-client'), { timeout: 60_000 }).not.toBe(openingLine);
+
+  // A still arms no timer, so it holds the line the seed put there.
+  await gotoScene(page, { view: 'monitor', embed: '1', still: '1' });
+  await SCENE_MARKERS.monitor(page);
+  expect(await countTrailChanges(page, 'sess-cw-api-client', 6_000)).toBe(0);
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

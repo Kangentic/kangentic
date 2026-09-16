@@ -210,8 +210,10 @@ glob. One plugin injects four classic scripts ahead of the module bundle: the sc
 boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
 pre-reveal click runner), `tests/ui/mock-electron-api.js` verbatim, and the generated seed (the
-sample install from `tests/captures/helpers/demo-dataset.ts` plus each session's final terminal
-frame from the recordings under `tests/captures/fixtures/demo/`). The plugin also emits every
+sample install from `tests/captures/helpers/demo-dataset.ts` plus, per recording under
+`tests/captures/fixtures/demo/`, its opening and final terminal frames, its working-tree diff, its
+output-peek timeline, and the agent message trail a board card prints under the default Card
+Preview). The plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, and the agent boots a drag or a new Command
 Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from

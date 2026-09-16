@@ -34,6 +34,23 @@ interface DemoCaptureRecord {
   peekTimeline?: Array<{ t: number; lines: string[] }>;
   /** The whole screen every quarter second, for a terminal the bytes cannot address. */
   frameTimeline?: Array<{ t: number; frame: string }>;
+  /** What the agent said, and when, on the stream's own clock. See loadDemoMessageTrails. */
+  messageTrail?: DemoMessageTrailEntry[];
+  /** How long the capture ran, which is the clock messageTrail offsets sit on. */
+  durationMs?: number;
+}
+
+/**
+ * One line of a recording's agent message trail, on the recording's own clock.
+ *
+ * `uuid`, `ts` and `text` are exactly `AssistantMessageTrailEntry`, which is what main pushes and
+ * what the card renders; `t` is the replay offset this line lands at.
+ */
+export interface DemoMessageTrailEntry {
+  t: number;
+  uuid: string;
+  ts: number;
+  text: string;
 }
 
 interface DemoManifest {
@@ -274,6 +291,32 @@ export function loadDemoPeekTimelines(fixturesDir: string = DEMO_FIXTURES_DIR): 
     timelines[sessionId] = record.peekTimeline;
   }
   return timelines;
+}
+
+/**
+ * What each session's agent said over its recording, keyed by session id, on the recording's own
+ * clock. The board card's default Card Preview prints the agent's newest message, so this is what
+ * a card shows where the description used to be, and it changes as the replay runs.
+ *
+ * Whole-recording, for the same reason loadDemoPeekTimelines is: no window constant to keep in step
+ * with liveTailMs, and nothing that goes stale when a session's tail changes. It is small, 95 lines
+ * and 24.5 KB of raw JSON across every recording on disk, of which only the sessions ride the eager
+ * seed. Unlike the peek timeline this is NOT limited to working sessions: a resting session still
+ * shows the trail its agent finished on, seeded before the first paint.
+ *
+ * A recording with an empty trail is absent here, and that is a real state rather than a gap. A
+ * Command Terminal's session is transient, Cursor and Copilot have no transcript parser at all, and
+ * one Gemini capture put all its prose in thinking blocks, which assistantMessagePreviews excludes.
+ * Each of those shows its description on the desktop too. tests/unit/demo-message-trail-seeded.test.ts
+ * holds the enumerated list so a NEW empty one fails instead of passing quietly.
+ */
+export function loadDemoMessageTrails(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, DemoMessageTrailEntry[]> {
+  const trails: Record<string, DemoMessageTrailEntry[]> = {};
+  for (const { sessionId, record } of loadRecordings(fixturesDir)) {
+    if (!Array.isArray(record.messageTrail) || record.messageTrail.length === 0) continue;
+    trails[sessionId] = record.messageTrail;
+  }
+  return trails;
 }
 
 /** The working-tree diff each recorded session left behind, keyed by session id. */
