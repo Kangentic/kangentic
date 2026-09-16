@@ -788,7 +788,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_column',
     {
-      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting the message the column sends its agent, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
+      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting the message the column sends its agent and when it is delivered, overriding the agent for the column, changing permission mode, enabling handoff context, choosing whether the column runs on an isolated session, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
       inputSchema: z.object({
         column: z.string().describe('Column name to update (case-insensitive, e.g. "Review"). The role columns (To Do, Done) can be renamed and restyled here like any other; their role itself is structural and not settable.'),
         name: z.string().max(100).optional().describe('New column name.'),

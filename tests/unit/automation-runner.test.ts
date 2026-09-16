@@ -688,3 +688,142 @@ describe('template substitution', () => {
     expect(seen[0]).toBe('Fix the "quoted" bug & more');
   });
 });
+
+/**
+ * Three defects in the per-attempt loop, all of them invisible to the tests
+ * above because each needs a RETRY or a non-default group budget to reach.
+ */
+describe('retry and budget accounting', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  // `delayBeforeRetry` REJECTS when the move is superseded mid-backoff. It was
+  // awaited as the last statement of the per-attempt `catch`, and a throw from
+  // inside a catch is not caught by its own try, so it escaped the row loop and
+  // the function without ever closing the row `runs.start` had opened. The row
+  // sat at 'running' until the next boot's sweep marked it interrupted.
+  it('closes the run row when the move is superseded during a retry backoff', async () => {
+    const { rows, repository } = fakeRuns();
+    const controller = new AbortController();
+    let attempts = 0;
+    const registry = registryOf(testAdapter('webhook', async () => {
+      attempts += 1;
+      throw new AutomationRetryableError('example.com answered HTTP 503.');
+    }));
+
+    const pending = runAutomations({
+      automations: [automation()],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: controller.signal,
+      registry,
+    });
+
+    // Let the first attempt fail and park the row in its backoff sleep.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+    expect(rows[0].status).toBe('running');
+
+    controller.abort();
+    await expect(pending).rejects.toBeDefined();
+
+    expect(rows[0].status).toBe('interrupted');
+    expect(rows[0].detail).toBe('The move was superseded.');
+  });
+
+  // The attempt budget was computed ONCE per row, so every retry re-armed the
+  // FULL budget and a retrying row could outlast the group cap it was measured
+  // against. Recomputed per attempt, the second attempt gets only what is left.
+  it('gives a retry only the budget the group has left, not a fresh full one', async () => {
+    const { rows, repository } = fakeRuns();
+    let attempts = 0;
+    const registry = registryOf(testAdapter(
+      'webhook',
+      async (_config, adapterContext) => {
+        attempts += 1;
+        if (attempts === 1) {
+          // Burn almost the whole 60s exit-group budget, then ask for a retry.
+          await new Promise((resolve) => setTimeout(resolve, 58_000));
+          throw new AutomationRetryableError('example.com answered HTTP 503.', 0);
+        }
+        // Needs 5s. Only ~2s of the group budget remain, so the fix cuts this
+        // off; reusing the row-start budget would hand it a fresh 60s and let
+        // it succeed.
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 5_000);
+          adapterContext.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          }, { once: true });
+        });
+        return { detail: 'Sent' };
+      },
+      { timeoutMs: null },
+    ));
+
+    const pending = runAutomations({
+      automations: [automation()],
+      column: COLUMN,
+      context: context({ trigger: 'exit' }),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry,
+    });
+
+    await vi.advanceTimersByTimeAsync(70_000);
+    await pending;
+
+    expect(attempts).toBe(2);
+    expect(rows[0].status).toBe('failed');
+  });
+
+  // `runAutomationAgain` documents that a re-run inherits neither the exit
+  // group's short-lock cap nor Phase 3's spawn budget, but it called
+  // `executeSingleAutomation` without a budget, so the runner fell back to the
+  // trigger default and silently cut a re-run of an On exit row to 60s.
+  it('honours an explicit group budget over the exit-trigger default', async () => {
+    const { rows, repository } = fakeRuns();
+    const slowAdapter = (): AutomationAdapter => testAdapter(
+      'notify',
+      async (_config, adapterContext) => {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 90_000);
+          adapterContext.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          }, { once: true });
+        });
+        return { detail: 'Shown' };
+      },
+      { timeoutMs: null },
+    );
+
+    const cutOff = runAutomations({
+      automations: [automation({ type: 'notify' })],
+      column: COLUMN,
+      context: context({ trigger: 'exit' }),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(slowAdapter()),
+    });
+    await vi.advanceTimersByTimeAsync(95_000);
+    await cutOff;
+    expect(rows[0].status).toBe('failed');
+
+    const second = fakeRuns();
+    const allowed = runAutomations({
+      automations: [automation({ type: 'notify' })],
+      column: COLUMN,
+      context: context({ trigger: 'exit' }),
+      runs: second.repository,
+      signal: new AbortController().signal,
+      registry: registryOf(slowAdapter()),
+      groupBudgetMs: 5 * 60_000,
+    });
+    await vi.advanceTimersByTimeAsync(95_000);
+    await allowed;
+
+    expect(second.rows[0].status).toBe('succeeded');
+  });
+});

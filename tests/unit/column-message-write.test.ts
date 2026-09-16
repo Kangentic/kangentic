@@ -8,7 +8,7 @@
  * silent-failure shapes, because the caller is told it worked.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { setColumnMessage, uniqueName } from '../../src/main/automations/column-message';
+import { setColumnMessage, setColumnMessageMode, uniqueName } from '../../src/main/automations/column-message';
 import type { AutomationWriteInput } from '../../src/main/db/repositories/automation-repository';
 import type { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
 import type { ColumnAutomation } from '../../src/shared/types';
@@ -183,6 +183,76 @@ describe('setColumnMessage', () => {
     expect(result.action).toBe('created');
     expect(fake.rows()).toHaveLength(2);
     expect(fake.rows().find((row) => row.id === 'exit-msg')?.config.message).toBe('/wrap-up');
+  });
+});
+
+describe('setColumnMessageMode', () => {
+  let fake: ReturnType<typeof makeRepo>;
+
+  beforeEach(() => {
+    fake = makeRepo();
+  });
+
+  it('reports unchanged when there is no message row for the mode to apply to', () => {
+    const result = setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+    expect(result).toEqual({ action: 'unchanged', name: null });
+    expect(fake.writes()).toHaveLength(0);
+  });
+
+  // Setting a delivery mode says nothing about whether the message should run.
+  // `setColumnMessage` deliberately switches a disabled row back on because
+  // asking for a message IS asking for it to be sent; a bare mode change carries
+  // no such request, so a disabled row must stay disabled.
+  it('changes the mode without switching a disabled row on', () => {
+    fake = makeRepo([makeRow({ enabled: false, config: { message: '/msg', mode: 'immediate' } })]);
+    const result = setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+
+    expect(result.action).toBe('updated');
+    expect(fake.rows()[0].enabled).toBe(false);
+    expect(fake.rows()[0].config.mode).toBe('deferred');
+  });
+
+  it('leaves an enabled row enabled while changing its mode', () => {
+    fake = makeRepo([makeRow({ enabled: true, config: { message: '/msg', mode: 'immediate' } })]);
+    setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+    expect(fake.rows()[0].enabled).toBe(true);
+  });
+
+  it('reports unchanged, and writes nothing, when the row already has that mode', () => {
+    fake = makeRepo([makeRow({ config: { message: '/msg', mode: 'deferred' } })]);
+    const result = setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+    expect(result).toEqual({ action: 'unchanged', name: 'Message' });
+    expect(fake.writes()).toHaveLength(0);
+  });
+
+  // The same row `setColumnMessage` targets: the first `send_message` enter row
+  // BY POSITION, including a disabled one. `resolveColumnMessage` filters on
+  // `enabled`, so if this read the text back through that resolver instead, a
+  // disabled first row would be skipped and the SECOND (enabled) row would take
+  // the mode change instead, silently rewriting a different automation.
+  it('targets the first message row by position, not the one resolveColumnMessage would pick', () => {
+    fake = makeRepo([
+      makeRow({ id: 'first', name: 'First message', position: 0, enabled: false, config: { message: '/first', mode: 'immediate' } }),
+      makeRow({ id: 'second', name: 'Second message', position: 1, enabled: true, config: { message: '/second', mode: 'immediate' } }),
+    ]);
+
+    const result = setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+
+    expect(result.name).toBe('First message');
+    expect(fake.rows().find((row) => row.id === 'first')?.config.mode).toBe('deferred');
+    expect(fake.rows().find((row) => row.id === 'second')?.config.mode).toBe('immediate');
+  });
+
+  it('never targets an exit message row, even when it is the only one', () => {
+    fake = makeRepo([makeRow({ id: 'exit-msg', name: 'Handoff', trigger: 'exit', config: { message: '/wrap-up', mode: 'immediate' } })]);
+    const result = setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+    expect(result).toEqual({ action: 'unchanged', name: null });
+  });
+
+  it('leaves the message text untouched', () => {
+    fake = makeRepo([makeRow({ config: { message: '/keep-me', mode: 'immediate' } })]);
+    setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+    expect(fake.rows()[0].config.message).toBe('/keep-me');
   });
 });
 

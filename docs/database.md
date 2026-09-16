@@ -871,8 +871,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 63. **Subagent attribution columns on `conversation_turn_usage`** - adds `subagent_id`, `agent_type`, and `parent_tool_use_id` (`TEXT DEFAULT NULL`) plus `spawn_depth` (`INTEGER DEFAULT NULL`), and creates `idx_turn_usage_agent_type` on `(agent_type, ts)`. `subagent_id` is the discriminator: NULL for every main-thread (driver) turn, set for a turn a Task-tool subagent ran. Every row written before subagent capture existed is a main-thread turn, so NULL is also the correct historical value and no backfill is needed. The index serves the project-wide by-type rollup's `GROUP BY` ordering only. It does NOT prune on `subagent_id`, which is in no index, so that predicate still runs per row; the per-task breakdown rides the existing `idx_turn_usage_task` instead. See the `conversation_turn_usage` table section above for which readers see which rows. Four idempotent guarded `ALTER TABLE`s plus one idempotent `CREATE INDEX IF NOT EXISTS`.
 64. **`turn_spawn_links`** - adds the table that makes `parent_tool_use_id` resolvable, mapping a subagent-spawning tool call's id to the turn that emitted it, plus `idx_turn_spawn_links_turn` on `(turn_uuid)` for the reverse direction. Migration 63 stored the child's half of that link and nothing stored the parent's: `conversation_turn_usage.turn_uuid` is the transcript record's own uuid for a main-thread row and `sub:<subagentId>:<messageId>` for a subagent one, and neither is a tool-use id, so the column named a key no row carried. No backfill: links accrue as sessions are indexed, and a task with none reports its fan-outs under a null driver rather than losing them. One idempotent `CREATE TABLE IF NOT EXISTS` plus one idempotent `CREATE INDEX IF NOT EXISTS`.
 65. **`remote_item_cache` table** - creates the persistent cache of remote board items for the Import dialog, keyed by `(external_source, repository, external_id)`. The dialog paints it instantly on open (`backlog:importGetCached`, no network) and reconciles only items changed since `MAX(remote_updated_at)` (`backlog:importReconcile`), so browsing a large tracker no longer re-fetches everything and no longer spawns one `az rest` per Azure DevOps work item just to render the list. `state_category` is the normalized `'open' | 'closed'` bucket, kept for a future SQL-level filter; the copy the dialog actually reads is `stateCategory` inside `payload`, which also carries `alreadyImported` forced false (re-stamped from the live backlog on read) and has Azure DevOps comments deferred to import time. See the `remote_item_cache table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
-
-63. **`column_automations` and `automation_runs` tables, and the actions-to-automations data migration** - creates both tables and their four indices (see the table sections above), then converts what the old `actions` + `swimlane_transitions` pair held. Every transition row becomes a `column_automations` row on its `to` column, in `(from, to, execution_order)` order, with the action's name, type and config copied; an action referenced N times becomes N independent automations, because an automation belongs to exactly one column. Names are made unique per column BEFORE the unique index is created, or its creation fails. Three types are DROPPED rather than ported, rows and all: `kill_session` (at Priority 4 the task has no active session, so the seeded `* -> Planning` row did nothing), `create_worktree` (duplicates the move path's `ensureTaskWorktree`) and `cleanup_worktree` (duplicates what a To Do move does). The seeded "Start Planning Agent" is skipped too, since its prompt equals `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which the fallback spawn already uses; a `spawn_agent` row with any OTHER prompt IS copied, as the one legacy automation. Every swimlane with a non-empty `auto_command` gains a `send_message` enter row carrying the message and its mode, and both swimlane fields are then cleared. `workingDir` is dropped from `run_script` configs. Idempotent via a `schema_meta` flag, so a second run is a no-op; `tests/unit/automations-migration.test.ts` pins each of those cases.
+66. **`column_automations` and `automation_runs` tables, and the actions-to-automations data migration** - creates both tables and their four indices (see the table sections above), then converts what the old `actions` + `swimlane_transitions` pair held. Every transition row becomes a `column_automations` row on its `to` column, in `(from, to, execution_order)` order, with the action's name, type and config copied; an action referenced N times becomes N independent automations, because an automation belongs to exactly one column. Names are made unique per column BEFORE the unique index is created, or its creation fails. Three types are DROPPED rather than ported, rows and all: `kill_session` (at Priority 4 the task has no active session, so the seeded `* -> Planning` row did nothing), `create_worktree` (duplicates the move path's `ensureTaskWorktree`) and `cleanup_worktree` (duplicates what a To Do move does). The seeded "Start Planning Agent" is skipped too, since its prompt equals `DEFAULT_SPAWN_PROMPT_TEMPLATE`, which the fallback spawn already uses; a `spawn_agent` row with any OTHER prompt IS copied, as the one legacy automation. Every swimlane with a non-empty `auto_command` gains a `send_message` enter row carrying the message and its mode, and both swimlane fields are then cleared. `workingDir` is dropped from `run_script` configs. Idempotent via a `schema_meta` flag, so a second run is a no-op; `tests/unit/automations-migration.test.ts` pins each of those cases.
 
 ### Key Migrations (Global DB)
 
@@ -949,7 +948,7 @@ Operates on a per-project DB.
 
 ### AutomationRepository
 
-Operates on a per-project DB. Replaces `ActionRepository`, which was deleted with its handlers.
+Operates on a per-project DB. Takes over from `ActionRepository`, whose IPC handlers were deleted.
 
 | Method | Description |
 |--------|-------------|
@@ -974,11 +973,17 @@ Operates on a per-project DB.
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
 | `pruneTo(limit)` | Keep the newest N rows. Nothing else bounds the table. |
 
-### ActionRepository (deleted)
+### ActionRepository (legacy, still present)
 
-Was the reader for `actions` and `swimlane_transitions`. Deleted with the `ACTION_*` and
-`TRANSITION_*` IPC channels, which had zero renderer callers; `AUTOMATION_LIST` and
-`AUTOMATION_REPLACE_FOR_COLUMN` took their place.
+The reader and writer for `actions` and `swimlane_transitions`. Its IPC handlers are gone with the
+`ACTION_*` and `TRANSITION_*` channels, which had zero renderer callers; `AUTOMATION_LIST` and
+`AUTOMATION_REPLACE_FOR_COLUMN` took their place, and no move path reads these two tables any more.
+
+The class itself is not deleted. Two callers remain: `apply-config.ts` still reconciles a
+`kangentic.json` that carries the legacy `actions` and `transitions` keys, and
+`automations-migration.ts` reads both tables once to convert them. A file written by an older build
+therefore still round-trips, which is why `BoardConfig.actions` and `.transitions` became optional
+rather than being removed.
 
 ### SessionRepository
 

@@ -22,13 +22,24 @@
  *
  * It is lossy on purpose, and the lossless path is the one a script should
  * prefer anyway: every variable is also exported as a `KANGENTIC_*` environment
- * variable, so `"$KANGENTIC_TITLE"` gets the exact title on every shell.
+ * variable, so `"$KANGENTIC_TITLE"` gets the exact title on a POSIX shell or
+ * PowerShell. NOT on cmd.exe: cmd expands `%KANGENTIC_TITLE%` while PARSING and
+ * then re-tokenizes what came back, so a raw `&` inside the value chains a
+ * second command. `%` is stripped below for exactly that reason, but a script
+ * that spells out `%KANGENTIC_*%` itself is still reaching past this function.
+ *
+ * `%` is in the class because it is cmd.exe's expansion character and is always
+ * live there, unlike `!VAR!`, which needs delayed expansion switched on. Without
+ * it, a task title of `%KANGENTIC_LABELS%` survives this escape intact, lands in
+ * a script body as a variable reference, and cmd expands it to the RAW label
+ * text and re-parses that for metacharacters. Measured on Windows: the second
+ * command runs. `$` and backtick already cover the POSIX and PowerShell forms.
  *
  * This is the same treatment `resolveShortcutCommand` has always given
  * `{{taskTitle}}`; it lives here so the two systems share one definition.
  */
 export function stripShellMetacharacters(value: string): string {
-  return value.replace(/[`$\\!"&|;<>(){}[\]\r\n]/g, '');
+  return value.replace(/[`$%\\!"&|;<>(){}[\]\r\n]/g, '');
 }
 
 /**

@@ -304,9 +304,16 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // "a pin never crosses a project" holds by construction rather than by
         // relying on loadBoard()'s reconcile happening to find the pinned task
         // absent from the new project's payload.
+        // `automations` is cleared for the same reason as `lanePins`: it rides
+        // loadBoard() as a fire-and-forget call rather than one of the awaited
+        // coldLoads, so without this the new project's columns paint against
+        // the OUTGOING project's rows until that read lands. Ids are per
+        // project, so the visible effect is a column header counting zero, not
+        // one project's automations shown under another's column.
         useBoardStore.setState({
           archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false,
           lanePins: EMPTY_LANE_PINS,
+          automations: [], automationsLoaded: false, automationRuns: {},
         });
         const coldLoads = Promise.all([
           useBoardStore.getState().loadBoard(),

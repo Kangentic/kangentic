@@ -78,6 +78,11 @@ export async function runAutomationAgain(
     try {
       const summary = await engine.executeSingleAutomation(task, column, automation, {
         signal: budget,
+        // Stated explicitly, not left to the runner's trigger default. That
+        // default is the 60s exit-group cap, which the comment on
+        // RUN_AGAIN_BUDGET_MS says a re-run does not inherit, so re-running an
+        // On exit row was silently cut to a minute.
+        groupBudgetMs: RUN_AGAIN_BUDGET_MS,
         // Fire and forget, like the warm enter path: nothing here cancels the
         // scheduler, so a message queues rather than racing anything.
         deliverToAgent: async (message, mode) => {

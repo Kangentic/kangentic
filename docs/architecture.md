@@ -602,7 +602,7 @@ folder and one manifest entry. See `.claude/rules/automation-adapters.md` for th
 | Type | Label | Needs | Timeout | What it does |
 |------|-------|-------|---------|-------------|
 | `send_message` | Send message to agent | the agent | the scheduler's own 120s | Deliver an interpolated message to the task's agent, through the three delivery rungs |
-| `run_script` | Run script | none | 5 minutes, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
+| `run_script` | Run script | none | 10 minutes by default, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
 | `webhook` | Call webhook | none | 30s | Send a request with an interpolated body, retried on a transport error, 429 or 5xx with an idempotency key |
 | `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
 | `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |

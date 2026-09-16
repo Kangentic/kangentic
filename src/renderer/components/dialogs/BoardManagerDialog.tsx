@@ -2298,7 +2298,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           onPickCopy={(source: AutomationDraft) => {
             const copied = copyAutomation(
               source,
-              source.trigger,
+              // The group whose "Add automation" button opened this picker, NOT
+              // the source row's own trigger. The copy list spans both groups
+              // and labels each candidate with its trigger, so copying an
+              // "On enter" row from the "On exit" Add button is a normal thing
+              // to do; taking `source.trigger` landed it back in On enter.
+              pickerOpenFor.trigger,
               takenNamesFor(rowsForColumn(pickerOpenFor.columnId)),
             );
             mutateRows(pickerOpenFor.columnId, (rows) => appendRow(rows, copied));

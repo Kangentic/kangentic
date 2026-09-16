@@ -245,8 +245,18 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
 
     while (attempt < attemptLimit) {
       attempt += 1;
+      // Recomputed PER ATTEMPT, not reused from the pre-check above. Arming
+      // every retry with the full budget meant a retrying row could outlast the
+      // group cap it was measured against: three webhook attempts at 30s each,
+      // plus backoff, against a 60s exit group. The cap is the point of the
+      // exit group, so each attempt gets only what is left of it.
+      const attemptBudgetMs = remainingBudget(adapter.manifest.timeoutMs, groupBudgetMs, groupStartedAt);
+      if (attemptBudgetMs !== null && attemptBudgetMs <= 0) {
+        lastError = new AutomationTimeoutError('Ran out of the group budget before the next attempt.');
+        break;
+      }
       const timeout = new AbortController();
-      const timer = budgetMs === null ? null : setTimeout(() => timeout.abort(), budgetMs);
+      const timer = attemptBudgetMs === null ? null : setTimeout(() => timeout.abort(), attemptBudgetMs);
       const combined = AbortSignal.any([signal, timeout.signal]);
 
       try {
@@ -266,11 +276,22 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
           throw error;
         }
         if (timeout.signal.aborted) {
-          lastError = new AutomationTimeoutError(`Gave up after ${Math.round((budgetMs ?? 0) / 1000)}s.`);
+          lastError = new AutomationTimeoutError(`Gave up after ${Math.round((attemptBudgetMs ?? 0) / 1000)}s.`);
           break;
         }
         if (attempt >= attemptLimit || !isRetryableAutomationError(error)) break;
-        await delayBeforeRetry(error.retryAfterSeconds, attempt, signal);
+        try {
+          await delayBeforeRetry(error.retryAfterSeconds, attempt, signal);
+        } catch (abortedDuringBackoff) {
+          // `delayBeforeRetry` REJECTS when the move is superseded mid-backoff.
+          // A throw from inside a catch block is not caught by its own try, so
+          // this escaped the row loop and the function without ever closing the
+          // run row that `runs.start` opened: the row sat at 'running' until the
+          // next boot's sweep. Same close the abort branch above does.
+          runs.finish(runId, 'interrupted', 'The move was superseded.', attempt);
+          record('interrupted', 'The move was superseded.');
+          throw abortedDuringBackoff;
+        }
       } finally {
         if (timer) clearTimeout(timer);
       }

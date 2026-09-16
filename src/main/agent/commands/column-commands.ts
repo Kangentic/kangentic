@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
-import { setColumnMessage } from '../../automations/column-message';
+import { setColumnMessage, setColumnMessageMode } from '../../automations/column-message';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { pruneDeletedColumnFromProfiles } from '../../config/board-config/prune-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
@@ -91,10 +91,17 @@ export const handleUpdateColumn: CommandHandler = (
   if (messageWrite) {
     changedFields.push('autoCommand');
   }
+  let messageMode: AutoCommandMode | undefined;
   if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
     const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
     if ('error' in parsed) return { success: false, error: parsed.error };
+    // The lane field is still written because the Column Manager round-trips
+    // it, but it is NOT what the engine honours. The delivered mode lives on
+    // the `send_message` row's config, so `messageMode` carries it down to the
+    // automation write below. Writing only this line reported success and
+    // changed nothing the delivery path reads.
     updates.auto_command_mode = parsed.value;
+    messageMode = parsed.value;
     changedFields.push('autoCommandMode');
   }
   if (params.agentOverride !== undefined) {
@@ -180,13 +187,17 @@ export const handleUpdateColumn: CommandHandler = (
 
   let messageNote = '';
   if (messageWrite) {
-    const mode = params.autoCommandMode === undefined || params.autoCommandMode === null
-      ? undefined
-      : (String(params.autoCommandMode) === 'deferred' ? 'deferred' : 'immediate') satisfies AutoCommandMode;
-    const result = setColumnMessage(new AutomationRepository(db), updated.id, messageWrite.text, mode);
+    const result = setColumnMessage(new AutomationRepository(db), updated.id, messageWrite.text, messageMode);
     messageNote = result.action === 'unchanged'
       ? ' This column had no message to clear.'
       : ` The message is the "${result.name}" automation on this column's On enter group (${result.action}).`;
+  } else if (messageMode !== undefined) {
+    // Mode with no message of its own to attach to. Says so rather than
+    // reporting a success that moved nothing.
+    const result = setColumnMessageMode(new AutomationRepository(db), updated.id, messageMode);
+    messageNote = result.name === null
+      ? ' It has no message for that delivery mode to apply to, so nothing is scheduled yet.'
+      : ` The delivery mode is on the "${result.name}" automation on this column's On enter group.`;
   }
 
   // `swimlane` is the pre-update row resolved above. Handing it over lets the
@@ -263,6 +274,17 @@ export const handleCreateColumn: CommandHandler = (
   const initialMessage = params.autoCommand === undefined || params.autoCommand === null
     ? null
     : String(params.autoCommand).slice(0, 4000);
+  // Validated here, the same way `handleUpdateColumn` validates it, rather than
+  // coerced at the write below. Coercing turned every unrecognized value into
+  // 'immediate' and still reported success, so a typo silently changed the
+  // delivery mode instead of being refused. The MCP tool's zod schema catches
+  // this for the released tool only; a direct handler call had nothing.
+  let initialMessageMode: AutoCommandMode | undefined;
+  if (params.autoCommandMode !== undefined && params.autoCommandMode !== null) {
+    const parsed = parseEnumParam(params.autoCommandMode, VALID_AUTO_COMMAND_MODES, 'autoCommandMode');
+    if ('error' in parsed) return { success: false, error: parsed.error };
+    initialMessageMode = parsed.value;
+  }
   if (params.agentOverride !== undefined && params.agentOverride !== null) {
     input.agent_override = String(params.agentOverride);
   }
@@ -358,10 +380,7 @@ export const handleCreateColumn: CommandHandler = (
 
   let messageNote = '';
   if (initialMessage) {
-    const mode = params.autoCommandMode === undefined || params.autoCommandMode === null
-      ? undefined
-      : (String(params.autoCommandMode) === 'deferred' ? 'deferred' : 'immediate') satisfies AutoCommandMode;
-    const result = setColumnMessage(new AutomationRepository(db), created.id, initialMessage, mode);
+    const result = setColumnMessage(new AutomationRepository(db), created.id, initialMessage, initialMessageMode);
     messageNote = ` Its message is the "${result.name}" automation on its On enter group.`;
   }
 
@@ -433,6 +452,13 @@ export const handleDeleteColumn: CommandHandler = (
   const transitionCount = (db
     .prepare('SELECT COUNT(*) as count FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?')
     .get(swimlane.id, swimlane.id) as { count: number } | undefined)?.count ?? 0;
+  // The column's automations go with it (`deleteSwimlaneRowWithReferences`
+  // drops them, and the foreign key cascades anyway). Counted and reported
+  // because this is the part a caller actually loses: the transition count
+  // above is zero on every board the automations migration has touched, so
+  // reporting only that told an agent nothing had been cleaned up while its
+  // column's whole enter and exit groups went with the delete.
+  const automationCount = new AutomationRepository(db).listForColumn(swimlane.id).length;
   const planExitCount = (db
     .prepare('SELECT COUNT(*) as count FROM swimlanes WHERE plan_exit_target_id = ?')
     .get(swimlane.id) as { count: number } | undefined)?.count ?? 0;
@@ -453,6 +479,7 @@ export const handleDeleteColumn: CommandHandler = (
   context.onSwimlaneDeleted(swimlane);
 
   const alsoCleaned: string[] = [];
+  if (automationCount > 0) alsoCleaned.push(`${automationCount} automation(s)`);
   if (transitionCount > 0) alsoCleaned.push(`${transitionCount} transition(s)`);
   if (planExitCount > 0) alsoCleaned.push(`${planExitCount} plan-exit reference(s)`);
   if (removedEntries > 0) alsoCleaned.push(`${removedEntries} board-profile entr${removedEntries === 1 ? 'y' : 'ies'}`);
@@ -466,6 +493,7 @@ export const handleDeleteColumn: CommandHandler = (
     data: {
       id: swimlane.id,
       name: swimlane.name,
+      automationsRemoved: automationCount,
       transitionsRemoved: transitionCount,
       planExitReferencesCleared: planExitCount,
       profileEntriesRemoved: removedEntries,
