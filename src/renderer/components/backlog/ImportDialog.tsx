@@ -371,6 +371,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       if (result.skippedAttachments > 0) {
         parts.push(`${result.skippedAttachments} attachment${result.skippedAttachments !== 1 ? 's' : ''} skipped`);
       }
+      if (result.detailUnavailable) {
+        parts.push(`comments unavailable for ${result.detailUnavailable}`);
+      }
       addToast({ message: parts.join(', '), variant: 'success' });
       loadBacklog();
       onClose();
@@ -554,7 +557,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             <button
               type="button"
               onClick={() => reconcile('incremental')}
-              className="ml-auto text-xs text-accent-fg hover:underline"
+              disabled={syncing}
+              className="ml-auto text-xs text-accent-fg hover:underline disabled:opacity-50 disabled:no-underline"
             >
               Retry
             </button>
@@ -633,7 +637,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
                 <button
                   type="button"
                   onClick={() => reconcile('full')}
-                  className="flex items-center gap-1.5 mt-1 text-xs text-accent-fg hover:underline"
+                  disabled={syncing}
+                  className="flex items-center gap-1.5 mt-1 text-xs text-accent-fg hover:underline disabled:opacity-50 disabled:no-underline"
                 >
                   <RefreshCw size={12} />
                   Refresh to check for new items

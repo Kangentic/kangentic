@@ -3664,6 +3664,13 @@ export interface ImportExecuteResult {
   imported: number;
   skippedDuplicates: number;
   skippedAttachments: number;
+  /**
+   * How many items imported without their deferred per-item detail (Azure DevOps
+   * comments) because the hydrate step failed. The items themselves are fine, so
+   * the import succeeds, but nothing on them would otherwise show the content is
+   * missing. Absent on providers that defer nothing.
+   */
+  detailUnavailable?: number;
   items: BacklogTask[];
 }
 

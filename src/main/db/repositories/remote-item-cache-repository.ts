@@ -58,7 +58,15 @@ export class RemoteItemCacheRepository {
         continue;
       }
       // Same reasoning for a payload that parses but no longer matches the shape.
-      if (isUsableCachedIssue(parsed)) issues.push(parsed);
+      // Warn rather than dropping it silently: the row still counts toward the
+      // cache size and is not prunable, so on a provider that only ever fetches
+      // changed items it stays invisible until that item changes remotely, and the
+      // symptom ("an item vanished from the list") gives no other clue.
+      if (isUsableCachedIssue(parsed)) {
+        issues.push(parsed);
+      } else {
+        console.warn('[RemoteItemCacheRepository] skipping a cached row with an unusable shape');
+      }
     }
     return issues;
   }
