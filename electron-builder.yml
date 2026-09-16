@@ -81,6 +81,7 @@ asarUnpack:
   - "node_modules/semver/**"
   - ".vite/build/embed-worker.js"
   - ".vite/build/line-count-worker.js"
+  - ".vite/build/dictation-worker.js"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
   - ".vite/build/plugins/**"

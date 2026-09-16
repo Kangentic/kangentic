@@ -45,6 +45,7 @@ interface FakeFlipFusesCall {
 
 interface FakeVerifyUnpackedWorkerCall {
   unpackedRoot: string;
+  moduleNames?: string[];
 }
 
 /** electron-builder's AfterPackContext, narrowed to the fields afterPack.js
@@ -128,10 +129,16 @@ function installFakeVerifyUnpackedWorker(throwError?: Error): {
 } {
   const calls: FakeVerifyUnpackedWorkerCall[] = [];
   const fakeModule = {
-    verifyUnpackedWorkerModules: ({ unpackedRoot }: { unpackedRoot: string }): void => {
-      calls.push({ unpackedRoot });
+    verifyUnpackedWorkerModules: ({ unpackedRoot, moduleNames }: { unpackedRoot: string; moduleNames?: string[] }): void => {
+      calls.push(moduleNames ? { unpackedRoot, moduleNames } : { unpackedRoot });
       if (throwError) throw throwError;
     },
+    // afterPack.js destructures these alongside verifyUnpackedWorkerModules
+    // for its dictation-worker call; a fake missing them would silently pass
+    // `moduleNames: undefined` and make the second call indistinguishable
+    // from the first in the recorded calls below.
+    DICTATION_WORKER_EXTERNALS: ['sherpa-onnx-node'],
+    DICTATION_WORKER_PROBE_DEPENDENCIES: [],
   };
 
   const originalCacheEntry = require.cache[VERIFY_UNPACKED_WORKER_RESOLVED_PATH];
@@ -181,18 +188,20 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       const appOutDir = path.join('afterpack-fake-out', 'mac-out');
       await afterPack(buildFakeContext({ platform: 'darwin', appOutDir }));
 
+      const unpackedRoot = path.join(
+        appOutDir,
+        'Kangentic.app',
+        'Contents',
+        'Resources',
+        'app.asar.unpacked',
+      );
+      // Two gates now run against the same unpackedRoot: the embed worker
+      // (default moduleNames) and the dictation worker (DESKTOP-X).
       expect(fakeVerify.calls).toEqual([
-        {
-          unpackedRoot: path.join(
-            appOutDir,
-            'Kangentic.app',
-            'Contents',
-            'Resources',
-            'app.asar.unpacked',
-          ),
-        },
+        { unpackedRoot },
+        { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
       ]);
-      // The verifier passed, so packaging must still proceed to flipFuses.
+      // Both verifiers passed, so packaging must still proceed to flipFuses.
       expect(fakeFuses.calls).toHaveLength(1);
     } finally {
       fakeFuses.restore();
@@ -208,8 +217,10 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       const appOutDir = path.join('afterpack-fake-out', 'win-out');
       await afterPack(buildFakeContext({ platform: 'win32', appOutDir }));
 
+      const unpackedRoot = path.join(appOutDir, 'resources', 'app.asar.unpacked');
       expect(fakeVerify.calls).toEqual([
-        { unpackedRoot: path.join(appOutDir, 'resources', 'app.asar.unpacked') },
+        { unpackedRoot },
+        { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
       ]);
       expect(fakeFuses.calls).toHaveLength(1);
     } finally {

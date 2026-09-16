@@ -288,6 +288,14 @@ export function DictationTab({
         className={enabled ? 'space-y-4' : 'space-y-4 pointer-events-none opacity-50'}
         aria-disabled={!enabled}
       >
+      {info?.workerUnavailable ? (
+        <div
+          className="rounded border border-edge bg-surface-hover px-3 py-2 text-xs text-red-400"
+          data-testid="dictation-worker-unavailable"
+        >
+          Dictation stopped after repeated crashes{info.workerError ? ` (${info.workerError})` : ''}. Restart Kangentic to try again.
+        </div>
+      ) : null}
       {info && (
         <>
           {/* Language first (never locked by the preset): the models below adapt to

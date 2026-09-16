@@ -9,19 +9,14 @@ import type {
   DictationStartResult,
 } from '../../shared/types';
 import { detectHardware, selectTier } from './hardware/detect-hardware';
-import { listEngineInfos, selectEngine, type SelectedEngine } from './engines/engine-registry';
+import { computeEngineKey, listEngineInfos, selectEngine, type EngineSelection } from './engines/engine-selection';
 import { ensureModel, isModelInstalled, listInstalledModels } from './models/model-manager';
 import { finalCapableModels, isOfflineModel, liveCapableModels, modelLanguages, type ModelDef } from './models/model-registry';
 import { trackFeatureUsed } from '../analytics/usage';
-import type {
-  ResolvedModel,
-  TranscriptionEngine,
-  TranscriptionEngineSession,
-} from './engines/transcription-engine';
+import type { ResolvedModel } from './engines/transcription-engine';
+import { DictationClient, dictationClient } from './dictation-client';
 
 interface ActiveDictation {
-  engine: TranscriptionEngine;
-  session: TranscriptionEngineSession;
   /** How many PCM frames this session has ingested so far. The finalize drain
    *  barrier waits for this to reach the renderer's sent-frame count. */
   frameCount: number;
@@ -34,8 +29,8 @@ interface ActiveDictation {
  *  In the normal case the frames are already in and the barrier is a no-op. */
 const FRAME_DRAIN_TIMEOUT_MS = 500;
 
-interface PendingBuild {
-  promise: Promise<TranscriptionEngine>;
+interface PreparedModels {
+  resolved: ResolvedModel[];
   needsDownload: boolean;
 }
 
@@ -47,27 +42,43 @@ interface PendingBuild {
  * events, which the IPC handler forwards to the renderer popup. The handler
  * then writes only the finalized text into the focused PTY.
  *
- * Engines are kept WARM. Loading a model is expensive (the 631 MB Parakeet ONNX
- * takes seconds), so an engine is loaded once and REUSED across push-to-talk
- * sessions - a press starts instantly instead of paying the load. A small LRU
- * of warm engines, keyed by the resolved engine + model selection, keeps the
- * most-recently-used few around so A/B-switching back to a recently-used model
- * is instant too. The renderer pre-warms the selected engine the moment
- * dictation is enabled (and on every model change), so even the first press is
- * instant.
+ * The engine itself - sherpa-onnx-node, whose native module a C++ throw
+ * inside can crash whatever process it runs in (DESKTOP-X) - runs in the
+ * `kangentic-dictation` utilityProcess worker, never here. This service owns
+ * only session bookkeeping (the active map, the frame-drain barrier) and
+ * model download; `DictationClient` (dictation-client.ts) is the boundary to
+ * the worker, and the warm-engine LRU that used to live on this class now
+ * lives worker-side (dictation-worker.ts), since only the worker ever holds
+ * a real engine object. See engines/transcription-engine.ts for the
+ * engine-selection/engine-build split and .claude/rules/dictation-out-of-process.md.
+ *
+ * Engines are kept WARM (in the worker). Loading a model is expensive (the
+ * 631 MB Parakeet ONNX takes seconds), so an engine is loaded once and
+ * REUSED across push-to-talk sessions - a press starts instantly instead of
+ * paying the load. The renderer pre-warms the selected engine the moment
+ * dictation is enabled (and on every model change), so even the first press
+ * is instant.
  */
 export class TranscriptionService extends EventEmitter {
   private readonly active = new Map<string, ActiveDictation>();
-  // LRU of warm (loaded) engines keyed by engineKey(); Map insertion order is
-  // the LRU order (oldest first). A cache hit re-inserts to mark it MRU.
-  private readonly warm = new Map<string, TranscriptionEngine>();
-  // In-flight loads keyed by engineKey, so a prewarm racing the first press (or
-  // two near-simultaneous presses) share one load instead of double-loading.
-  private readonly warming = new Map<string, PendingBuild>();
-  // Bumped by disposeWarm() so a load that completes after a disable/teardown is
-  // discarded instead of cached (the in-flight build observes the change).
-  private warmGeneration = 0;
+  // In-flight main-side prep (model download, keyed by engineKey) so a
+  // prewarm racing the first press (or two near-simultaneous presses) share
+  // one download instead of double-fetching the same model file. The
+  // worker's own warm/warming maps separately dedupe the ENGINE LOAD half of
+  // this; this one exists because the download half has no protection of
+  // its own once it moved out of the single main-side buildAndLoad it used
+  // to share with the load.
+  private readonly warming = new Map<string, Promise<PreparedModels>>();
   private counter = 0;
+
+  constructor(private readonly client: DictationClient = dictationClient) {
+    super();
+    this.client.on('partial', (dictationSessionId: string, text: string) => {
+      if (this.active.has(dictationSessionId)) {
+        this.emit('partial', dictationSessionId, text);
+      }
+    });
+  }
 
   /**
    * Begin a dictation session. Reuses a warm engine when the resolved engine +
@@ -76,32 +87,48 @@ export class TranscriptionService extends EventEmitter {
    */
   async start(options: DictationStartOptions): Promise<DictationStartResult> {
     const config = normalizeConfig(options);
-    let prepared: { engine: TranscriptionEngine; selected: SelectedEngine; needsDownload: boolean };
+    const profile = await detectHardware();
+    const selected = selectEngine(profile, config);
+    const engineKey = computeEngineKey(selected, config);
+
+    let prepared: PreparedModels;
     try {
-      prepared = await this.ensureEngine(config);
+      prepared = await this.prepareModels(selected, engineKey);
     } catch (error) {
-      throw error instanceof Error ? error : new Error('Failed to prepare the dictation engine');
+      throw this.reportPrepareFailure(selected, error);
     }
-    const { engine, selected, needsDownload } = prepared;
 
     const dictationSessionId = `dictation-${++this.counter}`;
-    const session = engine.createSession({
-      sampleRate: 16000,
-      language: config.language ?? 'en',
-      punctuation: config.punctuation ?? true,
-      onPartial: (text: string) => {
-        if (this.active.has(dictationSessionId)) {
-          this.emit('partial', dictationSessionId, text);
-        }
-      },
-    });
-    this.active.set(dictationSessionId, { engine, session, frameCount: 0 });
+    this.active.set(dictationSessionId, { frameCount: 0 });
+    try {
+      await this.client.createSession({
+        dictationSessionId,
+        engineKey,
+        selection: selected,
+        models: prepared.resolved,
+        remote: config.remote,
+        warmCap: this.warmCap(profile),
+        sessionOptions: { language: config.language ?? 'en', punctuation: config.punctuation ?? true },
+      });
+    } catch (error) {
+      this.active.delete(dictationSessionId);
+      // A REJECT here does not prove the worker never created the session -
+      // a timeout means the client gave up while the worker was still
+      // building/loading, and that createSession may still land and
+      // active.set() a live session in the worker nobody will ever
+      // finalize/cancel. cancel() is a safe no-op everywhere else (crash: no
+      // child to send to; a worker-reported error: never got as far as
+      // active.set), so send it unconditionally rather than only in the
+      // timeout case.
+      this.client.cancel(dictationSessionId);
+      throw this.reportPrepareFailure(selected, error);
+    }
 
     return {
       dictationSessionId,
       engineId: selected.id,
       modelId: primaryModel(selected.models)?.id ?? null,
-      needsDownload,
+      needsDownload: prepared.needsDownload,
     };
   }
 
@@ -113,145 +140,82 @@ export class TranscriptionService extends EventEmitter {
    */
   async prewarm(config: DictationConfig | null): Promise<void> {
     if (!config) {
-      this.disposeWarm();
+      this.client.setWarmHold(false);
+      this.client.disposeWarm();
       return;
     }
+    this.client.setWarmHold(true);
+    let selected: EngineSelection | undefined;
     try {
-      await this.ensureEngine(config);
-    } catch {
-      // Best-effort: a failed prewarm just means the first press pays the load.
-    }
-  }
-
-  /**
-   * Resolve a loaded engine for the config, reusing a warm one when the resolved
-   * engine + model selection matches. Model-agnostic: the key covers the engine
-   * id, every selected model id, and the remote endpoint, so every model
-   * (Parakeet, any Whisper size, streaming-only, cloud) warms identically.
-   */
-  private async ensureEngine(
-    config: DictationConfig,
-  ): Promise<{ engine: TranscriptionEngine; selected: SelectedEngine; needsDownload: boolean }> {
-    const profile = await detectHardware();
-    const selected = selectEngine(profile, config);
-    const key = this.engineKey(selected, config);
-
-    const cached = this.warm.get(key);
-    if (cached) {
-      this.warm.delete(key);
-      this.warm.set(key, cached); // move to MRU
-      return { engine: cached, selected, needsDownload: false };
-    }
-
-    const pending = this.warming.get(key);
-    if (pending) {
-      const engine = await pending.promise;
-      return { engine, selected, needsDownload: pending.needsDownload };
-    }
-
-    const generation = this.warmGeneration;
-    const needsDownload = selected.models.some((model) => !isModelInstalled(model));
-    const promise = this.buildAndLoad(selected, config);
-    this.warming.set(key, { promise, needsDownload });
-    let engine: TranscriptionEngine;
-    try {
-      engine = await promise;
-    } finally {
-      this.warming.delete(key);
-    }
-
-    if (generation !== this.warmGeneration) {
-      // disposeWarm() ran during the load (e.g. dictation disabled). Do not
-      // cache; a caller's session, if any, keeps it alive until finalize.
-      this.maybeDisposeEngine(engine);
-      return { engine, selected, needsDownload };
-    }
-    this.warm.set(key, engine);
-    this.evictWarm(this.warmCap(profile));
-    return { engine, selected, needsDownload };
-  }
-
-  /** Build + load an engine for the selection, emitting download progress. */
-  private async buildAndLoad(selected: SelectedEngine, config: DictationConfig): Promise<TranscriptionEngine> {
-    const needsDownload = selected.models.some((model) => !isModelInstalled(model));
-    const engine = selected.build(config);
-    try {
-      const resolved = await this.ensureModels(selected.models, selected.id);
-      if (needsDownload && selected.models.length > 0) {
-        const totalBytes = totalModelBytes(selected.models);
-        this.emitModelProgress({ modelId: selected.models[0].id, status: 'done', downloadedBytes: totalBytes, totalBytes });
-      }
-      await engine.load(resolved);
+      const profile = await detectHardware();
+      selected = selectEngine(profile, config);
+      const engineKey = computeEngineKey(selected, config);
+      const prepared = await this.prepareModels(selected, engineKey);
+      await this.client.ensureWarm({
+        engineKey,
+        selection: selected,
+        models: prepared.resolved,
+        remote: config.remote,
+        warmCap: this.warmCap(profile),
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to prepare the dictation engine';
-      if (selected.models.length > 0) {
-        this.emitModelProgress({ modelId: selected.models[0].id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
-      }
-      void engine.dispose();
-      throw new Error(message);
+      // Best-effort: a failed prewarm just means the first press pays the
+      // load, but still surface it via the popup's model-progress phase when
+      // we got far enough to know which model to blame (mirrors the
+      // pre-split buildAndLoad, whose failure reporting fired the same way
+      // whether the caller was start() or prewarm()).
+      if (selected) this.reportPrepareFailure(selected, error);
     }
-    return engine;
   }
 
   /**
-   * A stable cache key for the resolved engine + model + remote selection. No
-   * engine-name branching (the remote fields are simply empty for on-device), so
-   * the boundary that keeps engine-id mapping in engine-registry stays intact.
+   * Download (if missing) every model the selection needs and resolve their
+   * on-disk paths, deduped by engineKey. Does NOT touch the worker - the
+   * caller sends the result on to createSession/ensureWarm for that half.
    */
-  private engineKey(selected: SelectedEngine, config: DictationConfig): string {
-    return [
-      selected.id,
-      // Both slots, not the deduped model set: live=Parakeet/final=none and
-      // live=none/final=Parakeet share one model id but are different engines.
-      selected.liveModelId ?? 'none',
-      selected.finalModelId ?? 'none',
-      // The Whisper recognizer bakes the language in at creation, so each language
-      // is a distinct warm engine (the model files are shared/cached on disk).
-      selected.language,
-      config.remote?.url ?? '',
-      config.remote?.apiKey ?? '',
-      config.remote?.model ?? '',
-    ].join('|');
+  private async prepareModels(selected: EngineSelection, engineKey: string): Promise<PreparedModels> {
+    const pending = this.warming.get(engineKey);
+    if (pending) return pending;
+
+    const needsDownload = selected.models.some((model) => !isModelInstalled(model));
+    const promise = this.downloadAndResolve(selected, needsDownload);
+    this.warming.set(engineKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.warming.delete(engineKey);
+    }
+  }
+
+  private async downloadAndResolve(selected: EngineSelection, needsDownload: boolean): Promise<PreparedModels> {
+    const resolved = await this.ensureModels(selected.models, selected.id);
+    if (needsDownload && selected.models.length > 0) {
+      const totalBytes = totalModelBytes(selected.models);
+      this.emitModelProgress({ modelId: selected.models[0].id, status: 'done', downloadedBytes: totalBytes, totalBytes });
+    }
+    return { resolved, needsDownload };
+  }
+
+  /** Emit a model-progress 'error' (if there is a model to name) and return
+   *  the Error to throw. Shared by a failed download and a failed worker
+   *  load - both dead-end the same way from the caller's perspective. */
+  private reportPrepareFailure(selected: EngineSelection, error: unknown): Error {
+    const message = error instanceof Error ? error.message : 'Failed to prepare the dictation engine';
+    if (selected.models.length > 0) {
+      this.emitModelProgress({ modelId: selected.models[0].id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
+    }
+    return new Error(message);
   }
 
   /**
    * Warm-engine cap: 2 on the accurate tier (hold the previously-used model so
    * an A/B switch back to it is instant), 1 on the low-resource tier (do not pin
-   * two large models on a weak machine).
+   * two large models on a weak machine). Computed here (detectHardware/selectTier
+   * need the `app` module) and passed to the worker rather than re-derived
+   * there.
    */
   private warmCap(profile: DictationHardwareProfile): number {
     return selectTier(profile) === 'streaming-tiny' ? 1 : 2;
-  }
-
-  /** Drop least-recently-used warm engines beyond the cap, disposing any that
-   *  are idle (an evicted engine still serving a session is disposed on finalize). */
-  private evictWarm(cap: number): void {
-    while (this.warm.size > cap) {
-      const oldestKey = this.warm.keys().next().value as string;
-      const engine = this.warm.get(oldestKey);
-      this.warm.delete(oldestKey);
-      if (engine) this.maybeDisposeEngine(engine);
-    }
-  }
-
-  /** Dispose an engine only when it is neither warm-cached nor serving a session. */
-  private maybeDisposeEngine(engine: TranscriptionEngine): void {
-    for (const warmEngine of this.warm.values()) if (warmEngine === engine) return;
-    for (const entry of this.active.values()) if (entry.engine === engine) return;
-    void engine.dispose();
-  }
-
-  /**
-   * Release every warm engine (dictation disabled, or shutdown). Synchronous-
-   * shutdown safe: the async `engine.dispose()` is fired without awaiting, and
-   * the generation bump discards any load still in flight.
-   */
-  private disposeWarm(): void {
-    this.warmGeneration += 1; // supersede any in-flight load so it is not cached
-    const engines = [...this.warm.values()];
-    this.warm.clear();
-    this.warming.clear();
-    for (const engine of engines) this.maybeDisposeEngine(engine);
   }
 
   private emitModelProgress(progress: DictationModelProgress): void {
@@ -305,20 +269,24 @@ export class TranscriptionService extends EventEmitter {
   }
 
   /**
-   * Feed one PCM frame (16 kHz mono Int16) into the active engine session.
-   * This is the transport-agnostic ingest boundary (local IPC today, a future
+   * Feed one PCM frame (16 kHz mono Int16) into the active session. This is
+   * the transport-agnostic ingest boundary (local IPC today, a future
    * remote client later). Unknown ids are ignored (a late frame after stop).
+   * Fire-and-forget to the worker, mirroring the original direct
+   * `session.push()` call - see dictation-client.ts's push() for the
+   * ordering argument that keeps this safe against the finalize drain.
    */
   ingest(dictationSessionId: string, pcm: Int16Array): void {
     const entry = this.active.get(dictationSessionId);
     if (!entry) return;
-    entry.session.push(pcm);
+    this.client.push(dictationSessionId, pcm);
     entry.frameCount += 1;
     entry.onFrame?.();
   }
 
-  /** Flush the engine session and return the finalized, committed text. The
-   *  engine itself stays warm for the next press; only the session is disposed.
+  /** Flush the session and return the finalized, committed text. The engine
+   *  itself stays warm in the worker for the next press; only the session
+   *  is disposed there.
    *
    *  Drain barrier: PCM frames arrive over a fire-and-forget channel while this
    *  `stop` arrives over a separate invoke channel, so the last few frames can
@@ -338,12 +306,18 @@ export class TranscriptionService extends EventEmitter {
     }
     let text = '';
     try {
-      text = await entry.session.finalize();
+      text = await this.client.finalize(dictationSessionId);
+    } catch (error) {
+      // A worker CRASH or a worker-REPORTED error already cleans up the
+      // worker-side session as part of that failure. A request TIMEOUT does
+      // not - the worker may still be decoding - so cancel() is sent
+      // unconditionally rather than only on that one path; it is a safe
+      // no-op wherever the worker has already forgotten this session.
+      this.client.cancel(dictationSessionId);
+      throw error;
     } finally {
       entry.onFrame = undefined;
-      entry.session.dispose();
       this.active.delete(dictationSessionId);
-      this.maybeDisposeEngine(entry.engine);
     }
     this.emit('final', dictationSessionId, text);
     // Adoption signal for a completed utterance; the two early returns above
@@ -383,10 +357,8 @@ export class TranscriptionService extends EventEmitter {
   cancel(dictationSessionId: string): void {
     const entry = this.active.get(dictationSessionId);
     if (!entry) return;
-    entry.session.cancel();
-    entry.session.dispose();
+    this.client.cancel(dictationSessionId);
     this.active.delete(dictationSessionId);
-    this.maybeDisposeEngine(entry.engine);
   }
 
   /** Hardware profile + available engines for the settings panel. */
@@ -414,15 +386,21 @@ export class TranscriptionService extends EventEmitter {
       finalModels: finals,
       selectedLiveModelId: selected.liveModelId,
       selectedFinalModelId: selected.finalModelId,
+      // The dictation worker gave up after repeated crashes: name why, so the
+      // settings panel can say so instead of leaving push-to-talk a silent
+      // dead end. Mirrors EmbedClient.crashReason surfaced in the Memory tab.
+      workerUnavailable: this.client.crashed,
+      workerError: this.client.crashReason ?? undefined,
     };
   }
 
-  /** Release in-flight sessions and warm engines (synchronous-shutdown safe). */
+  /** Release in-flight sessions and the worker (synchronous-shutdown safe). */
   dispose(): void {
     for (const dictationSessionId of [...this.active.keys()]) {
       this.cancel(dictationSessionId);
     }
-    this.disposeWarm();
+    this.client.setWarmHold(false);
+    this.client.dispose();
   }
 }
 

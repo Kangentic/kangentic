@@ -5,15 +5,10 @@ import type {
   DictationHardwareProfile,
   DictationEngineTier,
 } from '../../../shared/types';
-import type { TranscriptionEngine } from './transcription-engine';
-import type { ModelDef } from '../models/model-registry';
+import type { ModelDef, ModelEngineKind } from '../models/model-registry';
 import { defaultModelForTier, getModel, modelLanguages } from '../models/model-registry';
-import { SherpaOnlineEngine, SHERPA_ONLINE_INFO } from './sherpa-online-engine';
-import { SherpaWhisperEngine, SHERPA_WHISPER_INFO } from './sherpa-whisper-engine';
-import { ChunkedOfflineEngine } from './chunked-offline-engine';
-import { HybridEngine, SHERPA_HYBRID_INFO, type HybridSlotSpec } from './hybrid-engine';
-import { RemoteOpenAiEngine, REMOTE_OPENAI_INFO } from './remote-openai-engine';
 import { selectTier } from '../hardware/detect-hardware';
+import { SHERPA_HYBRID_INFO, SHERPA_ONLINE_INFO, SHERPA_WHISPER_INFO, REMOTE_OPENAI_INFO } from './engine-infos';
 
 /** Config sentinel for an empty model slot (no live preview / no final pass). */
 const NONE = 'none';
@@ -44,14 +39,6 @@ function finalModelFor(config: DictationConfig, tier: DictationEngineTier): Mode
   return getModel(selection) ?? accurateDefault();
 }
 
-/** A live model runs natively streaming (the transducer) or chunked (offline).
- *  The chunked offline path bakes the language into its recognizer. */
-function liveEngineFactory(model: ModelDef, language: string): () => TranscriptionEngine {
-  return model.engineKind === 'online-transducer'
-    ? () => new SherpaOnlineEngine()
-    : () => new ChunkedOfflineEngine(language);
-}
-
 /** Clamp the requested language to what the running local models all support (the
  *  intersection of their language sets), falling back to English. A null slot (no
  *  live / no final) does not constrain. Guards a stale config language that the
@@ -77,13 +64,29 @@ function dedupeModels(models: ModelDef[]): ModelDef[] {
   return out;
 }
 
-export interface SelectedEngine {
+/**
+ * A dictation engine selection resolved from hardware + user config: which
+ * models to load, and enough data for the worker's `engine-build.ts` to
+ * construct the right concrete engine, without this (main-resident) module
+ * ever importing `sherpa-onnx-node`. `liveModelKind` carries the one piece
+ * of model data the build step needs that isn't already implied by
+ * `liveModelId`/`finalModelId` - whether the live model is the native
+ * streaming transducer or an offline model driven in chunks - so the worker
+ * never has to re-derive it from a `ModelDef` main never sends.
+ *
+ * This is the ONLY place that maps a selection to concrete engine IDENTITY
+ * (adapter-boundary); `engine-build.ts` (worker-only) is the only place that
+ * maps it to concrete engine CONSTRUCTION. See
+ * .claude/rules/dictation-out-of-process.md.
+ */
+export interface EngineSelection {
   id: DictationEngineId;
   info: DictationEngineInfo;
-  build: (config: DictationConfig) => TranscriptionEngine;
   models: ModelDef[];
   liveModelId: string | null;
+  liveModelKind: ModelEngineKind | null;
   finalModelId: string | null;
+  isRemote: boolean;
   /** The language the engines are built for, clamped to what the models support. */
   language: string;
 }
@@ -98,13 +101,11 @@ export function listEngineInfos(): DictationEngineInfo[] {
  * two-slot hybrid: a LIVE model (streaming Zipformer or a chunked offline model)
  * and a FINAL model (an offline model, or none), both from the user's dropdowns.
  * Cloud keeps the local live preview and routes the final to the remote endpoint.
- * This is the ONLY place that maps a selection to concrete engines (adapter-boundary);
- * everything else reads `engine.info`.
  */
 export function selectEngine(
   profile: DictationHardwareProfile,
   config: DictationConfig,
-): SelectedEngine {
+): EngineSelection {
   const tier = selectTier(profile);
   const isRemote = (config.engineMode ?? 'auto') === 'remote';
 
@@ -118,30 +119,42 @@ export function selectEngine(
   // local-final slots are considered.
   const language = resolveLanguage(config.language ?? 'en', [live, isRemote ? null : final]);
 
-  const liveSlot: HybridSlotSpec | null = live
-    ? { factory: liveEngineFactory(live, language), modelId: live.id }
-    : null;
-
   const models = dedupeModels(
     isRemote ? (live ? [live] : []) : [live, final].filter((model): model is ModelDef => model !== null),
   );
 
-  const build = (buildConfig: DictationConfig): TranscriptionEngine => {
-    const finalSlot: HybridSlotSpec | null = isRemote
-      ? { factory: () => new RemoteOpenAiEngine(buildConfig.remote), modelId: null }
-      : final
-        ? { factory: () => new SherpaWhisperEngine(language), modelId: final.id }
-        : null;
-    return new HybridEngine({ live: liveSlot, final: finalSlot });
-  };
-
   return {
     id: isRemote ? 'remote-openai' : 'hybrid',
     info: isRemote ? REMOTE_OPENAI_INFO : SHERPA_HYBRID_INFO,
-    build,
     models,
     liveModelId: live?.id ?? null,
+    liveModelKind: live?.engineKind ?? null,
     finalModelId: isRemote ? null : (final?.id ?? null),
+    isRemote,
     language,
   };
+}
+
+/**
+ * A stable cache key for the resolved engine + model + remote selection,
+ * shared by main (to name a warm request to the worker) and the worker
+ * (to key its own warm-engine LRU) so the two sides can never compute it
+ * differently. No engine-name branching (the remote fields are simply empty
+ * for on-device), so the boundary that keeps engine-id mapping in this file
+ * stays intact.
+ */
+export function computeEngineKey(selected: EngineSelection, config: DictationConfig): string {
+  return [
+    selected.id,
+    // Both slots, not the deduped model set: live=Parakeet/final=none and
+    // live=none/final=Parakeet share one model id but are different engines.
+    selected.liveModelId ?? 'none',
+    selected.finalModelId ?? 'none',
+    // The Whisper recognizer bakes the language in at creation, so each language
+    // is a distinct warm engine (the model files are shared/cached on disk).
+    selected.language,
+    config.remote?.url ?? '',
+    config.remote?.apiKey ?? '',
+    config.remote?.model ?? '',
+  ].join('|');
 }

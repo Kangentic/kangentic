@@ -1,10 +1,10 @@
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
   TranscriptionEngine,
   TranscriptionEngineSession,
 } from './transcription-engine';
+import { STUB_INFO } from './engine-infos';
 
 /**
  * A no-ML engine used to prove the end-to-end dictation pipeline (push-to-talk
@@ -25,14 +25,7 @@ const STUB_FINAL = 'This is a test of dictation.';
 const STUB_PARTIAL_INTERVAL_MS = 300;
 
 export class StubTranscriptionEngine implements TranscriptionEngine {
-  readonly info: DictationEngineInfo = {
-    id: 'stub',
-    displayName: 'Stub (test)',
-    streaming: true,
-    punctuation: true,
-    license: 'none',
-    requiresModelDownload: false,
-  };
+  readonly info = STUB_INFO;
 
   async load(_models: ResolvedModel[]): Promise<void> {
     // No weights to load.

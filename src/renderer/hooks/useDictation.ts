@@ -447,8 +447,17 @@ export function useDictation(): void {
     try {
       // Pass the sent-frame count so finalize drains the tail before decoding.
       finalText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
-    } catch {
-      // ignore; finalText stays empty
+    } catch (error) {
+      // The dictation engine runs in its own process (DESKTOP-X), so a
+      // native fault there no longer takes the whole app down with it - but
+      // the utterance itself is still lost. Surface it rather than silently
+      // committing nothing, mirroring the mic-permission-denied path above:
+      // cleanup, setError, return (no reset - the error stays visible).
+      cleanupSubscriptions();
+      useDictationStore.getState().setError(
+        error instanceof Error ? `Dictation failed: ${error.message}` : 'Dictation failed.',
+      );
+      return;
     }
     useDictationStore.setState({ finalText });
 

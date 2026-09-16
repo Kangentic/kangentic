@@ -2,20 +2,23 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 
 /**
- * Release gate for the packaged embed worker.
+ * Release gate for every packaged utilityProcess worker forked from the
+ * `app.asar.unpacked` tree (the embed worker, and the dictation worker added
+ * for DESKTOP-X).
  *
- * The worker (`.vite/build/embed-worker.js`) is forked from the
- * `app.asar.unpacked` tree and keeps `@huggingface/transformers` external, so
- * at runtime it resolves that package, and everything the package requires,
- * with plain Node resolution from real directories. A dependency that ships
- * only inside the asar is invisible to it, and the worker then dies at module
- * load with `Cannot find module` on every fork. That is exactly what shipped
- * in 0.38.0 and 0.39.0 (DESKTOP-6, DESKTOP-H): `onnxruntime-common` and
- * `sharp` were in the asar and not in `asarUnpack`, and nothing in the build
- * ever tried to load the worker's closure from the unpacked tree.
+ * Each such worker keeps its native/heavy dependency external, so at runtime
+ * it resolves that package, and everything the package requires, with plain
+ * Node resolution from real directories. A dependency that ships only inside
+ * the asar is invisible to it, and the worker then dies at module load with
+ * `Cannot find module` on every fork. That is exactly what shipped in 0.38.0
+ * and 0.39.0 (DESKTOP-6, DESKTOP-H): `onnxruntime-common` and `sharp` were in
+ * the asar and not in `asarUnpack`, and nothing in the build ever tried to
+ * load the embed worker's closure from the unpacked tree.
  *
  * This gate does that load, with plain Node, against the tree electron-builder
- * just produced. Two things make it honest:
+ * just produced, once per worker (`build/afterPack.js` calls
+ * `verifyUnpackedWorkerModules` once with each worker's `moduleNames`/
+ * `probeDependencies` pair). Two things make it honest:
  *
  * - Resolution is FENCED to the unpacked root. The output directory sits under
  *   the repo, so an unfenced `require` would walk up into the repo's own
@@ -42,6 +45,18 @@ const EMBED_WORKER_EXTERNALS = ['@huggingface/transformers'];
  *  in their own packages. Printed with their resolved paths on success, so the
  *  build log shows where each one came from. */
 const EMBED_WORKER_PROBE_DEPENDENCIES = ['onnxruntime-common', 'onnxruntime-node', 'sharp'];
+
+/**
+ * The dictation worker's esbuild external (src/main/transcription/dictation-worker.ts,
+ * see DESKTOP-X). `sherpa-onnx-node` resolves its native binding by a
+ * RELATIVE require (`../sherpa-onnx-<platform>-<arch>/sherpa-onnx.node`,
+ * addon.js), not a bare specifier, so loading it exercises both packages
+ * (itself and its platform sibling) with no separate probe dependency to
+ * list - a missing platform package fails the same `require(target)` call
+ * this gate already makes.
+ */
+const DICTATION_WORKER_EXTERNALS = ['sherpa-onnx-node'];
+const DICTATION_WORKER_PROBE_DEPENDENCIES = [];
 
 /**
  * The script the probe child runs. Everything it needs is inlined, since it is
@@ -115,6 +130,8 @@ function verifyUnpackedWorkerModules({
 module.exports = {
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
+  DICTATION_WORKER_EXTERNALS,
+  DICTATION_WORKER_PROBE_DEPENDENCIES,
   buildProbeScript,
   verifyUnpackedWorkerModules,
 };

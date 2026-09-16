@@ -1,7 +1,11 @@
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 const fs = require('fs');
 const path = require('path');
-const { verifyUnpackedWorkerModules } = require('./verify-unpacked-worker');
+const {
+  verifyUnpackedWorkerModules,
+  DICTATION_WORKER_EXTERNALS,
+  DICTATION_WORKER_PROBE_DEPENDENCIES,
+} = require('./verify-unpacked-worker');
 
 module.exports = async function afterPack(context) {
   const productFilename = context.packager.appInfo.productFilename;
@@ -70,6 +74,15 @@ module.exports = async function afterPack(context) {
   // unpacked tree, or it exits 1 on every fork (DESKTOP-H). Throws on failure,
   // which fails the package; see build/verify-unpacked-worker.js.
   verifyUnpackedWorkerModules({ unpackedRoot });
+
+  // Same gate for the dictation (sherpa-onnx) worker added for DESKTOP-X: a
+  // packaging regression here would re-ship the DESKTOP-H shape for
+  // sherpa-onnx-node instead of transformers.js.
+  verifyUnpackedWorkerModules({
+    unpackedRoot,
+    moduleNames: DICTATION_WORKER_EXTERNALS,
+    probeDependencies: DICTATION_WORKER_PROBE_DEPENDENCIES,
+  });
 
   await flipFuses(electronBinaryPath, {
     version: FuseVersion.V1,

@@ -1,5 +1,4 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type { DictationEngineInfo } from '../../../shared/types';
 import type {
   CreateSessionOptions,
   ResolvedModel,
@@ -8,15 +7,7 @@ import type {
 } from './transcription-engine';
 import { concatInt16ToFloat32 } from '../audio/pcm';
 import { buildOfflineConfig } from './sherpa-whisper-engine';
-
-export const CHUNKED_OFFLINE_INFO: DictationEngineInfo = {
-  id: 'chunked-offline',
-  displayName: 'Accurate live (chunked)',
-  streaming: true,
-  punctuation: true,
-  license: 'CC-BY-4.0 / MIT',
-  requiresModelDownload: true,
-};
+import { CHUNKED_OFFLINE_INFO } from './engine-infos';
 
 /** Re-decode the growing buffer this often to emit a live partial. */
 const CHUNK_INTERVAL_MS = 350;

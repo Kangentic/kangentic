@@ -1922,6 +1922,13 @@ function getShutdownDependencies() {
       // Synchronously kill the line-count worker (if spawned); in-flight
       // counts abandon and their callers fall back to inline counting.
       lineCountClient.dispose();
+      // Synchronously kill the dictation worker (if spawned): cancels every
+      // in-flight session bookkeeping-side and kills the kangentic-dictation
+      // utilityProcess. This is the DESKTOP-X quit-path gap - the method
+      // existed and was already synchronous-shutdown safe, but nothing
+      // called it, so the worker (and any native async work it still held)
+      // rode the app's own teardown instead of being torn down first.
+      getOptionalIpcContext()?.transcriptionService.dispose();
       // Stop accepting new MCP requests synchronously. The server's close()
       // is non-blocking; in-flight requests are abandoned, which is fine
       // because they're idempotent (the agent will retry on reconnect or

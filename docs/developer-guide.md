@@ -171,7 +171,7 @@ scripts/
 Three parallel processes:
 
 1. **Vite dev server** -- serves renderer with HMR on port 5173 (5174+ in worktrees)
-2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js` and `src/preload/preload.ts` → `.vite/build/preload.js`
+2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the three `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/retrieval/embedder/embed-worker.ts`, `src/main/git/line-count/line-count-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
 Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `font-list`, `simple-git`) are marked external in esbuild -- loaded at runtime from `node_modules`.
@@ -193,7 +193,7 @@ Flags:
    absent is how two releases shipped with unreadable stacks.
 1. `tsc --noEmit` (type check)
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
-3. esbuild bundles main + preload (minified)
+3. esbuild bundles main + preload + the three utility-process workers (embed, line-count, dictation), minified
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`) to `.vite/build/`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
    Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token. A
@@ -425,7 +425,7 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 Native modules:
 - `better-sqlite3` - rebuilt against Electron headers via `scripts/rebuild-native.js`
 - `node-pty` - uses prebuilt NAPI binaries, no rebuild needed
-- `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
+- `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation, running in its own `kangentic-dictation` utilityProcess worker - see DESKTOP-X in `.claude/rules/dictation-out-of-process.md`; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
 - `font-list` - shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
 - `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (conversation-memory retrieval; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar)
 - `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)

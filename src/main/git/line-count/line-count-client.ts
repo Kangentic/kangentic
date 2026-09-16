@@ -2,6 +2,7 @@ import path from 'node:path';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
+import { unpacked } from '../../utility-process/paths';
 import type { LineCountEntry } from './line-count-worker';
 
 /** Per-request timeout; generous since the worker itself bounds each file's
@@ -21,11 +22,6 @@ const IDLE_SHUTDOWN_MS = 60_000;
  *  ever replaces, so a permanent latch here lasted the whole session. */
 const MAX_CRASHES = 3;
 const SERVICE_NAME = 'kangentic-line-count';
-
-/** Rewrite an in-asar path to its asar.unpacked twin when packaged. */
-function unpacked(absolutePath: string): string {
-  return app.isPackaged ? absolutePath.replace('app.asar', 'app.asar.unpacked') : absolutePath;
-}
 
 interface PendingRequest {
   resolve: (entries: LineCountEntry[] | null) => void;
