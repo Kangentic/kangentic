@@ -239,7 +239,7 @@ Graceful exit sequences written to the PTY before a force-kill. `SessionManager.
 | Ollama | `Ctrl+C`, `/bye` | `/bye` exits the interactive REPL; harmless after a one-shot run has already exited |
 | Grok Build | `Ctrl+C`, `/quit` | `/quit` exits cleanly (probe-verified exit 0) and prints the conversation dump that transcript cleanup anchors on |
 | Antigravity CLI | `Ctrl+C`, `Ctrl+C` | First Ctrl+C prints "press ctrl+c again to exit" (or cancels a running turn); the second exits gracefully, printing the `agy --conversation=<uuid>` resume summary (the fromOutput capture source) and flushing `cache/last_conversations.json`. No `/quit` slash command exists |
-| Goose CLI | `Ctrl+C` | Interrupts and exits the interactive session |
+| Goose CLI | `Ctrl+C`, `/exit` | Goose's Ctrl+C is contextual: it clears the line if text is entered, interrupts the request if one is processing, and exits only when the line is already empty. A kill usually lands mid-turn, where Ctrl+C alone only interrupts, so the explicit `/exit` is what ends the session before the teardown grace expires |
 
 ## Session History File Location
 
@@ -1368,11 +1368,15 @@ The transcript flushes ON SUBMIT (measured: 84ms worst append latency across sho
 
 ## Goose CLI
 
-Goose is Block's open-source agent CLI (`goose`, https://github.com/block/goose). It is a thin integration, close to the Warp/Ollama adapters: no hooks, no structured status/event output, no trust mechanism, and no settings merging. It differs from those two by supporting session resume and by delivering its approval mode through an env var.
+Goose is Block's open-source agent CLI (`goose`, https://github.com/block/goose). It is a thin first-pass integration, close to the Warp/Ollama adapters: no hooks wired, no structured status/event output, no trust mechanism, and no settings merging. It differs from those two by supporting session resume and by delivering its approval mode through an env var.
+
+"No hooks wired" rather than "no hooks", and the distinction is load-bearing because it is what justifies the PTY-only activity detection below. Goose ships a hook system: plugin-scoped `hooks/hooks.json` discovered from `<project>/.agents/plugins/<name>/` or `~/.agents/plugins/<name>/`, firing `SessionStart`, `SessionEnd`, `Stop`, `UserPromptSubmit`, `PreToolUse`, `PreToolUseResult`, `PostToolUse`, `PostToolUseFailure`, `BeforeReadFile`, `AfterFileEdit`, `BeforeShellExecution`, and `AfterShellExecution`, each handed a JSON payload on stdin carrying `event` and `session_id`. That is the same `.agents/` workspace shape the Antigravity adapter already writes to and a payload close to what `event-bridge.js` consumes, so wiring hooks (and with them structured activity, a session-id capture, and eventually a submission verifier) is a follow-up rather than a blocked path. Until then activity rides the PTY silence timer, with the false-idle exposure that implies.
 
 ### CLI Detection
 
-Detection uses the shared `AgentDetector` (via composition) with binary name `goose` and `standardUnixFallbackPaths('goose')`. `goose --version` prints a line containing a semver; `parseVersion` extracts the first `MAJOR.MINOR.PATCH` run rather than stripping a fixed prefix, because the surrounding wrapper text varies between builds.
+Detection uses the shared `AgentDetector` (via composition) with binary name `goose` and `standardUnixFallbackPaths('goose')`. The official installer puts the binary in `~/.local/bin` on macOS/Linux (covered by those fallbacks) and in `%USERPROFILE%\.local\bin` on Windows, where it is added to PATH and found by `which`.
+
+`goose --version` prints `goose 1.10.0`, and `parseVersion` REQUIRES that `goose ` product prefix followed immediately by a digit. This is a collision defense, not cosmetic: `goose` is also the binary name of pressly/goose, a widely installed Go database-migration tool whose banner is `goose version: v3.24.1`, from which a scan-anywhere `MAJOR.MINOR.PATCH` match extracts `3.24.1` and reports the migration tool as Block's agent CLI. `AgentDetector` walks every `which` match in order, so rejecting a foreign banner means detection skips that binary and keeps looking rather than stopping on the wrong one. Same anchoring as `GrokDetector`, for the same reason.
 
 ### Command Building
 
@@ -1380,11 +1384,13 @@ Detection uses the shared `AgentDetector` (via composition) with binary name `go
 
 ```
 goose run [-r] [-n <sessionId>] -t "<prompt>" -s    # with a prompt
+goose run [-r] [-n <sessionId>] -t "<prompt>"       # nonInteractive spawn_agent action
 goose session [-r] [-n <sessionId>]                 # promptless / resume
 ```
 
 - Goose runs in the process cwd (there is no start-in-dir flag), so the PTY's cwd set by the spawn chokepoint is authoritative and no directory flag is passed.
 - A prompt uses `goose run -t "<prompt>" -s`: process the prompt, then stay interactive (`-s` / `--interactive`) so the user can continue the session. A promptless spawn opens a bare interactive `goose session`.
+- A `nonInteractive` spawn_agent action drops `-s`, which is already Goose's headless one-shot form: run the prompt and exit. Leaving `-s` on would park a fire-and-forget automation in a session that never exits.
 - `-n <sessionId>` names the session with the engine-generated id when one is present; `-r` is added to resume that named session. On Windows / non-unix shells, embedded double quotes in the prompt are rewritten to single quotes.
 
 ### Session Resume
@@ -1393,16 +1399,20 @@ goose session [-r] [-n <sessionId>]                 # promptless / resume
 
 ### Permission Modes
 
-Goose sets its approval mode through the `GOOSE_MODE` env var (its own default is `smart_approve`), not a spawn flag, so the permission dropdown is delivered via `buildEnv`. The mapping lives in `GOOSE_MODE_BY_PERMISSION`, a `Record` over the full `PermissionMode` union (so a new mode is a compile error rather than a silent wrong-mode spawn), and it maps all six modes below. The dropdown exposes four (`plan`, `default`, `acceptEdits`, `bypassPermissions`); `dontAsk` and `auto` are not offered there but are still mapped, so a column/lane override that forces one of them resolves to a valid `GOOSE_MODE`.
+Goose sets its approval mode through the `GOOSE_MODE` env var, not a spawn flag, so the permission dropdown is delivered via `buildEnv`. The mapping lives in `GOOSE_MODE_BY_PERMISSION`, a `Record` over the full `PermissionMode` union (so a new mode is a compile error rather than a silent wrong-mode spawn), and it maps all six modes below. The dropdown exposes three, one per distinct Goose mode Kangentic can reach; `dontAsk`, `acceptEdits`, and `auto` are not offered there but are still mapped, so a column/lane override or the global default that forces one of them resolves to a valid `GOOSE_MODE`.
+
+Goose has four modes. `approve` (every action needs approval) is stricter than `smart_approve`, so it sits below `default` on the permissiveness ladder the dropdown is ordered by and nothing maps to it.
 
 | Mode | GOOSE_MODE | Goose Behavior |
 |------|-----------|----------------|
-| `plan` | `chat` | No tools or file modification (read-only) |
-| `dontAsk` | `chat` | Read-only, non-interactive (not in the dropdown) |
-| `default` | `smart_approve` | Auto-approves low-risk actions, asks on the rest |
-| `acceptEdits` | `auto` | Modify/create/delete and run tools without approval |
-| `auto` | `auto` | Same as above (not in the dropdown) |
-| `bypassPermissions` | `auto` | Same as above |
+| `plan` | `chat` | No tools at all. Not merely read-only: the agent cannot read files either, so a plan-mode Goose session reasons without repo access |
+| `dontAsk` | `chat` | No tools (not in the dropdown). Goose has no allowlist, so "deny unless allowed" degrades to "deny" |
+| `default` | `smart_approve` | File modifications need approval, reads do not |
+| `acceptEdits` | `smart_approve` | Not in the dropdown. See below |
+| `auto` | `auto` | Modify/create/delete and run shell commands without approval (not in the dropdown) |
+| `bypassPermissions` | `auto` | Same as above. The explicit opt-in to full autonomy |
+
+`acceptEdits` is the mode with no faithful target. Everywhere else in Kangentic it means "auto-approve edits, still gate shell commands", and Goose has no such mode: the only way to stop prompting on edits is `auto`, which also stops prompting on shell. It therefore resolves DOWN to `smart_approve` rather than up to `auto`, and this matters more than it looks: `DEFAULT_CONFIG.agent.permissionMode` is `acceptEdits` and `resolveEffectivePermissionMode` falls through task -> lane -> that global without consulting the adapter's `permissions` list, so whatever `acceptEdits` maps to is the out-of-the-box spawn for every Goose session on a fresh install. Mapping it to `auto` made that a fully unattended agent nobody chose. The practical consequence of resolving down is that a Goose agent on default settings prompts on file writes; choose "Auto (Skip All Approvals)" for unattended board runs.
 
 `defaultPermission` is `default`. Model/provider selection is left to Goose's own `--model`/`--provider` flags and `~/.config/goose/config.yaml`; per `cli-features-over-custom-layers.md` the adapter keeps no model list and does not shadow the CLI's model control.
 
@@ -1412,10 +1422,14 @@ Runtime activity is PTY-only. The silence timer drives the idle transition; `det
 
 ### Limitations
 
-- No hooks, no settings merge, no trust mechanism, no MCP wiring
-- No structured status or event output - the PTY silence timer is the sole idle detection
-- No transcript parsing or capability discovery, and no `summarize` (auto-name not yet wired)
-- `locateSessionHistoryFile` returns null - resume rides on the caller-supplied `--name` instead
+Every item here is "not wired in this adapter", not "the CLI cannot do it", except where noted.
+
+- No hook plugin installed, so no structured status or event output: the PTY silence timer is the sole idle detection, with the false-idle exposure that implies. Goose's hook system (see above) is the obvious way to close this.
+- No MCP wiring, so a Goose session cannot call the `kangentic_*` tools. Goose supports MCP extensions natively (`--with-extension`, `--with-streamable-http-extension <url>`), so this is a follow-up too.
+- No settings merge and no trust mechanism (Goose genuinely has no folder-trust gate).
+- No transcript parsing or capability discovery, and no `summarize` (auto-name not yet wired).
+- `locateSessionHistoryFile` returns null - resume rides on the caller-supplied `--name` instead.
+- `plan` mode maps to Goose `chat`, which has no file access at all, so a plan-mode Goose session cannot read the repo it is planning against.
 
 ## Project relocation
 
