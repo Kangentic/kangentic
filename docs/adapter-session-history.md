@@ -310,7 +310,7 @@ behavior below is the resume contract.
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes |
 | Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a |
 | Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) |
-| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store (`sessions.db`), resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) |
+| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) |
 
 Reading the table by class:
 
