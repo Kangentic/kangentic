@@ -36,7 +36,6 @@ import {
   runnableRows,
   serializeAutomation,
   setEnabled,
-  setTrigger,
   spliceAtRange,
   splitTemplateSegments,
   detectTemplateVariableTrigger,
@@ -135,7 +134,14 @@ describe('ordering', () => {
     expect(rowsFor(moved, 'exit').map((row) => row.name)).toEqual(['Three']);
   });
 
-  it('moves a row across the heading, which is a trigger change and a position', () => {
+  // `moveRow` stays general: given the other group it changes the trigger and
+  // the position together. No GESTURE produces that any more - a drag is
+  // clamped to its own group and `handleDragEnd` refuses a trigger mismatch -
+  // so these two cases pin the helper, not a path a user can take. They earn
+  // their keep because the helper is what a future cross-group affordance
+  // would be built on, and because the index arithmetic is shared with the
+  // within-group case above.
+  it('moves a row into the other group, changing its trigger and its position', () => {
     const moved = moveRow(list, 'a1', 'exit', 0);
     expect(rowsFor(moved, 'enter').map((row) => row.name)).toEqual(['Two']);
     expect(rowsFor(moved, 'exit').map((row) => row.name)).toEqual(['One', 'Three']);
@@ -171,7 +177,7 @@ describe('ordering', () => {
       expect(dropOn(three, 'a2', 'a1')).toEqual(['Two', 'One', 'Three']);
     });
 
-    it('lands a row dropped across the heading in front of its target', () => {
+    it('lands a row moved into the other group in front of its target', () => {
       const mixed = [
         draft({ id: 'b1', name: 'Enter one', trigger: 'enter' }),
         draft({ id: 'b2', name: 'Exit one', trigger: 'exit' }),
@@ -189,14 +195,10 @@ describe('ordering', () => {
     });
   });
 
-  it('appends a trigger change to the end of the destination group', () => {
-    const moved = setTrigger(list, 'a1', 'exit');
-    expect(rowsFor(moved, 'exit').map((row) => row.name)).toEqual(['Three', 'One']);
-  });
-
-  it('leaves the list alone when the trigger does not change', () => {
-    expect(setTrigger(list, 'a1', 'enter')).toBe(list);
-  });
+  // The `setTrigger` pair that used to sit here went with the helper. Nothing
+  // called it: the dialog's When field applies the whole edited draft through
+  // `replaceRow`, trigger included, so a second path to the same outcome was
+  // one editing home too many.
 });
 
 describe('naming', () => {
