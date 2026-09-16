@@ -56,12 +56,17 @@ the embed client rebuilds its policy on every model change and project switch.
 `gpu_process_gone` follows the same shape for the GPU process (`src/main/diagnostics/gpu-health.ts`),
 mirroring Chromium's own judgment of GPU health: three deaths inside five minutes is also the point
 at which Chromium falls back to software compositing on its own
-(`GpuProcessHost::RecordProcessCrash`). `first` fires on the first death, `latched` on the third; a
-fourth death in the same window ticks nothing further. Reaching the latch also writes a durable
-escalation record for the NEXT launch to report to Sentry (see "Error Reporting" below) - live
-reporting is not possible here, because the GPU process exhausting every fallback mode can end in
-Chromium killing the browser process outright (`LOG(FATAL)`, DESKTOP-W), which happens before an
-async Sentry POST queued at that moment could ever transmit.
+(`GpuProcessHost::RecordProcessCrash`). `first` fires on the first death, `latched` on the third;
+neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
+the phase gate is per-run, not per-window, which is what keeps this at exactly two Aptabase events no
+matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel does NOT carry the same
+meaning it does for `utility_worker_crashed` above: there it means the fork never started, but here it
+means Electron's `child-process-gone` event reported no exit code, a routine and more common case.
+Reaching the latch also writes a durable escalation record for the NEXT launch to report to Sentry
+(see "Error Reporting" below) - live reporting is not possible here, because the GPU process
+exhausting every fallback mode can end in Chromium killing the browser process outright
+(`LOG(FATAL)`, DESKTOP-W), which happens before an async Sentry POST queued at that moment could
+ever transmit.
 
 The curated `feature` vocabulary is `ANALYTICS_FEATURES` in `src/main/analytics/usage.ts`:
 `command_terminal`, `worktree_session`, `board_profile`, `popout_window`, `browser_pane`,
@@ -254,9 +259,11 @@ in one Sentry org, one triage surface.
 - **Handled errors are forwarded too** (`reportHandledError`): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
   spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a
-  `reason` tag), and a Kangentic utility worker that has crashed past its restart cap
-  (`source: utility_process`, with `service`, `exitCode`, and `crashCount`) - send the real error
-  to Sentry so hidden issues are diagnosable, not just counted. The utility-worker report also
+  `reason` tag), a Kangentic utility worker that has crashed past its restart cap
+  (`source: utility_process`, with `service`, `exitCode`, and `crashCount`), and a GPU health
+  escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
+  `crashCount` - see the GPU health bullet below) - send the real error to Sentry so hidden issues
+  are diagnosable, not just counted. The utility-worker report also
   carries a `utility_process` context block with the last 8 KiB of the worker's stderr (home
   directory redacted). Both workers are forked with stderr piped for this; with Electron's
   `inherit` default, a packaged GUI build sent the worker's uncaught-exception dump nowhere, so
@@ -289,14 +296,23 @@ in one Sentry org, one triage surface.
   durable record to `<configDir>/gpu-health.json`, carrying `app.getGPUFeatureStatus()` AT THAT
   MOMENT; further deaths in the same run keep updating count, lastAt, and that status rather than
   freezing the record at the threshold, so a chronic looper's report does not read identically to a
-  run that latched once and ended. `src/main/index.ts` reads and reports the record once
-  `app.whenReady()` resolves on the FOLLOWING launch, then clears it. The report carries two
-  separate feature-status reads, not one: the ESCALATING run's (from the record, what Chromium's GPU
-  mode was at the death that produced it - the one fact neither DESKTOP-W nor DESKTOP-15 could say)
-  and the REPORTING run's (read live, which may already differ - a machine can recover on its own
-  between launches). It also carries the previous run's `lastRunExit` (`abrupt` means that run ended
+  run that latched once and ended. `src/main/index.ts` reads the record once `app.whenReady()`
+  resolves on the FOLLOWING launch, **clears it BEFORE reporting** (so a launch with error reporting
+  off - the kill switch, or `KANGENTIC_ERROR_REPORTING=0` - still consumes it silently rather than
+  carrying it forward to a later launch that might have reporting on; the local crash JSONs and the
+  `gpu_process_gone` Aptabase count exist either way), then calls `reportHandledError` with tags
+  `source: gpu_process`, `reason`, `exitCode`, `crashCount`, and a `gpu_process` context carrying
+  `reason`, `exitCode`, `count`, `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
+  produced the escalation, not the one reporting it - the same build-attribution concern the native
+  crash correction below exists for), `featureStatusAtEscalation`, `featureStatusOnReport`, and
+  `previousRunExit`. The last three are deliberately three separate facts, not one:
+  `featureStatusAtEscalation` is what Chromium's GPU mode was AT THE DEATH that produced the record
+  (the one fact neither DESKTOP-W nor DESKTOP-15 could say); `featureStatusOnReport` is what it is on
+  THIS boot, read live, which may already differ (a machine can recover on its own between launches);
+  and `previousRunExit` is the previous run's `run-uptime.ts` exit kind (`abrupt` means that run ended
   in a process kill, the DESKTOP-W shape; `clean` or `failsafe` means Chromium recovered on its own,
-  the DESKTOP-15 shape), so the two failure shapes are distinguishable on arrival.
+  the DESKTOP-15 shape; `unknown` on a first launch or a wiped config dir), so the two failure shapes
+  are distinguishable on arrival.
 - **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
   (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`
   handler, and sits deliberately AFTER `trackEvent('app_error')` so the "how often do update
