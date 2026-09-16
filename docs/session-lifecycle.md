@@ -164,13 +164,40 @@ The capture reads a snapshot the watcher already computed for its own counting, 
 - All session DB records for the task (deleted)
 - In-memory caches (usage, activity, events) for the session
 
-Before the registry row is deleted, `SessionManager.remove()` forces its status to `exited` and
-emits `session-changed`. This is load-bearing, not cosmetic: a status push landing mid-teardown
-(a `syncSessions()` call in the grace window, say) can otherwise resurrect the row via
-`withSessionUpserted` after the renderer's SESSION_EXIT handler has already ignored the
-intentional exit, leaving a ghost `running` card and panel tab for an agent that no longer exists
-anywhere in main. Pinned by `tests/unit/session-manager-remove-emit.test.ts` and
-`tests/ui/todo-reset-no-ghost-session.spec.ts`.
+Before the registry row is deleted, `SessionManager.remove()` emits `session-removed` (broadcast
+as `SESSION_REMOVED`) with the row's last snapshot. The renderer's `removeSession` drops the row,
+the task index entry, and every per-session map entry keyed on the id (`withoutSessions` in
+`session-index.ts`). Two failures shaped this:
+
+- With no push at all, a status push landing mid-teardown (a `syncSessions()` call in the grace
+  window, say) resurrected the row via `withSessionUpserted` after the renderer's SESSION_EXIT
+  handler had already ignored the intentional exit, leaving a ghost `running` card and panel tab
+  for an agent that no longer existed anywhere in main (#80).
+- Announcing the removal as a forced-`exited` `session-changed` fixed that and caused #661: the
+  status channel's only renderer handler is an upsert, so for a task moved to To Do (whose rows
+  `moveTask` evicts optimistically the instant the move starts) the removal itself re-inserted an
+  `exited` row for a PTY, worktree, and session directory that no longer existed, and its surviving
+  `sessionUsage` entry filled a context bar under a black terminal. A removal and a status change
+  cannot share one channel.
+
+The renderer also refuses to paint anything session-shaped for a task in a `todo`-role lane, whatever
+row the store holds (`laneHoldsSession` and the lane-aware `taskDetailSurfaceFor` in
+`task-progress.ts`; `useTaskSessionState` resolves such a task's session to null), and both spawn
+chokepoints refuse the To Do and Done roles regardless of `auto_spawn`, so that classification is
+true rather than assumed.
+
+The same contract covers a bare `kill()`: the renderer's `SESSION_EXIT` handler ignores an
+intentional exit, so every kill site follows up with the push that says what happened. `remove()`
+announces `session-removed`, `suspend()` announces `suspended`, and a caller that keeps the row after
+`kill()` + `awaitExit()` (the `cleanup_worktree` transition action) calls
+`SessionManager.announceSessionEnded()`, which re-emits the row on `session-changed` with its resolved
+status. `tests/unit/session-kill-followup.test.ts` scans every kill site for one of those. The full
+contract is `.claude/rules/session-replica-contract.md`; the property that ties it together is
+`tests/unit/session-store-replica-convergence.test.ts`, which drives the real store over random
+interleavings of pushes, optimistic evictions, and stale syncs and asserts it ends equal to main's
+registry. Also pinned by `tests/unit/session-manager-remove-emit.test.ts`,
+`tests/unit/session-store-remove-session.test.ts`, `tests/ui/todo-reset-no-ghost-session.spec.ts`,
+and `tests/ui/todo-stale-exited-row-opens-edit.spec.ts`.
 
 ### SessionManager.kill() and the young-session grace
 

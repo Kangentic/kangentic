@@ -50,6 +50,7 @@ export function App() {
   const loadAgentList = useConfigStore((s) => s.loadAgentList);
   const detectGit = useConfigStore((s) => s.detectGit);
   const upsertSession = useSessionStore((s) => s.upsertSession);
+  const removeSession = useSessionStore((s) => s.removeSession);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
   const updateActivity = useSessionStore((s) => s.updateActivity);
 
@@ -221,6 +222,20 @@ export function App() {
               variant: 'info',
             });
           }
+        });
+      }));
+    }
+
+    // Session removed from main's registry for good (a To Do reset, a task or
+    // project delete, a session reset, an aborted spawn). Its own channel, and
+    // the only push that takes a row OUT: the status handler above can only
+    // upsert, so a removal announced there re-seeded the row the move had
+    // already evicted (#661). Through the same coalescer as the status push so
+    // a removal applies in arrival order with any status for the same id.
+    if (sessions.onRemoved) {
+      cleanups.push(sessions.onRemoved((sessionId) => {
+        enqueueSessionUpdate(() => {
+          removeSession(sessionId);
         });
       }));
     }
@@ -795,7 +810,7 @@ export function App() {
     return () => {
       cleanups.forEach((fn) => fn());
     };
-  }, [upsertSession, updateSessionStatus, updateActivity]);
+  }, [upsertSession, removeSession, updateSessionStatus, updateActivity]);
 
   return (
     <>

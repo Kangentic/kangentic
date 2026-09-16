@@ -4,7 +4,7 @@ import { requiresUserInteraction, isActive } from '../../shared/activity-state';
 import { useProjectStore } from './project-store';
 import { useConfigStore } from './config-store';
 import type { SessionStore, PendingTuiAnchor } from './session-store/types';
-import { buildSessionByTaskId, withSessionUpserted } from './session-store/session-index';
+import { buildSessionByTaskId, hasSessionState, withSessionUpserted, withoutSessionsIndexed } from './session-store/session-index';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createTransientSessionSlice, type TransientSessionEntry } from './session-store/transient-session-slice';
@@ -75,6 +75,34 @@ function reconcileLiveCache<T>(
     if (!(sessionId in result) && liveSessionIds.has(sessionId)) {
       result[sessionId] = currentValue;
     }
+  }
+  return result;
+}
+
+/**
+ * Apply what a sync learned about its own async gap to a reconciled
+ * per-session map. The cache fetches are answered at the START of the sync,
+ * alongside the list, so a session REMOVED during the gap is still in every
+ * cache and `reconcileCache` would import its entry for a row the merge just
+ * dropped (a dead session's usage back under an id nothing references, the
+ * #661 context bar by another route); and a session that ARRIVED during the
+ * gap is in no cache, so the value its push delivered would be dropped for a
+ * row the merge kept. Both are the row-level gap rules mirrored onto the maps.
+ * Found by the replica-convergence property test, not by a report.
+ */
+function settleSyncGap<T>(
+  reconciled: Record<string, T>,
+  current: Record<string, T>,
+  removedDuringGap: ReadonlySet<string>,
+  arrivedDuringGap: ReadonlySet<string>,
+): Record<string, T> {
+  if (removedDuringGap.size === 0 && arrivedDuringGap.size === 0) return reconciled;
+  const result: Record<string, T> = {};
+  for (const [sessionId, value] of Object.entries(reconciled)) {
+    if (!removedDuringGap.has(sessionId)) result[sessionId] = value;
+  }
+  for (const sessionId of arrivedDuringGap) {
+    if (sessionId in current && !(sessionId in result)) result[sessionId] = current[sessionId];
   }
   return result;
 }
@@ -335,16 +363,42 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
 
     // Merge: use server data as base, but preserve IPC-delivered updates
     // that arrived during the async gap (detected by reference change).
-    const mergedSessions = freshSessions.map((freshSession) => {
+    const mergedSessions: Session[] = [];
+    for (const freshSession of freshSessions) {
       const preAsync = preAsyncSessions.get(freshSession.id);
       const postAsync = postAsyncSessions.get(freshSession.id);
+      // Held when this sync started, gone now: the row was REMOVED during the
+      // async gap (a removal push, a To Do eviction, a reset or resume that
+      // replaced it under a new id), and main's list was issued before that
+      // removal. Taking the stale copy would resurrect a session main has
+      // already dropped. A session id is minted once per spawn, so "present
+      // before, absent after" is only ever a removal, never a legitimate
+      // return.
+      if (preAsync && !postAsync) continue;
       // If the store's reference changed during the async gap,
       // an IPC listener updated this session -- keep the fresher version.
       if (postAsync && preAsync && postAsync !== preAsync) {
-        return postAsync;
+        mergedSessions.push(postAsync);
+        continue;
       }
-      return freshSession;
-    });
+      mergedSessions.push(freshSession);
+    }
+    // The mirror case: a row NOT held when this sync started, held now, and
+    // absent from main's list ARRIVED during the gap (a spawn's status push
+    // landed after the list was issued). It is main's truth as of after the
+    // snapshot, and a running session gets no further status push for as long
+    // as it stays running, so dropping it here left a live agent invisible
+    // until the next sync.
+    const freshIds = new Set(freshSessions.map((session) => session.id));
+    for (const [sessionId, postAsync] of postAsyncSessions) {
+      if (!preAsyncSessions.has(sessionId) && !freshIds.has(sessionId)) mergedSessions.push(postAsync);
+    }
+    // The same two gap facts, applied to every per-session map below: the
+    // cache snapshots were taken alongside the list and are exactly as stale.
+    const removedDuringGap = new Set([...preAsyncSessions.keys()].filter((sessionId) => !postAsyncSessions.has(sessionId)));
+    const arrivedDuringGap = new Set([...postAsyncSessions.keys()].filter((sessionId) => !preAsyncSessions.has(sessionId)));
+    const settle = <T,>(reconciled: Record<string, T>, current: Record<string, T>): Record<string, T> =>
+      settleSyncGap(reconciled, current, removedDuringGap, arrivedDuringGap);
 
     const stillExists = currentState.activeSessionId
       && mergedSessions.some((s) => s.id === currentState.activeSessionId);
@@ -428,27 +482,27 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       _sessionByTaskId: buildSessionByTaskId(mergedSessions),
       activeSessionId: stillExists ? currentState.activeSessionId : null,
       sessionUsage: cachedUsage
-        ? reconcileLiveCache(cachedUsage, currentState.sessionUsage, liveSessionIds)
+        ? settle(reconcileLiveCache(cachedUsage, currentState.sessionUsage, liveSessionIds), currentState.sessionUsage)
         : currentState.sessionUsage,
       latestRateLimits: nextLatestRateLimits,
       sessionActivity: cachedActivity
-        ? reconcileCache(cachedActivity, currentState.sessionActivity)
+        ? settle(reconcileCache(cachedActivity, currentState.sessionActivity), currentState.sessionActivity)
         : currentState.sessionActivity,
       sessionActivityReason: cachedReasons
-        ? reconcileCache(cachedReasons, currentState.sessionActivityReason)
+        ? settle(reconcileCache(cachedReasons, currentState.sessionActivityReason), currentState.sessionActivityReason)
         : currentState.sessionActivityReason,
       // Message trails: unscoped and main-authoritative (main retains a trail
       // past exit and prunes on registry removal), so plain reconcileCache like
       // activity - the snapshot is the keyset, a push that landed during the
       // async gap keeps its fresher value.
       sessionMessageTrails: cachedMessageTrails
-        ? reconcileCache(cachedMessageTrails, currentState.sessionMessageTrails)
+        ? settle(reconcileCache(cachedMessageTrails, currentState.sessionMessageTrails), currentState.sessionMessageTrails)
         : currentState.sessionMessageTrails,
       sessionEvents: cachedEvents
-        ? reconcileLiveCache(cachedEvents, currentState.sessionEvents, liveSessionIds)
+        ? settle(reconcileLiveCache(cachedEvents, currentState.sessionEvents, liveSessionIds), currentState.sessionEvents)
         : currentState.sessionEvents,
       sessionFirstOutput: cachedFirstOutput
-        ? reconcileCache(cachedFirstOutput, currentState.sessionFirstOutput)
+        ? settle(reconcileCache(cachedFirstOutput, currentState.sessionFirstOutput), currentState.sessionFirstOutput)
         : currentState.sessionFirstOutput,
       spawnProgress: nextSpawnProgress,
       pendingCommandLabel: nextPendingCommandLabel,
@@ -672,6 +726,15 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       );
       return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions) };
     });
+  },
+
+  removeSession: (sessionId) => {
+    set((state) => (
+      // Same reference when nothing is held: Zustand skips the notify, so a
+      // removal for a session this window never saw (another project's, or a
+      // teardown that raced ahead of the row ever arriving) costs no render.
+      hasSessionState(state, sessionId) ? withoutSessionsIndexed(state, [sessionId]) : state
+    ));
   },
 
   updateUsage: (sessionId, data) => {

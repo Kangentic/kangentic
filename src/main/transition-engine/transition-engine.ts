@@ -589,6 +589,11 @@ export class TransitionEngine {
     if (task.session_id) {
       this.sessionManager.kill(task.session_id);
       await this.sessionManager.awaitExit(task.session_id);
+      // The row stays in the registry (this action reclaims the worktree, not
+      // the session record), so tell the renderer the session ended: a bare
+      // kill announces nothing the renderer acts on, and the card would keep
+      // its spinner for an agent that is gone.
+      this.sessionManager.announceSessionEnded(task.session_id);
     }
 
     const wm = new WorktreeManager(appConfig.projectPath);

@@ -1,7 +1,7 @@
 /**
  * Bridges session lifecycle transitions onto the board-changed bus so a
  * phone's board view updates when a task's session spawns, queues,
- * resumes, suspends, or exits. The renderer learns these through its own
+ * resumes, suspends, exits, or is removed. The renderer learns these through its own
  * IPC pushes; the bridge's read-board subscription only hears
  * BoardEventBus, and nothing fed that bus on a session lifecycle edge -
  * so a phone watching the board saw stale "running" badges until the
@@ -56,6 +56,10 @@ export class SessionLifecycleBoardFeed {
     if (this.started || this.disposed) return;
     this.started = true;
     this.sessionManager.on('session-changed', this.onSessionChanged);
+    // A removal carries the same (id, Session) payload and is the last edge a
+    // session has; a phone watching the board would otherwise keep a badge
+    // for a session main has torn down without a natural exit.
+    this.sessionManager.on('session-removed', this.onSessionChanged);
     this.sessionManager.on('exit', this.onExit);
   }
 
@@ -77,6 +81,7 @@ export class SessionLifecycleBoardFeed {
     this.disposed = true;
     if (this.started) {
       this.sessionManager.off('session-changed', this.onSessionChanged);
+      this.sessionManager.off('session-removed', this.onSessionChanged);
       this.sessionManager.off('exit', this.onExit);
     }
     for (const settleTimer of this.settleTimers.values()) clearTimeout(settleTimer);

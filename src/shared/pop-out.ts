@@ -197,6 +197,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     channels: [
       IPC.SESSION_USAGE,
       IPC.SESSION_STATUS,
+      IPC.SESSION_REMOVED,
       IPC.SESSION_ACTIVITY,
       IPC.SESSION_EXIT,
       IPC.SESSION_IDLE_TIMEOUT,
@@ -272,6 +273,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // store, which `syncSessions` seeds and this push keeps live.
       IPC.SESSION_MESSAGE_TRAIL,
       IPC.SESSION_STATUS,
+      // A surface that hears a session change hears its removal too, so a
+      // hosted task detail cannot keep a row main has dropped.
+      IPC.SESSION_REMOVED,
       IPC.SESSION_EXIT,
       IPC.CONFIG_CHANGED,
       // This window can host a task detail (and therefore a live terminal) for a

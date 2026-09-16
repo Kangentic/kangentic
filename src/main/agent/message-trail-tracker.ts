@@ -48,12 +48,9 @@ import { getCachedTranscript } from './transcript-cache';
  * dropping it eagerly would need a new signal at exit and would foreclose ever
  * showing a finished agent's last words again.
  *
- * Both prunes are lazy, not event-driven: a
- * departed session's state is dropped by the next `snapshot()`, which diffs the
- * map against the registry, and nothing else watches for a removal. So a state
- * can outlive its session until the next boot, reload, or project switch calls
- * `syncSessions`. That is bounded by the session cap and costs one idle map
- * entry, which is why it is not worth an eager listener.
+ * A registry removal drops the state eagerly, on `'session-removed'`. The cap
+ * prune and the `snapshot()` diff against the registry stay as the backstop for
+ * anything that leaves the registry some other way.
  *
  * Unlike `MonitorPeekTracker`, this tracker is not subscribe-gated. The peek
  * tracker taps live PTY output, so it stays off until a monitor names the
@@ -112,6 +109,7 @@ export interface MessageTrailSessionFacts {
 export interface MessageTrailSessionSource {
   on(event: 'event', listener: (sessionId: string, event: SessionEvent) => void): unknown;
   on(event: 'session-changed', listener: (sessionId: string, session: Session) => void): unknown;
+  on(event: 'session-removed', listener: (sessionId: string, session: Session) => void): unknown;
   on(
     event: 'agent-session-id',
     listener: (sessionId: string, taskId: string, projectId: string, agentSessionId: string) => void,
@@ -164,6 +162,14 @@ export class MessageTrailTracker extends EventEmitter {
       this.schedule(sessionId);
     });
     deps.sessionManager.on('session-changed', (sessionId) => this.schedule(sessionId));
+    deps.sessionManager.on('session-removed', (sessionId) => {
+      // The registry dropped the row for good, so its trail goes with it now
+      // rather than at the next snapshot(). Clearing the trailing timer here
+      // is the part that matters: a read armed for a removed session would
+      // otherwise fire against a file that may already be deleted.
+      const state = this.states.get(sessionId);
+      if (state) this.dropState(sessionId, state);
+    });
     deps.sessionManager.on('agent-session-id', (sessionId, _taskId, _projectId, agentSessionId) => {
       // A captured id (Codex, Gemini) or a mid-session fork (Claude /clear)
       // means a different file from here on: re-anchor the cursor at its tail,

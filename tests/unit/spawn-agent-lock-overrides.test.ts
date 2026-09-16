@@ -191,6 +191,41 @@ async function runSpawn(
   });
 }
 
+describe('spawnAgent: a To Do or Done column never spawns, whatever its flag says', () => {
+  // Lives here for the harness: this file runs the real spawnAgent end to
+  // end. The flag can land on a role lane over MCP (`update_column` has no
+  // role guard) or through a Board Profile fold, and this chokepoint used to
+  // honor it for a task created, promoted, or restored straight into To Do,
+  // spawning a live agent behind a card the renderer treats as sessionless
+  // (#661). The move path never reaches here for a todo target
+  // (task-move.ts branches on role first), so this is the create-shaped hole.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([['todo'], ['done']] as const)('neither spawns nor locks overrides into a %s column with auto_spawn on', async (role) => {
+    const task = makeTask({ model_override: 'fable-5' });
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, makeSwimlane({ name: 'Role lane', role, auto_spawn: true }), deps);
+
+    // Pre-fix both fired: the engine spawned and the preamble locked the
+    // task's overrides on what it took to be a first spawn.
+    expect(deps.engine.executeTransition).not.toHaveBeenCalled();
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    expect(deps.tasks.update).not.toHaveBeenCalled();
+  });
+
+  it('still spawns into a custom column (role null) with auto_spawn on', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: undefined, task });
+
+    await runSpawn(task, makeDestinationLane(), deps);
+
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('spawnAgent lock-Advanced-overrides-on-first-spawn', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -5296,6 +5296,16 @@ export interface ElectronAPI {
     onFirstOutput: (callback: (sessionId: string, projectId?: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number, projectId?: string, intentional?: boolean) => void) => () => void;
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
+    /**
+     * The session left main's registry for good (`SessionManager.remove()`):
+     * a task reset to To Do, a task or project delete, a session reset, an
+     * aborted spawn. The renderer drops the row and every per-session map
+     * entry keyed on it. Distinct from `onStatus` on purpose: that handler can
+     * only upsert, so a removal announced there re-seeded the row (#661).
+     * The `Session` is the row's last snapshot, for consumers that need its
+     * `taskId`.
+     */
+    onRemoved: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
     getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
     onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => void) => () => void;

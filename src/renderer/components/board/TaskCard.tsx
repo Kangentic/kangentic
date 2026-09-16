@@ -13,7 +13,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
-import { useTaskProgress } from '../../utils/task-progress';
+import { useTaskProgress, taskDetailSurfaceFor } from '../../utils/task-progress';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
@@ -123,9 +123,19 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const handleClick = (e: React.MouseEvent) => {
     if (isDragOverlay) return;
     e.stopPropagation();
-    // To Do tasks with no session open straight into edit mode (the window then
-    // starts in the edit form). The window-manager bridge reads this intent.
-    setDetailTaskId(task.id, { initialEdit: displayState.kind === 'none' && !task.archived_at });
+    // A task with nothing session-shaped to show opens straight into edit mode
+    // (the window then starts in the edit form). The window-manager bridge
+    // reads this intent. Decided by the SAME classifier the detail body paints
+    // from, lane included, so the card and the window cannot disagree: a To Do
+    // task edits whatever stale row the store may still hold for it (#661),
+    // and a task whose window would show a terminal opens in view mode. The
+    // lane is read at click time, like the other handlers below, rather than
+    // subscribed: it costs nothing across a hundred memoized cards.
+    const laneRole = useBoardStore.getState().swimlanes
+      .find((lane) => lane.id === task.swimlane_id)?.role ?? null;
+    setDetailTaskId(task.id, {
+      initialEdit: taskDetailSurfaceFor(displayState.kind, laneRole) === 'inert' && !task.archived_at,
+    });
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {

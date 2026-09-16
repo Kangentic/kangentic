@@ -1,7 +1,7 @@
 /**
- * Regression test for the To Do reset leaving a ghost `running` session.
+ * Regression test for the To Do reset leaving a ghost session.
  *
- * Mechanism (kangentic.com #80):
+ * Mechanism (kangentic.com #80, then #661):
  *   - `moveTask` evicts a task's session rows optimistically the instant a
  *     move targets a todo-role column (`withoutSessionsForTasks` in
  *     task-slice.ts), well before the main-process teardown (kill the PTY,
@@ -12,25 +12,31 @@
  *   - `SessionManager.remove()` used to delete the registry row and emit
  *     nothing, and the renderer's SESSION_EXIT handler deliberately ignores
  *     an intentional exit (App.tsx) - so nothing corrected a row resurrected
- *     this way. The card kept painting a spinner and a panel tab for an
- *     agent that was already gone everywhere in main.
+ *     this way (#80). The first fix announced the removal as a forced
+ *     `status: 'exited'` status push, and that was #661: a status push can
+ *     only upsert, so the removal itself re-seeded an `exited` row for a
+ *     task the eviction had just cleared, and its surviving usage entry
+ *     filled a context bar under a black terminal.
  *
- * The fix (session-manager.ts `remove()`) emits a status push with
- * `status: 'exited'` immediately before the registry row is deleted, so
- * `withSessionUpserted` makes it the task's only row and the ghost clears.
+ * The fix (session-manager.ts `remove()`) announces the removal on its OWN
+ * push, `session:removed`, immediately before the registry row is deleted.
+ * The renderer's handler (`removeSession`) drops the row and every
+ * per-session map entry keyed on its id, so the ghost clears and nothing is
+ * left to paint a context bar from.
  *
- * This spec does NOT exercise `remove()` itself - it simulates main's push
- * via `window.__mockFireStatus` and checks only the renderer's reaction to
- * it, so it passes even with the `remove()` emit reverted. The emit itself
- * (that it fires, exactly once, with the right shape, before the registry
- * row is deleted) is pinned separately by
+ * This spec does NOT exercise `remove()` itself - it simulates main's pushes
+ * via `window.__mockFireStatus` / `window.__mockFireRemoved` and checks only
+ * the renderer's reaction to them, so it passes even with the `remove()`
+ * emit reverted. The emit itself (that it fires, exactly once, with the
+ * right shape, before the registry row is deleted, and never on the status
+ * channel) is pinned separately by
  * `tests/unit/session-manager-remove-emit.test.ts`.
  *
  * UI-tier because the whole mechanism is renderer-store behavior driven by
- * simulated IPC pushes (`window.__mockFireStatus`) - no real PTY needed.
- * Modelled on spawn-progress-clear-on-todo-move.spec.ts (direct board-store
- * calls) and unarchive-to-todo-no-paused-row.spec.ts (the sibling ghost-row
- * regression, and its session-store-state assertions alongside the pixels).
+ * simulated IPC pushes - no real PTY needed. Modelled on
+ * spawn-progress-clear-on-todo-move.spec.ts (direct board-store calls) and
+ * unarchive-to-todo-no-paused-row.spec.ts (the sibling ghost-row regression,
+ * and its session-store-state assertions alongside the pixels).
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -48,10 +54,30 @@ const SESSION_ID = 'session-todo-reset-ghost';
 interface BoardWindow {
   __zustandStores: {
     board: { getState: () => { moveTask: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }, skip?: boolean) => Promise<unknown> } };
-    session: { getState: () => { sessions: Array<{ id: string; taskId: string; status: string; pid: number | null }> } };
+    session: {
+      getState: () => {
+        sessions: Array<{ id: string; taskId: string; status: string; pid: number | null }>;
+        sessionUsage: Record<string, unknown>;
+      };
+    };
   };
   __mockFireStatus: (sessionId: string, session: Record<string, unknown>) => void;
+  __mockFireRemoved: (sessionId: string, session: Record<string, unknown>) => void;
+  __mockFireUsage: (sessionId: string, usage: Record<string, unknown>, projectId: string) => void;
 }
+
+const USAGE_FIXTURE = {
+  model: { id: 'claude-opus-5', displayName: 'Opus 5' },
+  contextWindow: {
+    usedPercentage: 11,
+    usedTokens: 113852,
+    cacheTokens: 0,
+    totalInputTokens: 111701,
+    totalOutputTokens: 2151,
+    contextWindowSize: 1000000,
+  },
+  cost: { totalCostUsd: 0.5, totalDurationMs: 18000 },
+};
 
 async function launch(): Promise<{ browser: Browser; page: Page; laneIds: { todo: string; planning: string } }> {
   await waitForViteReady(VITE_URL);
@@ -153,6 +179,23 @@ async function runningSessionCountForTask(page: Page, taskId: string): Promise<n
   }, taskId);
 }
 
+async function usageHeldForSession(page: Page, sessionId: string): Promise<boolean> {
+  return page.evaluate((targetSessionId) => {
+    const state = (window as unknown as BoardWindow).__zustandStores.session.getState();
+    return targetSessionId in state.sessionUsage;
+  }, sessionId);
+}
+
+async function fireUsage(page: Page, sessionId: string, projectId: string): Promise<void> {
+  await page.waitForFunction(() => typeof (window as unknown as BoardWindow).__mockFireUsage === 'function');
+  await page.evaluate(
+    ({ targetSessionId, usage, targetProjectId }) => {
+      (window as unknown as BoardWindow).__mockFireUsage(targetSessionId, usage, targetProjectId);
+    },
+    { targetSessionId: sessionId, usage: USAGE_FIXTURE, targetProjectId: projectId },
+  );
+}
+
 test.describe('To Do reset does not leave a ghost running session', () => {
   test('a status push landing after the todo-role eviction is corrected by the removal push', async () => {
     const { browser, page, laneIds } = await launch();
@@ -217,16 +260,22 @@ test.describe('To Do reset does not leave a ghost running session', () => {
       await expect.poll(async () => runningSessionCountForTask(page, TASK_ID), { timeout: 3000 }).toBe(1);
       await expect(todoCard.locator('[data-mark]')).toHaveCount(1);
       await expect(page.locator(`[data-testid="terminal-session-tab"][data-session-id="${SESSION_ID}"]`)).toHaveCount(1);
+      // A usage tick for the ghost lands too, the way #661's context bar got
+      // its numbers. It must leave with the row.
+      await fireUsage(page, SESSION_ID, PROJECT_ID);
+      await expect.poll(async () => usageHeldForSession(page, SESSION_ID), { timeout: 3000 }).toBe(true);
 
-      // The fix: the removal push SessionManager.remove() now emits.
+      // The fix: the removal push SessionManager.remove() now emits, on its
+      // own channel. Not a status push: that could only upsert (#661).
+      await page.waitForFunction(() => typeof (window as unknown as BoardWindow).__mockFireRemoved === 'function');
       await page.evaluate(
         ({ sessionId, taskId, projectId }) => {
-          (window as unknown as BoardWindow).__mockFireStatus(sessionId, {
+          (window as unknown as BoardWindow).__mockFireRemoved(sessionId, {
             id: sessionId,
             taskId,
             projectId,
             pid: null,
-            status: 'exited',
+            status: 'running',
             shell: 'bash',
             cwd: '/mock/todo-reset-ghost-test/.kangentic/worktrees/ghost',
             startedAt: new Date().toISOString(),
@@ -238,9 +287,10 @@ test.describe('To Do reset does not leave a ghost running session', () => {
         { sessionId: SESSION_ID, taskId: TASK_ID, projectId: PROJECT_ID },
       );
 
-      // The card stops lying, and the panel tab goes - because the session is
-      // gone (`status: 'exited'`), not because the row was hidden some other way.
-      await expect.poll(async () => runningSessionCountForTask(page, TASK_ID), { timeout: 3000 }).toBe(0);
+      // The row is GONE (not merely flipped to exited), the usage entry with
+      // it, the card stops lying, and the panel tab goes.
+      await expect.poll(async () => sessionCountForTask(page, TASK_ID), { timeout: 3000 }).toBe(0);
+      expect(await usageHeldForSession(page, SESSION_ID)).toBe(false);
       await expect(todoCard.locator('[data-mark]')).toHaveCount(0);
       await expect(page.locator(`[data-testid="terminal-session-tab"][data-session-id="${SESSION_ID}"]`)).toHaveCount(0);
     } finally {

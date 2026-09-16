@@ -9,10 +9,11 @@ import path from 'node:path';
 import {
   getTaskProgress,
   taskDetailSurfaceFor,
+  laneHoldsSession,
   isActiveKind,
   hasSessionLifecycle,
 } from '../../src/renderer/utils/task-progress';
-import type { Session, SessionUsage, ActivityState, SessionDisplayState } from '../../src/shared/types';
+import type { Session, SessionUsage, ActivityState, SessionDisplayState, SwimlaneRole } from '../../src/shared/types';
 
 /** Minimal session factory - only fields that matter for the function. */
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -175,7 +176,7 @@ describe('display-kind classifiers are total', () => {
 
   it('assigns every kind a task-detail surface', () => {
     for (const kind of ALL_KINDS) {
-      expect(taskDetailSurfaceFor(kind)).toBeTruthy();
+      expect(taskDetailSurfaceFor(kind, null)).toBeTruthy();
     }
   });
 
@@ -183,12 +184,12 @@ describe('display-kind classifiers are total', () => {
     // 'preparing' is the load-bearing exclusion: during a restore the outgoing
     // session's id is still on the row, so a 'terminal' answer here paints a
     // dead shell over an agent that is being restored.
-    expect(taskDetailSurfaceFor('running')).toBe('terminal');
-    expect(taskDetailSurfaceFor('initializing')).toBe('terminal');
-    expect(taskDetailSurfaceFor('preparing')).toBe('launch-overlay');
-    expect(taskDetailSurfaceFor('queued')).toBe('queued-placeholder');
-    expect(taskDetailSurfaceFor('suspended')).toBe('resume-prompt');
-    expect(taskDetailSurfaceFor('none')).toBe('inert');
+    expect(taskDetailSurfaceFor('running', null)).toBe('terminal');
+    expect(taskDetailSurfaceFor('initializing', null)).toBe('terminal');
+    expect(taskDetailSurfaceFor('preparing', null)).toBe('launch-overlay');
+    expect(taskDetailSurfaceFor('queued', null)).toBe('queued-placeholder');
+    expect(taskDetailSurfaceFor('suspended', null)).toBe('resume-prompt');
+    expect(taskDetailSurfaceFor('none', null)).toBe('inert');
   });
 
   it('keeps a finished agent on the terminal, so its scrollback stays readable', () => {
@@ -198,7 +199,10 @@ describe('display-kind classifiers are total', () => {
     // shows it: the bottom panel tabs `status === 'running'` only
     // (panel-sessions.ts). Mapping it to 'inert' drops the user on "No active
     // session" and takes the record of why the agent stopped with it.
-    expect(taskDetailSurfaceFor('exited')).toBe('terminal');
+    expect(taskDetailSurfaceFor('exited', null)).toBe('terminal');
+    // Done is the other role, and a finished agent there keeps its scrollback
+    // the same way: only To Do is sessionless.
+    expect(taskDetailSurfaceFor('exited', 'done')).toBe('terminal');
   });
 
   it('classifies the lifecycle phases the toggle reads', () => {
@@ -207,6 +211,83 @@ describe('display-kind classifiers are total', () => {
     // Everything except the two terminal states has a session to talk about.
     expect(ALL_KINDS.filter(hasSessionLifecycle))
       .toEqual(['preparing', 'initializing', 'queued', 'running', 'suspended']);
+  });
+});
+
+describe('the lane classifier: a To Do task is sessionless whatever the store says', () => {
+  // #661: a task moved back to To Do kept an `exited` row main had already
+  // torn down. The kind said 'exited', the table said 'terminal', and the
+  // detail window painted a black pane over a task whose card should have
+  // opened the edit form. The lane is classified in its own compile-enforced
+  // table (`satisfies Record<SwimlaneRole, boolean>`) and consulted FIRST.
+  const ALL_KINDS: SessionDisplayState['kind'][] = [
+    'none', 'preparing', 'initializing', 'queued', 'running', 'suspended', 'exited',
+  ];
+  const ALL_ROLES: Array<SwimlaneRole | null | undefined> = ['todo', 'done', null, undefined];
+
+  it('only the todo role refuses to hold a session', () => {
+    expect(ALL_ROLES.filter((role) => !laneHoldsSession(role))).toEqual(['todo']);
+  });
+
+  it('a custom lane (null) and an unknown lane (undefined) hold sessions: the conservative answer', () => {
+    // A wrong "no" hides a live terminal; a monitor-hosted detail whose lane
+    // list has not loaded yet must not blank an agent's output.
+    expect(laneHoldsSession(null)).toBe(true);
+    expect(laneHoldsSession(undefined)).toBe(true);
+  });
+
+  it('makes every kind inert in a todo lane, including the ones that would paint a terminal or an overlay', () => {
+    for (const kind of ALL_KINDS) {
+      expect(taskDetailSurfaceFor(kind, 'todo')).toBe('inert');
+    }
+  });
+
+  it('leaves every other lane on the kind table', () => {
+    for (const kind of ALL_KINDS) {
+      const byKind = taskDetailSurfaceFor(kind, null);
+      expect(taskDetailSurfaceFor(kind, 'done')).toBe(byKind);
+      expect(taskDetailSurfaceFor(kind, undefined)).toBe(byKind);
+    }
+  });
+
+  // The two consumers that turn the classification into behavior. The board
+  // card decides edit-vs-view with the lane-aware classifier (so it and the
+  // window cannot disagree), and the window's session hook resolves a todo
+  // task's session to null at the one place the window learns it. Neither
+  // can be dropped silently: this pins the calls by source.
+  const repoRoot = path.resolve(__dirname, '../..');
+
+  it('TaskCard decides edit mode through the lane-aware classifier', () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'src/renderer/components/board/TaskCard.tsx'),
+      'utf8',
+    );
+    expect(source).toMatch(/taskDetailSurfaceFor\(displayState\.kind,\s*laneRole\)\s*===\s*'inert'/);
+  });
+
+  it('useTaskSessionState resolves the session through laneHoldsSession', () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'src/renderer/components/dialogs/task-detail/useTaskSessionState.ts'),
+      'utf8',
+    );
+    expect(source).toContain('laneHoldsSession(input.currentSwimlaneRole)');
+  });
+
+  // TaskDetailBody's queued-placeholder branch cannot be pinned behaviorally
+  // (tests/ui/todo-stale-exited-row-opens-edit.spec.ts covers the terminal and
+  // launch-overlay branches instead): useTaskSessionState above already nulls
+  // a todo-lane task's session before displayKind is ever computed, so
+  // useTaskProgress's sessionId argument is always undefined there and its
+  // taskSession lookup - the only source of a 'queued' kind - always returns
+  // undefined. A todo-lane task can therefore never actually reach this
+  // branch with kind === 'queued', so a dropped laneRole here produces no
+  // observable symptom and the call site has to be pinned by source instead.
+  it('TaskDetailBody\'s queued-placeholder branch threads the lane role', () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx'),
+      'utf8',
+    );
+    expect(source).toMatch(/taskDetailSurfaceFor\(displayKind,\s*laneRole\)\s*===\s*'queued-placeholder'/);
   });
 });
 

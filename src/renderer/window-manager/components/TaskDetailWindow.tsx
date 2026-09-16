@@ -183,6 +183,10 @@ export function TaskDetailWindow({
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
   const isInTodo = currentSwimlane?.role === 'todo';
+  // For the lane-aware surface classifier (task-progress.ts). An unknown lane
+  // (the host's list not loaded yet) reads as a custom column, which holds
+  // sessions: the conservative answer.
+  const laneRole = currentSwimlane?.role ?? null;
 
   const attachments = useAttachments(task.id, updateAttachmentCount);
   const branchConfig = useBranchConfig(task, title, isInTodo);
@@ -207,7 +211,7 @@ export function TaskDetailWindow({
   // `displayKind` is the field that actually does the work here, not the two
   // flags the Resume prompt reads. TaskDetailBody picks its branch in order, and
   // the active-terminal branch is gated FIRST, on
-  // `sessionId && taskDetailSurfaceFor(displayKind) === 'terminal'`.
+  // `sessionId && taskDetailSurfaceFor(displayKind, laneRole) === 'terminal'`.
   // `displayKind` is derived from `session.status` (task-progress.ts, which also
   // lets an in-flight spawn label outrank a suspended session), so the
   // optimistic write flips it
@@ -348,7 +352,7 @@ export function TaskDetailWindow({
   // The two surfaces that actually render the peek are the terminal branch and
   // the launch overlay, so ask the classifier for those rather than re-listing
   // the kinds that are not them.
-  const descriptionSurface = taskDetailSurfaceFor(sessionState.displayState.kind);
+  const descriptionSurface = taskDetailSurfaceFor(sessionState.displayState.kind, laneRole);
   const canShowDescription = !isArchived
     && hasDescriptionContent
     && (descriptionSurface === 'terminal' || descriptionSurface === 'launch-overlay');
@@ -475,7 +479,7 @@ export function TaskDetailWindow({
   // One table, one answer, so a future kind cannot split them again.
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
-    && taskDetailSurfaceFor(sessionState.displayState.kind) === 'terminal';
+    && taskDetailSurfaceFor(sessionState.displayState.kind, laneRole) === 'terminal';
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   const moveTargets = useMemo(() =>
@@ -792,6 +796,7 @@ export function TaskDetailWindow({
               isArchived={isArchived}
               isInTodo={isInTodo}
               isInDone={sessionState.isInDone}
+              laneRole={laneRole}
               hasSessionContext={hasSessionContext}
               sessionId={bodySessionView.sessionId}
               displayKind={bodySessionView.displayKind}

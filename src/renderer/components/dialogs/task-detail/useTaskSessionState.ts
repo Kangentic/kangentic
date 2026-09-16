@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/session-store';
 import { findSessionForTask } from '../../../stores/session-store/session-index';
-import { useTaskProgress, isActiveKind, hasSessionLifecycle } from '../../../utils/task-progress';
+import { useTaskProgress, isActiveKind, hasSessionLifecycle, laneHoldsSession } from '../../../utils/task-progress';
 import { isActive, requiresUserInteraction } from '../../../../shared/activity-state';
 import { resumeBlockReason } from '../../../../shared/session-resume-eligibility';
-import type { Task, Session } from '../../../../shared/types';
+import type { Task, Session, SwimlaneRole } from '../../../../shared/types';
 
 interface TaskSessionState {
   session: Session | null;
@@ -49,17 +49,24 @@ export function useTaskSessionState(input: {
   isEditing: boolean;
   isArchived: boolean;
   isInTodo: boolean;
-  currentSwimlaneRole: string | null | undefined;
+  currentSwimlaneRole: SwimlaneRole | null | undefined;
   /** The window is hidden-but-mounted (parked or retained) and hosts no xterm,
    *  so it must not claim the session: the bottom panel is free to show it. */
   dormant?: boolean;
 }): TaskSessionState {
+  // A lane that holds no session (To Do) resolves to null outright, whatever
+  // the store says: main tears the session down on every move into it, so any
+  // row still keyed to this task is stale (#661). Resolving it here, at the
+  // one place the window learns its session, is what makes every consumer
+  // agree at once - no terminal claim, no reconcile probe, and Cancel / Save
+  // / Delete in useTaskActions see the task as sessionless.
+  const holdsSession = laneHoldsSession(input.currentSwimlaneRole);
   // Live-preferring, never first-wins: main lists a stale suspended row ahead
   // of the live PTY when one has leaked, and taking the first match painted
   // the Resume overlay over a running agent while the board card, which
   // resolves through the index, showed it running.
   const session = useSessionStore((state) =>
-    findSessionForTask(state.sessions, input.task.id) ?? null,
+    holdsSession ? (findSessionForTask(state.sessions, input.task.id) ?? null) : null,
   );
   const reconcileSession = useSessionStore((state) => state.reconcileSession);
 

@@ -1,5 +1,6 @@
 import type { Session } from '../../../shared/types';
 import { isLiveSessionStatus } from '../../../shared/session-liveness';
+import type { SessionStore } from './types';
 
 /**
  * Of two rows sharing a taskId, the one that is the task's current session:
@@ -106,4 +107,96 @@ export function withoutSessionsForTasks(
     ? sessions.filter((session) => session.taskId !== taskIds)
     : sessions.filter((session) => !taskIds.has(session.taskId));
   return { sessions: remaining, _sessionByTaskId: buildSessionByTaskId(remaining) };
+}
+
+/** The slice of the store `withoutSessions` reads and rewrites. */
+export type SessionKeyedState = Pick<
+  SessionStore,
+  | 'sessions'
+  | 'activeSessionId'
+  | 'sessionUsage'
+  | 'sessionFirstOutput'
+  | 'sessionActivity'
+  | 'sessionActivityReason'
+  | 'sessionEvents'
+  | 'seenIdleSessions'
+  | 'sessionMessageTrails'
+>;
+
+/** Shallow copy of `record` minus any key in `ids`. */
+function omitKeys<T>(record: Record<string, T>, ids: ReadonlySet<string>): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!ids.has(key)) result[key] = value;
+  }
+  return result;
+}
+
+/**
+ * Whether the renderer still holds anything for a session id: its row, or an
+ * entry in any per-session map. `removeSession` uses this to return the same
+ * state reference for an id this renderer never held, so a removal push for a
+ * session that belonged to another window's project does not re-render every
+ * card.
+ */
+export function hasSessionState(state: SessionKeyedState, sessionId: string): boolean {
+  return state.sessions.some((session) => session.id === sessionId)
+    || state.activeSessionId === sessionId
+    || sessionId in state.sessionUsage
+    || sessionId in state.sessionFirstOutput
+    || sessionId in state.sessionActivity
+    || sessionId in state.sessionActivityReason
+    || sessionId in state.sessionEvents
+    || sessionId in state.seenIdleSessions
+    || sessionId in state.sessionMessageTrails;
+}
+
+/**
+ * Drop a set of sessions BY ID: their rows, the index, and every per-session
+ * map entry keyed on them, in one pass. The session is gone, so leaving any of
+ * these behind leaks (a `sessionActivity[id] = 'thinking'` that never clears,
+ * a `sessionUsage[id]` that fills a context bar under a terminal with no PTY,
+ * which is half of what #661 looked like). `activeSessionId` is cleared when
+ * it named one of them, as `syncSessions` does for a row that vanished.
+ *
+ * The task-keyed maps (`spawnProgress`, `pendingCommandLabel`) are deliberately
+ * NOT touched: a session reset removes the old row and respawns under the same
+ * task, and the label in flight belongs to the respawn. `dialogSessionIds` is
+ * left to the task-detail window's own layout effect, which releases the claim
+ * the moment its session resolves to null.
+ *
+ * Shared by `removeSession` (the `sessions.onRemoved` push path) and the
+ * transient-session removers, so "forget this session" has one implementation.
+ */
+export function withoutSessions(
+  state: SessionKeyedState,
+  sessionIds: readonly string[],
+): SessionKeyedState {
+  const ids = new Set(sessionIds);
+  const sessions = state.sessions.filter((session) => !ids.has(session.id));
+  return {
+    sessions,
+    activeSessionId: state.activeSessionId !== null && ids.has(state.activeSessionId) ? null : state.activeSessionId,
+    sessionUsage: omitKeys(state.sessionUsage, ids),
+    sessionFirstOutput: omitKeys(state.sessionFirstOutput, ids),
+    sessionActivity: omitKeys(state.sessionActivity, ids),
+    sessionActivityReason: omitKeys(state.sessionActivityReason, ids),
+    sessionEvents: omitKeys(state.sessionEvents, ids),
+    seenIdleSessions: omitKeys(state.seenIdleSessions, ids),
+    sessionMessageTrails: omitKeys(state.sessionMessageTrails, ids),
+  };
+}
+
+/**
+ * `withoutSessions` plus the rebuilt task index, for a caller that spreads the
+ * result straight into `setState`. Returning the index alongside is what keeps
+ * `_sessionByTaskId` from being left pointing a task at a row the array no
+ * longer has (see `withoutSessionsForTasks`).
+ */
+export function withoutSessionsIndexed(
+  state: SessionKeyedState,
+  sessionIds: readonly string[],
+): SessionKeyedState & { _sessionByTaskId: Map<string, Session> } {
+  const next = withoutSessions(state, sessionIds);
+  return { ...next, _sessionByTaskId: buildSessionByTaskId(next.sessions) };
 }

@@ -13,7 +13,7 @@ import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
-import { DEFAULT_AGENT } from '../../../shared/types';
+import { DEFAULT_AGENT, NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import type { Task, Swimlane, Project } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -30,6 +30,21 @@ import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
+
+/**
+ * Whether a column may spawn an agent at all, independent of its `auto_spawn`
+ * flag: the To Do and Done roles never do. `applyProfileToLane` preserves
+ * `role`, so the folded lane is safe to ask.
+ *
+ * Not the same question as `laneHoldsSession` in
+ * `src/renderer/utils/task-progress.ts`, which gates whether the renderer paints
+ * an EXISTING session and so refuses To Do only. The two deliberately disagree
+ * about `done`: a Done column never starts a new agent, but a Done task keeps
+ * its finished row so its scrollback and summary stay readable. Do not unify them.
+ */
+function laneMaySpawn(lane: Pick<Swimlane, 'role'>): boolean {
+  return lane.role === null || !NEVER_AUTO_SPAWN_ROLES.has(lane.role);
+}
 
 /**
  * Resolve the column-derived spawn overrides handed to
@@ -225,6 +240,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   const run = async (): Promise<void> => {
   // Guard: if the target column doesn't want agents, no-op
   if (!toLane.auto_spawn) return;
+
+  // Guard: a To Do or Done column never spawns, whatever its flag says. The
+  // move path branches on role before it gets here (task-move.ts), and the
+  // startup and reconcile paths gate on NEVER_AUTO_SPAWN_ROLES, but the flag
+  // itself can be written onto a role lane over MCP (update_column) or by a
+  // Board Profile fold, and this chokepoint used to honor it for a task
+  // created, promoted, or restored straight into To Do. The renderer treats
+  // a To Do task as sessionless (its card opens the edit form), so a live
+  // agent there would be invisible.
+  if (!laneMaySpawn(toLane)) return;
 
   // Guard: if the user manually paused this task, don't auto-resume.
   // The user must explicitly click Resume (SESSION_RESUME) to restart.
@@ -581,6 +606,9 @@ export async function autoSpawnForTask(
       // internally, which is idempotent.
       const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
       if (!toLane.auto_spawn) return;
+      // Same role gate as spawnAgent, and for the same reason: a profile fold
+      // or an MCP update can leave the flag on for a To Do column.
+      if (!laneMaySpawn(toLane)) return;
 
       // MCP auto-spawn used to be progress-silent end to end; the card now
       // shows the same fetch/branch/worktree phases the drag path does. The

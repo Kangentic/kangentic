@@ -4,7 +4,7 @@ import { isActive, requiresUserInteraction } from '../../../shared/activity-stat
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
 import type { SessionStore } from './types';
-import { buildSessionByTaskId } from './session-index';
+import { withoutSessionsIndexed } from './session-index';
 
 /**
  * One transient (Command Terminal) session, owned by a single command-terminal
@@ -136,36 +136,6 @@ export function selectCommandTerminalSummary(
   }
   if (count === 0) return EMPTY_COMMAND_TERMINAL_SUMMARY;
   return { count, tone: anyActive ? 'thinking' : anyNeedsUser ? 'idle' : 'rest' };
-}
-
-/** Shallow copy of `record` minus any key in `ids`. */
-function omitKeys<T>(record: Record<string, T>, ids: Set<string>): Record<string, T> {
-  const result: Record<string, T> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (!ids.has(key)) result[key] = value;
-  }
-  return result;
-}
-
-/**
- * Strip every per-session dictionary entry + the sessions-list rows for a set of
- * dead transient sessions, in one pass. Shared by the by-id, by-slot, and
- * by-project removers: the session is gone, so leaving these entries would leak
- * (a `sessionActivity[id] = 'thinking'` that never clears, stale usage/events).
- */
-function scrubSessionDicts(state: SessionStore, sessionIds: string[]): Partial<SessionStore> {
-  const ids = new Set(sessionIds);
-  const sessions = state.sessions.filter((session) => !ids.has(session.id));
-  return {
-    sessions,
-    _sessionByTaskId: buildSessionByTaskId(sessions),
-    sessionUsage: omitKeys(state.sessionUsage, ids),
-    sessionFirstOutput: omitKeys(state.sessionFirstOutput, ids),
-    sessionActivity: omitKeys(state.sessionActivity, ids),
-    sessionActivityReason: omitKeys(state.sessionActivityReason, ids),
-    sessionEvents: omitKeys(state.sessionEvents, ids),
-    seenIdleSessions: omitKeys(state.seenIdleSessions, ids),
-  };
 }
 
 export interface TransientSessionSlice {
@@ -338,8 +308,10 @@ export function createTransientSessionSlice(preserved: {
             break;
           }
         }
+        // The by-id scrub every dead session gets (rows, index, per-session
+        // maps): shared with `removeSession`, see session-index.ts.
         return {
-          ...scrubSessionDicts(state, [sessionId]),
+          ...withoutSessionsIndexed(state, [sessionId]),
           transientSessions,
         };
       });
@@ -363,7 +335,7 @@ export function createTransientSessionSlice(preserved: {
           if (entry.projectId !== projectId) transientSessions[key] = entry;
         }
         return {
-          ...scrubSessionDicts(state, entries.map((entry) => entry.sessionId)),
+          ...withoutSessionsIndexed(state, entries.map((entry) => entry.sessionId)),
           transientSessions,
         };
       });
