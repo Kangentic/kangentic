@@ -5,6 +5,7 @@ import { IPC } from '../../shared/ipc-channels';
 import type { CrashRecord } from '../../shared/types';
 import { resolveCrashRecord } from './source-map-resolver';
 import { isBenignStreamWriteError } from './benign-stream-error';
+import { recordGpuProcessGone } from './gpu-health';
 
 /**
  * Captures fatal-error events from main, preload, and renderer and persists
@@ -32,6 +33,11 @@ import { isBenignStreamWriteError } from './benign-stream-error';
 
 interface CrashCaptureOptions {
   getProjectRoot: () => string | null;
+  /** `<configDir>/gpu-health.json`, computed once from PATHS by the caller
+   *  (this module stays decoupled from PATHS, matching run-uptime.ts). Where
+   *  a repeated GPU death's escalation record is written for the NEXT launch
+   *  to report - see gpu-health.ts for why not live. */
+  gpuHealthFilePath: string;
 }
 
 let installed = false;
@@ -117,6 +123,16 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
       origin: null,
       context: { reason: details.reason, exitCode: details.exitCode },
       versions: getVersions(),
+    });
+    // Counts repeated deaths across the whole run (not gated on a project
+    // being open, unlike the local record above) and writes a durable
+    // escalation once they cross the threshold - see gpu-health.ts.
+    // getFeatureStatus is only READ by that module once it is actually about
+    // to write, so this closure costs nothing on the deaths before a latch.
+    recordGpuProcessGone(options.gpuHealthFilePath, details.reason, details.exitCode, app.getVersion(), {
+      // gpu-health.ts stays Electron-free (matches run-uptime.ts), so it
+      // takes a plain record rather than Electron's GPUFeatureStatus type.
+      getFeatureStatus: () => app.getGPUFeatureStatus() as unknown as Record<string, string>,
     });
   });
 

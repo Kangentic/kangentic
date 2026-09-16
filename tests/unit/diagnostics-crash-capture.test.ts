@@ -20,10 +20,12 @@ import type { CrashRecord } from '../../src/shared/types';
 
 const ipcHandlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
 const appListeners = new Map<string, (...args: unknown[]) => unknown>();
+const recordGpuProcessGoneMock = vi.fn();
 
 vi.mock('electron', () => ({
   app: {
     getVersion: vi.fn(() => '1.2.3'),
+    getGPUFeatureStatus: vi.fn(() => ({ gpu_compositing: 'enabled' })),
     on: vi.fn((eventName: string, handler: (...args: unknown[]) => unknown) => {
       appListeners.set(eventName, handler);
     }),
@@ -36,12 +38,22 @@ vi.mock('electron', () => ({
   },
 }));
 
+// gpu-health.ts's own counting/latch/decay/durable-write contract is covered
+// by tests/unit/gpu-health.test.ts; this file only pins that crash-capture's
+// listener calls it with the right arguments and for the right reasons.
+vi.mock('../../src/main/diagnostics/gpu-health', () => ({
+  recordGpuProcessGone: recordGpuProcessGoneMock,
+}));
+
 let tempDirectory: string;
+let gpuHealthFilePath: string;
 
 beforeEach(() => {
   tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-capture-test-'));
+  gpuHealthFilePath = path.join(tempDirectory, 'gpu-health.json');
   ipcHandlers.clear();
   appListeners.clear();
+  recordGpuProcessGoneMock.mockClear();
   vi.resetModules();
 });
 
@@ -60,7 +72,7 @@ describe('crash-capture', () => {
   it('registers an IPC.CRASH_REPORT handler that writes a record to disk', async () => {
     const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
     const { IPC } = await import('../../src/shared/ipc-channels');
-    startCrashCapture({ getProjectRoot: () => tempDirectory });
+    startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
 
     const handler = ipcHandlers.get(IPC.CRASH_REPORT);
     expect(handler).toBeDefined();
@@ -93,7 +105,7 @@ describe('crash-capture', () => {
   it('drops the report silently when project root is null', async () => {
     const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
     const { IPC } = await import('../../src/shared/ipc-channels');
-    startCrashCapture({ getProjectRoot: () => null });
+    startCrashCapture({ getProjectRoot: () => null, gpuHealthFilePath });
 
     const handler = ipcHandlers.get(IPC.CRASH_REPORT);
     const record: CrashRecord = {
@@ -112,7 +124,7 @@ describe('crash-capture', () => {
 
   it('subscribes to web-contents-created on the app for per-window crash capture', async () => {
     const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
-    startCrashCapture({ getProjectRoot: () => tempDirectory });
+    startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
     expect(appListeners.has('web-contents-created')).toBe(true);
   });
 
@@ -124,7 +136,7 @@ describe('crash-capture', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
-      startCrashCapture({ getProjectRoot: () => tempDirectory });
+      startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
 
       const handler = appListeners.get('child-process-gone');
       expect(handler).toBeDefined();
@@ -136,6 +148,9 @@ describe('crash-capture', () => {
       handler!({}, { type: 'GPU', reason: 'clean-exit', exitCode: 0 });
       expect(fs.existsSync(directory)).toBe(false);
       expect(warnSpy).not.toHaveBeenCalled();
+      // gpu-health.ts's counting must short-circuit on exactly the same two
+      // cases as the local crash record, or the two would drift apart.
+      expect(recordGpuProcessGoneMock).not.toHaveBeenCalled();
 
       // Recorded: a GPU crash, and a GPU kill (Chromium treats both alike).
       // Filenames derive from the record timestamp, so pin Date between the
@@ -167,6 +182,50 @@ describe('crash-capture', () => {
       // The persisted log gets one warn per death (warn lines always persist).
       expect(warnSpy).toHaveBeenCalledTimes(2);
       expect(String(warnSpy.mock.calls[0]![0])).toContain('[gpu] GPU process gone: crashed (exit code 5)');
+
+      // Each recorded death also feeds gpu-health.ts's counting, with the
+      // configured escalation path, the raw reason/exitCode, the running
+      // app's version, and a lazy GPU-feature-status reader - the wiring the
+      // escalation report at boot depends on.
+      expect(recordGpuProcessGoneMock).toHaveBeenCalledTimes(2);
+      expect(recordGpuProcessGoneMock).toHaveBeenNthCalledWith(
+        1, gpuHealthFilePath, 'crashed', 5, '1.2.3', { getFeatureStatus: expect.any(Function) },
+      );
+      expect(recordGpuProcessGoneMock).toHaveBeenNthCalledWith(
+        2, gpuHealthFilePath, 'killed', 1, '1.2.3', { getFeatureStatus: expect.any(Function) },
+      );
+      // The reader is a live closure over app.getGPUFeatureStatus(), not a
+      // value snapshotted at call time - gpu-health.ts relies on this to read
+      // it lazily, only once a write is actually about to happen.
+      const passedGetFeatureStatus = recordGpuProcessGoneMock.mock.calls[0]![4].getFeatureStatus;
+      expect(passedGetFeatureStatus()).toEqual({ gpu_compositing: 'enabled' });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('counts a GPU launch-failed death the same way as a crash (the DESKTOP-W shape)', async () => {
+    // The reason that actually killed the browser process in DESKTOP-W: a
+    // launch failure, not a crash. It must flow through the same two paths
+    // as any other non-clean-exit GPU death.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
+      startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
+
+      const handler = appListeners.get('child-process-gone');
+      handler!({}, { type: 'GPU', reason: 'launch-failed', exitCode: null });
+
+      const directory = path.join(tempDirectory, '.kangentic', 'logs', 'crashes');
+      const files = fs.readdirSync(directory);
+      expect(files).toHaveLength(1);
+      const record = JSON.parse(fs.readFileSync(path.join(directory, files[0]!), 'utf-8')) as CrashRecord;
+      expect(record.context).toEqual({ reason: 'launch-failed', exitCode: null });
+
+      expect(recordGpuProcessGoneMock).toHaveBeenCalledTimes(1);
+      expect(recordGpuProcessGoneMock).toHaveBeenCalledWith(
+        gpuHealthFilePath, 'launch-failed', null, '1.2.3', { getFeatureStatus: expect.any(Function) },
+      );
     } finally {
       warnSpy.mockRestore();
     }

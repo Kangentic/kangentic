@@ -29,6 +29,8 @@ export interface DiagnosticsContext {
   getPersistConsoleLogs: () => boolean;
   /** Returns the current value of `developer.recordIpcTraffic`. */
   getRecordIpcTraffic: () => boolean;
+  /** `<configDir>/gpu-health.json`; see crash-capture.ts's CrashCaptureOptions. */
+  gpuHealthFilePath: string;
 }
 
 let installed = false;
@@ -53,6 +55,7 @@ export function installDiagnostics(context: DiagnosticsContext): void {
 
   startCrashCapture({
     getProjectRoot: context.getProjectRoot,
+    gpuHealthFilePath: context.gpuHealthFilePath,
   });
 
   configureDebugDumpResolver({
