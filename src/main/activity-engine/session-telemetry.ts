@@ -42,6 +42,12 @@ function extractHookContext(line: string): string | null {
 interface SessionTelemetryCallbacks {
   onUsageChange(sessionId: string, usage: SessionUsage): void;
   onActivityChange(sessionId: string, activity: ActivityState, reason: ActivityReason): void;
+  /**
+   * The reason changed kind without the activity changing. Optional, because
+   * only the production wiring forwards it to the renderer; every test harness
+   * and every consumer that cares about state transitions ignores it.
+   */
+  onReasonChange?(sessionId: string, activity: ActivityState, reason: ActivityReason): void;
   onEvent(sessionId: string, event: SessionEvent): void;
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
@@ -243,6 +249,15 @@ export class SessionTelemetry {
         } else if (this.permissionPendingSessions.delete(sessionId)) {
           this.stopPermissionRejectionPollIfIdle();
         }
+      },
+      onReasonChange: (sessionId, activity, reason) => {
+        // Reason moved, activity did not. Forwarded so the renderer's stored
+        // reason stays current through a long turn, and deliberately NOT given
+        // the rest of the onActivityChange body above: the debug snapshot is a
+        // synchronous disk write, and the permission bookkeeping is about
+        // entering and leaving the permission STATE, neither of which a
+        // reason-only refresh has anything to say about.
+        this.callbacks.onReasonChange?.(sessionId, activity, reason);
       },
       onSyntheticEvent: (sessionId, event) => {
         // Push the engine-originated synthetic event (e.g. watchdog-driven

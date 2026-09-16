@@ -455,6 +455,24 @@ export interface SessionEngineState {
    */
   idleAuthoritative: boolean;
   /**
+   * The last `ActivityReason` handed to a consumer, or null before the first
+   * one. Exists so a reason that changes KIND without the activity changing can
+   * still be reported.
+   *
+   * A session is `thinking` from the start of a turn until the end of it, and
+   * `commitTransition` returns early when the activity is unchanged, so an
+   * activity-transition-only push reports nothing for the whole of a long turn.
+   * Measured over a real 9-way /code-review capture, the engine derived 711
+   * reasons and delivered 3 (`tests/unit/activity-engine-replay.test.ts`,
+   * session-029). That is what left every card's hover tooltip reporting a
+   * reason frozen since the turn began.
+   *
+   * Compared on KIND only, never deep-equal: `pendingCount` and `currentTool`
+   * move on nearly every event, so a deep-equal gate would push about a thousand
+   * times across that same capture instead of 176.
+   */
+  lastPushedReason: ActivityReason | null;
+  /**
    * Provenance of the CURRENT `turnActive=true`: true iff it was set by the
    * status-heartbeat's `forceThinking(sessionId, true)` (output-token growth
    * while idle, e.g. a `--resume` resume-picker context-reload, which fires NO
@@ -650,6 +668,22 @@ export interface ActivityStatsSnapshot {
 export interface ActivityEngineCallbacks {
   /** Fired every time the activity state actually changes (deduped). */
   onActivityChange(sessionId: string, activity: ActivityState, reason: ActivityReason): void;
+  /**
+   * Fired when the REASON changed kind but the activity did not, so a consumer
+   * that renders the reason stays current through a long turn.
+   *
+   * Deliberately separate from `onActivityChange` rather than folded into it.
+   * Everything hanging off that callback is written for a real transition and
+   * pays a real cost per call: the telemetry snapshot writer does a synchronous
+   * disk write, `getStatsSnapshot` slices a 1200-entry PTY window, and the
+   * interval recorder opens and closes rows in `session_activity_intervals`.
+   * A long turn raises the call count from about 3 per session to about 180, so
+   * folding these together would charge all of that for a refresh whose only new
+   * information is which reason to draw.
+   *
+   * Optional: a consumer that only cares about state transitions omits it.
+   */
+  onReasonChange?(sessionId: string, activity: ActivityState, reason: ActivityReason): void;
   /**
    * Fired when the engine itself originates a `SessionEvent` that did
    * not arrive from the JSONL stream (e.g. a watchdog-driven Idle event

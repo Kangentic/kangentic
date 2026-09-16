@@ -19,10 +19,20 @@ import type { SessionTelemetryOptions } from '../../src/main/activity-engine/ses
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionUsage, SessionEvent } from '../../src/shared/types';
 
-function makeCallbacks() {
+interface PushLog {
+  activityChanges: Array<{ activity: ActivityState; reason: ActivityReason }>;
+  reasonChanges: Array<{ activity: ActivityState; reason: ActivityReason }>;
+}
+
+function makeCallbacks(log?: PushLog) {
   return {
     onUsageChange: (_sessionId: string, _usage: SessionUsage): void => {},
-    onActivityChange: (_sessionId: string, _activity: ActivityState, _reason: ActivityReason): void => {},
+    onActivityChange: (_sessionId: string, activity: ActivityState, reason: ActivityReason): void => {
+      log?.activityChanges.push({ activity, reason });
+    },
+    onReasonChange: (_sessionId: string, activity: ActivityState, reason: ActivityReason): void => {
+      log?.reasonChanges.push({ activity, reason });
+    },
     onEvent: (_sessionId: string, _event: SessionEvent): void => {},
     onIdleTimeout: (_sessionId: string): void => {},
     onPlanExit: (_sessionId: string): void => {},
@@ -117,5 +127,73 @@ describe('SessionTelemetry.getActivityReasonsCache', () => {
 
     telemetry.removeSession('s1');
     expect(Object.keys(telemetry.getActivityReasonsCache())).toEqual(['s2']);
+  });
+});
+
+describe('SessionTelemetry forwards a reason-only refresh', () => {
+  // The engine's own replay coverage proves it DERIVES the right reason; this
+  // proves the derived reason survives the hop out of telemetry, which is the
+  // link that decides whether anything downstream ever sees it. It also pins the
+  // split: a reason refresh must not arrive as an activity change, because the
+  // interval recorder and the desktop notifier both read that as a transition.
+  let log: PushLog;
+  let instance: SessionTelemetry;
+
+  beforeEach(() => {
+    log = { activityChanges: [], reasonChanges: [] };
+    instance = new SessionTelemetry(makeCallbacks(log), {
+      disableBgShellWatcher: true,
+      activityEngineOptions: {
+        bgShellEscapeHatchMs: 60_000,
+        staleThinkingTimeoutMs: 60_000,
+        idleStabilityWindowMs: 0,
+      },
+    });
+  });
+
+  afterEach(() => {
+    instance.dispose();
+  });
+
+  it('reports a reason that moves mid-turn, with the activity unchanged', () => {
+    instance.initSession('s-turn');
+    log.activityChanges.length = 0;
+    log.reasonChanges.length = 0;
+
+    const now = Date.now();
+    instance.ingestEvents('s-turn', [
+      { ts: now, type: EventType.Prompt },
+      { ts: now + 1, type: EventType.ToolStart, tool: 'Read', toolId: 't1' },
+      { ts: now + 2, type: EventType.ToolEnd, tool: 'Read', toolId: 't1' },
+      { ts: now + 3, type: EventType.SubagentStart, detail: 'review-finder' },
+    ]);
+
+    const kinds = log.reasonChanges.map((entry) => entry.reason.kind);
+    expect(kinds).toContain('tool');
+    expect(kinds).toContain('subagent');
+    // The session never left `thinking`, so nothing here is an activity change:
+    // before this existed, the whole turn reported one 'turn-active' and stopped.
+    expect(log.activityChanges.map((entry) => entry.activity)).toEqual(['thinking']);
+    expect(log.reasonChanges.every((entry) => entry.activity === 'thinking')).toBe(true);
+  });
+
+  it('does not report again when only the tool churns under an unchanged kind', () => {
+    instance.initSession('s-churn');
+    const now = Date.now();
+    instance.ingestEvents('s-churn', [
+      { ts: now, type: EventType.Prompt },
+      { ts: now + 1, type: EventType.ToolStart, tool: 'Read', toolId: 'a' },
+    ]);
+    const settled = log.reasonChanges.length;
+
+    // Three more tools in flight. Each moves `currentTool` and `pendingCount`
+    // and nothing else, so a deep-equal gate would report on all three.
+    instance.ingestEvents('s-churn', [
+      { ts: now + 2, type: EventType.ToolStart, tool: 'Grep', toolId: 'b' },
+      { ts: now + 3, type: EventType.ToolStart, tool: 'Glob', toolId: 'c' },
+      { ts: now + 4, type: EventType.ToolStart, tool: 'Bash', toolId: 'd' },
+    ]);
+
+    expect(log.reasonChanges.length - settled).toBe(0);
   });
 });

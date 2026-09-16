@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ActivityEngine } from '../../src/main/activity-engine/engine';
 import { EventType } from '../../src/shared/types';
-import type { ActivityState, SessionEvent } from '../../src/shared/types';
+import type { ActivityReason, ActivityState, SessionEvent } from '../../src/shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'replay');
@@ -31,6 +31,23 @@ interface ReplayResult {
   totalTransitions: number;
   /** Every committed activity value, in order (one entry per onActivityChange). */
   transitions: ActivityState[];
+  /**
+   * The reason carried by each `onActivityChange`, index-aligned with
+   * `transitions`. Real activity transitions only.
+   */
+  pushedReasons: ActivityReason[];
+  /**
+   * Reasons reported by `onReasonChange` - the kind moved while the activity
+   * did not. With `pushedReasons` this is everything a consumer receives.
+   */
+  reasonReports: ActivityReason[];
+  /**
+   * The reason the engine WOULD report, sampled after every event rather than
+   * only at a committed transition. The gap between this and `pushedReasons` is
+   * the staleness a card sees: a long turn derives many reasons and pushes none
+   * of them.
+   */
+  reasonSamples: ActivityReason[];
   finalState: {
     pendingToolCount: number;
     subagentDepth: number;
@@ -67,10 +84,17 @@ function loadFixture(name: string): SessionEvent[] {
 
 function replay(events: SessionEvent[]): ReplayResult {
   const transitions: ActivityState[] = [];
+  const pushedReasons: ActivityReason[] = [];
+  const reasonReports: ActivityReason[] = [];
+  const reasonSamples: ActivityReason[] = [];
   const engine = new ActivityEngine(
     {
-      onActivityChange(_sessionId, activity) {
+      onActivityChange(_sessionId, activity, reason) {
         transitions.push(activity);
+        pushedReasons.push(reason);
+      },
+      onReasonChange(_sessionId, _activity, reason) {
+        reasonReports.push(reason);
       },
     },
     {
@@ -82,6 +106,8 @@ function replay(events: SessionEvent[]): ReplayResult {
   engine.initSession(SESSION_ID);
   for (const event of events) {
     engine.processEvent(SESSION_ID, event);
+    const sampled = engine.getActivityReason(SESSION_ID);
+    if (sampled) reasonSamples.push(sampled);
   }
   const state = engine.getState(SESSION_ID)!;
   const snapshot = engine.getStatsSnapshot(SESSION_ID)!;
@@ -92,6 +118,9 @@ function replay(events: SessionEvent[]): ReplayResult {
     finalActivity: state.activity,
     totalTransitions: transitions.length,
     transitions: transitions.slice(),
+    pushedReasons: pushedReasons.slice(),
+    reasonReports: reasonReports.slice(),
+    reasonSamples: reasonSamples.slice(),
     finalState: {
       pendingToolCount: state.pendingToolCount,
       subagentDepth: state.subagentDepth,
@@ -1292,6 +1321,85 @@ describe('ActivityEngine replay tests', () => {
       expect(result.finalState.exemptBackgroundShellIds).toEqual(['bw37v13wm']);
       expect(result.finalState.activeBackgroundShellIds).toEqual([]);
       expect(result.finalActivity).toBe('idle');
+    });
+  });
+
+  describe('session-029-code-review-9-way-fanout (why a card freezes during a fan-out)', () => {
+    // A real /code-review fan-out: the driver spawns 9 finders, says nothing for
+    // minutes, and the card's message trail sits on the driver's last line the
+    // whole time. This fixture exists to pin WHY, because the reason is two
+    // independent mechanisms and fixing either one alone changes nothing.
+    let events: SessionEvent[];
+    let result: ReplayResult;
+    beforeEach(() => {
+      events = loadFixture('session-029-code-review-9-way-fanout.jsonl');
+      result = replay(events);
+    });
+
+    it('is a 9-way fan-out whose subagents run their own tools through the PARENT stream', () => {
+      const subagentStarts = events.filter((event) => event.type === EventType.SubagentStart);
+      expect(subagentStarts).toHaveLength(9);
+      // The driver itself issues 9 Agent calls. Everything beyond that is a
+      // SUBAGENT's tool, hooked into the parent session's events.jsonl - which
+      // is why the parent stream is busy rather than silent while the driver
+      // says nothing, and why a directory walk on the trail's 300ms tick would
+      // run continuously rather than occasionally.
+      const toolStarts = events.filter((event) => event.type === EventType.ToolStart);
+      expect(toolStarts.length).toBeGreaterThan(250);
+      expect(toolStarts.filter((event) => event.tool === 'Agent')).toHaveLength(9);
+    });
+
+    // Mechanism 1: the ladder. `tool` outranks `subagent`, and with 9 finders
+    // running concurrently there is almost always SOME tool in flight, so the
+    // depth is masked far more aggressively than a single agent's tool/gap duty
+    // cycle would suggest.
+    it('masks the live depth behind kind:tool in 86% of derived reasons', () => {
+      const toolKind = result.reasonSamples.filter((reason) => reason.kind === 'tool');
+      const subagentKind = result.reasonSamples.filter((reason) => reason.kind === 'subagent');
+      expect(result.reasonSamples).toHaveLength(711);
+      expect(toolKind).toHaveLength(608);
+      expect(subagentKind).toHaveLength(81);
+      // So a consumer that reads only `kind === 'subagent'` sees the fan-out in
+      // barely one sample in nine, and flickers in and out of it 176 times.
+      const kindChanges = result.reasonSamples.filter(
+        (reason, index) => index === 0 || reason.kind !== result.reasonSamples[index - 1].kind,
+      );
+      expect(kindChanges).toHaveLength(176);
+    });
+
+    // Mechanism 2: a session is `thinking` from before the first spawn until
+    // after the last stop, and commitTransition returns early when the activity
+    // is unchanged. Only three ACTIVITY transitions happen in the whole capture,
+    // so an activity-transition-only consumer holds `turn-active` throughout.
+    it('commits only 3 activity transitions across the whole capture', () => {
+      expect(result.pushedReasons.map((reason) => reason.kind)).toEqual([
+        'idle',
+        'turn-active',
+        'idle',
+      ]);
+      expect(result.pushedReasons.some((reason) => reason.kind === 'subagent')).toBe(false);
+    });
+
+    it('reports the reason as it moves, so a consumer is not stuck on turn-active', () => {
+      // The fix for mechanism 2, and the reason this fixture is committed: the
+      // engine DERIVES a reason on all 711 events and used to deliver three of
+      // them, which is what left every card's hover tooltip frozen for the whole
+      // of any long turn.
+      expect(result.reasonReports.length).toBeGreaterThan(100);
+      // A live fan-out reaches a consumer rather than being derived and dropped.
+      expect(result.reasonReports.some((reason) => reason.kind === 'subagent')).toBe(true);
+    });
+
+    it('reports on a kind change only, never on tool churn', () => {
+      // The narrowness that keeps this affordable. Well over 500 of the 711
+      // events change `currentTool` or `pendingCount` without changing the kind;
+      // a deep-equal gate would report on each one.
+      expect(result.reasonReports.length).toBeLessThan(result.reasonSamples.length / 3);
+      // And no two consecutive reports share a kind.
+      const redundant = result.reasonReports.filter(
+        (reason, index) => index > 0 && result.reasonReports[index - 1].kind === reason.kind,
+      );
+      expect(redundant).toEqual([]);
     });
   });
 

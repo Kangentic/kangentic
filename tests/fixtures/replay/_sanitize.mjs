@@ -43,6 +43,14 @@ function sanitize(line) {
   cleaned = cleaned.replace(/(Users[\\/]+)tyler/gi, '$1dev');
   // Anonymize all UUIDs (session ids, transcript ids)
   cleaned = cleaned.replace(uuidRegex, '00000000-0000-0000-0000-000000000000');
+  // Bare username, with no path around it to anchor on. A captured tool_start
+  // carries the command line verbatim, so a session that grepped for its own
+  // author's name puts that name in the fixture in a form every path-shaped
+  // rule above misses. Over-scrubbing is the right error here: these fixtures
+  // are committed to a public repo, and no assertion reads a `detail` string.
+  cleaned = cleaned.replace(/tyler/gi, 'dev');
+  // Email literals, likewise banned in committed files.
+  cleaned = cleaned.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, 'dev@example.com');
   return cleaned;
 }
 

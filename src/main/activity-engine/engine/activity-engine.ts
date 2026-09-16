@@ -115,6 +115,7 @@ export class ActivityEngine {
     }
     const { activity, reason } = deriveActivityAndReason(state);
     state.activity = activity;
+    state.lastPushedReason = reason;
     this.states.set(sessionId, state);
     this.callbacks.onActivityChange(sessionId, activity, reason);
     // Arm the watchdog so a seeded 'thinking' turn that never emits a hook event
@@ -911,14 +912,11 @@ export class ActivityEngine {
     // lazily below (only when we actually log or commit).
     const newActivity = derivePredicate(state);
     if (newActivity === fromActivity) {
-      // No state change. If counters mutated, log a non-transition
-      // step so the audit log shows what events held the predicate
-      // in this state.
-      if (counterDelta) {
-        const reason = deriveReason(state);
-        this.recordTransition(state, fromActivity, fromActivity, reason.kind, trigger, counterDelta);
-      }
-      this.scheduleTimer(sessionId, state);
+      // No state change. Delegated to commitTransition rather than repeated
+      // here: its own no-transition arm does exactly this (log the counter
+      // delta, reschedule the timer) and now also reports a reason whose kind
+      // moved. Two copies meant that report had two places to live.
+      this.commitTransition(sessionId, state, newActivity, trigger, counterDelta);
       return;
     }
     // Stability window: only apply to thinking->idle. Idle->thinking
@@ -958,6 +956,10 @@ export class ActivityEngine {
         const reason = deriveReason(state);
         this.recordTransition(state, state.activity, state.activity, reason.kind, trigger, counterDelta);
       }
+      // ...and if the REASON moved to a different kind, report it even though
+      // the activity did not. Without this a session that stays `thinking` for
+      // minutes reports nothing after the turn's first push.
+      this.reportReasonIfChanged(sessionId, state);
       this.scheduleTimer(sessionId, state);
       return;
     }
@@ -981,8 +983,24 @@ export class ActivityEngine {
     }
     const reason = deriveReason(state);
     this.recordTransition(state, fromActivity, newActivity, reason.kind, trigger, counterDelta);
+    state.lastPushedReason = reason;
     this.callbacks.onActivityChange(sessionId, newActivity, reason);
     this.scheduleTimer(sessionId, state);
+  }
+
+  /**
+   * Report the current reason when its KIND has moved since the last report,
+   * with no activity transition to carry it.
+   *
+   * Kind only, never deep-equal. `pendingCount` and `currentTool` change on
+   * nearly every event, so a deep-equal gate turns a channel that needs about
+   * 180 reports over a five-minute turn into about a thousand.
+   */
+  private reportReasonIfChanged(sessionId: string, state: SessionEngineState): void {
+    const reason = deriveReason(state);
+    if (state.lastPushedReason && state.lastPushedReason.kind === reason.kind) return;
+    state.lastPushedReason = reason;
+    this.callbacks.onReasonChange?.(sessionId, state.activity, reason);
   }
 
   private recordTransition(

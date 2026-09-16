@@ -342,6 +342,17 @@ export class SessionManager extends EventEmitter {
     this.telemetry = new SessionTelemetry({
       onUsageChange: (sessionId, usage) => this.emit('usage', sessionId, usage),
       onActivityChange: (sessionId, activity, reason) => this.emit('activity', sessionId, activity, reason),
+      // A separate event, not 'activity', and that separation is load-bearing
+      // rather than tidy. Ten listeners read 'activity' as "the state changed",
+      // and several of them ACT on it: the mobile push notifier wakes a phone,
+      // the desktop notifier raises a toast, turn-completion drives auto-move,
+      // the terminal submit scheduler releases queued keystrokes, and the
+      // interval recorder opens and closes `session_activity_intervals` rows.
+      // A long turn reports a reason ~180 times against ~3 real transitions, so
+      // routing these onto 'activity' would fire all of that on a refresh whose
+      // only new information is which reason to draw.
+      onReasonChange: (sessionId, activity, reason) =>
+        this.emit('activity-reason', sessionId, activity, reason),
       onEvent: (sessionId, event) => this.emit('event', sessionId, event),
       onIdleTimeout: (sessionId) => {
         const session = this.registry.get(sessionId);
