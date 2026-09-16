@@ -130,8 +130,16 @@ export class RemoteItemCacheRepository {
     `);
     const runAll = this.db.transaction((list: ExternalIssue[]) => {
       for (const issue of list) {
-        if (existing.has(issue.externalId)) updated++;
-        else added++;
+        // Track ids as they land, so a duplicate inside one batch counts as an
+        // update on its second appearance rather than a second insert. The
+        // reconcile dedupes before calling this, so the snapshot alone was right in
+        // practice, but the count belongs to this method's contract, not its caller's.
+        if (existing.has(issue.externalId)) {
+          updated++;
+        } else {
+          added++;
+          existing.add(issue.externalId);
+        }
         const payload = JSON.stringify({ ...issue, alreadyImported: false });
         statement.run(
           source, repository, issue.externalId, normalizeRemoteTimestamp(issue.updatedAt),

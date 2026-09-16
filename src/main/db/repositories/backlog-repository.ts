@@ -6,6 +6,13 @@ import type {
   BacklogTaskUpdateInput,
 } from '../../../shared/types';
 
+/**
+ * How many external ids one dedup query binds. The clause binds two parameters
+ * per id, so this stays an order of magnitude under SQLite's bound-parameter
+ * ceiling while keeping a single-page lookup to one round trip.
+ */
+const EXTERNAL_ID_QUERY_CHUNK = 400;
+
 /** Row shape as stored in SQLite (labels is a JSON string). */
 interface BacklogTaskRow {
   id: string;
@@ -264,13 +271,23 @@ export class BacklogRepository {
    */
   findByExternalIds(source: string, externalIds: string[]): Set<string> {
     if (externalIds.length === 0) return new Set();
-    const placeholders = externalIds.map(() => '?').join(', ');
-    const rows = this.db.prepare(
-      `SELECT external_id FROM backlog_tasks WHERE external_source = ? AND external_id IN (${placeholders})
+    const matched = new Set<string>();
+    // Chunked, because the Import dialog's paint path passes the ENTIRE remote
+    // cache rather than one page. The query binds two parameters per id (once per
+    // unioned table), so a few thousand cached items would exceed SQLite's
+    // bound-parameter ceiling and fail the read outright, and every distinct length
+    // compiles a fresh statement. A fixed chunk bounds both.
+    for (let start = 0; start < externalIds.length; start += EXTERNAL_ID_QUERY_CHUNK) {
+      const chunk = externalIds.slice(start, start + EXTERNAL_ID_QUERY_CHUNK);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = this.db.prepare(
+        `SELECT external_id FROM backlog_tasks WHERE external_source = ? AND external_id IN (${placeholders})
        UNION
        SELECT external_id FROM tasks WHERE external_source = ? AND external_id IN (${placeholders})`
-    ).all(source, ...externalIds, source, ...externalIds) as Array<{ external_id: string }>;
-    return new Set(rows.map((row) => row.external_id));
+      ).all(source, ...chunk, source, ...chunk) as Array<{ external_id: string }>;
+      for (const row of rows) matched.add(row.external_id);
+    }
+    return matched;
   }
 
   /**

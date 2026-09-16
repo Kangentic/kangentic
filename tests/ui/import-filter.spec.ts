@@ -504,9 +504,11 @@ test.describe('ImportDialog - filter and reconcile behaviour', () => {
     await expect(page.locator('[data-testid="import-dialog"]')).toHaveCount(0, { timeout: 3000 });
 
     // Intentional fixed wait: proves a negative (no further reconcile after unmount),
-    // which cannot be expressed as a poll. Comfortably exceeds the 2000ms delay so the
-    // in-flight reconcile has resolved into the superseded (unmounted) token.
-    await page.waitForTimeout(2500);
+    // which cannot be expressed as a poll. The margin over the seeded 2000ms delay is
+    // deliberately wide, not just clear: this spec runs in parallel mode, and a worker
+    // starved for a few hundred milliseconds would otherwise read "the reconcile has
+    // not fired yet" as "it never will" and pass for the wrong reason.
+    await page.waitForTimeout(4000);
 
     expect(await getReconcileCallCount(page)).toBe(countBeforeClose);
     expect(getPageErrors()).toEqual([]);
