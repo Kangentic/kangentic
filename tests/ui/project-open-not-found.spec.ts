@@ -177,4 +177,69 @@ test.describe('clicking a stale sidebar project', () => {
       await browser.close();
     }
   });
+
+  test('clicking a stale project through the COLLAPSED RAIL also produces no unhandled rejection', async () => {
+    // The sidebar row (above) and the collapsed rail are two separate click
+    // handlers over the same store method - `ProjectListItem` awaits/catches
+    // nothing special, `CollapsedRail` fires `openProject(project.id)`
+    // unawaited with no `.catch`. Before this fix, an unawaited rejection
+    // from the rail would have surfaced exactly like the row's did. Covering
+    // it here (not a new browser launch) keeps this cheap: the assertions
+    // exercise the same `openProject` outcome contract already pinned in
+    // `tests/unit/project-open-outcomes.test.ts`, just through the rail's DOM.
+    const { browser, page } = await launchWithState();
+
+    try {
+      const getPageErrors = collectPageErrors(page);
+
+      // Collapse the sidebar so the rail becomes the active surface. Pre-
+      // configuring `sidebarVisible: false` does not work here: the sidebar's
+      // open/closed `useState` is frozen at mount time, so it has to be
+      // toggled live (mirrors collapsed-rail.spec.ts's collapseSidebar()).
+      await page.locator('button[title^="Hide sidebar"]').click();
+      await page.locator('[data-testid="sidebar-expand-button"]').waitFor({ state: 'attached', timeout: 5000 });
+
+      await page.evaluate(({ prefix, projectAId }) => {
+        window.electronAPI.projects.__openCalls.length = 0;
+        window.electronAPI.projects.open = async function (id: string) {
+          window.electronAPI.projects.__openCalls.push(id);
+          throw new Error(`Error invoking remote method 'project:open': Error: ${prefix}${id}`);
+        };
+        window.electronAPI.projects.list = async function () {
+          return [{
+            id: projectAId,
+            name: 'Project Alpha',
+            path: '/mock/onf-project-alpha',
+            github_url: null,
+            default_agent: 'claude',
+            default_model: null,
+            default_effort: null,
+            group_id: null,
+            position: 0,
+            last_opened: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          }];
+        };
+      }, { prefix: PROJECT_NOT_FOUND_PREFIX, projectAId: PROJECT_A_ID });
+
+      await page.locator(`[data-testid="rail-project-${PROJECT_B_ID}"]`).click();
+
+      await expect(page.locator('[data-testid="toast"]').filter({ hasText: /no longer available|Could not open/ }))
+        .toBeVisible({ timeout: 5000 });
+
+      const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
+      expect(openCalls).toEqual([PROJECT_B_ID]);
+
+      // The dead rail cell drops out once the store refetches.
+      await expect(page.locator(`[data-testid="rail-project-${PROJECT_B_ID}"]`)).toHaveCount(0);
+      await expect(page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`)).toBeVisible();
+
+      // The regression this test actually reports: no unhandled rejection
+      // from the rail's unawaited `openProject(project.id)` call.
+      await page.waitForTimeout(300);
+      expect(getPageErrors()).toHaveLength(0);
+    } finally {
+      await browser.close();
+    }
+  });
 });

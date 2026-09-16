@@ -7,7 +7,8 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, collectPageErrors } from './helpers';
+import { PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -189,6 +190,57 @@ function preConfigWithLiveSessionTask(): string {
       });
 
       return { currentProjectId: 'proj-search-escape' };
+    });
+  `;
+}
+
+/**
+ * Isolated fixture for the cross-project navigation failure path: a single
+ * task hit whose `projectId` differs from `currentProjectId`, so activating
+ * it must route through `switchProjectIfNeeded` -> `projectStore.openProject`.
+ * Kept separate from `preConfigWithSearchHits` (whose task hit stays in the
+ * current project) so this test's `projects.open` monkey-patch cannot bleed
+ * into any other test reusing that shared fixture.
+ */
+const CROSS_PROJECT_CURRENT_ID = 'proj-cross-current';
+const CROSS_PROJECT_TARGET_ID = 'proj-cross-target';
+const CROSS_PROJECT_TASK_ID = 'task-cross-1';
+
+function preConfigCrossProjectTaskHit(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+
+      state.projects.push({
+        id: '${CROSS_PROJECT_CURRENT_ID}', name: 'Current Project', path: '/mock/cross-current',
+        github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      });
+      state.projects.push({
+        id: '${CROSS_PROJECT_TARGET_ID}', name: 'Target Project', path: '/mock/cross-target',
+        github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      });
+
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-cross-' + i, position: i, created_at: ts }));
+      });
+
+      var hits = [
+        {
+          kind: 'task',
+          projectId: '${CROSS_PROJECT_TARGET_ID}',
+          projectName: 'Target Project',
+          taskId: '${CROSS_PROJECT_TASK_ID}',
+          displayId: 3,
+          taskTitle: 'Cross-project task hit',
+          archived: false,
+          snippetField: 'title',
+          snippet: 'Cross-project task hit',
+          matchStart: 0,
+          matchEnd: 5,
+        },
+      ];
+
+      return { currentProjectId: '${CROSS_PROJECT_CURRENT_ID}', searchHits: hits };
     });
   `;
 }
@@ -562,6 +614,90 @@ test.describe('Search Palette', () => {
       await page.locator('body').click();
       await page.keyboard.press('Control+f');
       await expect(page.getByTestId('board-search')).toBeFocused();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // ---------- Cross-project navigation: openProject outcome branching -----
+
+  test('a failed cross-project switch leaves the palette open, clears the pending task id, and never leaks the sentinel', async () => {
+    // `switchProjectIfNeeded` used to wrap `openProject` in its own try/catch
+    // and author its own toast on failure. `openProject` now never throws and
+    // reports its own failure; the palette just branches on the returned
+    // outcome. This exercises that branch specifically: a cross-project TASK
+    // hit whose target project can no longer be opened.
+    const { browser, page } = await launchWithState(preConfigCrossProjectTaskHit());
+    try {
+      const getPageErrors = collectPageErrors(page);
+
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await page.evaluate(({ prefix, currentId }) => {
+        window.electronAPI.projects.open = async function (id: string) {
+          throw new Error(`Error invoking remote method 'project:open': Error: ${prefix}${id}`);
+        };
+        // The store's not-found branch refetches the list; keep the target
+        // project OUT of the refetched list so the toast reads "no longer
+        // available" rather than "out of sync" - either copy is a pass below,
+        // but pinning the fixture avoids an incidental double-match on the
+        // "Could not open" fallback string.
+        window.electronAPI.projects.list = async function () {
+          return [{
+            id: currentId,
+            name: 'Current Project',
+            path: '/mock/cross-current',
+            github_url: null,
+            default_agent: 'claude',
+            default_model: null,
+            default_effort: null,
+            group_id: null,
+            position: 0,
+            last_opened: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          }];
+        };
+      }, { prefix: PROJECT_NOT_FOUND_PREFIX, currentId: CROSS_PROJECT_CURRENT_ID });
+
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('cross');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+
+      const taskRow = page.locator('[data-result-kind="task"]');
+      await expect(taskRow).toBeVisible();
+      await taskRow.click();
+
+      // The toast carries the store's own copy, never the raw IPC error text -
+      // pre-fix, the palette's own catch interpolated `error.message`, which
+      // would have leaked the PROJECT_NOT_FOUND: sentinel straight into the UI.
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: /no longer available|out of sync/ });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('[data-testid="toast"]', { hasText: PROJECT_NOT_FOUND_PREFIX })).toHaveCount(0);
+
+      // The palette itself: `activate`'s task branch only reaches
+      // `requestClose()` when `switchProjectIfNeeded()` resolves true, so a
+      // failed switch must leave the overlay open rather than closing over a
+      // navigation that never happened. Non-occurrence claim - poll would
+      // pass instantly if the close simply has not landed yet, so give it a
+      // fixed budget instead.
+      await page.waitForTimeout(300);
+      await expect(page.getByTestId('search-palette')).toBeVisible();
+
+      // The one-shot pending-open signal, armed before the switch attempt,
+      // must be cleared on failure - otherwise a LATER successful open of the
+      // same project would jump straight to this stale task id.
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const stores = (window as unknown as {
+              __zustandStores?: { session: { getState: () => { _pendingOpenTaskId: string | null } } };
+            }).__zustandStores;
+            return stores?.session.getState()._pendingOpenTaskId ?? null;
+          }),
+        )
+        .toBe(null);
+
+      expect(getPageErrors()).toHaveLength(0);
     } finally {
       await browser.close();
     }
