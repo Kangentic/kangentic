@@ -60,6 +60,71 @@ export function bucketOf(row: MonitorSessionRow): MonitorStateBucket {
 }
 
 /**
+ * Is an agent on this session right now?
+ *
+ * The two live buckets, which is exactly the pair `stateGlyphContent` draws an
+ * `ActivityMark` for, so "the card shows a glyph" and "the card shows agent
+ * output" are one condition rather than two that can drift. An agent waiting on
+ * the user counts: it is still running, still holding the task, still the thing
+ * you would click into. Paused, queued and exited do not.
+ *
+ * Derived from the bucket rather than re-tested against `row.status`, for the
+ * reason `stateGlyphContent` gives: a running session that has not reported
+ * activity yet buckets as `working`, and a second derivation disagreed with the
+ * first the last time this was written twice.
+ */
+export function isLiveBucket(bucket: MonitorStateBucket): boolean {
+  return bucket === 'working' || bucket === 'needs-you';
+}
+
+/** What a monitor card draws in the slot under its title. */
+export type MonitorSlotKind = 'trail' | 'description' | 'peek';
+
+/**
+ * Which of the three the slot gets, for one row.
+ *
+ * ONE function because two consumers need the same answer and must not compute
+ * it separately: the card draws the slot, and `MonitorBody` names the rows whose
+ * peek main should keep sampling. When those were two copies, a change to either
+ * left main streaming output for cards that no longer showed it.
+ *
+ * The ordering is the board card's, plus the peek the board has no data for:
+ *
+ *   - Card Preview `description` asks for the description, so it gets it on
+ *     every row, live or not. The peek is only the fallback for a row that has
+ *     no description at all (a Command Terminal).
+ *   - In the two agent modes a LIVE row shows what the agent is doing: its trail
+ *     if it has said anything, otherwise the raw terminal peek. Both render in
+ *     the same well, so a live card always has one.
+ *   - A row that is not live shows what the TASK is, which is its description.
+ *     This is the half that matters: a trail outlives its session, so without it
+ *     a paused or finished card printed agent prose with no glyph to say so.
+ */
+export function monitorSlotKind(
+  row: MonitorSessionRow,
+  trailMode: 'lines' | 'latest' | null,
+  hasTrail: boolean,
+): MonitorSlotKind {
+  if (!trailMode) return hasDescription(row) ? 'description' : 'peek';
+  if (isLiveBucket(bucketOf(row))) return hasTrail ? 'trail' : 'peek';
+  return hasDescription(row) ? 'description' : 'peek';
+}
+
+/**
+ * Tested on the RAW description, before `stripMarkdown`: a description that is
+ * nothing but markdown still counts as one, and the card prints the empty result
+ * rather than falling through to a terminal peek the user did not ask for.
+ *
+ * Empty string and a missing field both count as no description. A Command
+ * Terminal has `null` here because it has no task; a row assembled without the
+ * field at all has `undefined`, which a `!== null` test would have let through
+ * as an empty slot.
+ */
+function hasDescription(row: MonitorSessionRow): boolean {
+  return typeof row.description === 'string' && row.description.length > 0;
+}
+
+/**
  * Label for the reason variants that carry a `since` timestamp. A lookup rather
  * than an equality check on `reason.kind`, because those kind names overlap with
  * `ActivityState` members and a bare `=== 'permission'` reads as (and is scanned

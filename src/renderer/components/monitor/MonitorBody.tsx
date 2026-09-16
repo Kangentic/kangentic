@@ -17,7 +17,15 @@ import { MonitorTable } from './MonitorTable';
 import { MonitorRowContextMenu } from './MonitorRowContextMenu';
 import { requestMonitorDetail } from './MonitorDetailLayer';
 import { useMonitorPeekSubscription } from './useMonitorPeekSubscription';
-import { applyProjectScope, bucketOf, filterRows, groupRows, sortRows, toRenderUnits } from './monitor-view-model';
+import {
+  applyProjectScope,
+  bucketOf,
+  filterRows,
+  groupRows,
+  monitorSlotKind,
+  sortRows,
+  toRenderUnits,
+} from './monitor-view-model';
 
 /**
  * The monitor's body. Reads purely from stores and returns a bare fragment, so it
@@ -158,13 +166,14 @@ export function MonitorBody() {
   // both hosts (in-app overlay and detached window) get it from the one
   // component they share.
   //
-  // The card's slot follows Card Preview: a row with a message trail draws the
-  // trail, a row with a description draws that in the description mode, and only
-  // the rest (a Command Terminal, an agent that has not spoken) draw the peek.
-  // The list and table layouts draw none. Naming those rows lets main drop every
-  // other session's output at the tap, and an empty set switches its listener
-  // and timer off. Selected as ONE string so a trail landing for some other
-  // session, or one that leaves the set unchanged, re-renders nothing here.
+  // Which rows draw the peek is `monitorSlotKind`'s answer, not a second copy of
+  // the card's branching. It used to be a copy, and the two could disagree the
+  // moment either changed: main would go on streaming output for cards that had
+  // stopped showing it, or stop sampling for cards that had started. The list and
+  // table layouts draw none. Naming the rows lets main drop every other session's
+  // output at the tap, and an empty set switches its listener and timer off.
+  // Selected as ONE string so a trail landing for some other session, or one that
+  // leaves the set unchanged, re-renders nothing here.
   const cardPreview = useConfigStore((state) => state.config.cardPreview);
   const trailMode = trailModeFor(cardPreview);
   const filteredRows = units.filteredRows;
@@ -176,9 +185,8 @@ export function MonitorBody() {
         const wanted: string[] = [];
         for (const row of filteredRows) {
           const trail = state.sessionMessageTrails[row.sessionId];
-          if (trailMode && trail && trail.length > 0) continue;
-          if (!trailMode && row.description) continue;
-          wanted.push(row.sessionId);
+          const hasTrail = Boolean(trail && trail.length > 0);
+          if (monitorSlotKind(row, trailMode, hasTrail) === 'peek') wanted.push(row.sessionId);
         }
         return wanted.sort().join('\n');
       },

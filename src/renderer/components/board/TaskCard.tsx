@@ -203,8 +203,19 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   // this feature ships broken. Falls back to the description while a task has
   // no session or its agent has not said anything yet, so the default setting
   // never blanks a card.
+  //
+  // RUNNING is a condition of showing it at all, not just of styling it. A trail
+  // deliberately outlives its session ("a paused or exited card keeps what its
+  // agent last said", `message-trail-tracker.ts`), and this card only ever tested
+  // that the trail was non-empty, so a paused, exited or Done card printed agent
+  // prose in the description's slot with no activity mark and no progress bar to
+  // say who wrote it. Gating on `running` makes the trail and the mark one
+  // signal: if there is a glyph in the title row, there is agent output below it.
+  // Idle and permission count as running - an agent waiting on you is still on
+  // the task - which is why this reads `kind`, not the activity bucket.
   const trailMode = trailModeFor(cardPreview);
-  const shownTrail = trailMode && messageTrail && messageTrail.length > 0 ? messageTrail : null;
+  const isLive = displayState.kind === 'running';
+  const shownTrail = trailMode && isLive && messageTrail && messageTrail.length > 0 ? messageTrail : null;
 
   // Subtle, muted `#N` (display_id) matching the task-detail header format. Right-aligned
   // and shrink-0 so a long title truncates before the number; rendered only when the
@@ -256,12 +267,20 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               </button>
             )}
           </div>
-          {/* This card is dimmer overall, so its one trail line sits one step
-              above its `text-fg-disabled` description rather than at the full
-              card's muted tone. */}
+          {/* This card is dimmer overall, so its trail keeps the `text-fg-faint`
+              one step above its `text-fg-disabled` description rather than the
+              full card's muted tone. The well is the same either way: it marks
+              agent output, and that does not get quieter because the card is.
+              This path is the Done column's completed list (`DoneSwimlane`), the
+              only caller that passes `compact`. It is reached only by a RUNNING
+              session, and moving a task into Done suspends its agent, so in
+              practice this branch draws during the move and not after it. Kept
+              rather than deleted because "in practice" is not "never": the
+              suspend is asynchronous, and a card that rendered a bare trail
+              during that window would be the exact mismatch this change removes. */}
           {shownTrail && trailMode ? (
             <div className="mt-0.5">
-              <CardMessageTrail entries={shownTrail} lines={1} mode={trailMode} olderLineClass="text-fg-disabled" newestLineClass="text-fg-faint" />
+              <CardMessageTrail entries={shownTrail} lines={1} mode={trailMode} lineClass="text-fg-faint" terminal />
             </div>
           ) : task.description ? (
             <div className="mt-0.5">
@@ -402,9 +421,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           </div>
         )}
 
+        {/* One tone for every line, the `text-fg-muted` the newest line already
+            had. Nothing on this card gets brighter or dimmer than it is today;
+            the well is what says the agent wrote this. */}
         {shownTrail && trailMode ? (
           <div className="mt-1">
-            <CardMessageTrail entries={shownTrail} lines={excerptLines} mode={trailMode} olderLineClass="text-fg-faint" newestLineClass="text-fg-muted" />
+            <CardMessageTrail entries={shownTrail} lines={excerptLines} mode={trailMode} lineClass="text-fg-muted" terminal />
           </div>
         ) : task.description ? (
           <div className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[excerptLines]}`} data-testid="task-card-description">{stripMarkdown(task.description)}</div>

@@ -32,9 +32,23 @@ import { getCachedTranscript } from './transcript-cache';
  * to the stat-validated cached parse (`getCachedTranscript`), rate-limited
  * harder because a changed file re-parses its whole bounded tail there.
  *
- * Retention: a trail outlives its session (a paused or exited card keeps what
- * its agent last said) until the session leaves the registry or the map hits
- * `MESSAGE_TRAIL_MAX_SESSIONS`. Both prunes are lazy, not event-driven: a
+ * Retention: a trail outlives its session until the session leaves the registry
+ * or the map hits `MESSAGE_TRAIL_MAX_SESSIONS`.
+ *
+ * That retention no longer has a consumer, and the reason is worth writing down
+ * rather than quietly deleting. It existed so a paused or exited card could keep
+ * showing what its agent last said. Every card now hides the trail the moment the
+ * session stops running and falls back to the task description, because a trail
+ * under a paused glyph, with no progress bar, was indistinguishable from prose
+ * the user wrote themselves (`CardMessageTrail`, `monitorSlotKind`). So the
+ * retention past exit, and the final read `'session-changed'` takes on the way
+ * out, are both dead value today: bounded and harmless (200 sessions x 5 lines),
+ * but not load-bearing. Left in place because it is the cheap direction to be
+ * wrong in - a trail that outlives its session costs one idle map entry, while
+ * dropping it eagerly would need a new signal at exit and would foreclose ever
+ * showing a finished agent's last words again.
+ *
+ * Both prunes are lazy, not event-driven: a
  * departed session's state is dropped by the next `snapshot()`, which diffs the
  * map against the registry, and nothing else watches for a removal. So a state
  * can outlive its session until the next boot, reload, or project switch calls
