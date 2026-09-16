@@ -32,6 +32,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -41,6 +42,8 @@ interface FakeWindow {
   name: string;
   isDestroyed: () => boolean;
   isVisible: () => boolean;
+  /** Only needed by tests that drive the PROJECT_LIST_CHANGED broadcast. */
+  webContents?: { send: ReturnType<typeof vi.fn> };
 }
 
 const {
@@ -603,5 +606,39 @@ describe('notifyGlobalDbUnavailable', () => {
 
     expect(showMessageBoxMock).not.toHaveBeenCalled();
     expect(appQuitMock).not.toHaveBeenCalled();
+  });
+
+  it('sends PROJECT_LIST_CHANGED to the live parent window on a successful retry', async () => {
+    // Sentry DESKTOP-V: the reopened handle may back a different file, so
+    // whatever project list/current-project the renderer already holds cannot
+    // be trusted. A successful Retry must tell it to refetch.
+    const main: FakeWindow = { name: 'main', isDestroyed: () => false, isVisible: () => true, webContents: { send: vi.fn() } };
+    allWindows.push(main);
+    openDatabase.mockReturnValue(healthyConnection());
+    showMessageBoxMock.mockResolvedValue({ response: RETRY });
+    const { notifyGlobalDbUnavailable } = await freshModules();
+
+    notifyGlobalDbUnavailable(new Error('boom'), 'project:list', main as never);
+    // Wait for the reopen, which is what gates the send - waiting on the
+    // dialog alone would race the send below it in the same async function.
+    await vi.waitFor(() => expect(openDatabase).toHaveBeenCalled());
+
+    expect(main.webContents!.send).toHaveBeenCalledWith(IPC.PROJECT_LIST_CHANGED);
+  });
+
+  it('does not send PROJECT_LIST_CHANGED when the retry itself fails', async () => {
+    const main: FakeWindow = { name: 'main', isDestroyed: () => false, isVisible: () => true, webContents: { send: vi.fn() } };
+    allWindows.push(main);
+    openDatabase.mockReturnValue(ioErrorOnPragma());
+    showMessageBoxMock.mockResolvedValue({ response: RETRY });
+    const { notifyGlobalDbUnavailable } = await freshModules();
+
+    notifyGlobalDbUnavailable(new Error('boom'), 'project:list', main as never);
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+      '[db] Retry failed; the global database is still unreadable.',
+      expect.anything(),
+    ));
+
+    expect(main.webContents!.send).not.toHaveBeenCalled();
   });
 });
