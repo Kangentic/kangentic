@@ -37,11 +37,6 @@ const SESSION_SPAWN_STRATEGY_SCHEMA = z.enum(['create_or_resume', 'always_spawn_
  * "immediate". Literals pinned by tests/unit/mcp-column-field-parity.test.ts.
  */
 const AUTO_COMMAND_MODE_SCHEMA = z.enum(['immediate', 'deferred']);
-const AUTO_COMMAND_MODE_DESCRIPTION =
-  'When autoCommand is delivered to the agent. "immediate" (default) injects as soon as the task lands in '
-  + 'the column, interrupting a turn already in progress (the interruption is reported, not silent). '
-  + '"deferred" holds the command until the current turn genuinely finishes, then injects. Only meaningful '
-  + 'alongside autoCommand.';
 
 /**
  * Written to lead a caller to the right answer rather than to name the enum. An
@@ -802,7 +797,7 @@ export function registerTaskTools(
         icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
         autoCommand: z.string().max(4000).nullable().optional().describe('The message this column sends its agent on entry (e.g. "/review --strict"). Supports template variables such as {{title}}, {{taskNumber}} and {{baseBranch}}. Writes the column\'s first send_message automation in its On enter group, creating one if it has none; null deletes it. For anything beyond that one message (scripts, webhooks, notifications, ordering, exit automations) use kangentic_set_automations.'),
-        autoCommandMode: z.enum(['immediate', 'deferred']).optional().describe('When the message is sent: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn. Defaults to the row\'s existing mode, then "immediate".'),
+        autoCommandMode: AUTO_COMMAND_MODE_SCHEMA.optional().describe('When the message is sent: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn. Defaults to the row\'s existing mode, then "immediate".'),
         agentOverride: z.string().nullable().optional().describe('Force a specific agent for this column (e.g. "codex"). Null to use project default.'),
         modelOverride: z.string().max(200).nullable().optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet", "claude-opus-4-7"). Null to inherit the agent default.'),
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
@@ -847,7 +842,7 @@ export function registerTaskTools(
         icon: z.string().optional().describe('Lucide icon name.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent. Defaults to true.'),
         autoCommand: z.string().max(4000).optional().describe('The message this column sends its agent on entry (e.g. "/review --strict"). Supports template variables such as {{title}}, {{taskNumber}} and {{baseBranch}}. Creates the column\'s first send_message automation in its On enter group. For anything more (scripts, webhooks, notifications, exit automations) use kangentic_set_automations afterwards.'),
-        autoCommandMode: z.enum(['immediate', 'deferred']).optional().describe('When the message is sent: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn. Defaults to "immediate".'),
+        autoCommandMode: AUTO_COMMAND_MODE_SCHEMA.optional().describe('When the message is sent: "immediate" types it as soon as the agent is ready, "deferred" waits for the agent to finish its current turn. Defaults to "immediate".'),
         agentOverride: z.string().optional().describe('Force a specific agent for this column (e.g. "codex"). Omit to use the project default.'),
         modelOverride: z.string().max(200).optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet"). Omit to inherit the agent default.'),
         effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),

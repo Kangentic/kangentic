@@ -16,7 +16,6 @@ import {
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type {
   AutoCommandMode,
-  PermissionMode,
   SwimlaneCreateInput,
   SwimlaneUpdateInput,
   SessionTarget,
