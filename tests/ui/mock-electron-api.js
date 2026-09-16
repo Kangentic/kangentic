@@ -787,6 +787,26 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onListChanged: function (callback) {
+        // Tests can fire the project-list-changed push via
+        // `window.__mockFireProjectListChanged()`. Carries no payload; the
+        // renderer is expected to refetch `list()` / `getCurrent()`.
+        if (!window.__mockProjectListChangedListeners) {
+          window.__mockProjectListChangedListeners = [];
+        }
+        window.__mockProjectListChangedListeners.push(callback);
+        if (!window.__mockFireProjectListChanged) {
+          window.__mockFireProjectListChanged = function () {
+            var listeners = (window.__mockProjectListChangedListeners || []).slice();
+            listeners.forEach(function (fn) { fn(); });
+          };
+        }
+        return function () {
+          var listeners = window.__mockProjectListChangedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onAutoOpened: function (callback) {
         // Tests can fire the programmatic auto-open path via
         // `window.__mockFireProjectAutoOpened(projectId)`. Useful for

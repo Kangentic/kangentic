@@ -69,6 +69,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.PROJECT_PATH_MISSING, handler);
       return () => ipcRenderer.removeListener(IPC.PROJECT_PATH_MISSING, handler);
     },
+    onListChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.PROJECT_LIST_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.PROJECT_LIST_CHANGED, handler);
+    },
   },
 
   projectGroups: {

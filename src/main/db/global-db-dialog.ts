@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog } from 'electron';
 
 import { PATHS } from '../config/paths';
+import { IPC } from '../../shared/ipc-channels';
 import { getGlobalDb, resetGlobalDb } from './database';
 import { describeSqliteFailure } from './sqlite-error';
 
@@ -108,12 +109,14 @@ let notified = false;
  * Retry reopens the connection and stops there. It deliberately does NOT
  * reload the renderer: that would destroy every `<webview>` guest, which is the
  * whole point of `.claude/rules/retained-pane-never-remounts.md`, and the
- * hard-reload recovery that does exist only re-pairs Command Terminal PTYs. So
- * a successful retry restores writes and every future read, while a list that
- * already degraded to empty stays empty until something refetches it. That
- * limit is deliberately NOT in the dialog copy, which is shared with the
- * startup path where it would be wrong: the copy stays on the cause, naming the
- * file, the SQLite code, and what is likely holding it.
+ * hard-reload recovery that does exist only re-pairs Command Terminal PTYs. A
+ * successful retry does send `IPC.PROJECT_LIST_CHANGED` (Sentry DESKTOP-V), so
+ * the renderer refetches its project list and current project rather than
+ * keeping whatever it held when the database went unreadable - a stale row
+ * clicked after recovery used to reject with no explanation. That limit is
+ * deliberately NOT in the dialog copy, which is shared with the startup path
+ * where it would be wrong: the copy stays on the cause, naming the file, the
+ * SQLite code, and what is likely holding it.
  */
 export function notifyGlobalDbUnavailable(
   error: unknown,
@@ -146,6 +149,13 @@ export function notifyGlobalDbUnavailable(
       getGlobalDb();
       // Re-arm, so a database that fails again later can still say so once more.
       notified = false;
+      // The reopened handle may back a different file (or the same file
+      // recovered mid-read), so whatever project list/current-project the
+      // renderer already holds cannot be trusted. Tell it to refetch rather
+      // than leaving stale rows clickable-but-broken (Sentry DESKTOP-V).
+      if (parent && !parent.isDestroyed()) {
+        parent.webContents.send(IPC.PROJECT_LIST_CHANGED);
+      }
     } catch (retryError) {
       console.error('[db] Retry failed; the global database is still unreadable.', retryError);
     }

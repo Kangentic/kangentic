@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from '../../git/original-fs';
 import { ipcMain } from 'electron';
-import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../../../shared/ipc-channels';
+import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../../shared/ipc-channels';
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
@@ -274,6 +274,12 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
 
 /**
  * Delete a project record from the global index DB.
+ *
+ * Called only from the ephemeral (`/preview`) shutdown path, during THIS
+ * process's own quit. Deliberately does not send `IPC.PROJECT_LIST_CHANGED`:
+ * this process's window is going away, and a stale sidebar row this deletion
+ * could cause belongs to a different process's renderer, which this send
+ * cannot reach.
  */
 export function deleteProjectFromIndex(context: IpcContext, id: string): void {
   context.projectRepo.delete(id);
@@ -286,6 +292,7 @@ export function deleteProjectFromIndex(context: IpcContext, id: string): void {
  */
 export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<void> {
   const projects = context.projectRepo.list();
+  let prunedAny = false;
   for (const project of projects) {
     if (!isKangenticWorktree(project.path)) continue;
 
@@ -299,6 +306,13 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
     try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
 
     context.projectRepo.delete(project.id);
+    prunedAny = true;
+  }
+  // Dev-only (this function only runs when !app.isPackaged, see index.ts), but a
+  // renderer that already hydrated its list before this fires would otherwise
+  // show rows main can no longer resolve (Sentry DESKTOP-V's failure mode).
+  if (prunedAny && context.mainWindow && !context.mainWindow.isDestroyed()) {
+    context.mainWindow.webContents.send(IPC.PROJECT_LIST_CHANGED);
   }
 }
 
@@ -738,7 +752,12 @@ export function registerProjectHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {
     const project = context.projectRepo.getById(id);
-    if (!project) throw new Error(`Project ${id} not found`);
+    // Sentry DESKTOP-V: a renderer whose project list outlived the row
+    // behind it (a global-DB recovery that reopened onto a different file,
+    // or a dev-only boot prune) hit this and had no way to tell "gone" from
+    // any other failure. The sentinel lets the renderer refetch its list
+    // instead of surfacing a raw error with nothing to do about it.
+    if (!project) throw new Error(PROJECT_NOT_FOUND_PREFIX + id);
 
     // The project folder was moved or renamed on disk. Bail before any
     // directory-creating side effect below recreates an empty folder at the

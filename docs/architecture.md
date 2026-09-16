@@ -30,7 +30,7 @@ User drags task between columns
 
 All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src/preload/preload.ts` mirrors them as `window.electronAPI.*`.
 
-### Projects (19 channels)
+### Projects (20 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `project:list` | invoke | Fetch all projects (ordered by position) |
@@ -52,6 +52,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `project:moveProgress` | on | Event: progress during a one-step project move (`phase`: `moving`/`copying`, `copiedEntries`, `totalEntries`) |
 | `project:autoOpened` | on | Event: project auto-opened on launch |
 | `project:pathMissing` | on | Event: a registered project path no longer exists on disk |
+| `project:listChanged` | on | Event: the project list changed server-side (a stale project pruned, or a recovered global DB); tells the renderer to refetch `project:list` and `project:getCurrent` |
 
 ### Dev-only (preview)
 Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in the production channel totals above.

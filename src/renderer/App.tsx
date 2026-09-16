@@ -117,6 +117,15 @@ export function App() {
       useProjectStore.setState({ missingPathProject: project });
     });
 
+    // Main deleted or reconciled project rows this renderer's list did not
+    // know about (a dev-only boot prune, or a global-DB recovery that
+    // reopened onto a different file): refetch rather than leaving stale
+    // rows that reject when clicked with nothing on screen. Sentry DESKTOP-V.
+    const cleanupListChanged = window.electronAPI.projects.onListChanged?.(() => {
+      loadProjects();
+      loadCurrent();
+    });
+
     // Pop-out windows: hydrate which surfaces are currently detached, then stay
     // live via the popOut:changed push. Only meaningful in the main window (a
     // pop-out window never reads this store); see stores/pop-out-store.ts.
@@ -145,6 +154,7 @@ export function App() {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
       cleanupAutoOpen();
       cleanupPathMissing?.();
+      cleanupListChanged?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
       cleanupAnnouncementsChanged?.();
