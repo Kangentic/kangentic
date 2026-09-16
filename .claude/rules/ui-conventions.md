@@ -37,8 +37,12 @@ chrome unless these are stated.
 - **Dialog dismissal:** all dialogs use a global `useEffect` Escape key listener.
 - **Test selectors:** add `data-testid` and `data-swimlane-name` attributes for test selectors.
 - **Clickable controls ignore text selection.** A hand-rolled clickable control (a non-`button`
-  element with an `onClick` and `cursor-pointer`) carries `select-none`, so a click that drifts a
-  few pixels activates the control instead of selecting its label. Native `<button>` gets this from
+  element with an `onClick` and an action cursor: `cursor-pointer`, `cursor-grab`, `cursor-move`,
+  `cursor-col-resize`, `cursor-row-resize`) carries `select-none`, so a press that drifts a few
+  pixels runs the gesture instead of selecting the label. The cursor set is the one
+  `light-dismiss-denylist.md` already enumerates. A drag source counts: the board's `TaskCard` is
+  `cursor-grab`, and a stray selection breaks a drag at least as badly as it breaks a click.
+  Native `<button>` gets this from
   the `@layer base` rule in `index.css`, which stays scoped to native buttons because `role="button"`
   is spread onto dnd-kit wrapper divs. `user-select` is inherited, so a container's `select-none`
   reaches every descendant: where a control holds text a user copies (a live output line, a ticket
@@ -88,12 +92,13 @@ chrome unless these are stated.
   real imports rather than being a fourth list that drifts. It does not detect a NEW inline
   `<svg>` elsewhere; that stays review-caught.
 - **Test (text selection):** `tests/unit/clickable-control-select-none.test.ts` parses the TSX AST
-  under `src/renderer/**` and fails on a non-`button` element with an `onClick` and `cursor-pointer`
+  under `src/renderer/**` and fails on a non-`button` element with an `onClick` and an action cursor
   whose className lacks `select-none`, unless it carries a `// select-none-ok: <reason>` marker. It
   parses rather than matching `<Tag ...>` with a regex, which truncates at the `>` inside
-  `onClick={() => ...}` and so misses exactly the clickable elements. It also pins the known exempt
-  sites, so a parser change that stops resolving JSX cannot pass vacuously. Runs in CI via
-  `npm run test:unit`.
+  `onClick={() => ...}` and so misses exactly the clickable elements. Two things keep it from
+  passing vacuously: it pins the known exempt sites, so a parser change that stops resolving JSX is
+  caught, and it drives the detector over known-bad source, so an `inScope` that stops matching is
+  caught too. Runs in CI via `npm run test:unit`.
 - The remaining bullets have no dedicated mechanical test yet. Candidate future checks: a scan for
   raw `<select>` and for `text-[10px]` (or smaller) under `src/renderer/`; a scan of
   `SETTINGS_REGISTRY` label/description fields for raw hex / byte-code literals (`0x`, `\x`, `\u`,

@@ -127,6 +127,8 @@ function SortableActionItem({
             subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
             cannot dismiss a task window. That is the fail-safe the marker placement buys; this
             `cursor-grab` handle needs no marker of its own. */}
+        {/* select-none-ok: the handle draws a grip icon and no text, and it
+            inherits the summary row's `select-none` anyway. */}
         <div
           className="flex-shrink-0 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
           {...attributes}

@@ -340,7 +340,7 @@ function MonitorFullCard({
             title={activityLine}
             data-testid="monitor-card-activity"
           >
-            <span className="truncate">{activityLine}</span>
+            <span className="truncate select-text">{activityLine}</span>
           </Pill>
         )}
       </div>
