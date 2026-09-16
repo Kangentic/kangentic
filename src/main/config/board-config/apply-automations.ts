@@ -38,6 +38,26 @@ export function configDeclaresAutomations(columns: BoardColumnConfig[]): boolean
   return columns.some((column) => column.automations !== undefined || column.autoCommand !== undefined);
 }
 
+/**
+ * Does this file know the `automations` key at all?
+ *
+ * The rule above answers "is there anything to apply". This one answers a
+ * different question: what an ABSENT key on a column MEANS. In a file the app
+ * has written, absent means none, and clearing the column is the whole point of
+ * deleting the key. In a file written by a build that predated automations,
+ * absent means the writer had never heard of them, and clearing would delete
+ * whatever the schema migration had just rescued from that board's transitions.
+ *
+ * `autoCommand` cannot be the signal, which is the bug this separates out: a
+ * legacy board with three messages and one transition-borne script flipped the
+ * whole config to "automation-aware" on the strength of the messages, and the
+ * script's column, silent in the file, was emptied on the first open after the
+ * upgrade. The script was gone before anyone opened the Column Manager.
+ */
+export function configIsAutomationAware(columns: BoardColumnConfig[]): boolean {
+  return columns.some((column) => column.automations !== undefined);
+}
+
 export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomationPlan {
   const warnings: string[] = [];
   const rows: AutomationWriteInput[] = [];
