@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
+import { describeIpcError } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { NameFromPromptButton } from '../NameFromPromptButton';
 import { BaseDialog } from './BaseDialog';
@@ -316,6 +317,17 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         variant: 'info',
       });
       onClose();
+    } catch (error) {
+      // Previously unhandled: a rejected create (including a pending
+      // attachment write failing inside it) reached only the global
+      // unhandledrejection analytics listener, with nothing shown to the
+      // user. The dialog stays open so the title/description/attachments
+      // are not lost and the user can retry.
+      console.error('[NewTaskDialog] Failed to create task:', error);
+      useToastStore.getState().addToast({
+        message: `Couldn't create task: ${describeIpcError(error)}`,
+        variant: 'error',
+      });
     } finally {
       setSubmitting(false);
     }

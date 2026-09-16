@@ -68,6 +68,9 @@ export function extractPrintResponse(rawOutput: string): string | null {
  */
 export async function runAntigravityPrint(cliPath: string, prompt: string): Promise<string> {
   const scratch = scratchDirectory();
+  // sync-write-ok: this must throw, not degrade - the function docblock above
+  // already documents that contract, and the summarize caller treats any
+  // throw from this whole function as "auto-name unavailable".
   fs.mkdirSync(scratch, { recursive: true });
   await ensureWorkspaceTrust(scratch);
 

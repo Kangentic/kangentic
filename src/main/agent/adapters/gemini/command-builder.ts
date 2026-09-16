@@ -235,6 +235,12 @@ export class GeminiCommandBuilder {
     }
 
     const settingsPath = path.join(geminiDir, 'settings.json');
+    // sync-write-ok: this must throw, not degrade - this file carries the
+    // event-bridge hooks and the kangentic MCP entry, so a swallowed failure
+    // would spawn Gemini with no activity tracking (the session reads as
+    // permanently idle) and no kangentic_* tools, with nothing to say why.
+    // The spawn preamble already reports and notifies (notifySpawnBlocked) on
+    // any throw from buildCommand.
     fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2));
 
     const hookCount = Object.keys(merged.hooks || {}).length;

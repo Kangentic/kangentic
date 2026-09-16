@@ -747,6 +747,22 @@ export function App() {
       }));
     }
 
+    // A sync write to the data directory (config or one of the other small
+    // per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Main
+    // composes the whole sentence and latches it per failing source, so this
+    // toasts verbatim, same as onSpawnWarning. Not project-filtered: an
+    // unwritable data directory is a machine-level condition, not one tied to
+    // whichever project happens to be open.
+    if (window.electronAPI?.config?.onWriteFailed) {
+      cleanups.push(window.electronAPI.config.onWriteFailed((message) => {
+        useToastStore.getState().addToast({
+          message,
+          variant: 'error',
+          duration: 12000,
+        });
+      }));
+    }
+
     // A column's auto_command finished delivering. Main only pushes the
     // outcomes worth acting on (see `shouldNotify` in auto-command-outcome.ts),
     // so anything arriving here is either a real failure or a success that

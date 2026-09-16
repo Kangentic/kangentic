@@ -72,6 +72,8 @@ import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
+import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
+import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { loadVecExtension } from './retrieval/vec-extension';
@@ -1429,6 +1431,20 @@ app.whenReady().then(async () => {
     // createWindow, so it is still null here and holds the real window by the
     // time a read can degrade.
     notifyGlobalDbUnavailable(error, operation, mainWindow);
+  });
+
+  // A sync write to config or one of the other small per-machine/per-project
+  // state files failed (DESKTOP-14/DESKTOP-13: the data directory itself went
+  // unwritable, e.g. a relocated userData on a removable volume). The Sentry
+  // report is unconditional (write-failure-notice.ts latches it once per
+  // source); the toast is suppressed on the way out, matching notifySpawnBlocked
+  // and notifySpawnWarning - a quit that closes the window mid-flush must not
+  // try to push to a renderer that is tearing down. mainWindow is read at CALL
+  // time, same reason as the DB notifier above: this runs before createWindow.
+  setSyncWriteFailureNotifier((message) => {
+    if (isShuttingDown()) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    sendToRenderer(mainWindow, IPC.CONFIG_WRITE_FAILED, message);
   });
   phase('ensureGlobalDbReadable');
   const globalDbReady = await ensureGlobalDbReadable();

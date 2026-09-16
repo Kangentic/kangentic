@@ -123,6 +123,10 @@ export function writeSessionConfig(
   eventsOutputPath: string,
   statusOutputPath?: string,
 ): void {
+  // sync-write-ok: this must throw, not degrade - configDir is passed straight
+  // to --config-dir, so a swallowed failure would spawn Copilot pointed at a
+  // directory that does not exist. The spawn preamble already reports and
+  // notifies (notifySpawnBlocked) on throw.
   fs.mkdirSync(configDir, { recursive: true });
 
   // Start with the user's existing config to preserve preferences
@@ -156,6 +160,8 @@ export function writeSessionConfig(
     // Best effort - MCP config is optional
   }
 
+  // sync-write-ok: same reason as the mkdir above - carries the event-bridge
+  // hooks and statusLine wiring this whole function exists to inject.
   fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify(config, null, 2));
 }
 

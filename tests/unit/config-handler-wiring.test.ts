@@ -129,6 +129,7 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
+import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -156,8 +157,12 @@ function makeConfigManager(overrides?: {
       agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
       terminal: { shell: null },
     })),
-    save: vi.fn(),
-    saveProjectOverrides: vi.fn(),
+    // Default to a successful write, matching real ConfigManager.save()'s
+    // return value on the happy path. Tests below override this per case to
+    // exercise the failure path (save()/saveProjectOverrides() now degrade
+    // rather than throw - see write-failure-notice.ts).
+    save: vi.fn(() => true),
+    saveProjectOverrides: vi.fn(() => true),
     loadProjectOverrides: vi.fn(() => null),
     currentProjectPath: overrides?.currentProjectPath ?? null,
   };
@@ -242,6 +247,29 @@ describe('CONFIG_SET IPC handler - applyRuntimeConfig wiring', () => {
       context.configManager,
       null,
     );
+  });
+});
+
+describe('CONFIG_SET IPC handler - broadcasts config:changed even when the write fails', () => {
+  // ConfigManager.save() no longer throws (write-failure-notice.ts); a failed
+  // write still changed the in-memory config, so every window's optimistic
+  // read should still match. A DESKTOP-13-shaped regression would skip this
+  // broadcast on a falsy return, leaving open pop-outs on a stale config with
+  // no way to notice.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('still calls broadcast(CONFIG_CHANGED) when configManager.save() returns false', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.save as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { theme: 'dark' });
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.CONFIG_CHANGED);
   });
 });
 
@@ -581,6 +609,25 @@ describe('CONFIG_SYNC_DEFAULT_TO_PROJECTS IPC handler - applyRuntimeConfig wirin
 
     expect(result).toBe(3);
   });
+
+  it('does not count a project whose write failed, and still syncs the rest', () => {
+    const context = makeContext({
+      currentProjectPath: '/repo/current',
+      projectPaths: ['/repo/a', '/repo/unwritable', '/repo/current'],
+    });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockImplementation(
+      (projectPath: string) => projectPath !== '/repo/unwritable',
+    );
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const result = invokeHandler('config:syncDefaultToProjects', { agent: { maxConcurrentSessions: 2 } });
+
+    // One unwritable project's directory must not abort the sync for its
+    // siblings, and must not count as "updated" - saveProjectOverrides()
+    // still ran for every project, but only 2 of the 3 succeeded.
+    expect(context.configManager.saveProjectOverrides).toHaveBeenCalledTimes(3);
+    expect(result).toBe(2);
+  });
 });
 
 describe('CONFIG_SET_SYNC IPC handler - synchronous quit-flush wiring', () => {
@@ -626,5 +673,20 @@ describe('CONFIG_SET_SYNC IPC handler - synchronous quit-flush wiring', () => {
     expect(capturedHandlers.has('config:setSync')).toBe(false);
     // Confirm it IS in the sync on-handler map.
     expect(capturedOnHandlers.has('config:setSync')).toBe(true);
+  });
+
+  it('sets event.returnValue to false when the write fails, instead of leaving it unassigned', () => {
+    // Before this fix, a throwing save() left returnValue unassigned entirely
+    // (DESKTOP-14's shape one layer up: an ipcMain.on throw is an uncaught
+    // exception, not a rejection), and the renderer's blocking sendSync got
+    // undefined back with no way to tell success from failure.
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.save as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const fakeEvent: Record<string, unknown> = {};
+    invokeOnHandler('config:setSync', fakeEvent, { workspaceByProject: {} });
+
+    expect(fakeEvent.returnValue).toBe(false);
   });
 });

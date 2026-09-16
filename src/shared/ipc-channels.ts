@@ -165,6 +165,16 @@ export const IPC = {
   // (main + pop-outs) so live theme/settings changes sync across windows. Carries
   // no payload; subscribers re-fetch via config:get.
   CONFIG_CHANGED: 'config:changed',
+  // Push: a sync write to the data directory (config or one of the other small
+  // per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Carries
+  // the user-facing message to toast. Latched once per failing source in
+  // src/main/config/write-failure-notice.ts, so this fires at most once until a
+  // later write to that same source succeeds.
+  // Main window only (sendToRenderer, not broadcast), unlike CONFIG_CHANGED
+  // above: ToastContainer is mounted in AppLayout alone, so a pop-out window has
+  // no toast host to deliver this to. Register it in POP_OUT_SURFACES only if a
+  // pop-out ever gets one.
+  CONFIG_WRITE_FAILED: 'config:writeFailed',
 
   // Keybindings
   KEYBINDINGS_PROBE_GLOBAL: 'keybindings:probeGlobal',

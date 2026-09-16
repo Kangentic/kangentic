@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { PATHS } from '../config/paths';
+import { safeWriteJson } from '../safe-write';
 import {
   bytesToHex,
   hexToBytes,
@@ -88,12 +89,14 @@ export function loadRoster(identity: BridgeIdentity): DeviceRoster {
 }
 
 function saveRoster(roster: DeviceRoster): void {
-  fs.mkdirSync(PATHS.configDir, { recursive: true });
   const stored: StoredRoster = {
     masterSigningPublicKeyHex: bytesToHex(roster.masterSigningPublicKey),
     devices: roster.devices.map(toStoredEntry),
   };
-  fs.writeFileSync(rosterPath(), JSON.stringify(stored, null, 2));
+  // Degrades rather than throws: a pair/rename/revoke must not reject on an
+  // unwritable config directory. The shared write-failure-notice latch tells
+  // the user once (see safe-write.ts).
+  safeWriteJson(rosterPath(), stored, 'mobile_bridge_roster');
 }
 
 export interface AddDeviceInput {

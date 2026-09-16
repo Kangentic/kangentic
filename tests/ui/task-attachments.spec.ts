@@ -302,6 +302,42 @@ test.describe('Image Attachments', () => {
     await expect(taskCard).toBeVisible();
   });
 
+  test('a rejected create keeps the dialog open with the title intact and toasts an error', async () => {
+    // Previously unhandled: handleSubmit's try/finally had no catch, so a
+    // rejected tasks.create (which also carries any pending attachments)
+    // reached only the global unhandledrejection analytics listener -
+    // nothing shown to the user, and onClose() never ran either way.
+    await openNewTaskDialog();
+
+    await page.evaluate(() => {
+      const api = window as unknown as { __originalTasksCreate?: typeof window.electronAPI.tasks.create };
+      api.__originalTasksCreate = window.electronAPI.tasks.create;
+      window.electronAPI.tasks.create = async () => {
+        throw new Error('mock create failure');
+      };
+    });
+
+    const titleInput = page.locator('input[placeholder="Task title"]');
+    await titleInput.fill('Create failure task');
+    const createButton = page.locator('button[type="submit"]:has-text("Create")');
+    await createButton.click();
+
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't create task" });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+    const dialog = page.locator('.fixed.inset-0');
+    await expect(dialog).toBeVisible();
+    await expect(titleInput).toHaveValue('Create failure task');
+
+    // Restore the real mock and close cleanly so later tests are unaffected.
+    await page.evaluate(() => {
+      const api = window as unknown as { __originalTasksCreate?: typeof window.electronAPI.tasks.create };
+      if (api.__originalTasksCreate) window.electronAPI.tasks.create = api.__originalTasksCreate;
+    });
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('button:has-text("Discard")').click();
+    await expect(dialog).not.toBeVisible();
+  });
+
   test('drop zone highlights on drag over', async () => {
     await openNewTaskDialog();
 

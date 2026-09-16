@@ -432,10 +432,8 @@ export function drainAutoNameAskedIds(context: IpcContext, taskIds: string[]): v
   const removeSet = new Set(taskIds);
   const next = current.filter((entry) => !removeSet.has(entry));
   if (next.length === current.length) return;
-  try {
-    configManager.save({ autoNameAskedTaskIds: next });
-  } catch {
-    // Best-effort - a save failure here just means the next launch sees a
-    // slightly larger asked-set. Not worth surfacing to the user.
-  }
+  // Best-effort: save() no longer throws (see write-failure-notice.ts), and a
+  // failed write here just means the next launch sees a slightly larger
+  // asked-set - not worth surfacing to the user beyond the shared toast.
+  configManager.save({ autoNameAskedTaskIds: next });
 }

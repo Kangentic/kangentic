@@ -226,6 +226,13 @@ export async function prepareAgentSpawn(input: {
 
   const sessionRecordId = randomUUID();
   const sessionDir = path.join(projectPath, '.kangentic', 'sessions', sessionRecordId);
+  // sync-write-ok: this must throw, not degrade - a spawn with no session
+  // directory has nowhere to write status/events, so the CLI would come up
+  // with no activity tracking and no way to tell the renderer it is ready.
+  // Both callers (resume-suspended.ts, auto-spawn.ts) already wrap their
+  // per-record prepareAgentSpawn() call in a try/catch that logs, retires or
+  // skips just that one record, and continues the batch - a throw here never
+  // aborts recovery for every other task.
   fs.mkdirSync(sessionDir, { recursive: true });
   const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 

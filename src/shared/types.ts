@@ -5694,6 +5694,11 @@ export interface ElectronAPI {
      *  re-fetch via config.get()/loadConfig() to pick up the new effective config. Lets
      *  pop-out windows (and the main window) live-sync theme/settings across windows. */
     onChanged: (callback: () => void) => () => void;
+    /** A sync write to the data directory (config or one of the other small
+     *  per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Fires at
+     *  most once per failing source until a later write to that source succeeds;
+     *  `message` is the whole user-facing sentence, composed in main. */
+    onWriteFailed: (callback: (message: string) => void) => () => void;
   };
 
   // Keybindings
