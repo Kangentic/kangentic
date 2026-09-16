@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as util from 'node:util';
 
 const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -240,6 +241,65 @@ describe('echo failure containment', () => {
     const lines = await readLogLines(todayUtc());
     const errorLine = lines.find((entry) => entry.level === 'error');
     expect(errorLine?.args[0]).toBe('boom despite dead stdout');
+  });
+
+  // The two tests above prove the catch swallows an arbitrary throw, but
+  // they replace `original` with a mock that throws unconditionally - they
+  // never exercise what the corrected doc comment on the catch actually
+  // names as the reachable paths. Node's console does NOT let a write
+  // failure (sync throw or callback error) escape - it swallows both
+  // itself - so what escapes is upstream of the write: resolving
+  // `process.stdout`, and formatting the args. The two tests below drive
+  // the SECOND of those with the REAL, unmocked console implementation (no
+  // spy stands in for `original`), the same way a hostile object landing in
+  // a real `console.error(...)` call would in production. Split into two
+  // `it`s (rather than two assertions in one) so each gets its own
+  // independent red-green: vitest aborts a test at its first failed
+  // assertion, so a shared test would only ever observe the first hostile
+  // arg fail red.
+  it('survives a real custom-inspect throw from the REAL console formatter (arg-formatting failure)', async () => {
+    // Confirmed empirically (Node 24.15.0) that an un-wrapped
+    // `console.log('x', hostileInspect)` throws synchronously out of the
+    // real console, which is exactly what this wrap must contain.
+    const hostileInspectArgument = {
+      [util.inspect.custom]: () => {
+        throw new Error('custom inspect boom');
+      },
+    };
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => true,
+    });
+
+    expect(() => console.error('object arg:', hostileInspectArgument)).not.toThrow();
+
+    // Persistence must still succeed - stringifyArg does not invoke the
+    // custom inspect hook (JSON.stringify ignores that symbol), so the
+    // record still reaches disk.
+    const lines = await readLogLines(todayUtc());
+    const errorLine = lines.find((entry) => entry.level === 'error' && entry.args[0] === 'object arg:');
+    expect(errorLine).toBeDefined();
+  });
+
+  it('survives a real Symbol.toPrimitive throw under %s from the REAL console formatter (arg-formatting failure)', async () => {
+    // Confirmed empirically (Node 24.15.0) that this throws synchronously
+    // out of the real console even once the timestamp prefix is
+    // concatenated into the format-string slot ahead of the `%s`.
+    const hostileToPrimitiveArgument = {
+      [Symbol.toPrimitive]: () => {
+        throw new Error('toPrimitive boom');
+      },
+    };
+
+    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+    startLogMirror({
+      getProjectRoot: () => tempDirectory,
+      getPersistInfoDebug: () => true,
+    });
+
+    expect(() => console.log('%s', hostileToPrimitiveArgument)).not.toThrow();
   });
 });
 
