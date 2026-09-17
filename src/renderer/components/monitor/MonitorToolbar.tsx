@@ -217,7 +217,11 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
           Live only
         </button>
 
-        <div className="relative">
+        {/* `flex-1 min-w-0` with the width as a CAP rather than a fixed size. This
+            row wraps, so a fixed 22rem never clipped, but it forced the wrap
+            earlier than the row needed to: the input would not give up a pixel
+            before pushing a sibling onto a second line. */}
+        <div className="relative flex-1 min-w-0 max-w-[22rem]">
           <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint pointer-events-none" aria-hidden />
           <input
             type="text"
@@ -227,7 +231,7 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             // Twice the old width: this filter matches across title, project,
             // column, agent, model, ticket and labels, so the useful queries are
             // longer than a 44-wide box shows. The row has the space.
-            className="rounded-full border border-edge bg-surface/60 pl-7 pr-3 py-1 text-xs text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent w-[22rem]"
+            className="w-full min-w-0 rounded-full border border-edge bg-surface/60 pl-7 pr-3 py-1 text-xs text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent"
             data-testid="monitor-text-filter"
             aria-label="Filter sessions"
           />

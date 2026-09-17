@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Plus } from 'lucide-react';
+import { Columns3, ListTodo, Plus } from 'lucide-react';
 import { CountBadge } from '../CountBadge';
 import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
@@ -9,6 +9,11 @@ import { PrioritiesPopover } from '../backlog/manage-labels/PrioritiesPopover';
 import { useBoardStore } from '../../stores/board-store';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
+import {
+  BACKLOG_TOOLBAR_COLLAPSE,
+  BOARD_TOOLBAR_COLLAPSE,
+  TOOLBAR_ROW_CONTAINER_CLASS,
+} from './toolbar-collapse';
 
 export const ViewToggle = React.memo(function ViewToggle() {
   const activeView = useBoardStore((state) => state.activeView);
@@ -42,6 +47,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
   const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Per branch, because the two carry different content and so run out of room at
+  // genuinely different widths: backlog has two actions where board has one, and
+  // New Task is wider than Add column. The derivation is in toolbar-collapse.ts.
+  const collapse = activeView === 'board' ? BOARD_TOOLBAR_COLLAPSE : BACKLOG_TOOLBAR_COLLAPSE;
 
   const boardLabels = useMemo(() => {
     const labelSet = new Set<string>();
@@ -82,7 +92,15 @@ export const ViewToggle = React.memo(function ViewToggle() {
   }, [boardSearchFocusNonce, activeView]);
 
   return (
-    <div className="flex items-center px-4 pt-2 pb-2 border-b border-edge" data-testid="view-toggle">
+    // `@container` + `min-w-0`: every control below sheds its text on a container
+    // query against THIS row, so the ladder reads the space the row actually has
+    // (sidebar already subtracted) rather than the window width. The whole ladder,
+    // and why it is not the task-detail header's measurement hook, is in
+    // toolbar-collapse.ts.
+    <div
+      className={`flex items-center px-4 pt-2 pb-2 border-b border-edge min-w-0 ${TOOLBAR_ROW_CONTAINER_CLASS}`}
+      data-testid="view-toggle"
+    >
       {/* `ground="raised"`: this sits on the app ground, not in a form row, so the
           thumb takes `surface-raised` (lighter than its track in every theme)
           rather than the `surface-hover` fill the settings-row variant shares
@@ -91,14 +109,37 @@ export const ViewToggle = React.memo(function ViewToggle() {
         ground="raised"
         ariaLabel="View"
         testId="view-toggle-group"
+        className="shrink-0"
+        labelClassName={collapse.viewSwitcherLabel}
         value={activeView}
         onChange={setActiveView}
         options={[
-          { value: 'board' as const, label: 'Board', testId: 'view-toggle-board' },
+          {
+            value: 'board' as const,
+            label: 'Board',
+            testId: 'view-toggle-board',
+            // Columns-against-list is the least self-evident glyph pair on this
+            // row, and at the last step it is all that is left of the switcher.
+            title: 'Board',
+            // The icon is the label's replacement, not an addition, so it carries
+            // the inverse of the label's container query. Its `h-5` restores the
+            // 20px content height the label's line box had, so the option keeps
+            // its padding-derived 34px once the text goes. Without it the content
+            // is the 16px glyph and the option derives 30px instead.
+            icon: <span className={collapse.viewSwitcherIcon}><Columns3 size={16} /></span>,
+          },
           {
             value: 'backlog' as const,
             label: 'Backlog',
             testId: 'view-toggle-backlog',
+            title: 'Backlog',
+            // The option's accessible name is set from `ariaLabel`, so the badge
+            // below contributes nothing to it. Spell the count out here or it is
+            // lost to a screen reader at every width, not just the collapsed one.
+            ariaLabel: backlogItems.length > 0 ? `Backlog, ${backlogItems.length} items` : 'Backlog',
+            icon: <span className={collapse.viewSwitcherIcon}><ListTodo size={16} /></span>,
+            // The count stays through every step: it is the one thing the switcher
+            // says that an icon cannot.
             trailing: backlogItems.length > 0
               ? <CountBadge count={backlogItems.length} variant={activeView === 'backlog' ? 'accent' : 'muted'} />
               : undefined,
@@ -106,14 +147,14 @@ export const ViewToggle = React.memo(function ViewToggle() {
         ]}
       />
 
-      <div className="w-px h-5 bg-edge/50 mx-2.5" />
+      <div className={collapse.divider} />
 
-      <div className="flex items-center gap-1.5">
-        <LabelsPopover />
-        <PrioritiesPopover />
+      <div className="flex items-center gap-1.5 shrink-0">
+        <LabelsPopover collapse={collapse.filterControl} />
+        <PrioritiesPopover collapse={collapse.filterControl} />
       </div>
 
-      <div className="w-px h-5 bg-edge/50 mx-2.5" />
+      <div className={collapse.divider} />
 
       {/* Keyed per view: without a `key`, React reconciles ONE
           `ToolbarSearchFilter` instance across the view swap instead of
@@ -139,6 +180,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           labelFilters={boardLabelFilters}
           onToggleLabel={toggleBoardLabel}
           onClearFilters={clearBoardFilters}
+          filterCollapse={collapse.filterControl}
         />
       ) : (
         <ToolbarSearchFilter
@@ -157,36 +199,45 @@ export const ViewToggle = React.memo(function ViewToggle() {
           labelFilters={backlogLabelFilters}
           onToggleLabel={toggleBacklogLabel}
           onClearFilters={clearBacklogFilters}
+          filterCollapse={collapse.filterControl}
         />
       )}
 
       {/* Keyed per view for the reason above. Here the surviving node is the
           action button itself, so its colours cross-fade from the old view's
           palette while its label, padding, and icon size jump instantly. */}
+      {/* `ml-2`, not `ml-auto`. An auto margin absorbs free space BEFORE
+          `flex-grow` distributes it, so `ml-auto` here would stop the search
+          field growing at all. The search's own `flex-1` is what pushes this
+          cluster to the right now. */}
       {activeView === 'board' ? (
-        <div key="board-actions" className="ml-auto flex items-center gap-2">
+        <div key="board-actions" className="ml-2 flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => openBoardManager(null, true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+            title="Add column"
+            aria-label="Add column"
+            className={`flex items-center gap-1.5 py-1.5 text-sm font-medium rounded-md text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors whitespace-nowrap ${collapse.primaryAction.button}`}
             data-testid="add-column-button"
           >
-            <Plus size={16} />
-            <span>Add column</span>
+            <Plus size={16} className="shrink-0" />
+            <span className={collapse.primaryAction.label}>Add column</span>
           </button>
         </div>
       ) : (
-        <div key="backlog-actions" className="ml-auto flex items-center gap-2">
+        <div key="backlog-actions" className="ml-2 flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={openNewDialog}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
+            title="New Task"
+            aria-label="New Task"
+            className={`flex items-center gap-1.5 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors whitespace-nowrap ${collapse.primaryAction.button}`}
             data-testid="new-backlog-task-btn"
           >
-            <Plus size={14} />
-            New Task
+            <Plus size={14} className="shrink-0" />
+            <span className={collapse.primaryAction.label}>New Task</span>
           </button>
-          <ImportPopover onOpenImportDialog={setImportSource} />
+          <ImportPopover onOpenImportDialog={setImportSource} collapse={collapse.filterControl} />
         </div>
       )}
     </div>

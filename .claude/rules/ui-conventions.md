@@ -56,6 +56,29 @@ chrome unless these are stated.
   (`opacity-0 group-hover:opacity-100`) get overlooked and exclude keyboard / touch users.
   Prefer a right-click context menu or an always-visible control; reserve inline visible buttons
   for the single most-used primary action. Default to visual subtraction over addition.
+- **A persistent chrome row stays usable at the 900x600 floor.** The title bar, the board and
+  backlog toolbar, and the status bar are always on screen, so every one of them has to hold at
+  `minWidth: 900` / `minHeight: 600` (`src/main/index.ts`) with the sidebar at BOTH extremes: its
+  36px collapsed strip and its 400px maximum, which nothing clamps to the window. A 400px sidebar
+  at a 900px window leaves the toolbar 495px, so that is the number to design against, not the
+  window width.
+  - **Give the row a shrink strategy, never a single victim.** A row of content-sized children
+    with one flexible child makes that child pay for everything: the board toolbar's fixed 21rem
+    search meant the "Add column" label wrapped and then clipped off the right edge, with
+    `body`'s `overflow-hidden` and no scrollbar to recover it. Decide the order controls give
+    ground in, and write it down.
+  - **Collapse by container query, not by viewport breakpoint.** `@container` on the row plus
+    `@[NNNpx]:` variants reads the space the row actually has, with the sidebar already
+    subtracted, so one set of thresholds covers every sidebar width and the row responds to a
+    sidebar drag as well as a window resize. `src/renderer/components/board/toolbar-collapse.ts`
+    is the worked example, with `BoardManagerDialog`, `MonitorBody` and `form-layout.tsx` as
+    the other adopters. Every class must be a complete literal, since Tailwind scans source text.
+  - **An icon-only control keeps its name.** `hidden` on a label removes it from the
+    accessibility tree, so a control that sheds its text carries `aria-label` and `title`.
+  - **Watch the flexible child, not just the clipping.** A search field with a max and no min
+    absorbs the whole shortfall silently: the row fits perfectly while the field shrinks to
+    92px. "Nothing clipped" is not the same as "still usable", and only the first is visible in
+    a layout check.
 - **Copy for labels and descriptions.** House writing style is the always-on
   [[writing-style]]; this bullet adds only what is specific to a settings row.
   - **One sentence, about 110 characters.** That is what fits the row's `text-xs` column without
@@ -99,6 +122,20 @@ chrome unless these are stated.
   passing vacuously: it pins the known exempt sites, so a parser change that stops resolving JSX is
   caught, and it drives the detector over known-bad source, so an `inScope` that stops matching is
   caught too. Runs in CI via `npm run test:unit`.
+- **Test (chrome rows at the floor):** `tests/ui/toolbar-narrow-window.spec.ts` seeds a 400px
+  sidebar, drives the board and backlog toolbars at 900x600 with the sidebar both expanded and
+  collapsed, and sweeps every width across the ladder. It asserts four things, all read inside
+  `page.evaluate` and all relative rather than pixel-exact: the row's height does not change
+  between a wide viewport and the floor (a wrapped label is the only thing that can grow it), no
+  control's right edge passes the row's content edge, the search field keeps a coarse minimum
+  width, and the title bar's project name never reaches the icon cluster. It also asserts the
+  labels ARE text at full width, which is what stops the whole spec passing vacuously: every
+  collapse class is a min-width container query, so a variant that fails to compile leaves the
+  row permanently icon-only, and an icon-only row trivially fits.
+
+  **There is deliberately no static check here, and this is the gap.** Whether a row clips needs
+  the runtime tree, so a scan cannot express it; the spec above is the only guard, and a new
+  persistent chrome row is not covered until someone adds it there.
 - The remaining bullets have no dedicated mechanical test yet. Candidate future checks: a scan for
   raw `<select>` and for `text-[10px]` (or smaller) under `src/renderer/`; a scan of
   `SETTINGS_REGISTRY` label/description fields for raw hex / byte-code literals (`0x`, `\x`, `\u`,
