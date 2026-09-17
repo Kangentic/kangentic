@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -92,12 +92,14 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
 function FlyingCard() {
   const completingTask = useBoardStore((s) => s.completingTask);
   const markCompletionAnimationDone = useBoardStore((s) => s.markCompletionAnimationDone);
-  const [flying, setFlying] = React.useState(false);
+  // null while the card sits on its start frame; once the fly begins, the
+  // translate vector from the start rect to the Done drop-zone center ({0, 0}
+  // when the drop zone is not in the DOM). One value rather than a boolean
+  // plus a delta ref: the delta is measured on the frame that flips, so layout
+  // is never read during render and nothing needs a ref. The instance is keyed
+  // per completion by the parent, so a fresh drop always starts at null.
+  const [flight, setFlight] = React.useState<{ dx: number; dy: number } | null>(null);
   const fallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Translate vector from the start rect to the Done drop-zone center, measured
-  // once per completion in a layout effect (pre-paint) so layout is never read
-  // during render. null when the drop zone is not in the DOM.
-  const targetDeltaRef = React.useRef<{ dx: number; dy: number } | null>(null);
 
   const clearFallback = React.useCallback(() => {
     if (fallbackTimerRef.current !== null) {
@@ -106,48 +108,32 @@ function FlyingCard() {
     }
   }, []);
 
-  // Measure the drop-zone target before the browser paints the start frame, so
-  // the 2-rAF flip below animates toward an already-computed delta. Recomputed
-  // unconditionally on every completingTask change so back-to-back completions
-  // never reuse a stale delta. The delta is computed from the start top-left
-  // (translate is evaluated in untransformed pixels, before scale), preserving
-  // the original -20 landing offset above the drop-zone center.
-  React.useLayoutEffect(() => {
-    if (!completingTask) {
-      targetDeltaRef.current = null;
-      return;
-    }
-    const dropZone = document.querySelector('[data-done-drop-zone]');
-    const targetRect = dropZone?.getBoundingClientRect();
-    if (!targetRect) {
-      targetDeltaRef.current = null;
-      return;
-    }
-    const { startRect } = completingTask;
-    targetDeltaRef.current = {
-      dx: targetRect.left + targetRect.width / 2 - startRect.width / 2 - startRect.left,
-      dy: targetRect.top + targetRect.height / 2 - 20 - startRect.top,
-    };
-  }, [completingTask]);
-
   React.useEffect(() => {
     if (!completingTask) {
       clearFallback();
       return;
     }
-
-    setFlying(false);
-    const hasTarget = document.querySelector('[data-done-drop-zone]') !== null;
+    const { startRect } = completingTask;
 
     // Trigger transition on next frame so browser paints at start position first
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        setFlying(true);
+        // The delta is computed from the start top-left (translate is
+        // evaluated in untransformed pixels, before scale), preserving the
+        // original -20 landing offset above the drop-zone center.
+        const dropZone = document.querySelector('[data-done-drop-zone]');
+        const targetRect = dropZone?.getBoundingClientRect();
+        setFlight(targetRect
+          ? {
+            dx: targetRect.left + targetRect.width / 2 - startRect.width / 2 - startRect.left,
+            dy: targetRect.top + targetRect.height / 2 - 20 - startRect.top,
+          }
+          : { dx: 0, dy: 0 });
         // When the drop zone isn't in the DOM, no transition will run and
         // onTransitionEnd will never fire. Signal animation-done immediately so
         // the gate can persist (once approved) and the card unmounts. Otherwise
         // arm a 700ms fallback (500ms transition + 200ms safety margin).
-        if (!hasTarget) {
+        if (!targetRect) {
           markCompletionAnimationDone(completingTask.taskId);
         } else {
           fallbackTimerRef.current = setTimeout(() => {
@@ -171,7 +157,8 @@ function FlyingCard() {
   const reduceMotion =
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
     || document.documentElement.classList.contains('no-motion');
-  const delta = targetDeltaRef.current ?? { dx: 0, dy: 0 };
+  const flying = flight !== null;
+  const delta = flight ?? { dx: 0, dy: 0 };
 
   // Static box: position/size never change. Only transform + opacity animate, so
   // the motion is GPU-composited. The transition string is identical across both
@@ -284,15 +271,14 @@ export function KanbanBoard() {
   // coupling the global shortcut to any one lane's local state.
   const newTaskRequestNonce = useBoardStore((s) => s.newTaskRequestNonce);
   const newTaskDismissNonce = useBoardStore((s) => s.newTaskDismissNonce);
-  const [newTaskOpen, setNewTaskOpen] = useState(false);
-  // ONE effect reading BOTH counters, so whichever was bumped last wins regardless of the
-  // order the effects would have run in. Two separate effects made "close everything, then
-  // open this" - exactly what the onboarding walkthrough does when it advances into the
-  // create-a-task step - resolve as close-then-close, and the dialog never appeared.
-  useEffect(() => {
-    if (newTaskRequestNonce === 0 && newTaskDismissNonce === 0) return;
-    setNewTaskOpen(newTaskRequestNonce > newTaskDismissNonce);
-  }, [newTaskRequestNonce, newTaskDismissNonce]);
+  const dismissNewTask = useBoardStore((s) => s.dismissNewTask);
+  // Derived from BOTH counters in one expression, so whichever was bumped last wins
+  // regardless of any effect ordering. Two separate effects once made "close everything,
+  // then open this" - exactly what the onboarding walkthrough does when it advances into
+  // the create-a-task step - resolve as close-then-close, and the dialog never appeared.
+  // The dialog's own close bumps the dismiss counter rather than a local flag, so there
+  // is one source of truth and no state to sync.
+  const newTaskOpen = newTaskRequestNonce > newTaskDismissNonce;
   const newTaskLaneId = useMemo(() => {
     return (
       swimlanes.find((lane) => lane.role === 'todo')?.id
@@ -324,8 +310,16 @@ export function KanbanBoard() {
   // array reference so that `Swimlane`'s React.memo can bail out. Without
   // this, every store update re-renders all lanes regardless of which one
   // actually changed.
+  //
+  // The ref is read and written inside the memo, which react-hooks/refs
+  // forbids. The compiler-approved alternative (hold the previous map in state
+  // and set it during render) costs a second render pass on every board update
+  // for the same identities, on the hottest path in the app, so the cache stays
+  // a ref. The result is the same on every re-execution: only array identity
+  // is reused, never content.
   const stableLanesRef = useRef<Map<string, Task[]>>(new Map());
 
+  /* eslint-disable react-hooks/refs -- structural-sharing cache; see the comment above */
   const tasksPerLane = useMemo(() => {
     const fresh = new Map<string, Task[]>();
     for (const lane of swimlanes) fresh.set(lane.id, []);
@@ -377,6 +371,7 @@ export function KanbanBoard() {
     stableLanesRef.current = stable;
     return stable;
   }, [swimlanes, tasks, priorityFilters, labelFilters, normalizedSearch, ticketDigits, completingTaskIds, lanePins]);
+  /* eslint-enable react-hooks/refs */
 
   if (!hydrated) return null;
 
@@ -425,7 +420,7 @@ export function KanbanBoard() {
       </div>
 
       {newTaskOpen && newTaskLaneId && (
-        <NewTaskDialog swimlaneId={newTaskLaneId} onClose={() => setNewTaskOpen(false)} />
+        <NewTaskDialog swimlaneId={newTaskLaneId} onClose={dismissNewTask} />
       )}
 
       <BoardDialogs />

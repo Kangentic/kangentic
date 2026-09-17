@@ -5,6 +5,11 @@ import { OverlayPopover } from '../OverlayPopover';
 import { Pill } from '../Pill';
 import { fetchGitBranches } from '../../utils/git-branches';
 
+// Stable empty list so the filtered-branches memo keeps a referentially
+// constant input before the first fetch lands.
+// hmr-safe: never mutated; a referential-identity sentinel for "no branches".
+const EMPTY_BRANCHES: string[] = [];
+
 interface BranchPickerProps {
   value: string;
   defaultBranch: string;
@@ -47,8 +52,13 @@ export function BranchPicker({
     onOpenChange?.(next);
   }, [isControlled, onOpenChange]);
 
-  const [branches, setBranches] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  // The branch list is stored with the open it was fetched for, and `loading`
+  // is derived: the dropdown is open and no list has arrived for THIS open.
+  // Derived rather than a flag an effect sets, which the compiler rules forbid.
+  const [openGeneration, setOpenGeneration] = useState(0);
+  const [fetched, setFetched] = useState<{ openGeneration: number; branches: string[] } | null>(null);
+  const branches = fetched?.branches ?? EMPTY_BRANCHES;
+  const loading = open && fetched?.openGeneration !== openGeneration;
   const [query, setQuery] = useState('');
   const [triggerWidth, setTriggerWidth] = useState<number>();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -69,34 +79,47 @@ export function BranchPicker({
 
   // Input variant: match the trigger's full width. A fixed-strategy popover is
   // detached from the container, so `left-0 right-0` no longer stretches it.
+  // Read through the two named refs rather than `positionAnchor`: the compiler
+  // rules allow a state set in a layout effect that syncs from a ref (a DOM
+  // measurement), but cannot see a ref behind a `??` between two of them.
   useLayoutEffect(() => {
-    if (open && variant === 'input' && positionAnchor.current) {
-      setTriggerWidth(positionAnchor.current.getBoundingClientRect().width);
-    }
-  }, [open, variant, positionAnchor]);
+    if (!open || variant !== 'input') return;
+    const anchor = anchorRef?.current ?? containerRef.current;
+    if (!anchor) return;
+    setTriggerWidth(anchor.getBoundingClientRect().width);
+  }, [open, variant, anchorRef]);
 
   const displayBranch = value || defaultBranch || 'main';
 
-  const fetchBranches = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await fetchGitBranches();
-      setBranches(result);
-    } catch {
-      setBranches([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   // Whenever the dropdown opens (chip click OR a controlled open from the kebab),
-  // reset the query, fetch branches, and focus the search box.
+  // reset the query, fetch branches, and focus the search box. The query reset
+  // and the open generation are render-time adjustments on the open transition
+  // (React's "adjusting state when a prop changes" pattern), so the search box
+  // never paints the previous query for a frame; the fetch and the focus stay
+  // in the effect, which keys on the generation so each open fetches once.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setQuery('');
+      setOpenGeneration(openGeneration + 1);
+    }
+  }
   useEffect(() => {
     if (!open) return;
-    setQuery('');
-    fetchBranches();
+    let cancelled = false;
+    void (async () => {
+      let result: string[];
+      try {
+        result = await fetchGitBranches();
+      } catch {
+        result = [];
+      }
+      if (!cancelled) setFetched({ openGeneration, branches: result });
+    })();
     requestAnimationFrame(() => searchRef.current?.focus());
-  }, [open, fetchBranches]);
+    return () => { cancelled = true; };
+  }, [open, openGeneration]);
 
   // Close on click outside (consider both the position anchor and the dropdown).
   useEffect(() => {

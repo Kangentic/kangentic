@@ -47,7 +47,7 @@ import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
 import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
 import { ColumnsOverview, formatModelName, type OverviewRow, type OverviewValue } from './board-manager/ColumnsOverview';
 import { Pill } from '../Pill';
-import { ICON_REGISTRY, ROLE_DEFAULTS, getSwimlaneIcon, getUsedIcons } from '../../utils/swimlane-icons';
+import { RegistryIcon, getSwimlaneIconName, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
@@ -625,14 +625,14 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
    */
   profileName?: string | null;
 }) {
-  const Icon = draft.icon ? ICON_REGISTRY.get(draft.icon) : (draft.role ? ROLE_DEFAULTS[draft.role] : null);
+  const iconName = getSwimlaneIconName(draft);
   // Identity only: small tinted icon + name + role badge + position + the
   // active profile. Delete moved to the rail's COLUMNS group, where it sits
   // with the other structure actions (add, reorder) instead of alone here.
   return (
     <div className="flex items-center gap-2.5 px-7 py-2.5 border-b border-edge/60 flex-shrink-0">
-      {Icon ? (
-        <Icon size={18} strokeWidth={1.75} style={{ color: draft.color }} className="flex-shrink-0" />
+      {iconName ? (
+        <RegistryIcon name={iconName} size={18} strokeWidth={1.75} style={{ color: draft.color }} className="flex-shrink-0" />
       ) : (
         <span className="block w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: draft.color }} />
       )}
@@ -765,10 +765,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // save path can still name them and a discard restores them for free.
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set<string>());
 
-  // Set once the user drags a rail row. Tells the store-sync effect to preserve
-  // the local order instead of re-sorting from store positions. Never cleared
+  // Set once the user drags a rail row. Tells the store sync to preserve the
+  // local order instead of re-sorting from store positions. Never cleared
   // while open (once local order equals store order, "preserve" is a no-op).
-  const hasLocalReorderRef = useRef(false);
+  // State, not a ref, because the sync runs during render and may not read a
+  // ref there.
+  const [hasLocalReorder, setHasLocalReorder] = useState(false);
 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -785,19 +787,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
   const lastDraftRequestRef = useRef(addDraftRequest);
 
-  // Mirror state into refs so the store-sync effect can read the latest
-  // values without including them in its dependency array (which would loop,
-  // because the same effect calls setOriginals/setDrafts).
-  // Intentional: no deps array on these mirror effects - they fire on every
-  // commit so .current always points at the latest snapshot before the
-  // store-sync effect runs (effects fire in declaration order).
-  const originalsRef = useRef(originals);
-  const draftsRef = useRef(drafts);
-  const pendingDeleteIdsRef = useRef(pendingDeleteIds);
-  useEffect(() => { originalsRef.current = originals; });
-  useEffect(() => { draftsRef.current = drafts; });
-  useEffect(() => { pendingDeleteIdsRef.current = pendingDeleteIds; });
-
   // ── Sync from store ────────────────────────────────────────────────
   // When the store updates (other UI edits a column, or a column is created
   // by another flow), refresh the matching original/draft IFF the user has
@@ -805,26 +794,30 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // by this sync. After save, the store update flows back through here so
   // dirty dots clear without us re-creating the dialog state.
   //
-  // Reads originals/drafts via refs so we can compare against the latest
-  // committed state without putting them in the dep array (which would loop
-  // because the same effect calls setOriginals/setDrafts).
-  useEffect(() => {
-    const previousOriginals = originalsRef.current;
-    const previousDrafts = draftsRef.current;
-    const stagedDeletes = pendingDeleteIdsRef.current;
+  // This runs DURING RENDER, on the render where `swimlanes` first differs
+  // from the array last synced (React's "adjusting state when a prop changes"
+  // pattern), rather than in an effect. It used to be an effect reading the
+  // committed originals/drafts through mirror refs to avoid a dependency loop;
+  // in render the current state IS the committed state, so it reads it
+  // directly, and React re-renders immediately with the adjusted values
+  // before anything paints. The initial state is already derived from the
+  // mount-time `swimlanes`, so the first render never syncs.
+  const [syncedSwimlanes, setSyncedSwimlanes] = useState(swimlanes);
+  if (swimlanes !== syncedSwimlanes) {
+    setSyncedSwimlanes(swimlanes);
 
     const nextOriginals: Record<string, Swimlane> = {};
     for (const lane of swimlanes) nextOriginals[lane.id] = lane;
     setOriginals(nextOriginals);
 
-    const nextDrafts: Record<string, Swimlane> = { ...previousDrafts };
+    const nextDrafts: Record<string, Swimlane> = { ...drafts };
     for (const lane of swimlanes) {
       // A staged delete removed this lane's draft, but the row is still in the
       // store (nothing is persisted until Save), so `!previousDraft` below would
       // read as "never seen" and re-add it, resurrecting the removal.
-      if (stagedDeletes.has(lane.id)) continue;
-      const previousDraft = previousDrafts[lane.id];
-      const wasDirty = previousDraft ? isDirty(previousDraft, previousOriginals[lane.id]) : false;
+      if (pendingDeleteIds.has(lane.id)) continue;
+      const previousDraft = drafts[lane.id];
+      const wasDirty = previousDraft ? isDirty(previousDraft, originals[lane.id]) : false;
       if (!previousDraft || !wasDirty) {
         nextDrafts[lane.id] = lane;
       }
@@ -836,8 +829,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
     setDrafts(nextDrafts);
 
-    setLaneOrder((previousOrder) => reconcileLaneOrder(previousOrder, swimlanes, hasLocalReorderRef.current, stagedDeletes));
-  }, [swimlanes]);
+    setLaneOrder(reconcileLaneOrder(laneOrder, swimlanes, hasLocalReorder, pendingDeleteIds));
+  }
 
   // ── Refresh agent capabilities ─────────────────────────────────────
   // The agent inventory is loaded once at app bootstrap (App.tsx) and cached in
@@ -903,23 +896,21 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // under a profile without being individually rewired.
   const storeBoardProfiles = useBoardStore((state) => state.boardProfiles);
   const saveBoardProfiles = useBoardStore((state) => state.saveBoardProfiles);
-  const [profileDrafts, setProfileDrafts] = useState<BoardProfile[]>([]);
-  const [profileOriginals, setProfileOriginals] = useState<BoardProfile[]>([]);
+  // Snapshot the store's profiles once per open (lazy initializers run at the
+  // first render only, so live store changes never clobber in-progress edits).
+  // Deep-cloned so edits stay local until Save, matching how column drafts
+  // work. Hand-written profiles in kangentic.json load here like any other, so
+  // they round-trip through an edit rather than being clobbered by it.
+  const [profileDrafts, setProfileDrafts] = useState<BoardProfile[]>(
+    () => structuredClone(storeBoardProfiles) as BoardProfile[],
+  );
+  const [profileOriginals, setProfileOriginals] = useState<BoardProfile[]>(
+    () => structuredClone(storeBoardProfiles) as BoardProfile[],
+  );
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [profileNameDialog, setProfileNameDialog] = useState<
     { mode: 'new' | 'duplicate' | 'rename'; value: string } | null
   >(null);
-
-  // Snapshot the store's profiles once per open. Deep-cloned so edits stay local
-  // until Save, matching how column drafts work. Hand-written profiles in
-  // kangentic.json load here like any other, so they round-trip through an edit
-  // rather than being clobbered by it.
-  useEffect(() => {
-    const snapshot = structuredClone(storeBoardProfiles) as BoardProfile[];
-    setProfileDrafts(snapshot);
-    setProfileOriginals(structuredClone(storeBoardProfiles) as BoardProfile[]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot on mount only; live store changes must not clobber in-progress edits
-  }, []);
 
   const activeProfile = activeProfileId
     ? profileDrafts.find((profile) => profile.id === activeProfileId) ?? null
@@ -953,13 +944,23 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // A draft per column, snapshotted on mount and again while UNTOUCHED, so a
   // board reload behind an open dialog refreshes what the user has not edited
   // without clobbering what they have.
-  const [automationOriginals, setAutomationOriginals] = useState<AutomationDraftsByColumn>({});
-  const [automationDrafts, setAutomationDrafts] = useState<AutomationDraftsByColumn>({});
+  const automations = useBoardStore((s) => s.automations);
+  const [automationOriginals, setAutomationOriginals] = useState<AutomationDraftsByColumn>(() => draftsByColumn(automations));
+  const [automationDrafts, setAutomationDrafts] = useState<AutomationDraftsByColumn>(() => draftsByColumn(automations));
   const [editing, setEditing] = useState<{ columnId: string; rowId: string; isNew: boolean } | null>(null);
   const [pickerOpenFor, setPickerOpenFor] = useState<{ columnId: string; trigger: AutomationTrigger; anchor: HTMLElement } | null>(null);
-  const automationsTouchedRef = useRef(false);
-
-  const automations = useBoardStore((s) => s.automations);
+  const [automationsTouched, setAutomationsTouched] = useState(false);
+  // The store refresh, during render on the render where `automations` first
+  // differs from the array last synced (the same pattern as the column sync
+  // above). The originals always follow the store; the drafts only while
+  // untouched, so a store refresh never overwrites the user's edits.
+  const [syncedAutomations, setSyncedAutomations] = useState(automations);
+  if (automations !== syncedAutomations) {
+    setSyncedAutomations(automations);
+    const next = draftsByColumn(automations);
+    setAutomationOriginals(next);
+    if (!automationsTouched) setAutomationDrafts(next);
+  }
   const loadAutomations = useBoardStore((s) => s.loadAutomations);
   const automationRuns = useBoardStore((s) => s.automationRuns);
   const loadAutomationRuns = useBoardStore((s) => s.loadAutomationRuns);
@@ -988,21 +989,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     [automationRuns],
   );
 
-  useEffect(() => {
-    const next = draftsByColumn(automations);
-    setAutomationOriginals(next);
-    // Only while untouched: once the user has edited a row, a store refresh
-    // must not overwrite their work.
-    if (!automationsTouchedRef.current) setAutomationDrafts(next);
-  }, [automations]);
-
   const rowsForColumn = useCallback(
     (columnId: string): AutomationDraft[] => automationDrafts[columnId] ?? [],
     [automationDrafts],
   );
 
   const mutateRows = useCallback((columnId: string, next: (rows: AutomationDraft[]) => AutomationDraft[]) => {
-    automationsTouchedRef.current = true;
+    setAutomationsTouched(true);
     setAutomationDrafts((previous) => ({ ...previous, [columnId]: next(previous[columnId] ?? []) }));
   }, []);
 
@@ -1202,11 +1195,18 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     );
   }, [drafts, newDraftIds, activeId]);
 
-  // Sync hexInput when the active draft's color changes.
-  useEffect(() => {
-    if (draft) setHexInput(draft.color.toLowerCase());
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync only when the color changes, not on every draft identity change, so editing other fields does not clobber in-progress hex input
-  }, [draft?.color]);
+  // Sync hexInput when the active draft's color changes, and only then:
+  // editing other fields must not clobber in-progress hex input. Done during
+  // render against the last color synced, so the field re-renders with the new
+  // value before anything paints.
+  const draftColor = draft?.color;
+  // Starts unsynced so the first render with a draft seeds the field, as the
+  // mount run of the old effect did.
+  const [syncedDraftColor, setSyncedDraftColor] = useState<string | undefined>(undefined);
+  if (draftColor !== syncedDraftColor) {
+    setSyncedDraftColor(draftColor);
+    if (draftColor !== undefined) setHexInput(draftColor.toLowerCase());
+  }
 
   // ── Mutators ───────────────────────────────────────────────────────
   const updateDraft = useCallback((updater: (current: Swimlane) => Swimlane) => {
@@ -1552,7 +1552,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // Reorder handler for the rail: local-only until Save. Flags the store-sync
   // effect to preserve this order (see hasLocalReorderRef above).
   const handleRailReorder = useCallback((nextOrder: string[]) => {
-    hasLocalReorderRef.current = true;
+    setHasLocalReorder(true);
     setLaneOrder(nextOrder);
   }, []);
 
@@ -1698,6 +1698,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     isTodoOrDone
       ? `Sessions don't run in ${draftRole === 'todo' ? 'To Do' : 'Done'} columns, so ${label} doesn't apply.`
       : `Turn on "Start an agent here" in the Agent section to enable ${label}.`;
+
+  // The automation row being edited, resolved in plain render code rather than
+  // an inline IIFE in the JSX: the compiler rules cannot see through an IIFE
+  // to tell the dialog's event handlers apart from render.
+  const editingColumn = editing ? drafts[editing.columnId] : undefined;
+  const editingRow = editing
+    ? rowsForColumn(editing.columnId).find((row) => row.id === editing.rowId)
+    : undefined;
 
   return (
     <>
@@ -1970,21 +1978,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     className="w-full flex items-center gap-2.5 bg-surface-control border border-edge-input hover:border-fg-faint rounded px-3 py-1.5 transition-colors group"
                   >
                     <div className="flex-shrink-0">
-                      {(() => {
-                        // getSwimlaneIcon resolves the custom icon, then the role default,
-                        // and returns null rather than the undefined a two-key
-                        // Record<SwimlaneRole, ...> yields for a role outside the union.
-                        // Rendering that undefined is React error #130, which the root
-                        // ErrorBoundary turns into a blank board.
-                        const RoleIcon = getSwimlaneIcon(draft);
-                        if (RoleIcon) return <RoleIcon size={14} strokeWidth={1.75} style={{ color: draft.color }} />;
-                        return (
-                          <div
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: draft.color }}
-                          />
-                        );
-                      })()}
+                      {/* getSwimlaneIconName resolves the custom icon, then the role
+                          default, and returns null rather than the undefined a two-key
+                          Record<SwimlaneRole, ...> yields for a role outside the union.
+                          Rendering that undefined is React error #130, which the root
+                          ErrorBoundary turns into a blank board. */}
+                      {getSwimlaneIconName(draft) ? (
+                        <RegistryIcon name={getSwimlaneIconName(draft)} size={14} strokeWidth={1.75} style={{ color: draft.color }} />
+                      ) : (
+                        <div
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: draft.color }}
+                        />
+                      )}
                     </div>
                     <span className="text-xs text-fg-tertiary flex-1 text-left truncate">
                       {draft.icon ?? (draft.role ? `Default (${draft.role})` : 'None')}
@@ -2313,31 +2319,26 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         />
       )}
 
-      {editing && (() => {
-        const editingColumn = drafts[editing.columnId];
-        const editingRow = rowsForColumn(editing.columnId).find((row) => row.id === editing.rowId);
-        if (!editingColumn || !editingRow) return null;
-        return (
-          <EditAutomationDialog
-            key={editing.rowId}
-            draft={editingRow}
-            column={editingColumn}
-            isNew={editing.isNew}
-            takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
-            templatePicker={(onInsert) => <TemplateVariablePicker onInsert={onInsert} />}
-            onDone={(next) => {
-              mutateRows(editing.columnId, (rows) => replaceRow(rows, next));
-              setEditing(null);
-            }}
-            onCancel={() => {
-              // Cancelling a row the picker just added removes it, so a
-              // half-built automation never survives the dialog.
-              if (editing.isNew) mutateRows(editing.columnId, (rows) => removeRow(rows, editing.rowId));
-              setEditing(null);
-            }}
-          />
-        );
-      })()}
+      {editing && editingColumn && editingRow && (
+        <EditAutomationDialog
+          key={editing.rowId}
+          draft={editingRow}
+          column={editingColumn}
+          isNew={editing.isNew}
+          takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
+          templatePicker={TemplateVariablePicker}
+          onDone={(next) => {
+            mutateRows(editing.columnId, (rows) => replaceRow(rows, next));
+            setEditing(null);
+          }}
+          onCancel={() => {
+            // Cancelling a row the picker just added removes it, so a
+            // half-built automation never survives the dialog.
+            if (editing.isNew) mutateRows(editing.columnId, (rows) => removeRow(rows, editing.rowId));
+            setEditing(null);
+          }}
+        />
+      )}
 
       {showIconPicker && draft && (
         <IconPickerDialog

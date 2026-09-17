@@ -78,8 +78,14 @@ export interface EditAutomationDialogProps {
   isNew: boolean;
   /** The column's other rows, for the uniqueness check. */
   takenNames: string[];
-  /** The template-variable inserter, passed as a render prop so it stays in one place. */
-  templatePicker: (onInsert: (variable: string) => void) => React.ReactNode;
+  /**
+   * The template-variable inserter, passed as a COMPONENT so it stays in one
+   * place. A component rather than a render prop: the inserter callback reads
+   * the field's refs when clicked, and the compiler rules cannot tell a
+   * render-prop call from a render-time read, whereas a JSX prop is understood
+   * as deferred.
+   */
+  templatePicker: React.ComponentType<{ onInsert: (variable: string) => void }>;
   onDone: (draft: AutomationDraft) => void;
   onCancel: () => void;
 }
@@ -233,7 +239,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
 }
 
 /** One field, rendered from its manifest declaration. No type branching. */
-function ManifestField({ field, value, onChange, templatePicker }: {
+function ManifestField({ field, value, onChange, templatePicker: TemplatePicker }: {
   field: AutomationField;
   value: unknown;
   onChange: (value: unknown) => void;
@@ -283,7 +289,7 @@ function ManifestField({ field, value, onChange, templatePicker }: {
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
         <span className={SETTING_LABEL_CLASS}>{field.label}</span>
-        {field.templateVariables && templatePicker(insertAtCaret)}
+        {field.templateVariables && <TemplatePicker onInsert={insertAtCaret} />}
       </div>
 
       {field.kind === 'textarea' && highlighted && (

@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
-import { automationIcon } from './automation-icons';
+import { AutomationIcon } from './automation-icons';
 import { TRIGGER_LABELS, describeDraft, pickerTypes, type AutomationDraft } from './automation-drafts';
 
 /**
@@ -38,8 +38,14 @@ export interface AddAutomationPickerProps {
 export function AddAutomationPicker(props: AddAutomationPickerProps) {
   const [filter, setFilter] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+  // The anchor arrives as a prop; the position hook wants a ref. Kept current
+  // in a layout effect declared ahead of the hook, so it runs before the
+  // hook's own measuring effect on every commit (effects fire in declaration
+  // order). A render-time ref write is forbidden by the compiler rules.
   const anchorRef = useRef<HTMLElement>(props.anchor);
-  anchorRef.current = props.anchor;
+  useLayoutEffect(() => {
+    anchorRef.current = props.anchor;
+  });
 
   const { style, placement } = usePopoverPosition(anchorRef, menuRef, true, {
     mode: 'dropdown',
@@ -134,7 +140,6 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
       <PickerGroup label="New automation">
         {types.map(({ type, runnable }) => {
           const entry = AUTOMATION_MANIFEST[type];
-          const TypeIcon = automationIcon(entry.icon);
           return (
             <button
               key={type}
@@ -147,7 +152,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
               onClick={runnable.ok ? () => props.onPickType(type) : undefined}
               className={`flex w-full items-start gap-2 px-3 py-2 text-left ${runnable.ok ? 'cursor-pointer hover:bg-surface-hover' : 'cursor-not-allowed opacity-55'}`}
             >
-              <TypeIcon size={14} className="mt-0.5 shrink-0 text-fg-muted" />
+              <AutomationIcon name={entry.icon} size={14} className="mt-0.5 shrink-0 text-fg-muted" />
               <span className="min-w-0">
                 <span className="block text-xs text-fg">{entry.label}</span>
                 <span className="block text-[11px] text-fg-faint">
@@ -166,7 +171,6 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
             // same glyph as the New automation rows above, the row in the list,
             // and the Type field. This group was the last place the type was
             // identified by its sentence alone.
-            const CopyIcon = automationIcon(AUTOMATION_MANIFEST[draft.type].icon);
             return (
             <button
               key={`${column.id}:${draft.id}`}
@@ -178,7 +182,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
               onClick={() => props.onPickCopy(draft)}
               className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-surface-hover"
             >
-              <CopyIcon size={14} className="mt-0.5 shrink-0 text-fg-muted" />
+              <AutomationIcon name={AUTOMATION_MANIFEST[draft.type].icon} size={14} className="mt-0.5 shrink-0 text-fg-muted" />
               <span className="min-w-0">
                 <span className="block truncate text-xs text-fg">{draft.name}</span>
                 <span className="block truncate text-[11px] text-fg-faint">{describeDraft(draft)}</span>

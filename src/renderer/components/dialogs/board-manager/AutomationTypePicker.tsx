@@ -20,7 +20,7 @@ import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationType } from '../../../../shared/types';
-import { automationIcon } from './automation-icons';
+import { AutomationIcon } from './automation-icons';
 
 export interface AutomationTypePickerProps {
   value: AutomationType;
@@ -59,7 +59,6 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
   }, [open]);
 
   const selected = AUTOMATION_MANIFEST[value];
-  const SelectedIcon = automationIcon(selected.icon);
   // Deduped, because the current value is always listed and a caller that also
   // passes it in `options` would otherwise render it twice. Cheaper to be
   // tolerant here than to make every call site remember.
@@ -93,7 +92,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
         // the Name input and the manifest fields around it.
         className="flex w-full cursor-pointer items-center gap-2 rounded border border-edge-input bg-surface-control px-3 py-1.5 text-left text-sm text-fg-tertiary focus:border-accent focus:outline-none"
       >
-        <SelectedIcon size={14} className="shrink-0 text-fg-muted" />
+        <AutomationIcon name={selected.icon} size={14} className="shrink-0 text-fg-muted" />
         <span className="min-w-0 flex-1 truncate">{selected.label}</span>
         <ChevronDown size={14} className="shrink-0 text-fg-muted" />
       </button>
@@ -119,7 +118,6 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
         <div role="listbox" aria-label={ariaLabel}>
           {listed.map((type) => {
             const entry = AUTOMATION_MANIFEST[type];
-            const OptionIcon = automationIcon(entry.icon);
             const isLegacy = entry.status === 'legacy';
             const isSelected = type === value;
             return (
@@ -137,7 +135,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
                   isLegacy ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-surface-hover'
                 }`}
               >
-                <OptionIcon size={14} className="shrink-0 text-fg-muted" />
+                <AutomationIcon name={entry.icon} size={14} className="shrink-0 text-fg-muted" />
                 <span className="min-w-0 flex-1 truncate text-fg">{entry.label}</span>
                 {isSelected && <Check size={14} className="shrink-0 text-accent" />}
               </button>

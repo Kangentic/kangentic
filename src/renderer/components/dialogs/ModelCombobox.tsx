@@ -158,17 +158,16 @@ export function ModelCombobox({
     return ids;
   }, [modelGroups, supersededGroups]);
 
-  useEffect(() => {
-    if (!isOpen) {
-      setPinnedExpanded(false);
-      return;
-    }
-    if (value && demotedSelectableIds.has(value)) setPinnedExpanded(true);
-    // Seed the expanded state only on the open transition (reading value and
-    // demotedSelectableIds fresh from this render's closure); re-running on
-    // every keystroke while open would fight a manual collapse.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
-  }, [isOpen]);
+  // Seed the expanded state only on the open transition (reading value and
+  // demotedSelectableIds from this render); re-running on every keystroke
+  // while open would fight a manual collapse. A render-time adjustment on the
+  // transition (React's "adjusting state when a prop changes" pattern) rather
+  // than an effect, so the menu never paints a frame in the wrong state.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    setPinnedExpanded(isOpen && Boolean(value) && demotedSelectableIds.has(value));
+  }
 
   useEffect(() => {
     // The menu is portaled OUT of containerRef, so a click inside it must also

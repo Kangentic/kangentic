@@ -27,7 +27,7 @@
  *    next real report corrects.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { TaskDetailHost } from '../../../shared/types';
 import { isWindowDormant } from '../store/types';
 import type { ManagedWindow } from '../store/types';
@@ -95,8 +95,13 @@ function fingerprint(entries: Array<{ projectId: string; taskId: string }>): str
 }
 
 export function useDetailOwnershipSync(options: DetailOwnershipSyncOptions): void {
+  // Written on commit (a layout effect, ahead of the passive effect below and
+  // the store subscriptions it installs), never during render, which the
+  // compiler rules forbid.
   const optionsRef = useRef(options);
-  optionsRef.current = options;
+  useLayoutEffect(() => {
+    optionsRef.current = options;
+  });
 
   // The last set actually sent. In a ref rather than module scope deliberately: a
   // Fast Refresh remount then re-sends a redundant (idempotent) report instead of

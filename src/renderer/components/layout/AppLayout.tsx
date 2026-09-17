@@ -128,8 +128,12 @@ export function AppLayout() {
   const detailWindowRestorePending = useSessionStore(
     (s) => s.pendingDetailWindowsProjectId !== null && s.pendingDetailWindowsProjectId === currentProjectId,
   );
+  // The content column the panel's available height is measured against. Owned
+  // here and attached below, rather than returned by the hook (see its docblock).
+  const terminalContentColRef = useRef<HTMLDivElement>(null);
   const terminal = useTerminalResize(
     config,
+    terminalContentColRef,
     everyTerminalDetached,
     `${currentProjectId ?? 'none'}:${detailWindowRestorePending ? 'restoring' : 'settled'}`,
   );
@@ -454,7 +458,7 @@ export function AppLayout() {
           </>
         )}
 
-        <div className="flex-1 flex flex-col min-w-0" ref={terminal.contentColRef}>
+        <div className="flex-1 flex flex-col min-w-0" ref={terminalContentColRef}>
           <AnnouncementBanner />
           {currentProject ? (
             <>

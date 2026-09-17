@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CircleStop, Crosshair, Eraser, Loader2, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { closeBrowserForTask } from './close-browser';
 import { useDrawingOverlay } from './useDrawingOverlay';
@@ -255,7 +255,12 @@ function BrowserPaneActive({
   // same guest, which main treats as an in-place owner update.
   const registeredWebContentsIdRef = useRef<number | null>(null);
   const registrationIdentityRef = useRef({ sessionId, taskId, projectId, visibility });
-  registrationIdentityRef.current = { sessionId, taskId, projectId, visibility };
+  // Written on commit (a layout effect, ahead of every passive effect and
+  // listener that reads it), never during render: React's compiler rules
+  // forbid a render-time ref write, and a discarded render must not publish.
+  useLayoutEffect(() => {
+    registrationIdentityRef.current = { sessionId, taskId, projectId, visibility };
+  });
   useEffect(() => {
     const webview = webviewRef.current;
     if (!webview) return;

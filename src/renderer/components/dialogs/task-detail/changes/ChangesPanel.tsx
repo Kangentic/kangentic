@@ -1,5 +1,5 @@
 import '../../../../monacoConfig';
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowLeft, ArrowUp, ArrowDown, Check } from 'lucide-react';
 import { PrLink } from '../../../PrLink';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
@@ -193,11 +193,15 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   }, [entityId, toggleChangesFileViewed]);
 
   // Refs for values needed inside callbacks to avoid stale closures
-  // and subscription churn on every file selection or re-render.
+  // and subscription churn on every file selection or re-render. Written on
+  // commit (a layout effect, ahead of every passive effect and handler that
+  // reads them), never during render, which the compiler rules forbid.
   const selectedFileRef = useRef(selectedFile);
-  selectedFileRef.current = selectedFile;
   const filesRef = useRef(files);
-  filesRef.current = files;
+  useLayoutEffect(() => {
+    selectedFileRef.current = selectedFile;
+    filesRef.current = files;
+  });
 
   // Stale-while-revalidate content cache. Each entry stores the fetch result
   // and the generation it was fetched in. When fs.watch fires, the generation
@@ -340,21 +344,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     }
   }, [worktreePath, projectPath, baseBranch]);
 
-  // Truthful `behind`: without a fetch, the counts only reflect the last time
-  // anyone fetched, so a branch can read "0 behind" while origin has moved on.
-  // refreshRemote makes the HANDLER run the throttled all-remotes fetch first
-  // (5s budget, never rejects). Mount-only by design - the cheap local summary
-  // above paints immediately and this corrects it once; the fs.watch refires
-  // stay flagless so file edits never trigger network I/O.
-  const refreshBranchSummaryFromRemote = useCallback(async () => {
-    try {
-      const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch, refreshRemote: true });
-      setBranchSummary(summary);
-    } catch {
-      // Best-effort context: leave the previous summary in place on failure.
-    }
-  }, [worktreePath, projectPath, baseBranch]);
-
   // Working-diff file count for the history browser's "Uncommitted changes" row
   // badge. Always scope-based (never commitOid) so the badge stays accurate even
   // while the user is browsing a different commit's detail.
@@ -370,21 +359,25 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // Stable refs for fetch callbacks - used in the subscription effect and
   // handleSelectFile to avoid re-subscribing or re-creating on every render.
   const fetchFilesRef = useRef(fetchFiles);
-  fetchFilesRef.current = fetchFiles;
   const fetchFileContentRef = useRef(fetchFileContent);
-  fetchFileContentRef.current = fetchFileContent;
   const fetchBranchSummaryRef = useRef(fetchBranchSummary);
-  fetchBranchSummaryRef.current = fetchBranchSummary;
   const fetchUncommittedCountRef = useRef(fetchUncommittedCount);
-  fetchUncommittedCountRef.current = fetchUncommittedCount;
   // Selection ref for the fs.watch subscription effect below, which must not
   // re-subscribe on every commit-selection change (see that effect's comment).
   const selectedCommitRef = useRef(changesSelectedCommit);
-  selectedCommitRef.current = changesSelectedCommit;
   // Scope ref for the same subscription effect, to decide whether fetchFiles's
   // result already covers the Uncommitted-row count (see onDiffChanged below).
   const scopeRef = useRef(scope);
-  scopeRef.current = scope;
+  // All written on commit, in a layout effect that runs ahead of the passive
+  // effects below that read them; never during render.
+  useLayoutEffect(() => {
+    fetchFilesRef.current = fetchFiles;
+    fetchFileContentRef.current = fetchFileContent;
+    fetchBranchSummaryRef.current = fetchBranchSummary;
+    fetchUncommittedCountRef.current = fetchUncommittedCount;
+    selectedCommitRef.current = changesSelectedCommit;
+    scopeRef.current = scope;
+  });
 
   // Adoption signal, once per mount. Every host gates this component on a
   // state the user put it in (TaskDetailBody's changesPresent,
@@ -412,20 +405,33 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     }
   }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
 
-  // One remote-refreshed summary per panel identity, NOT per scope or
+  // Truthful `behind`: without a fetch, the counts only reflect the last time
+  // anyone fetched, so a branch can read "0 behind" while origin has moved on.
+  // refreshRemote makes the HANDLER run the throttled all-remotes fetch first
+  // (5s budget, never rejects). One remote-refreshed summary per panel
+  // identity (worktreePath / projectPath / baseBranch), NOT per scope or
   // commit-selection change - browsing commits must never re-fetch the
-  // network. The callback's own deps are exactly the panel identity
-  // (worktreePath / projectPath / baseBranch), so depending on it keys this
-  // effect correctly. Runs after the flagless mount fetch above, so the header
-  // shows the cheap local counts immediately and corrects them within the
-  // probe budget (or silently keeps them when offline).
+  // network. Runs after the flagless mount fetch above, so the header shows
+  // the cheap local counts immediately and corrects them within the probe
+  // budget (or silently keeps them when offline). The fetch is inline rather
+  // than a callback, so a result that lands after the identity has moved on
+  // is dropped instead of overwriting the next identity's summary.
   // hmr-safe: a Vite Fast Refresh remount re-runs this like a fresh mount;
   // that is accepted because the handler's fetch is throttled to one real
   // fetch per repo per 30s and never rejects - do not "fix" that throttle
   // window down on the strength of the mount-only comment above.
   useEffect(() => {
-    void refreshBranchSummaryFromRemote();
-  }, [refreshBranchSummaryFromRemote]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch, refreshRemote: true });
+        if (!cancelled) setBranchSummary(summary);
+      } catch {
+        // Best-effort context: leave the previous summary in place on failure.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [worktreePath, projectPath, baseBranch]);
 
   // Restore content for the persisted selected file after files load.
   // `files` is in the dependency array so this re-evaluates after the initial
@@ -536,7 +542,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // here re-renders every visible row on every push, which the sibling
   // onSelect / onToggleViewed / onContextMenu handlers deliberately avoid.
   const taskRef = useRef(task);
-  taskRef.current = task;
+  useLayoutEffect(() => {
+    taskRef.current = task;
+  });
   const filePopOutTaskId = filePopOutParams?.taskId;
   const filePopOutProjectId = filePopOutParams?.projectId;
   const handleOpenFileWindow = useCallback((filePath: string) => {
@@ -627,13 +635,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const [isResizingTree, setIsResizingTree] = useState(false);
   const panelRowRef = useRef<HTMLDivElement>(null);
 
-  // Apply the stored (manual) width. Fires only when the stored value itself
-  // changes - NOT on isResizingTree - so the release does not momentarily re-apply
-  // a stale width and snap the panel (the janky double-move). A live drag is
-  // local-only and untouched.
-  useEffect(() => {
+  // Track the stored (manual) width in the ref. Fires only when the stored value
+  // itself changes - NOT on isResizingTree - so the release does not momentarily
+  // re-apply a stale width and snap the panel (the janky double-move). The
+  // local state is only rendered while a drag is live, so it is seeded from
+  // this ref at drag start rather than synced here (a setState in an effect is
+  // the cascading-render shape the compiler rules forbid).
+  useLayoutEffect(() => {
     if (storedFileTreeWidth === undefined) return;
-    setFileTreeWidth(storedFileTreeWidth);
     fileTreeWidthRef.current = storedFileTreeWidth;
   }, [storedFileTreeWidth]);
 
@@ -642,6 +651,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     const container = panelRowRef.current;
     if (!container) return;
     setIsResizingTree(true);
+    // Start the live width where the rail already is, so the first frame of
+    // the drag (before any mousemove) does not jump.
+    setFileTreeWidth(fileTreeWidthRef.current);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
@@ -670,7 +682,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // once the stored value is gone).
   const handleTreeResizeReset = useCallback(() => {
     setChangesFileTreeWidth(entityId, null);
-    setFileTreeWidth(FILE_TREE_DEFAULT_WIDTH);
     fileTreeWidthRef.current = FILE_TREE_DEFAULT_WIDTH;
   }, [setChangesFileTreeWidth, entityId]);
 
@@ -747,13 +758,17 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   }, []);
   const storedHistoryHeight = useSessionStore((state) => state.changesHistoryHeight[entityId]);
   const setChangesHistoryHeightStore = useSessionStore((state) => state.setChangesHistoryHeight);
-  const [historyHeight, setHistoryHeight] = useState<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
+  // The live height while a drag is in flight; the stored height otherwise.
+  // Derived rather than synced from the store in an effect (the
+  // cascading-render shape the compiler rules forbid). The ref carries the
+  // latest value for the release handler, which commits it to the store.
+  const [liveHistoryHeight, setLiveHistoryHeight] = useState<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
   const historyHeightRef = useRef<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
   const [isResizingHistory, setIsResizingHistory] = useState(false);
+  const historyHeight = isResizingHistory ? liveHistoryHeight : (storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (storedHistoryHeight === undefined) return;
-    setHistoryHeight(storedHistoryHeight);
     historyHeightRef.current = storedHistoryHeight;
   }, [storedHistoryHeight]);
 
@@ -762,6 +777,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     const container = railRef.current;
     if (!container) return;
     setIsResizingHistory(true);
+    // Start the live height where the section already is, so the first frame
+    // of the drag (before any mousemove) does not jump.
+    setLiveHistoryHeight(historyHeightRef.current);
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
 
@@ -776,7 +794,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         HISTORY_DRAG_MIN,
         Math.min(rect.height - TREE_REGION_DRAG_MIN, rect.bottom - moveEvent.clientY - HISTORY_SECTION_HEADER_PX),
       );
-      setHistoryHeight(next);
+      setLiveHistoryHeight(next);
       historyHeightRef.current = next;
     };
     const onMouseUp = () => {
@@ -795,7 +813,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // to its default.
   const handleHistoryResizeReset = useCallback(() => {
     setChangesHistoryHeightStore(entityId, null);
-    setHistoryHeight(HISTORY_DEFAULT_HEIGHT);
     historyHeightRef.current = HISTORY_DEFAULT_HEIGHT;
   }, [setChangesHistoryHeightStore, entityId]);
 

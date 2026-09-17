@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch, Circle } from 'lucide-react';
 import { layoutCommitGraph } from '../../../../lib/commit-graph-layout';
 import { CommitGraphSvg, ROW_HEIGHT_PX, laneColor } from './CommitGraphSvg';
@@ -77,8 +77,11 @@ export function CommitGraphPanel({
   const initialFetchDoneRef = useRef(false);
 
   // Stable ref so a host passing an inline callback never re-triggers fetches.
+  // Written on commit (a layout effect), never during render.
   const onLoadedRef = useRef(onLoaded);
-  onLoadedRef.current = onLoaded;
+  useLayoutEffect(() => {
+    onLoadedRef.current = onLoaded;
+  });
 
   const fetchGraph = useCallback(async () => {
     try {
@@ -98,8 +101,12 @@ export function CommitGraphPanel({
   }, [worktreePath, projectPath, baseBranch]);
 
   // Stable ref so the subscription effect never re-subscribes on a fetch change.
+  // Written on commit (a layout effect, ahead of the passive effects that read
+  // it), never during render.
   const fetchGraphRef = useRef(fetchGraph);
-  fetchGraphRef.current = fetchGraph;
+  useLayoutEffect(() => {
+    fetchGraphRef.current = fetchGraph;
+  });
 
   // Fetch on mount and whenever the target directory / base branch changes.
   useEffect(() => {

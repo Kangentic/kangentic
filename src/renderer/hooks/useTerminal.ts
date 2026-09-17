@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
@@ -640,12 +640,12 @@ export function useTerminal(options: UseTerminalOptions) {
    *  a glyph-atlas re-rasterization) apart from a cursor/scrollback/color-only
    *  change (which reuses the existing atlas and applies synchronously). */
   const lastAppliedFontRef = useRef<{ family: string; size: number } | null>(null);
-  /** Updated every render so the paste handler (attached once by initTerminal)
-   *  always reads the current template, even though the agent list resolves
-   *  asynchronously after the terminal has already initialized. */
+  /** Updated on every commit (see the layout effect below) so the paste handler
+   *  (attached once by initTerminal) always reads the current template, even
+   *  though the agent list resolves asynchronously after the terminal has
+   *  already initialized. */
   const pasteImageTemplateRef = useRef(options.pasteImageTemplate);
-  pasteImageTemplateRef.current = options.pasteImageTemplate;
-  /** Updated every render (same pattern as pasteImageTemplateRef) so the key
+  /** Updated on every commit (same pattern as pasteImageTemplateRef) so the key
    *  handler attached once by initTerminal always reads the current setting. */
   const backspaceSendsCtrlHRef = useRef(options.backspaceSendsCtrlH);
   /** The grid main is holding this session at (SessionResizeResult.held), or
@@ -654,13 +654,23 @@ export function useTerminal(options: UseTerminalOptions) {
   /** The font size the terminal runs at while conformed, so the display-settings
    *  effect re-derives it on a font change instead of clobbering it. */
   const conformedFontRef = useRef<number | null>(null);
-  /** The configured font size and the session, updated every render, so the
+  /** The configured font size and the session, updated on every commit, so the
    *  conform callbacks below (stable, ref-reading) scale from the size the user
    *  chose and label their traces with the session they serve. */
   const configuredFontRef = useRef(options.fontSize || 14);
-  configuredFontRef.current = options.fontSize || 14;
   const sessionIdRef = useRef(options.sessionId ?? null);
-  sessionIdRef.current = options.sessionId ?? null;
+  // The latest-value refs above are written in a layout effect, on commit,
+  // never during render: the compiler rules forbid a render-time ref write,
+  // and a listener must never see a value from a render that was discarded.
+  // Every reader (the xterm handlers, the IPC and settle callbacks, the fit and
+  // conform paths, the watchdog) runs after commit, and neither this hook nor
+  // its hosts reads them from a layout effect, so the ordering is safe.
+  useLayoutEffect(() => {
+    pasteImageTemplateRef.current = options.pasteImageTemplate;
+    backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
+    configuredFontRef.current = options.fontSize || 14;
+    sessionIdRef.current = options.sessionId ?? null;
+  });
   /** The cell measured at the configured font, taken by every unheld fit, so a
    *  held terminal can say what grid it would fit on its own (fitTerminal's
    *  probe) without touching the font it is conformed to. */
@@ -901,17 +911,18 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     fitTerminal('renderer-change', false);
   }, [fitTerminal]);
-  backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
-  /** Updated every render (same pattern as pasteImageTemplateRef) so the settle
-   *  paths attached by initTerminal/reloadScrollback always call the caller's
-   *  current callback. */
+  /** Updated on every commit (same pattern as pasteImageTemplateRef) so the
+   *  settle paths attached by initTerminal/reloadScrollback always call the
+   *  caller's current callback. */
   const onScrollbackSettledRef = useRef(options.onScrollbackSettled);
-  onScrollbackSettledRef.current = options.onScrollbackSettled;
-  /** Updated every render (same pattern as onScrollbackSettledRef) so the single
-   *  arrival-focus frame below (`focusOnArrival`, reached from all five discharge
-   *  sites) asks the host's CURRENT policy. */
+  /** Updated on every commit (same pattern as onScrollbackSettledRef) so the
+   *  single arrival-focus frame below (`focusOnArrival`, reached from all five
+   *  discharge sites) asks the host's CURRENT policy. */
   const mayTakeArrivalFocusRef = useRef(options.mayTakeArrivalFocus);
-  mayTakeArrivalFocusRef.current = options.mayTakeArrivalFocus;
+  useLayoutEffect(() => {
+    onScrollbackSettledRef.current = options.onScrollbackSettled;
+    mayTakeArrivalFocusRef.current = options.mayTakeArrivalFocus;
+  });
 
   /** Single chokepoint for "a scrollback operation has settled". Ordering is
    *  load-bearing: pending must clear BEFORE the kick (the incoming queue's
@@ -2220,8 +2231,11 @@ export function useTerminal(options: UseTerminalOptions) {
   }, [options.sessionId, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid]);
 
   // Let the watchdog (armed from initTerminal, declared above this callback)
-  // re-issue a stuck replay without a circular declaration.
-  reloadScrollbackRef.current = reloadScrollback;
+  // re-issue a stuck replay without a circular declaration. Written on commit;
+  // the watchdog is a timer, so it never reads this before the commit lands.
+  useLayoutEffect(() => {
+    reloadScrollbackRef.current = reloadScrollback;
+  });
 
   // Reveal catch-up: when this session's terminal transitions parked ->
   // visible, repaint from scrollback. While parked, main dropped the session's

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
 import { startPanelDrag } from './panel-drag';
 
@@ -28,17 +28,37 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
 
   const latestWidthRef = useRef(width);
   const openRef = useRef(open);
-  openRef.current = open;
+  // Written on commit (a layout effect, ahead of the handlers that read it),
+  // never during render, which the compiler rules forbid.
+  useLayoutEffect(() => {
+    openRef.current = open;
+  });
 
   const collapsedByDragRef = useRef(false);
 
-  // Sync from config on load
-  useEffect(() => {
+  // Sync from config when it changes. A render-time adjustment on the config
+  // transition (React's "adjusting state when a prop changes" pattern) rather
+  // than an effect, so the sidebar never paints the old width for a frame. The
+  // initial state already comes from the mount-time config.
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (config !== syncedConfig) {
+    setSyncedConfig(config);
     const saved = config.sidebar?.width;
-    if (typeof saved === 'number' && saved >= MIN_WIDTH && saved <= MAX_WIDTH) {
-      setWidth(saved);
-      latestWidthRef.current = saved;
-    }
+    if (typeof saved === 'number' && saved >= MIN_WIDTH && saved <= MAX_WIDTH) setWidth(saved);
+  }
+  // The ref half of that sync, which render cannot do. Keyed on the config and
+  // NOT mirrored from `width`: a collapsing drag sets the width to MIN_WIDTH
+  // and then 0 on purpose while the ref keeps the last real width for the
+  // toggle to restore.
+  useLayoutEffect(() => {
+    const saved = config.sidebar?.width;
+    if (typeof saved === 'number' && saved >= MIN_WIDTH && saved <= MAX_WIDTH) latestWidthRef.current = saved;
+  }, [config]);
+
+  // Enable transitions after the first frame, and again after a config change
+  // (matching the previous mount-and-config effect), to avoid animating the
+  // synced width.
+  useEffect(() => {
     requestAnimationFrame(() => setReady(true));
   }, [config]);
 

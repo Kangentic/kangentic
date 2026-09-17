@@ -19,7 +19,7 @@
  * sizing math is gone.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Pencil, Trash2, X } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
@@ -255,10 +255,15 @@ export function TaskDetailWindow({
   }, [requestClose]);
   // A window that was PARKED rather than removed keeps its frozen view through
   // the park (nothing unmounts). Release the freeze on the way back so the
-  // un-parked body renders live state, not the face it wore when closed.
-  useEffect(() => {
+  // un-parked body renders live state, not the face it wore when closed. A
+  // render-time adjustment on the dormant transition (React's "adjusting state
+  // when a prop changes" pattern), so the body never paints the frozen face
+  // for a frame after un-parking.
+  const [wasDormant, setWasDormant] = useState(dormant);
+  if (dormant !== wasDormant) {
+    setWasDormant(dormant);
     if (!dormant) setClosingView(null);
-  }, [dormant]);
+  }
 
   const actions = useTaskActions({
     task,
@@ -303,6 +308,10 @@ export function TaskDetailWindow({
     skipDeleteConfirm,
     updateConfig,
   });
+  // Pulled out by name so the compiler rules can see it is a ref (the `Ref`
+  // suffix) rather than a field of the hook's return value, which they would
+  // treat as immutable when the worktree confirm below writes to it.
+  const { pendingSaveRef } = actions;
 
   // Track the body's branch selector until a close is requested, then hold it.
   // An effect (not a render-time write) is what makes the snapshot pre-gesture:
@@ -376,20 +385,26 @@ export function TaskDetailWindow({
     || branchConfig.useWorktree !== (task.use_worktree != null ? Boolean(task.use_worktree) : null)
   ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, runMode, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
 
-  // Guard close gestures (header X, Escape, panel.close) while editing with
-  // unsaved changes: ask before discarding. Returns true to let the caller
-  // proceed with the close, false when a confirm was shown instead.
-  const handleCloseAttempt = useCallback(() => {
-    if (confirmDiscard) return false;
-    if (isEditing && isEditDirty) { setConfirmDiscard(true); return false; }
-    return true;
-  }, [confirmDiscard, isEditing, isEditDirty]);
-
-  // The single guarded close used by every close affordance. Proceeds through
-  // the frame's animated exit unless the discard guard intercepts.
+  // The single guarded close used by every close affordance. Guards close
+  // gestures (header X, Escape, panel.close) while editing with unsaved
+  // changes by asking before discarding; otherwise proceeds through the
+  // frame's animated exit.
   const closeWithGuard = useCallback(() => {
-    if (handleCloseAttempt()) requestCloseFrozen();
-  }, [handleCloseAttempt, requestCloseFrozen]);
+    if (confirmDiscard) return;
+    if (isEditing && isEditDirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    requestCloseFrozen();
+  }, [confirmDiscard, isEditing, isEditDirty, requestCloseFrozen]);
+  // Named rather than inline in the confirm's JSX: an inline arrow that calls
+  // the same setter `closeWithGuard` calls makes the compiler rules read the
+  // setter as a reactive dependency of `closeWithGuard` and reject its memo.
+  const cancelDiscard = useCallback(() => setConfirmDiscard(false), []);
+  const confirmDiscardAndClose = useCallback(() => {
+    setConfirmDiscard(false);
+    requestCloseFrozen();
+  }, [requestCloseFrozen]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
   const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
@@ -516,18 +531,24 @@ export function TaskDetailWindow({
   // pointer event that lands on this window (not another open window's header).
   const titleBarRef = useRef<HTMLDivElement>(null);
 
-  // Auto-save and exit edit mode when a session appears.
+  // Auto-save and exit edit mode when a session appears. The form values are
+  // mirrored into refs so the effect keys on `hasSessionContext` alone; the
+  // mirrors are written on commit (a layout effect, ahead of the passive effect
+  // below that reads them), never during render, which the compiler rules
+  // forbid.
   const hadSessionContext = useRef(hasSessionContext);
   const editingRef = useRef(isEditing);
   const titleRef = useRef(title);
   const descriptionRef = useRef(description);
   const labelsRef = useRef(labels);
   const priorityRef = useRef(priority);
-  editingRef.current = isEditing;
-  titleRef.current = title;
-  descriptionRef.current = description;
-  labelsRef.current = labels;
-  priorityRef.current = priority;
+  useLayoutEffect(() => {
+    editingRef.current = isEditing;
+    titleRef.current = title;
+    descriptionRef.current = description;
+    labelsRef.current = labels;
+    priorityRef.current = priority;
+  });
   useEffect(() => {
     if (!hadSessionContext.current && hasSessionContext && editingRef.current) {
       updateTask({
@@ -865,8 +886,8 @@ export function TaskDetailWindow({
           confirmLabel="Discard"
           cancelLabel="Keep editing"
           message="Closing now will discard your unsaved edits to this task."
-          onConfirm={() => { setConfirmDiscard(false); requestCloseFrozen(); }}
-          onCancel={() => setConfirmDiscard(false)}
+          onConfirm={confirmDiscardAndClose}
+          onCancel={cancelDiscard}
         />
       )}
 
@@ -879,14 +900,14 @@ export function TaskDetailWindow({
           variant="default"
           onConfirm={async () => {
             actions.setShowEnableWorktreeConfirm(false);
-            if (actions.pendingSaveRef.current) {
-              await actions.pendingSaveRef.current();
-              actions.pendingSaveRef.current = null;
+            if (pendingSaveRef.current) {
+              await pendingSaveRef.current();
+              pendingSaveRef.current = null;
             }
           }}
           onCancel={() => {
             actions.setShowEnableWorktreeConfirm(false);
-            actions.pendingSaveRef.current = null;
+            pendingSaveRef.current = null;
           }}
         />
       )}

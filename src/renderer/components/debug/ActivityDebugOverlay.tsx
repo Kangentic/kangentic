@@ -243,8 +243,11 @@ function ActivityDebugOverlayContent() {
   // briefly flash on every overlay open / projectSessionIds change because
   // `snapshots` defaults to `[]` and the first poll's IPC roundtrip is
   // async. The diagnostic message is alarming ("engine has no state for N
-  // sessions") and would be wrong during the loading window.
-  const [firstPollComplete, setFirstPollComplete] = useState(false);
+  // sessions") and would be wrong during the loading window. Tracked as the
+  // session-set key the first poll completed FOR, so a change of set reads as
+  // not-yet-complete by derivation, with no effect needed to reset it.
+  const [firstPollCompletedFor, setFirstPollCompletedFor] = useState<string | null>(null);
+  const firstPollComplete = firstPollCompletedFor === projectSessionIdsKey;
 
   // Grid layout grows with the running snapshot count. When fewer than
   // one snapshot is rendered (loading or desync states) we still want a
@@ -310,8 +313,12 @@ function ActivityDebugOverlayContent() {
   // Driving centering from the ref callback removes the indirection:
   // the moment React attaches the DOM node we have a real rect, and
   // we commit the centered position in the same synchronous flush.
+  //
+  // The ref mirrors `isPositioned` for the ref callback and the resize
+  // backstop, which run outside render and need the freshest answer. It is
+  // kept in step at every `setIsPositioned` call rather than by a
+  // render-time write, so it is never assigned during render.
   const isPositionedRef = useRef(isPositioned);
-  isPositionedRef.current = isPositioned;
   const handlePanelRef = useCallback((node: HTMLDivElement | null) => {
     panelRef.current = node;
     if (node === null) {
@@ -336,9 +343,6 @@ function ActivityDebugOverlayContent() {
 
   useEffect(() => {
     let cancelled = false;
-    // Reset the loading guard when the session set changes so the user
-    // doesn't see the diagnostic briefly carry over from a different set.
-    setFirstPollComplete(false);
     const idsAtMount = projectSessionIdsKey.length === 0 ? [] : projectSessionIdsKey.split(',');
     const poll = async () => {
       // Skip mid-drag: a setSnapshots while dragging would re-render
@@ -395,7 +399,7 @@ function ActivityDebugOverlayContent() {
           }
           return results;
         });
-        setFirstPollComplete(true);
+        setFirstPollCompletedFor(projectSessionIdsKey);
       }
     };
     void poll();
@@ -408,10 +412,15 @@ function ActivityDebugOverlayContent() {
 
   // Sync positionRef with state ONLY when not actively dragging. During
   // a drag the ref holds the live cursor position and must not be
-  // overwritten by stale committed state if React re-renders.
-  if (dragRef.current === null) {
-    positionRef.current = position;
-  }
+  // overwritten by stale committed state if React re-renders. A layout
+  // effect (on commit, ahead of the pointer handlers and rAF flushes that
+  // read it) rather than a render-time write, which the compiler rules
+  // forbid and which a discarded render would publish anyway.
+  useLayoutEffect(() => {
+    if (dragRef.current === null) {
+      positionRef.current = position;
+    }
+  });
 
   // GPU-accelerated transform-only positioning: `translate3d()` only
   // triggers Composite, never Layout or Paint, which is what makes a

@@ -8,7 +8,7 @@
  * and id space).
  */
 
-import { createContext, useContext, useMemo, useRef } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { WindowManager } from './store/window-store';
 import type { ManagedWindow } from './store/types';
@@ -112,11 +112,12 @@ export function useLayerStore(): WindowManager['store'] {
   return useWindowManager().manager.store;
 }
 
-/** A stable snap-preview controller for one layer mount. Built once via a ref
- *  (NOT `useMemo`, which React is permitted to discard and rebuild) so the
- *  imperatively-registered preview element is never silently dropped mid-mount. */
+/** A stable snap-preview controller for one layer mount. Built once via a lazy
+ *  `useState` initializer (NOT `useMemo`, which React is permitted to discard
+ *  and rebuild) so the imperatively-registered preview element is never
+ *  silently dropped mid-mount. State, not a ref, because the value is read
+ *  during render and React's compiler rules forbid reading a ref there. */
 export function useSnapPreviewController(): SnapPreviewController {
-  const controllerRef = useRef<SnapPreviewController | null>(null);
-  if (!controllerRef.current) controllerRef.current = createSnapPreviewController();
-  return controllerRef.current;
+  const [controller] = useState(() => createSnapPreviewController());
+  return controller;
 }

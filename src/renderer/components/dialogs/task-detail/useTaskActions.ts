@@ -172,23 +172,26 @@ export function useTaskActions(input: {
   };
 
   // Clear pendingAction once the session store reflects the target state.
-  // Includes a 5s safety timeout in case the transition never arrives.
+  // Done during render (React's "adjusting state when a prop changes"
+  // pattern) rather than in an effect, so the button never paints a frame of
+  // the pending state after the store has moved on.
+  //
+  // "No session lifecycle left" is the ended bucket of SESSION_LIFECYCLE_PHASE
+  // ('none' / 'exited'), read through the compile-enforced table rather than
+  // re-listed here, so a kind added later cannot leave a pause hanging on the
+  // 5s timeout below.
+  const pendingActionReached = pendingAction === 'pausing'
+    ? (input.isSuspended || !hasSessionLifecycle(input.displayState.kind))
+    : input.isSessionActive;
+  if (pendingAction && pendingActionReached) setPendingAction(null);
+
+  // A 5s safety timeout, from the moment the action was taken, in case the
+  // transition never arrives.
   useEffect(() => {
     if (!pendingAction) return;
-    // "No session lifecycle left" is the ended bucket of SESSION_LIFECYCLE_PHASE
-    // ('none' / 'exited'), read through the compile-enforced table rather than
-    // re-listed here, so a kind added later cannot leave a pause hanging on the
-    // 5s timeout below.
-    const reached = pendingAction === 'pausing'
-      ? (input.isSuspended || !hasSessionLifecycle(input.displayState.kind))
-      : input.isSessionActive;
-    if (reached) {
-      setPendingAction(null);
-      return;
-    }
     const timer = setTimeout(() => setPendingAction(null), 5000);
     return () => clearTimeout(timer);
-  }, [pendingAction, input.isSuspended, input.isSessionActive, input.displayState.kind]);
+  }, [pendingAction]);
 
   const handleResetSession = async () => {
     try {

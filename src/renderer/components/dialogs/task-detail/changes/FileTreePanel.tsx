@@ -440,31 +440,35 @@ function VirtualizedFileTree({
     () => defaultExpanded ? new Set(allDirectoryPaths) : new Set<string>(),
   );
 
-  // Expand new directories when the tree changes (new files added by the agent)
-  useEffect(() => {
+  // Expand new directories when the tree changes (new files added by the
+  // agent). Adjusted during render, on the render where the directory set
+  // first differs from the one last merged (React's "adjusting state when a
+  // prop changes" pattern), so the new rows never paint collapsed for a frame.
+  const [mergedDirectoryPaths, setMergedDirectoryPaths] = useState(allDirectoryPaths);
+  if (allDirectoryPaths !== mergedDirectoryPaths) {
+    setMergedDirectoryPaths(allDirectoryPaths);
     if (defaultExpanded) {
-      setExpandedPaths((previous) => {
-        const merged = new Set(previous);
-        let changed = false;
-        for (const directoryPath of allDirectoryPaths) {
-          if (!merged.has(directoryPath)) {
-            merged.add(directoryPath);
-            changed = true;
-          }
+      const merged = new Set(expandedPaths);
+      let changed = false;
+      for (const directoryPath of allDirectoryPaths) {
+        if (!merged.has(directoryPath)) {
+          merged.add(directoryPath);
+          changed = true;
         }
-        return changed ? merged : previous;
-      });
+      }
+      if (changed) setExpandedPaths(merged);
     }
-  }, [allDirectoryPaths, defaultExpanded]);
+  }
 
-  // Collapse-all / expand-all: apply when the command nonce changes (not on mount,
-  // and not on an unrelated allDirectoryPaths change).
-  const expansionNonceRef = useRef(expansionCommand.nonce);
-  useEffect(() => {
-    if (expansionCommand.nonce === expansionNonceRef.current) return;
-    expansionNonceRef.current = expansionCommand.nonce;
+  // Collapse-all / expand-all: apply when the command nonce changes (not on
+  // mount, and not on an unrelated allDirectoryPaths change). Same render-time
+  // adjustment; declared after the merge above so a command arriving in the
+  // same render wins, as it did when both were effects run in this order.
+  const [appliedExpansionNonce, setAppliedExpansionNonce] = useState(expansionCommand.nonce);
+  if (expansionCommand.nonce !== appliedExpansionNonce) {
+    setAppliedExpansionNonce(expansionCommand.nonce);
     setExpandedPaths(expansionCommand.expand ? new Set(allDirectoryPaths) : new Set<string>());
-  }, [expansionCommand, allDirectoryPaths]);
+  }
 
   const toggleDirectory = useCallback((fullPath: string) => {
     setExpandedPaths((previous) => {
@@ -729,23 +733,27 @@ function FileHistoryPopover({
   onClose: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [commits, setCommits] = useState<GitFileHistoryCommit[] | null>(null);
   const { file } = state;
+  // The history is stored with the key it was fetched for and `commits` is
+  // derived from it, so a change of file or directory reads as "loading"
+  // at once, with no effect having to clear the previous result first.
+  const historyKey = JSON.stringify([worktreePath, projectPath, file.path]);
+  const [fetchedHistory, setFetchedHistory] = useState<{ key: string; commits: GitFileHistoryCommit[] } | null>(null);
+  const commits = fetchedHistory?.key === historyKey ? fetchedHistory.commits : null;
 
   useEffect(() => {
     let cancelled = false;
-    setCommits(null);
     window.electronAPI.git.fileHistory({ worktreePath, projectPath: projectPath ?? '', filePath: file.path })
       .then((result) => {
-        if (!cancelled) setCommits(result.commits);
+        if (!cancelled) setFetchedHistory({ key: historyKey, commits: result.commits });
       })
       .catch(() => {
-        if (!cancelled) setCommits([]);
+        if (!cancelled) setFetchedHistory({ key: historyKey, commits: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [file.path, worktreePath, projectPath]);
+  }, [file.path, worktreePath, projectPath, historyKey]);
 
   useEffect(() => {
     const handleClick = (event: globalThis.MouseEvent) => {
