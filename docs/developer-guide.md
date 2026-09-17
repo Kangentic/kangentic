@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.12+ (vitest 5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`, so 22.0 through 22.11 cannot run the unit tier)
 - Git 2.25+ (worktree support)
 - Platform-specific:
   - **Windows:** Visual Studio Build Tools (for better-sqlite3 native compilation)
@@ -375,6 +375,8 @@ npm run test:unit                 # Unit (separate runner)
 - **Test selectors** -- `data-testid` and `data-swimlane-name` attributes
 - **Escape key** -- all dialogs use global `useEffect` listener
 - **IPC channels** -- `src/shared/ipc-channels.ts` is the single source of truth
+- **Dependency blocks** - `dependencies` is the esbuild externals (minus `electron`) plus whatever `electron-builder.yml`'s `files:` names directly; everything else is bundled and belongs in `devDependencies`. electron-builder copies the whole production closure into the asar, so a stray entry there ships its entire transitive tree for nothing. See `.claude/rules/dependency-block-parity.md`
+- **`allowScripts`** - the block at the bottom of `package.json` is live npm 12 config, not leftovers from a tool nobody uses. npm blocks a dependency's install script unless `allowScripts` covers it, so deleting the key leaves `npm ci` exiting 0 with no electron binary and an uncompiled better-sqlite3. `npm install-scripts ls` shows what npm is blocking; `tests/unit/allow-scripts-coverage.test.ts` fails when a package with an install script is not covered
 - **Lockfile metadata** - never regenerate `package-lock.json` against a populated `node_modules`. npm writes every already-installed package with no `resolved` and no `integrity`, which drops `npm ci`'s supply-chain verification for most of the tree without failing anything. `npm install --package-lock-only` does not repair it; `node scripts/repair-lockfile-integrity.js` does, and `tests/unit/lockfile-integrity.test.ts` fails CI when an entry is missing either field
 
 ## Environment Variables
@@ -432,6 +434,7 @@ Native modules:
 - `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)
 - `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
 - `onnxruntime-common`, `sharp` (with its `@img/*` platform binding), `detect-libc`, `semver` - what transformers.js requires at module scope; unpacked for the same reason, since the worker never looks inside the asar. `build/afterPack.js` loads the worker's externals from the unpacked tree after packing and fails the build if any of this closure is missing (`build/verify-unpacked-worker.js`)
+- `bindings` and `file-uri-to-path` - pure JavaScript, and better-sqlite3's own transitive closure rather than anything this app imports. They carry a root `dependencies` entry only because `electron-builder.yml`'s `files:` names them directly, which is what `.claude/rules/dependency-block-parity.md` keeps them in that block for
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 

@@ -212,10 +212,13 @@ async function uploadNativeDebugFiles() {
     await sentryCli.execute(
       ['debug-files', 'upload', '--org', SENTRY_ORG, '--project', SENTRY_PROJECT, ...debugFileDirs],
       // `true` is what `'rejectOnError'` used to be. @sentry/cli 3 collapsed the
-      // two live modes: `true` now inherits stdio AND rejects on a non-zero exit,
-      // and the old string is gone. Passing it would still be truthy, so the
-      // upload would run and a FAILED one would resolve - the silent-success
-      // shape .claude/rules/release-gates-fail-loudly.md exists to prevent.
+      // two live modes into one: `true` now inherits stdio AND rejects on a
+      // non-zero exit, and the old string is gone from both the API and the
+      // types. 3.8.0's `execute` happens to branch on a bare `if (live)` and
+      // rejects independently of the value, so the old string would still work
+      // there by accident. Pass the documented value rather than lean on that:
+      // a truthiness coincidence is not something the release gate in
+      // .claude/rules/release-gates-fail-loudly.md should rest on.
       true,
     );
   } catch (error) {
