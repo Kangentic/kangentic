@@ -416,7 +416,10 @@ configured size and letterboxes the rest, so a held terminal is never in bigger 
 panel beside it. Two font sizes on one screen was the first thing a live look caught. A held terminal keeps probing with the grid
 it would fit on its own, so a Command Terminal that tiles still switches to the boot recorded at
 the tiled width, and the desktop's own hold (a phone streaming the session) ends the moment
-main accepts the probe.
+main accepts the probe. A real window resize repaints; the terminal reporting the grid it was
+just held at does not, being the conform landing rather than the window moving. Reading that
+report as a resize repaints on every conform, which put a whole frame into a terminal whose
+session was already at its recording's end and should have received nothing.
 
 A terminal that keeps its own grid plays the recording's FRAMES instead of its bytes, which is
 what keeps the panel live. Every recording carries a `frameTimeline` beside its stream, the

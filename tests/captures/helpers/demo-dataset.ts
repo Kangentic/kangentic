@@ -1333,6 +1333,11 @@ export function buildDemoPreConfig(options: {
       // than folded into mountedGeometry because the frame fitter and geometryFits both need the
       // grid the terminal actually has, which is the held one.
       var naturalGeometry = {};
+      // The grid each session was last ANSWERED with a hold at. A held terminal resizes its own
+      // xterm to that grid and reports it back, so the seed sees two kinds of resize for one
+      // session: the window's natural grid, and the terminal echoing the grid it was just held
+      // at. Only the first describes the window.
+      var heldAnswer = {};
       var originalResize = window.electronAPI.sessions.resize;
       window.electronAPI.sessions.resize = function (sessionId, cols, rows) {
         // The renderer resizes before it asks for the scrollback, so a mount's grid is known when
@@ -1346,12 +1351,19 @@ export function buildDemoPreConfig(options: {
         // terminal will actually have.
         var previous = mountedGeometry[sessionId];
         var previousNatural = naturalGeometry[sessionId];
+        var previousHeld = heldAnswer[sessionId];
         var entry = replays[sessionId];
-        if (entry) applyLayout(entry, cols);
-        var held = recordings ? heldGridFor(entry, cols, rows) : null;
+        // The terminal reporting exactly the grid it was last held at is the conform LANDING,
+        // not the window moving. It must change nothing: treating it as a natural resize fires a
+        // repaint on every conform, which reached a session whose replay is already at its end
+        // and pushed a whole frame into a terminal that should have received nothing.
+        var conformEcho = !!previousHeld && cols === previousHeld.cols && rows === previousHeld.rows;
+        if (entry && !conformEcho) applyLayout(entry, cols);
+        var held = conformEcho ? previousHeld : (recordings ? heldGridFor(entry, cols, rows) : null);
         var effective = held || { cols: cols, rows: rows };
         mountedGeometry[sessionId] = effective;
-        naturalGeometry[sessionId] = { cols: cols, rows: rows };
+        heldAnswer[sessionId] = held;
+        if (!conformEcho) naturalGeometry[sessionId] = { cols: cols, rows: rows };
         // A repaint follows a real WINDOW resize, so the natural grid decides, not the held one.
         // While a session is held the held grid can be identical either side of a resize (a
         // Command Terminal that tiles still fits its recording's grid), and keying off it alone
@@ -1359,8 +1371,9 @@ export function buildDemoPreConfig(options: {
         // fell against the single-window threshold, which moves with the platform's font metrics:
         // Windows crossed it and Linux CI did not, so the tiling case passed locally and failed
         // on every CI run.
-        var changed = (!!previousNatural && (previousNatural.cols !== cols || previousNatural.rows !== rows))
-          || (!!previous && (previous.cols !== effective.cols || previous.rows !== effective.rows));
+        var changed = !conformEcho
+          && ((!!previousNatural && (previousNatural.cols !== cols || previousNatural.rows !== rows))
+            || (!!previous && (previous.cols !== effective.cols || previous.rows !== effective.rows)));
         var answer = originalResize.apply(this, arguments);
         if (held) answer = answer.then(function (base) { return Object.assign({}, base, { colsChanged: false, refused: true, held: held }); });
         if (live && entry && changed) {

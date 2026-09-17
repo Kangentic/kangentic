@@ -117,7 +117,9 @@ three things staying in step, and each is enforced rather than remembered.
   peeks change while a still frame's do not, that `loop=1` brings a finished session back and its
   absence leaves it finished, that a terminal on a grid its recording does not fit plays its
   frames and leaves its session working (including the board's bottom panel, where no grid could
-  fit), that a board card and a Monitor card draw the agent message trail in place of the
+  fit), that a held terminal reporting its conformed grid back is read as the conform landing
+  rather than a resize, so a session already at its recording's end receives nothing,
+  that a board card and a Monitor card draw the agent message trail in place of the
   description and the output peek while a session with no trail still draws its peek, and that a
   drag into an
   auto-spawn column and a new Command Terminal each start a session whose bytes arrive through
