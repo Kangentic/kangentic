@@ -405,6 +405,13 @@ function sentGrids(page: Page, sessionId: string): Promise<Grid[]> {
 const MIDDLEWARE_RECORDED_GRID: Grid = { cols: 154, rows: 37 };
 
 /**
+ * The same, for the Copilot rate-limit session. Claude's context bar wraps to two rows and every
+ * other agent's does not, so a non-Claude session records two rows taller (manifest geometry,
+ * rowsByAgent).
+ */
+const RATE_LIMIT_RECORDED_GRID: Grid = { cols: 154, rows: 39 };
+
+/**
  * Every frame the mock paints into a terminal on the frames path, parsed: the rows between the
  * autowrap-off and autowrap-on brackets, each measured in cells (code points plus cursor-forward
  * gaps; the sample install's frames carry no wide glyph). What the bottom-panel case asserts on.
@@ -621,6 +628,28 @@ test('loop=1 leaves a session that was never working alone', async ({ page }) =>
   expect(await streamedBytes(page, 'sess-cw-rate-limit', 15_000)).toBe(0);
   expect((await monitorRow(page, 'sess-cw-rate-limit'))?.activity).toBe('idle');
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a held terminal reporting its conformed grid is not a resize, so a finished session stays silent', async ({ browser }) => {
+  // The case above runs at the frame size, where the task window already fits 154 by 39 and the
+  // hold never engages. Narrow the frame and it does: the terminal takes the held grid and its own
+  // xterm resize reports that grid straight back. That report is the conform landing, not the
+  // window moving, and reading it as a resize repaints a session whose replay is at its end,
+  // which is a whole frame arriving in a terminal that should get nothing. It reached CI as one
+  // retried run out of many, because whether the hold engages at all rides on the runner's font
+  // metrics; this viewport puts the natural grid a fifth of the columns short on every platform.
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1233, height: 771 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1', state: encodeState(RATE_LIMIT_WINDOW_STATE) }));
+  await waitForDemoReady(page);
+  await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Add rate limiting');
+  await expect.poll(() => sentGrids(page, 'sess-cw-rate-limit'), { timeout: 10_000 }).toContainEqual(RATE_LIMIT_RECORDED_GRID);
+  expect((await sentGrids(page, 'sess-cw-rate-limit'))[0].cols).toBeLessThan(RATE_LIMIT_RECORDED_GRID.cols);
+  expect(await streamedBytes(page, 'sess-cw-rate-limit', 15_000)).toBe(0);
+  expect(getUnexpectedErrors()).toEqual([]);
+  await context.close();
 });
 
 test('a display that fits another grid holds the task window at the recording\'s grid and streams its bytes', async ({ browser }) => {
