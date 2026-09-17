@@ -381,6 +381,16 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
  * The script the page runs after the mock has loaded. Everything above is inlined as JSON; the
  * only code is the small applier that turns offsets into timestamps and pushes rows.
  */
+/**
+ * The code points that are not one cell wide, as flat [lo, hi, lo, hi, ...] ranges: `wide` for
+ * two cells, `zero` for none. Built by buildCellWidthTable in demo-scrollback.ts from the app's own
+ * width table; the seed's frame applier clips rows by cell with it.
+ */
+export interface DemoCellWidthTable {
+  wide: number[];
+  zero: number[];
+}
+
 export function buildDemoPreConfig(options: {
   scrollback?: DemoScrollbackMap;
   changes?: DemoChangesMap;
@@ -394,6 +404,8 @@ export function buildDemoPreConfig(options: {
   liveTailMs?: number;
   currentProjectId?: string;
   appVersion?: string;
+  /** Cell widths for the frame applier (buildCellWidthTable); every code point outside the ranges is one cell. */
+  cellWidths?: DemoCellWidthTable;
 } = {}): string {
   const dataset = {
     groups: DEMO_GROUPS,
@@ -457,6 +469,7 @@ export function buildDemoPreConfig(options: {
       var peekTimelines = ${JSON.stringify(peekTimelines)};
       var messageTrails = ${JSON.stringify(messageTrails)};
       var messageTrailMaxEntries = ${JSON.stringify(messageTrailMaxEntries)};
+      var cellWidths = ${JSON.stringify(options.cellWidths ?? { wide: [], zero: [] })};
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
@@ -640,9 +653,14 @@ export function buildDemoPreConfig(options: {
       var replays = {};
       var recordingCache = {};
       var replayTimers = {};
+      // An index entry names the recording file and the grid it was made at (demo/vite.config.mts);
+      // the grid rides on the replay entry so a terminal's first resize can be answered before
+      // the file is fetched.
+      function gridOf(indexed) { return { cols: indexed.cols, rows: indexed.rows }; }
       data.sessions.forEach(function (session) {
         if (!recordings || !recordings.sessions[session.id]) return;
-        replays[session.id] = { file: recordings.sessions[session.id], startedAt: null, tail: session.activity === 'thinking' ? (session.liveTailMs || LIVE_TAIL_MS) : 0, projectId: session.projectId };
+        var indexed = recordings.sessions[session.id];
+        replays[session.id] = { file: indexed.file, grid: gridOf(indexed), startedAt: null, tail: session.activity === 'thinking' ? (session.liveTailMs || LIVE_TAIL_MS) : 0, projectId: session.projectId };
       });
       function fetchRecording(file) {
         if (!recordingCache[file]) {
@@ -772,9 +790,9 @@ export function buildDemoPreConfig(options: {
             if (entry.frameOnly) {
               // This terminal plays frames, not bytes: re-arm the same timeline and repaint it
               // at the moment the cycle opens on.
-              var cols = mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0;
-              var current = scheduleFrameTimeline(sessionId, entry, recording, cols);
-              emitBytes(sessionId, REPAINT + fitFrameToCols(current || (open ? open.serialized : recording.serialized), cols), entry.projectId);
+              var grid = mountedGeometry[sessionId];
+              var current = scheduleFrameTimeline(sessionId, entry, recording, grid);
+              emitBytes(sessionId, REPAINT + fitFrameToGrid(current || (open ? open.serialized : recording.serialized), grid, recording.rows), entry.projectId);
             } else {
               emitBytes(sessionId, REPAINT + (open ? open.serialized : ''), entry.projectId);
               scheduleStreamBytes(sessionId, entry, recording);
@@ -797,13 +815,14 @@ export function buildDemoPreConfig(options: {
         return head;
       }
       // A terminal on any other grid plays the recording's FRAMES instead of its bytes. A frame
-      // reflows where a stream cannot, so the same recording is live at any size: the 15-row
+      // is physical rows, so it fits any size without a row spilling into the next: the 15-row
       // bottom panel shows the last 15 rows of a 37-row frame, which is what a terminal scrolled
-      // to the bottom shows anyway, and a display scaled to 125 percent gets the frame fitted to
-      // its width. Each entry replaces the screen rather than appending, so the terminal never
-      // grows and the repaint is one screen of bytes.
-      var REPAINT = '\\x1b[2J\\x1b[3J\\x1b[H';
-      function scheduleFrameTimeline(sessionId, entry, recording, cols) {
+      // to the bottom shows anyway, and a narrower grid gets each row cut at its edge. Each entry
+      // replaces the screen rather than appending, so the terminal never grows and the repaint is
+      // one screen of bytes. The repaint leaves the alternate screen first: an alt frame enters it
+      // again itself, and a normal one must not land in the alt buffer the previous tick left.
+      var REPAINT = '\\x1b[?1049l\\x1b[2J\\x1b[3J\\x1b[H';
+      function scheduleFrameTimeline(sessionId, entry, recording, grid) {
         if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
         var timeline = recording.frameTimeline || [];
         var elapsed = Date.now() - entry.startedAt;
@@ -811,7 +830,7 @@ export function buildDemoPreConfig(options: {
         timeline.forEach(function (step) {
           if (step.t <= elapsed) { current = step.frame; return; }
           replayTimers[sessionId].push(setTimeout(function () {
-            emitBytes(sessionId, REPAINT + fitFrameToCols(step.frame, cols), entry.projectId);
+            emitBytes(sessionId, REPAINT + fitFrameToGrid(step.frame, grid, recording.rows), entry.projectId);
           }, Math.max(0, entry.startedAt + step.t - Date.now())));
         });
         return current;
@@ -865,107 +884,222 @@ export function buildDemoPreConfig(options: {
       // reflows in a different grid, and the session stays on it there: a live stream cannot be
       // re-laid out without the CLI.
       var mountedGeometry = {};
-      // A frame serialized at the recording's width still holds rows the CLI drew to that width
-      // with characters: rules of box-drawing glyphs, bands of styled spaces. On a narrower grid
-      // those wrap into a stub row and push the frame's cursor a row down, where the desktop's
-      // CLI would have drawn them to the new width. Cut such trailing runs at the grid's width;
-      // a row that carries real text past it is left to wrap, as text does anywhere.
-      // Two things overrun a narrower grid: a right-aligned tail the CLI placed with a
-      // cursor-forward sized to its own width (Claude's "/rc" at the footer's edge), and rules or
-      // bands drawn to that width. The gap shrinks first, so the tail ends at this width as the CLI
-      // would align it; then trailing rule glyphs and spaces are cut. Real text past the width is
-      // left to wrap. The serializer's final cursor move is relative to the frame's bottom, so a
-      // row that no longer wraps below the cursor is what keeps the cursor on its row.
-      var FRAME_SEQUENCE = /^\x1b\\[[0-9;?]*[A-Za-z]/;
-      var CURSOR_FORWARD = /^\x1b\\[(\\d*)C$/;
-      var RULE_OR_SPACE = /[ ─-╿]/;
-      // Box drawing AND block elements: Claude rules with ─, Copilot borders with ┃, and Codex
-      // draws its input band with ▄ and ▀, which sit past the box-drawing range.
-      var RULE_GLYPH = /[\\u2500-\\u259F]/;
-      function fitFrameToCols(frame, cols) {
-        if (!cols) return frame;
-        return frame.split('\\r\\n').map(function (row) {
-          var tokens = [];
-          var index = 0;
-          while (index < row.length) {
-            if (row.charAt(index) === '\x1b') {
-              var match = FRAME_SEQUENCE.exec(row.slice(index));
-              var sequence = match ? match[0] : row.charAt(index);
-              var forward = CURSOR_FORWARD.exec(sequence);
-              tokens.push(forward ? { forward: Math.max(1, parseInt(forward[1] || '1', 10)) } : { sequence: sequence });
-              index += sequence.length;
-            } else {
-              var end = row.indexOf('\x1b', index);
-              if (end === -1) end = row.length;
-              tokens.push({ text: row.slice(index, end) });
-              index = end;
-            }
+      // A frame is PHYSICAL rows (scripts/lib/demo-frame-serializer.js): one row per recorded
+      // row, each self-contained, joined with \\r\\n, behind the alt-screen switch when the
+      // recording was on the alternate screen, and ending in one absolute cursor position for
+      // the recorded grid. Fitting it to the mounted grid is then row by row:
+      //
+      // - A row wider than the grid is CUT at the grid's edge, never left to wrap. A CLI would
+      //   have re-laid its prose out at this width; a wrap mid-word is what nothing would draw.
+      //   A right-aligned tail the CLI placed with a cursor-forward sized to its own width
+      //   (Claude's "/rc" at the footer's edge, Copilot's timing beside its border) is pulled in
+      //   first by shrinking that gap, so it ends at this edge as the CLI would align it.
+      // - A row narrower than the grid that ends in a HORIZONTAL rule glyph is extended with
+      //   that glyph, so the frame's lines reach the edge the way the desktop drew them. Only
+      //   horizontal glyphs: a vertical bar extended sideways is a stripe, which is exactly what
+      //   Copilot's right border became. Gaps are never grown: a box border followed by a
+      //   one-cell gap and a sentence would put the sentence at the right margin.
+      // - Widths are counted in CELLS from the app's own table (cellWidths), so a wide glyph
+      //   cuts where the terminal will put it. Autowrap is off while the rows are written, so a
+      //   cell the two still disagree on overwrites the last column instead of wrapping.
+      // - The cursor is recomputed for the mounted row count: a 37-row frame in a 15-row panel
+      //   scrolls 22 rows up, and the cursor's row moves with them.
+      var FRAME_SEQUENCE = /^\\x1b\\[[0-9;?]*[A-Za-z]/;
+      var CURSOR_FORWARD = /^\\x1b\\[(\\d*)C$/;
+      var ERASE_CHARS = /^\\x1b\\[(\\d*)X$/;
+      var ALT_PREFIX = '\\x1b[?1049h\\x1b[H';
+      var CURSOR_SUFFIX = /\\x1b\\[(\\d+);(\\d+)H$/;
+      var HORIZONTAL_RULE_GLYPHS = '\\u2500\\u2501\\u2504\\u2505\\u2508\\u2509\\u254C\\u254D\\u2550\\u2574\\u2576\\u2578\\u257A\\u257C\\u257E\\u2580\\u2581\\u2582\\u2583\\u2584\\u2585\\u2586\\u2587\\u2588\\u2594';
+      function inRanges(ranges, codepoint) {
+        var low = 0;
+        var high = ranges.length / 2 - 1;
+        while (low <= high) {
+          var middle = (low + high) >> 1;
+          if (codepoint < ranges[middle * 2]) high = middle - 1;
+          else if (codepoint > ranges[middle * 2 + 1]) low = middle + 1;
+          else return true;
+        }
+        return false;
+      }
+      function cellWidth(codepoint) {
+        if (inRanges(cellWidths.zero, codepoint)) return 0;
+        if (inRanges(cellWidths.wide, codepoint)) return 2;
+        return 1;
+      }
+      function textWidth(text) {
+        var width = 0;
+        for (var index = 0; index < text.length; index++) {
+          var codepoint = text.codePointAt(index);
+          if (codepoint > 0xffff) index++;
+          width += cellWidth(codepoint);
+        }
+        return width;
+      }
+      // The longest prefix of the text that is at most the given number of cells wide; a wide
+      // glyph that would straddle the edge is left out.
+      function clipText(text, cells) {
+        var width = 0;
+        var index = 0;
+        while (index < text.length) {
+          var codepoint = text.codePointAt(index);
+          var advance = codepoint > 0xffff ? 2 : 1;
+          var glyphWidth = cellWidth(codepoint);
+          if (width + glyphWidth > cells) break;
+          width += glyphWidth;
+          index += advance;
+        }
+        return { text: text.slice(0, index), width: width };
+      }
+      function tokenizeRow(row) {
+        var tokens = [];
+        var index = 0;
+        while (index < row.length) {
+          if (row.charAt(index) === '\\x1b') {
+            var match = FRAME_SEQUENCE.exec(row.slice(index));
+            var sequence = match ? match[0] : row.charAt(index);
+            var forward = CURSOR_FORWARD.exec(sequence);
+            var erase = ERASE_CHARS.exec(sequence);
+            if (forward) tokens.push({ forward: Math.max(1, parseInt(forward[1] || '1', 10)) });
+            else if (erase) tokens.push({ erase: Math.max(1, parseInt(erase[1] || '1', 10)) });
+            else tokens.push({ sequence: sequence });
+            index += sequence.length;
+          } else {
+            var end = row.indexOf('\\x1b', index);
+            if (end === -1) end = row.length;
+            tokens.push({ text: row.slice(index, end) });
+            index = end;
           }
-          function render() {
-            return tokens.map(function (token) {
-              if (token.text !== undefined) return token.text;
-              if (token.forward !== undefined) return token.forward > 0 ? '\x1b[' + token.forward + 'C' : '';
-              return token.sequence;
-            }).join('');
+        }
+        return tokens;
+      }
+      function renderTokens(tokens) {
+        return tokens.map(function (token) {
+          if (token.text !== undefined) return token.text;
+          if (token.forward !== undefined) return token.forward > 0 ? '\\x1b[' + token.forward + 'C' : '';
+          if (token.erase !== undefined) return token.erase > 0 ? '\\x1b[' + token.erase + 'X' : '';
+          return token.sequence;
+        }).join('');
+      }
+      function rowWidth(tokens) {
+        return tokens.reduce(function (sum, token) {
+          if (token.text !== undefined) return sum + textWidth(token.text);
+          if (token.forward !== undefined) return sum + token.forward;
+          return sum;
+        }, 0);
+      }
+      // An erase reaches from the cursor to its count, so one past the edge is clamped to the
+      // cells left, wherever the row's width otherwise lands.
+      function clampErases(tokens, cols) {
+        var position = 0;
+        var changed = false;
+        tokens.forEach(function (token) {
+          if (token.text !== undefined) position += textWidth(token.text);
+          else if (token.forward !== undefined) position += token.forward;
+          else if (token.erase !== undefined && token.erase > cols - position) {
+            token.erase = Math.max(0, cols - position);
+            changed = true;
           }
-          var excess = tokens.reduce(function (sum, token) { return sum + (token.text !== undefined ? token.text.length : token.forward || 0); }, 0) - cols;
-          if (excess === 0) return row;
-          // WIDER than the recording. A CLI draws its rules and bands to the width it was given,
-          // so on a wider grid they stop short and the frame reads as though it fills only part of
-          // the terminal. A rule is the one run that can honestly be stretched: extend it with its
-          // own glyph, and the frame's horizontal lines reach the edge the way the desktop drew
-          // them. Nothing else is touched. A cursor-forward gap in particular must NOT be grown:
-          // the serializer emits one at every point it joined a wrapped row, so widening gaps
-          // shoves the continuation of a sentence out to the right margin. The CLI chose its wrap
-          // points at the recorded width, and only the CLI could re-wrap that prose.
-          if (excess < 0) {
-            var deficit = -excess;
-            for (var grow = tokens.length - 1; grow >= 0; grow--) {
-              var end = tokens[grow];
-              if (end.sequence !== undefined) continue;
-              if (end.text === undefined || end.text.length === 0) break;
-              var glyph = end.text.charAt(end.text.length - 1);
-              if (!RULE_GLYPH.test(glyph)) break;
-              var run = '';
-              while (run.length < deficit) run += glyph;
-              end.text += run;
-              return render();
-            }
-            return row;
+        });
+        return changed;
+      }
+      function fitRow(row, cols) {
+        var tokens = tokenizeRow(row);
+        var erasesClamped = clampErases(tokens, cols);
+        var width = rowWidth(tokens);
+        if (width === cols) return erasesClamped ? renderTokens(tokens) : row;
+        if (width < cols) {
+          // Only a row whose LAST painted thing is a horizontal rule glyph is stretched.
+          for (var last = tokens.length - 1; last >= 0; last--) {
+            var end = tokens[last];
+            if (end.sequence !== undefined) continue;
+            if (end.text === undefined || end.text.length === 0) break;
+            var glyph = end.text.charAt(end.text.length - 1);
+            if (HORIZONTAL_RULE_GLYPHS.indexOf(glyph) === -1) break;
+            var run = '';
+            while (run.length < cols - width) run += glyph;
+            end.text += run;
+            return renderTokens(tokens);
           }
-          for (var gap = tokens.length - 1; gap >= 0 && excess > 0; gap--) {
-            if (tokens[gap].forward === undefined) continue;
-            var shrink = Math.min(excess, tokens[gap].forward - 1);
-            tokens[gap].forward -= shrink;
-            excess -= shrink;
+          return erasesClamped ? renderTokens(tokens) : row;
+        }
+        // NARROWER. Pull a right-aligned tail in by shrinking the gaps before it, last gap first,
+        // each down to one cell; then cut whatever still overruns at the edge.
+        var excess = width - cols;
+        for (var gap = tokens.length - 1; gap >= 0 && excess > 0; gap--) {
+          if (tokens[gap].forward === undefined) continue;
+          var shrink = Math.min(excess, tokens[gap].forward - 1);
+          tokens[gap].forward -= shrink;
+          excess -= shrink;
+        }
+        if (excess === 0) return renderTokens(tokens);
+        var kept = [];
+        var used = 0;
+        var cut = false;
+        for (var index = 0; index < tokens.length; index++) {
+          var token = tokens[index];
+          if (token.sequence !== undefined) { kept.push(token); continue; }
+          var room = cols - used;
+          if (token.erase !== undefined) {
+            if (room > 0) kept.push({ erase: Math.min(token.erase, room) });
+            continue;
           }
-          for (var tail = tokens.length - 1; tail >= 0 && excess > 0; tail--) {
-            var token = tokens[tail];
-            if (token.sequence !== undefined) continue;
-            if (token.forward !== undefined) { var drop = Math.min(excess, token.forward); token.forward -= drop; excess -= drop; continue; }
-            var keep = token.text.length;
-            while (keep > 0 && excess > 0 && RULE_OR_SPACE.test(token.text.charAt(keep - 1))) { keep -= 1; excess -= 1; }
-            token.text = token.text.slice(0, keep);
-            if (excess > 0) return row;
+          if (room <= 0) { cut = true; break; }
+          if (token.forward !== undefined) {
+            var forward = Math.min(token.forward, room);
+            kept.push({ forward: forward });
+            used += forward;
+            if (forward < token.forward) { cut = true; break; }
+            continue;
           }
-          return render();
-        }).join('\\r\\n');
+          var textCells = textWidth(token.text);
+          if (textCells <= room) { kept.push(token); used += textCells; continue; }
+          var clipped = clipText(token.text, room);
+          kept.push({ text: clipped.text });
+          used += clipped.width;
+          cut = true;
+          break;
+        }
+        // The dropped tail may have carried the row's reset; every clipped row gets one.
+        if (cut) kept.push({ sequence: '\\x1b[0m' });
+        return renderTokens(kept);
+      }
+      function fitFrameToGrid(frame, grid, recordedRows) {
+        if (!grid || !grid.cols || !grid.rows) return frame;
+        var alt = frame.indexOf(ALT_PREFIX) === 0;
+        var body = alt ? frame.slice(ALT_PREFIX.length) : frame;
+        var cursor = CURSOR_SUFFIX.exec(body);
+        var rows = (cursor ? body.slice(0, cursor.index) : body).split('\\r\\n').map(function (row) { return fitRow(row, grid.cols); });
+        var fitted = (alt ? ALT_PREFIX : '') + '\\x1b[?7l' + rows.join('\\r\\n') + '\\x1b[?7h';
+        if (!cursor) return fitted;
+        // The suffix is screen-relative for the RECORDED row count; back to the frame's own row,
+        // then to the screen row the mounted terminal shows it on. A cursor scrolled off the top
+        // is left where the rows put it.
+        var frameRow = parseInt(cursor[1], 10) - 1 + Math.max(0, rows.length - (recordedRows || rows.length));
+        var screenRow = frameRow - Math.max(0, rows.length - grid.rows);
+        if (screenRow < 0) return fitted;
+        return fitted + '\\x1b[' + (screenRow + 1) + ';' + Math.max(1, Math.min(grid.cols, parseInt(cursor[2], 10))) + 'H';
       }
       function geometryFits(sessionId, recording) {
         var geometry = mountedGeometry[sessionId];
         if (!geometry || !recording.cols || !recording.rows) return true;
         return geometry.cols === recording.cols && geometry.rows === recording.rows;
       }
-      function layoutFileFor(entry, cols) {
-        // A boot recorded for each layout its window can open in: the one for this width.
+      // A boot recorded for each layout its window can open in: the index entry for this width.
+      function layoutFor(entry, cols) {
         var singleCols = recordings && recordings.geometry && recordings.geometry.commandTerminal ? recordings.geometry.commandTerminal.cols : null;
-        if (!entry.layouts || !singleCols) return entry.file;
+        if (!entry.layouts || !singleCols) return null;
         return cols < singleCols ? entry.layouts.tiled : entry.layouts.single;
+      }
+      function applyLayout(entry, cols) {
+        var layout = layoutFor(entry, cols);
+        if (!layout) return;
+        entry.file = layout.file;
+        entry.grid = gridOf(layout);
       }
       window.electronAPI.sessions.getScrollback = function (sessionId) {
         var entry = replays[sessionId];
         if (live && entry) {
-          if (mountedGeometry[sessionId]) entry.file = layoutFileFor(entry, mountedGeometry[sessionId].cols);
+          if (mountedGeometry[sessionId]) applyLayout(entry, mountedGeometry[sessionId].cols);
           return fetchRecording(entry.file).then(function (recording) {
             if (geometryFits(sessionId, recording)) return liveScrollback(sessionId, entry);
             // The bytes cannot replay into this grid, so the terminal paints a parsed frame
@@ -978,21 +1112,21 @@ export function buildDemoPreConfig(options: {
             // "never emit bytes to this session", nothing about whether it is finished.
             entry.frameOnly = true;
             entry.mounted = true;
-            var cols = mountedGeometry[sessionId] ? mountedGeometry[sessionId].cols : 0;
+            var grid = mountedGeometry[sessionId];
             if (entry.tail > 0) {
               clearReplayTimers(sessionId);
               var last = recording.stream[recording.stream.length - 1];
               var openFrame = openFrames[sessionId];
-              var current = scheduleFrameTimeline(sessionId, entry, recording, cols);
+              var current = scheduleFrameTimeline(sessionId, entry, recording, grid);
               scheduleSessionClock(sessionId, entry, { durationMs: last ? last.t : 0, endPeek: recording.peek, endedOnItsOwn: endedOnItsOwn(recording) });
-              return fitFrameToCols(current || (openFrame ? openFrame.serialized : recording.serialized), cols);
+              return fitFrameToGrid(current || (openFrame ? openFrame.serialized : recording.serialized), grid, recording.rows);
             }
             // A session already at its end: the frame is the recording's end, so the row's peek
             // and a finished session's state read as they would at the end here too.
             clearReplayTimers(sessionId);
             if (recording.peek && recording.peek.length) setMonitorPeek(sessionId, recording.peek);
             if (endedOnItsOwn(recording)) finishSession(sessionId);
-            return fitFrameToCols(recording.serialized, cols);
+            return fitFrameToGrid(recording.serialized, grid, recording.rows);
           });
         }
         if (scrollback[sessionId]) return Promise.resolve(scrollback[sessionId]);
@@ -1098,8 +1232,8 @@ export function buildDemoPreConfig(options: {
         seedUsage(id, agent);
         // The boot recorded for this task in this mode. A task the visitor created has none and
         // gets the project's Command Terminal boot: the agent starting with nothing to do yet.
-        var file = recordings ? (recordings.spawns[mockTask.id + ':' + permissionMode] || recordings.terminals[mockTask.projectId] || null) : null;
-        if (file) replays[id] = { file: file, startedAt: Date.now(), tail: 0, projectId: mockTask.projectId };
+        var indexed = recordings ? (recordings.spawns[mockTask.id + ':' + permissionMode] || recordings.terminals[mockTask.projectId] || null) : null;
+        if (indexed) replays[id] = { file: indexed.file, grid: gridOf(indexed), startedAt: Date.now(), tail: 0, projectId: mockTask.projectId };
         announceSession(row, 'thinking');
         announceMonitorRow(row, mockTask, agent, permissionMode);
         return row;
@@ -1164,9 +1298,9 @@ export function buildDemoPreConfig(options: {
             return session.transient && session.projectId === input.projectId && session.status === 'running' && session.id !== result.session.id;
           });
           var single = recordings ? recordings.terminals[input.projectId] || null : null;
-          var tiledFile = recordings ? recordings.terminals[input.projectId + '-tiled'] || null : null;
-          var file = (tiled && tiledFile) || single;
-          if (file) replays[result.session.id] = { file: file, startedAt: Date.now(), tail: 0, projectId: input.projectId, layouts: single && tiledFile ? { single: single, tiled: tiledFile } : null };
+          var tiledIndexed = recordings ? recordings.terminals[input.projectId + '-tiled'] || null : null;
+          var indexed = (tiled && tiledIndexed) || single;
+          if (indexed) replays[result.session.id] = { file: indexed.file, grid: gridOf(indexed), startedAt: Date.now(), tail: 0, projectId: input.projectId, layouts: single && tiledIndexed ? { single: single, tiled: tiledIndexed } : null };
           seedUsage(result.session.id, agent);
           announceSession(result.session, 'idle');
           announceMonitorRow(result.session, null, agent, data.defaultPermissionMode);
@@ -1179,6 +1313,20 @@ export function buildDemoPreConfig(options: {
       // size. A replay cannot repaint, but a boot recorded at both sizes can be swapped: a
       // resize across the single-window width switches the session to the other recording and
       // repaints it from a cleared screen at the same point in the boot.
+      // A replayed session is HELD at its recording's grid whenever the pane can show that grid
+      // at a readable size: main answers the renderer's resize with a held grid, and the terminal
+      // conforms (resizes to the recording's grid and scales its font to fit; useTerminal's
+      // conformToHeldGrid), so the bytes replay exactly, at any frame size and on any display.
+      // The floor is the scale the pane would need: below it the type would be too small to read,
+      // so the terminal keeps its own grid and plays frames instead. The 15-row bottom panel is
+      // the case that stays on frames (a 37-row recording would want 40 percent type).
+      var HOLD_MIN_SCALE = 0.6;
+      function heldGridFor(entry, cols, rows) {
+        if (!entry || !entry.grid || !entry.grid.cols || !entry.grid.rows) return null;
+        if (cols === entry.grid.cols && rows === entry.grid.rows) return null;
+        var scale = Math.min(cols / entry.grid.cols, rows / entry.grid.rows);
+        return scale >= HOLD_MIN_SCALE ? { cols: entry.grid.cols, rows: entry.grid.rows } : null;
+      }
       var originalResize = window.electronAPI.sessions.resize;
       window.electronAPI.sessions.resize = function (sessionId, cols, rows) {
         // The renderer resizes before it asks for the scrollback, so a mount's grid is known when
@@ -1186,22 +1334,29 @@ export function buildDemoPreConfig(options: {
         // terminal (a window tiling beside a new one, the panel's terminal handed to a task window)
         // brings no new getScrollback: the desktop's PTY resize has the CLI repaint for the new
         // grid, and here the session repaints from a cleared screen with whichever of its bytes or
-        // its frame fits that grid, switching boot recordings by layout on the way.
+        // its frame fits that grid, switching boot recordings by layout on the way. The grid the
+        // renderer names is its NATURAL one, at the configured font, whether or not it is held;
+        // the boot is chosen by that width, and the held grid, when there is one, is the grid the
+        // terminal will actually have.
         var previous = mountedGeometry[sessionId];
-        mountedGeometry[sessionId] = { cols: cols, rows: rows };
         var entry = replays[sessionId];
-        var changed = !!previous && (previous.cols !== cols || previous.rows !== rows);
+        if (entry) applyLayout(entry, cols);
+        var held = recordings ? heldGridFor(entry, cols, rows) : null;
+        var effective = held || { cols: cols, rows: rows };
+        mountedGeometry[sessionId] = effective;
+        var changed = !!previous && (previous.cols !== effective.cols || previous.rows !== effective.rows);
+        var answer = originalResize.apply(this, arguments);
+        if (held) answer = answer.then(function (base) { return Object.assign({}, base, { colsChanged: false, refused: true, held: held }); });
         if (live && entry && changed) {
-          entry.file = layoutFileFor(entry, cols);
           fetchRecording(entry.file).then(function (recording) {
             if (geometryFits(sessionId, recording)) {
-              return liveScrollback(sessionId, entry).then(function (head) { emitBytes(sessionId, '\x1b[2J\x1b[3J\x1b[H' + head, entry.projectId); });
+              return liveScrollback(sessionId, entry).then(function (head) { emitBytes(sessionId, REPAINT + head, entry.projectId); });
             }
             clearReplayTimers(sessionId);
-            emitBytes(sessionId, '\x1b[2J\x1b[3J\x1b[H' + fitFrameToCols(recording.serialized, cols), entry.projectId);
+            emitBytes(sessionId, REPAINT + fitFrameToGrid(recording.serialized, effective, recording.rows), entry.projectId);
           });
         }
-        return originalResize.apply(this, arguments);
+        return answer;
       };
 
       // The working tree each recorded session left behind, keyed by its task's worktree folder,

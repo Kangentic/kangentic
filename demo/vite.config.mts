@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildDemoPreConfig } from '../tests/captures/helpers/demo-dataset';
-import { loadDemoChanges, loadDemoEnds, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
+import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
 import { SCENES } from '../tests/captures/scenes';
@@ -93,17 +93,20 @@ function hashedName(name: string, source: string): string {
 function planDemoAssets(version: string, base: string): { scripts: string[]; files: PlannedAsset[] } {
   const recordings = loadDemoRecordings();
   const files: PlannedAsset[] = [];
-  const nameOf = (entry: DemoRecordingEntry): string => {
+  // Each index entry carries the grid its recording was made at beside the file name, so the
+  // seed can decide at a terminal's first resize, before any fetch, whether to hold the terminal
+  // at that grid (demo-dataset.ts, the sessions.resize wrapper).
+  const indexEntryOf = (entry: DemoRecordingEntry): { file: string; cols: number; rows: number } => {
     const source = JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows, stopReason: entry.stopReason, frameTimeline: entry.frameTimeline });
     const fileName = hashedName(`recordings/${entry.file}`, source);
     files.push({ fileName, source });
-    return fileName.slice('recordings/'.length);
+    return { file: fileName.slice('recordings/'.length), cols: entry.cols, rows: entry.rows };
   };
   const index = {
     base: `${base}recordings/`,
-    sessions: Object.fromEntries(Object.entries(recordings.sessions).map(([id, entry]) => [id, nameOf(entry)])),
-    spawns: Object.fromEntries(Object.entries(recordings.spawns).map(([key, entry]) => [key, nameOf(entry)])),
-    terminals: Object.fromEntries(Object.entries(recordings.terminals).map(([id, entry]) => [id, nameOf(entry)])),
+    sessions: Object.fromEntries(Object.entries(recordings.sessions).map(([id, entry]) => [id, indexEntryOf(entry)])),
+    spawns: Object.fromEntries(Object.entries(recordings.spawns).map(([key, entry]) => [key, indexEntryOf(entry)])),
+    terminals: Object.fromEntries(Object.entries(recordings.terminals).map(([id, entry]) => [id, indexEntryOf(entry)])),
     geometry: recordings.geometry,
   };
   console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions, ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots`);
@@ -140,6 +143,7 @@ function buildSeedScript(version: string): string {
       messageTrailMaxEntries: MESSAGE_TRAIL_MAX_ENTRIES,
       liveTailMs: readLiveTailMs(),
       appVersion: version,
+      cellWidths: buildCellWidthTable(),
     }),
     '};',
     'window.__demoBoot.afterSeed();',

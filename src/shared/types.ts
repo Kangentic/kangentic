@@ -1144,6 +1144,22 @@ export interface HandoffRecord {
 export type SentSessionMessageStatus = 'delivered' | 'queued' | 'refused' | 'failed';
 
 /**
+ * What main answers a `sessions.resize`. `refused` is set only when main
+ * deliberately held the PTY's grid against the requested one (the mobile
+ * sub-floor guard, or a replay whose bytes address a fixed grid), and `held`
+ * then names the grid it kept. A terminal that is refused conforms to `held`:
+ * it resizes its own grid to it and picks the font size that fits that grid
+ * into its pane, so the frame the PTY paints is the frame the user sees
+ * (useTerminal's conform path). The echo re-assert reads `refused` alone to
+ * stop healing attempts immediately instead of retrying to its cap.
+ */
+export interface SessionResizeResult {
+  colsChanged: boolean;
+  refused?: true;
+  held?: { cols: number; rows: number };
+}
+
+/**
  * One message sent into a session via `kangentic_send_session_message`, by
  * another agent or by a human steering it directly.
  *
@@ -5521,12 +5537,10 @@ export interface ElectronAPI {
     /**
      * `colsChanged` is intentionally unused by the renderer (main orders the
      * geometry change ahead of any scrollback sample on its own - see the
-     * parallel-IPC note in useTerminal's mount path). `refused` is set only
-     * when main deliberately held the grid against this resize (the mobile
-     * sub-floor guard) and is consumed only by the echo re-assert, which uses
-     * it to stop healing attempts immediately instead of retrying to its cap.
+     * parallel-IPC note in useTerminal's mount path). See SessionResizeResult
+     * for `refused` and `held`.
      */
-    resize: (sessionId: string, cols: number, rows: number) => Promise<{ colsChanged: boolean; refused?: true }>;
+    resize: (sessionId: string, cols: number, rows: number) => Promise<SessionResizeResult>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**

@@ -381,28 +381,52 @@ frame picking one at spawn time. The rows follow the agent, because the window's
 does: a Claude session's bar carries the account's rate-limit pills and wraps to two rows,
 leaving 37, while every other agent's bar is one row, leaving 39 (`rowsByAgent` in the
 manifest). The Codex task sessions and spawn boots are still at 37 rows, recorded before that
-was measured and not re-recordable until Codex credits return, so they play as frames in their
-39-row windows rather than streaming. A boot wider than its window is not a cosmetic miss: an inline
-TUI's repaint lands on wrapped rows and the frame ends up blank. The one exception is the Gemini
-session, still at the rig's 120 by 40 until its quota allows a re-run.
+was measured and not re-recordable until Codex credits return, and the Gemini session is still
+at the rig's 120 by 40 until its quota allows a re-run. Neither matters to the replay any more:
+a terminal is held at its recording's grid whatever that grid is (Live replay below), so a
+37-row Codex boot in a 39-row window and the 120-column Gemini session both stream their bytes,
+at a font a little smaller than the window's own fit. A boot wider than its window would still
+be a real miss on the desktop, where an inline TUI's repaint lands on wrapped rows and the frame
+ends up blank, which is why the matrix records at the surface's size rather than relying on the
+hold.
 
 The grid a visitor's terminal mounts with is theirs, not the recording's. The bottom panel is 15
-rows tall, and the task window fits 154 by 37 only with the sample install's Consolas at a device
-pixel ratio of 1: a Windows display scaled to 125 percent fits 144 by 36, and a machine without
-Consolas measures another font. A recording's bytes address rows for its own grid (Windows
-ConPTY re-emits even Claude's classic renderer with absolute cursor positions), so replayed into
-any other grid they land two frames' text on one row. Main applies one rule to that on the
-desktop, and the frame applies the same: bytes replay only into a terminal whose grid equals the
-recording's.
+rows tall, and the task window fits 154 by 37 only at the 1600 by 1000 frame with the sample
+install's Consolas at a device pixel ratio of 1: the site's take-control dialog on a 1440 by 900
+display fits 118 by 26, a Windows display scaled to 125 percent fits 144 by 36, and a machine
+without Consolas measures another font. A recording's bytes address rows for its own grid
+(Windows ConPTY re-emits even Claude's classic renderer with absolute cursor positions), so
+replayed into any other grid they land two frames' text on one row. Main applies one rule to
+that on the desktop, and the frame applies the same: bytes replay only into a terminal whose
+grid equals the recording's.
 
-Any other grid plays the recording's FRAMES instead, which is what makes every surface live. A
-frame reflows where a stream cannot, so the same recording paints correctly at any size: the
-board's bottom panel shows the last 15 rows of a 37-row frame, which is what a terminal scrolled
-to the bottom shows anyway, and a display scaled to 125 percent gets each frame fitted to its
-width. Every recording therefore carries a `frameTimeline` beside its stream, the screen every
-250 ms with unchanged screens dropped, derived from the bytes already on disk. Measured across
-all four common Windows display scales, both the task window and the board's bottom panel now
-stream; before this, the panel streamed at no scale and the task window at half of them.
+So the terminal is brought to the recording's grid wherever the pane can show it. The seed
+answers a replayed session's resize the way main answers one it refuses: with the grid it holds
+(`SessionResizeResult.held`, here the recording's), and the terminal conforms to it, resizing to
+that grid and scaling its font to fit the pane, letterboxed (`conformToHeldGrid` in
+`useTerminal`). The picture is then the recording's, exact, at whatever size the host gave the
+frame and on any display: the dialog at 1440 by 900 shows the 154-column session at about
+9 px type, a 2560 by 1440 display at about 16. Whether to hold is decided by the scale the pane
+would need (`HOLD_MIN_SCALE` in the seed's resize wrapper, 0.6): below it the type would be
+unreadable, so the terminal keeps its own grid and plays frames instead. The bottom panel is
+that case, 15 rows against a recording's 37 or 39. Upward the renderer caps the conformed font
+at 1.5 times the configured size (`CONFORM_MAX_SCALE` in `useTerminal`) and letterboxes past
+it, so a held terminal never reads as a different scale from the UI around it. A held terminal keeps probing with the grid
+it would fit on its own, so a Command Terminal that tiles still switches to the boot recorded at
+the tiled width, and the desktop's own hold (a phone streaming the session) ends the moment
+main accepts the probe.
+
+A terminal that keeps its own grid plays the recording's FRAMES instead of its bytes, which is
+what keeps the panel live. Every recording carries a `frameTimeline` beside its stream, the
+screen every 250 ms with unchanged screens dropped, derived from the bytes already on disk. A
+frame is PHYSICAL rows (`scripts/lib/demo-frame-serializer.js`): one row per recorded row, each
+self-contained in its styling, joined with line breaks, behind the alternate-screen switch when
+the CLI was on it, and ending in one absolute cursor position. It is not the serialize addon's
+output, which joins a row onto the row before it wherever the terminal had wrapped and relies on
+the same width to wrap it again: on a grid 20 columns wider every continuation spilled its first
+20 characters onto the row above and started its own row 20 characters in, which read as a cut
+left edge and a phantom sidebar (task #673). The final frame and the open frame are serialized
+the same way, so an idle session on the frames path scrolls through its whole history.
 
 The alternative was recording each surface at its own grid, and it does not work. The panel is 15
 rows against a recording's 37, and no font size reconciles them: 154 columns needs about 16 px
@@ -414,74 +438,79 @@ A geometry change also does not END the session. It does not finish an agent's t
 desktop, where main routes that session to its parsed frame and the agent goes on working, so it
 must not here: a session the board shows as working keeps the clock the seed started, along with
 its card, its sidebar count and its Monitor peeks. Only a session already at its end paints its
-end. A frame is fitted before it is served: the build drops the
-plain spaces ConPTY pads every row with (they wrap into blank rows on a narrower grid), and at
-serve time the applier shrinks a right-aligned tail's cursor-forward gap to the mounted width
-(Claude's "/rc" at the footer's edge) and cuts trailing rule glyphs and styled bands there, so
-rows end where the CLI would have drawn them and the frame's cursor, placed relative to its
-bottom row, lands on its row. A 1:1 display gets the byte stream, which is character by character
-and the better picture; every other display gets the frame timeline, four repaints a second.
+end.
 
-A grid WIDER than the recording is fitted too, but only so far. A CLI draws its rules and bands to
-the width it was given, so on a wider grid they stop short and the frame reads as though it fills
-only part of the terminal; the bottom panel is 219 columns against a recording's 154, so a quarter
-of it looked empty. A rule is the one run that can honestly be stretched, and it is: extended with
-its own glyph out to the mounted width, which is where the desktop's CLI would have drawn it.
+The applier (`fitFrameToGrid` in `demo-dataset.ts`) fits each frame to the mounted grid row by
+row, and the serializer already dropped the plain spaces ConPTY pads every row with. A row wider
+than the grid is CUT at the edge, never left to wrap: the CLI would have re-laid its prose out at
+this width, and a wrap mid-word is what nothing would draw. Before the cut, a cursor-forward gap
+ahead of a right-aligned tail is shrunk so the tail lands at the edge (Claude's "/rc" at the
+footer's edge, Copilot's timing beside its border). A row narrower than the grid whose last glyph
+is a HORIZONTAL rule is extended with that glyph, so rules reach the edge the way the desktop
+drew them; the bottom panel is 219 columns against a recording's 154, and without this a quarter
+of it read as empty. Only horizontal glyphs: a vertical border extended sideways is a stripe,
+which is what the striped block in #673 was (Copilot's right border, grown 20 wide by a rule
+that stretched any box-drawing glyph). Gaps are never grown either, because a box border
+followed by a one-cell gap and a sentence would put the sentence at the right margin. Widths are
+counted in cells from the app's own Unicode 11 table, inlined into the seed at build time
+(`buildCellWidthTable`), and autowrap is off while the rows are written, so a cell the two still
+disagree on overwrites the last column instead of wrapping. The cursor is recomputed for the
+mounted row count: a 37-row frame in the 15-row panel scrolls 22 rows up, and the cursor's row
+moves with them. Prose keeps its recorded wrap points, because the CLI chose them at that width
+and wrote them into the bytes as line breaks; only the CLI could re-wrap that, which is why the
+task window is held at the recording's grid rather than fitted.
 
-Nothing else is. Prose keeps its recorded wrap points, because the CLI chose them at that width
-and wrote them into the bytes as line breaks; only the CLI could re-wrap that. A cursor-forward gap
-in particular is NEVER widened, even though it would push a right-aligned footer tag out to the
-edge: the serializer emits one at every point it joined a wrapped row, so growing gaps shoves the
-continuation of a sentence out to the right margin. That was tried and reverted on sight. The cost
-is that a tag like Claude's "/rc" sits where the narrower grid put it. Every window opens
-at the size its recording was made for, so only a deliberate resize reaches this. Stretching the
-rules and the styled bands alone would look tidier and read worse: it would wrap the recorded
-width's text inside a visibly wider box. The real fix is the one above, a bundled fixed-cell font
-and a re-recorded matrix.
+One thing the frame path does not do is make text bigger on a display scaled to 200 percent.
+That report (kangentic.com #76) came from a capture at an emulated device pixel ratio of 2, and
+it is the capture, not the frame: under Playwright's `deviceScaleFactor` the `device-pixel-content-box`
+a `ResizeObserver` reports is the CSS size, and xterm's WebGL addon, which trusts that observer
+for its canvas backing store, draws 2x glyphs into a 1x buffer. A real 2x display reports real
+device pixels. A 2x poster is captured with WebGL off (`chromium.launch({ args: ['--disable-webgl'] })`),
+which puts every terminal on the DOM renderer at the right size.
 
 ## What the page ships, and what it costs
 
-Measured with `npm run demo:measure` on the build of 2026-09-12, headless Chromium, a plain
+Measured with `npm run demo:measure` on the build of 2026-09-17, headless Chromium, a plain
 static server on localhost, warm disk.
 
 ### Before first paint (gzipped)
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1757 KB | 485 KB |
+| index (the renderer) | 1802 KB | 499 KB |
 | xterm | 452 KB | 116 KB |
-| demo-seed.js (the sample install: opening and final frames, diffs, peek timelines, message trails) | 646 KB | 108 KB |
-| mock-electron-api.js (the bridge) | 203 KB | 46 KB |
+| demo-seed.js (the sample install: opening and final frames, diffs, peek timelines, message trails, the cell-width table) | 670 KB | 112 KB |
+| mock-electron-api.js (the bridge) | 210 KB | 47 KB |
 | react-vendor | 185 KB | 57 KB |
-| index.css + xterm.css | 111 KB | 18 KB |
-| Pill + datetime chunks | 84 KB | 29 KB |
-| demo-boot.js + demo-scenes.js | 23 KB | 8 KB |
-| **Eager total** | | **867 KB** |
+| index.css + xterm.css | 113 KB | 19 KB |
+| Pill + datetime chunks | 87 KB | 29 KB |
+| demo-boot.js + demo-scenes.js | 24 KB | 8 KB |
+| **Eager total** | | **887 KB** |
 
-The whole `dist/demo/assets` is 16.2 MB raw, almost all of it monaco's lazy language and worker
+The whole `dist/demo/assets` is 16.7 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
 `demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
-it is the one eager file that grows with the dataset (108 KB gzipped for 16 sessions and 10
+it is the one eager file that grows with the dataset (112 KB gzipped for 16 sessions and 10
 diffs). It grew 14 KB gzipped when working sessions gained their opening frame as well as their
 last one, which is what lets a still and the captures show the moment the live replay starts
 from. It grew 3 KB more when they gained their peek timelines, which is what makes the Monitor
 move without a terminal open. It grew 7 KB more for the agent message trails, which are what the
-board cards themselves say under the default Card Preview.
-The 36 recordings under `recordings/` are 35.6 MB raw and 886 KB gzipped
+board cards themselves say under the default Card Preview. It grew 4 KB more when the frames
+became physical rows and the seed took on the cell-width table the applier clips with.
+The 36 recordings under `recordings/` are 36.1 MB raw and 868 KB gzipped
 in total, fetched one at a time as terminals mount, so none of it is on the boot path. Each
 carries its timed stream and its frame timeline, and the frames are roughly half that weight: they
-are what makes a terminal live on a grid the bytes cannot address, which is every display scale
-but two and the bottom panel at all of them. The largest single file is the Codex OpenTelemetry
-session at 114 KB gzipped.
+are what keeps a terminal live where no grid can be held, which is the bottom panel. The largest
+single file is the Gemini owner-search session at 114 KB gzipped.
 
 ### Cold boot per scene
 
 | Scene | Requests | Off-origin | First contentful paint | Ready |
 |---|---|---|---|---|
-| board | 13 | 0 | 132 ms | 306 ms |
-| task | 13 | 0 | 248 ms | 379 ms |
-| changes | 17 | 0 | 276 ms | 415 ms |
-| monitor | 14 | 0 | (paint inside the veil) | 294 ms |
+| board | 15 | 0 | 260 ms | 323 ms |
+| task | 13 | 0 | 236 ms | 356 ms |
+| changes | 17 | 0 | 268 ms | 410 ms |
+| monitor | 14 | 0 | (paint inside the veil) | 293 ms |
 
 Zero off-origin requests on every scene: the renderer's Sentry SDK has no network path of its
 own and never initializes under the mock, analytics go through the bridge the mock stubs, and the
@@ -492,12 +521,12 @@ so the site's privacy page needs no line for the frame.
 
 | Frames | All ready | Script time | JS heap |
 |---|---|---|---|
-| 1 | 277 ms | 153 ms | 14 MB |
-| 4 | 664 ms | 340 ms | 42 MB |
-| 8 | 1210 ms | 632 ms | 76 MB |
+| 1 | 319 ms | 185 ms | 15 MB |
+| 4 | 767 ms | 395 ms | 33 MB |
+| 8 | 1271 ms | 665 ms | 65 MB |
 
 The bundle downloads once and caches; each frame parses and executes it again for roughly 70 ms of
-script and 5 to 10 MB of heap. Eight live frames on one docs page cost about 1.2 seconds on a
+script and 5 to 10 MB of heap. Eight live frames on one docs page cost about 1.3 seconds on a
 desktop machine, which is the number the docs-visuals decision (#632, site #78 and #79) was
 waiting for. This does not decide live frames against stills; it says the ceiling is well above
 what a docs page would use.

@@ -67,15 +67,22 @@ three things staying in step, and each is enforced rather than remembered.
   no recording. `loop=1` restarts a finished session on its own clock and repaints a mounted
   terminal from the opening frame rather than re-feeding its history; it is off by default, and
   a still frame arms no timer at all.
-- **A terminal that cannot take the bytes plays frames, and is never left dead or finished.** A
-  recording's bytes address rows for their own grid, which no page can promise: the board's bottom
-  panel is 15 rows against a session's 37, and a grid moves with the visitor's display scale. A
-  serialized frame reflows, so every recording carries a `frameTimeline` beside its stream and any
-  other grid plays that, fitted to its width. A grid mismatch is also not an ending: main routes a
+- **A terminal is brought to the recording's grid, or plays frames; it is never left dead or
+  finished.** A recording's bytes address rows for their own grid, which no page can promise: the
+  board's bottom panel is 15 rows against a session's 37, and a grid moves with the host's frame
+  size and the visitor's display scale. Wherever the pane can show the recording's grid at a
+  readable size, the seed answers the terminal's resize the way main answers one it refuses, with
+  the grid it holds (`SessionResizeResult.held`), and the terminal conforms to it (`useTerminal`'s
+  `conformToHeldGrid`: that grid, the font scaled to fit, letterboxed), so the bytes replay
+  exactly. Where it cannot (the panel), every recording carries a `frameTimeline` beside its
+  stream, PHYSICAL rows with an absolute cursor (`scripts/lib/demo-frame-serializer.js`), and the
+  applier fits each row to the grid: cut at the edge, never wrapped; only a horizontal rule
+  stretched; gaps never grown. A grid mismatch is also not an ending: main routes a
   geometry-changed session to its parsed frame on the desktop and the agent goes on working, so a
   working session here keeps its clock, its card and its Monitor peeks. Never conflate "cannot
-  replay these bytes" with "the agent finished", and never answer a grid mismatch with a second
-  recording at that grid: the grid is not stable enough to record against.
+  replay these bytes" with "the agent finished", never answer a grid mismatch with a second
+  recording at that grid (the grid is not stable enough to record against), and never hand the
+  serialize addon's joined rows to a terminal of another width.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)
@@ -92,6 +99,17 @@ three things staying in step, and each is enforced rather than remembered.
   gone stale, when a line sits outside its recording's span, and when the applier or the loader
   stops reading them. It is the answer to the parity test passing on a mock that answers with
   nothing. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-frame-format.test.ts` fails when any recording's
+  final frame, open frame, or timeline frame is not physical rows with a cursor suffix, or holds a
+  row wider than the recording's columns (the "run the backfill" backstop);
+  `tests/unit/demo-frame-serializer.test.ts` round-trips the serializer, including the two
+  recordings from task #673, and `tests/unit/demo-frame-fit.test.ts` runs the applier lifted out
+  of the GENERATED seed over those recordings at the grids that broke (no spill, no stripe, the
+  cursor on its row); `tests/unit/demo-cell-widths.test.ts` pins the applier's width table to
+  `wcwidthV11`. Run via `npm run test:unit`.
+- **Test (behavior, CI):** `tests/ui/terminal-held-grid-conform.spec.ts` drives the renderer's
+  conform against the mock's held answer: a held grid is taken at a smaller font, an accepted probe
+  releases it, and a plain refusal conforms nothing.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots every bootable scene from a
   static server and asserts the marker, the embed and theme parameters, the error card for an
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no

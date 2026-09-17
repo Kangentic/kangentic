@@ -879,7 +879,15 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   time-stamped refusal hold after a single refused IPC: no further re-asserts for the budget
   window, whatever dims later echoes carry (time-stamped rather than signature-keyed, because
   the pre-send fit can move the terminal's own dims and a burned signature would stop binding
-  exactly then). Every renderer resize sender now traces `resize-request` with an origin
+  exactly then). The refusal also names the grid main keeps (`SessionResizeResult.held`), and
+  the terminal CONFORMS to it (`conformToHeldGrid` in `useTerminal.ts`): it resizes its own
+  xterm to the held grid and scales its font to fit that grid into the pane, letterboxed and
+  never above 1.5 times the configured size (`CONFORM_MAX_SCALE`), so the frame the PTY paints
+  is the frame the user sees rather than the taller grid clipped. A
+  held terminal keeps probing main with the grid it would fit on its own (`fitTerminal`, on
+  every refit), and the first accepted probe releases the hold and restores the configured font.
+  The web demo's mock holds a replayed session at its recording's grid through the same answer
+  (demo/README.md, "Live replay"). Gated by `tests/ui/terminal-held-grid-conform.spec.ts`. Every renderer resize sender now traces `resize-request` with an origin
   tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every
   resize outcome (`resize-applied`/`resize-noop`/`resize-refused`/`resize-stash`/
   `resize-ignored`/`resize-invalid`/`resize-failed` (node-pty threw on a just-died child; main

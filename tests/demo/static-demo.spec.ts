@@ -227,7 +227,7 @@ test('the board scene makes no request off the serving origin', async ({ page })
 interface DemoSessionRow { id: string; taskId: string | null; status: string; transient?: boolean }
 interface DemoTaskRow { id: string; title: string; session_id: string | null }
 interface DemoRecordingsWindow {
-  __demoRecordings: { base: string; sessions: Record<string, string> };
+  __demoRecordings: { base: string; sessions: Record<string, { file: string; cols: number; rows: number }> };
   __demoScrollback: Record<string, string>;
 }
 interface DemoElectronWindow {
@@ -389,6 +389,46 @@ function mountedGrid(page: Page, sessionId: string): Promise<Grid | null> {
 }
 
 /**
+ * Every grid the renderer has sent the mock for the session. A terminal main HOLDS at a grid sends
+ * that grid once it has conformed (its own xterm resize reports it), and keeps probing with its
+ * natural grid afterwards, so the LAST call is not the grid it shows; the held grid appearing in
+ * the list is what says the terminal conformed (see the hold in demo-dataset.ts's resize wrapper).
+ */
+function sentGrids(page: Page, sessionId: string): Promise<Grid[]> {
+  return page.evaluate((id) => {
+    const calls = (window as unknown as DemoElectronWindow).electronAPI.sessions.__resizeCalls ?? [];
+    return calls.filter((call) => call.sessionId === id).map((call) => ({ cols: call.cols, rows: call.rows }));
+  }, sessionId);
+}
+
+/** The grid the middleware session was recorded at (tests/captures/fixtures/demo/manifest.json, a Claude task window). */
+const MIDDLEWARE_RECORDED_GRID: Grid = { cols: 154, rows: 37 };
+
+/**
+ * Every frame the mock paints into a terminal on the frames path, parsed: the rows between the
+ * autowrap-off and autowrap-on brackets, each measured in cells (code points plus cursor-forward
+ * gaps; the sample install's frames carry no wide glyph). What the bottom-panel case asserts on.
+ */
+function paintedFrameRowWidths(page: Page, sessionId: string, spanMs: number): Promise<number[][]> {
+  return page.evaluate(({ id, span }) => new Promise<number[][]>((resolve) => {
+    const api = (window as unknown as DemoElectronWindow).electronAPI;
+    const frames: number[][] = [];
+    const unsubscribe = api.sessions.onData((candidate, data) => {
+      if (candidate !== id) return;
+      const start = data.indexOf('\x1b[?7l');
+      const end = data.lastIndexOf('\x1b[?7h');
+      if (start === -1 || end === -1 || end < start) return;
+      frames.push(data.slice(start + 5, end).split('\r\n').map((row) => {
+        const text = row.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+        const gaps = (row.match(/\x1b\[(\d*)C/g) ?? []).reduce((sum, move) => sum + Number(move.replace(/\D/g, '') || '1'), 0);
+        return Array.from(text).length + gaps;
+      }));
+    });
+    setTimeout(() => { unsubscribe(); resolve(frames); }, span);
+  }), { id: sessionId, span: spanMs });
+}
+
+/**
  * A spawn's boot has to ARRIVE, whichever path carries it. Bytes replay only into a terminal whose
  * grid equals the recording's; any other grid plays the recording's frames instead. Both reach the
  * page through the mock's onData path, which is what the bottom-panel case below proves at a grid
@@ -437,7 +477,7 @@ test('a still paints a working session at the moment the live frame opens it', a
   const readFrames = () => page.evaluate(async () => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     const demo = window as unknown as DemoRecordingsWindow;
-    const endFrameOf = async (id: string) => ((await (await fetch(demo.__demoRecordings.base + demo.__demoRecordings.sessions[id])).json()) as { serialized: string }).serialized;
+    const endFrameOf = async (id: string) => ((await (await fetch(demo.__demoRecordings.base + demo.__demoRecordings.sessions[id].file)).json()) as { serialized: string }).serialized;
     return {
       activity: await api.sessions.getActivity(),
       middlewareSeeded: demo.__demoScrollback['sess-cw-middleware'].length,
@@ -583,12 +623,12 @@ test('loop=1 leaves a session that was never working alone', async ({ page }) =>
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('a terminal that cannot take the bytes does not end the session it shows', async ({ browser }) => {
-  // A geometry change does not end an agent's turn on the desktop: main routes that session to
-  // its parsed frame and the agent goes on working. So a working session whose terminal mounts
-  // on a grid its recording does not fit keeps its clock, its card and its Monitor peeks, and
-  // only the terminal text stands still. This is what leaves the default board layout moving
-  // with the bottom panel open, where the panel's 15 rows can never be a recording's 37.
+test('a display that fits another grid holds the task window at the recording\'s grid and streams its bytes', async ({ browser }) => {
+  // Windows at 125 percent scaling fits 144 by 36 in the task window, not the recorded 154 by 37,
+  // and a recording's bytes address rows for their own grid. The mock answers the terminal's
+  // resize with the grid it holds, the recording's, and the terminal conforms: it takes that grid
+  // and scales its font to fit the pane, so the bytes replay exactly here too. The session goes
+  // on working through it, as an agent does on the desktop when its window is resized.
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
   const page = await context.newPage();
@@ -596,12 +636,8 @@ test('a terminal that cannot take the bytes does not end the session it shows', 
   await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1' }));
   await waitForDemoReady(page);
   await SCENE_MARKERS.task(page);
-  await expect.poll(() => mountedGrid(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toBeNull();
-  const grid = await mountedGrid(page, 'sess-cw-middleware');
-  test.skip(grid?.cols === 154 && grid?.rows === 37, 'this machine fits the recorded grid at 1.25 too');
-
-  // The terminal plays the recording's frames instead of its bytes, so it is live here too, and
-  // the card must still be working once the moment its recording ends has passed.
+  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(MIDDLEWARE_RECORDED_GRID);
+  expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000);
   expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBeGreaterThan(0);
   expect(await peekChanges).toBeGreaterThan(0);
@@ -717,12 +753,13 @@ test('a Command Terminal that tiles beside a new one repaints from the boot reco
   // Let that terminal mount alone first: the repaint under test is what its resize triggers.
   await expect.poll(() => mountedGrid(page, firstId), { timeout: 10_000 }).not.toBeNull();
   // The desktop's PTY resize makes the CLI repaint at the tiled width; the frame does the same
-  // from the tiled recording, starting with a cleared screen.
+  // from the tiled recording, starting with a cleared screen (after leaving the alternate
+  // screen, so the clear lands on the buffer the boot is written into).
   const repainted = page.evaluate(({ sessionId, timeout }) => new Promise<boolean>((resolve) => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     const timer = setTimeout(() => resolve(false), timeout);
     const unsubscribe = api.sessions.onData((id, data) => {
-      if (id !== sessionId || !data.startsWith('\x1b[2J\x1b[3J')) return;
+      if (id !== sessionId || !data.replace(/^\x1b\[\?1049l/, '').startsWith('\x1b[2J\x1b[3J')) return;
       clearTimeout(timer);
       unsubscribe();
       resolve(true);
@@ -754,34 +791,43 @@ test('opened directly, the page hosts the frame at the site size and scales it t
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('a display that fits another grid plays the recording\'s frames instead of its bytes', async ({ browser }) => {
-  // Windows at 125 percent scaling fits 144 by 36 in the task window, not the recorded 154 by 37,
-  // and a recording's bytes address rows for their own grid. A FRAME reflows, so the same
-  // recording stays live here: the frame timeline plays instead, fitted to the mounted width.
-  // This is the case that used to be a standing still, and it is why every display is live now.
-  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
+test('the site\'s take-control dialog at a 1440 by 900 display holds the task window at the recording\'s grid', async ({ browser }) => {
+  // kangentic.com gives the dialog's frame a 1233 by 771 box there, where the task window fits
+  // 118 by 26 at the configured font: a fifth of the recording's columns short, and the case in
+  // which every wrapped row used to spill (task #673). The pane can show 154 by 37 at about 77
+  // percent of the type, above the hold's floor, so the terminal conforms and the bytes replay.
+  const context = await browser.newContext({ viewport: { width: 1233, height: 771 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await gotoScene(page, { view: 'task' });
+  await page.goto(demoUrl({ view: 'task', embed: '1' }));
+  await waitForDemoReady(page);
   await SCENE_MARKERS.task(page);
-  await expect.poll(() => mountedGrid(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toBeNull();
-  const grid = await mountedGrid(page, 'sess-cw-middleware');
-  test.skip(grid?.cols === 154 && grid?.rows === 37, 'this machine fits the recorded grid at 1.25 too');
+  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(MIDDLEWARE_RECORDED_GRID);
+  const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
+  expect(natural.cols).toBeLessThan(MIDDLEWARE_RECORDED_GRID.cols);
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   expect(getUnexpectedErrors()).toEqual([]);
   await context.close();
 });
 
 test('the board\'s bottom panel is live, where no grid could ever fit a recording', async ({ page }) => {
-  // The panel is 15 rows and a session recording is 37, which no font size reconciles: at every
-  // display scale this is the frame path. It is also the default layout, so it is the one a
-  // visitor meets the product through.
+  // The panel is 15 rows and a session recording is 37, which no font size reconciles: the hold
+  // would need type at 40 percent of the configured size, below its floor, so at every display
+  // scale this is the frame path. It is also the default layout, so it is the one a visitor
+  // meets the product through. Every frame it paints is physical rows fitted to the panel: no
+  // row wider than the grid, so nothing can wrap or spill, and the hold never engages.
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await gotoScene(page, { view: 'board', embed: '1' });
   await SCENE_MARKERS.board(page);
   const grid = await mountedGrid(page, 'sess-cw-middleware');
   expect(grid?.rows).toBe(15);
-  expect(await streamedBytes(page, 'sess-cw-middleware', 8_000)).toBeGreaterThan(0);
+  expect(await sentGrids(page, 'sess-cw-middleware')).not.toContainEqual(MIDDLEWARE_RECORDED_GRID);
+  const frames = await paintedFrameRowWidths(page, 'sess-cw-middleware', 8_000);
+  expect(frames.length).toBeGreaterThan(0);
+  for (const rows of frames) {
+    expect(rows.length).toBeGreaterThan(0);
+    for (const width of rows) expect(width).toBeLessThanOrEqual(grid?.cols ?? 0);
+  }
   expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
 });
