@@ -64,7 +64,10 @@ interface FakeSentryCliConstructorCall {
 
 interface FakeSentryCliExecuteCall {
   args: string[];
-  mode: string;
+  /** `execute`'s live flag. A boolean since @sentry/cli 3, where `true` both
+   *  inherits stdio and rejects on a non-zero exit. It used to be the string
+   *  `'rejectOnError'`, with the plain booleans meaning something weaker. */
+  live: boolean;
 }
 
 /**
@@ -78,7 +81,7 @@ interface FakeSentryCliExecuteCall {
  * expect the require to never happen at all) do not have to supply one.
  */
 function installFakeSentryCli(
-  executeImplementation: (args: string[], mode: string) => Promise<void> = async () => undefined,
+  executeImplementation: (args: string[], live: boolean) => Promise<void> = async () => undefined,
 ): {
   constructorCalls: FakeSentryCliConstructorCall[];
   executeCalls: FakeSentryCliExecuteCall[];
@@ -91,9 +94,9 @@ function installFakeSentryCli(
     constructor(configFile: unknown, options: unknown) {
       constructorCalls.push({ configFile, options });
     }
-    execute(args: string[], mode: string): Promise<void> {
-      executeCalls.push({ args, mode });
-      return executeImplementation(args, mode);
+    execute(args: string[], live: boolean): Promise<void> {
+      executeCalls.push({ args, live });
+      return executeImplementation(args, live);
     }
   }
 
@@ -102,7 +105,8 @@ function installFakeSentryCli(
     id: SENTRY_CLI_RESOLVED_PATH,
     filename: SENTRY_CLI_RESOLVED_PATH,
     loaded: true,
-    exports: FakeSentryCli,
+    // @sentry/cli 3 exports the class by name; the package used to BE the class.
+    exports: { SentryCli: FakeSentryCli },
   } as unknown as NodeJS.Module;
 
   return {
@@ -300,7 +304,7 @@ describe('uploadNativeDebugFiles', () => {
             expect.stringContaining(path.join('node-pty', 'prebuilds', 'win32-x64')),
             expect.stringContaining(path.join('node-pty', 'prebuilds', 'win32-arm64')),
           ],
-          mode: 'rejectOnError',
+          live: true,
         },
       ]);
       expect(console.log).toHaveBeenCalledWith(

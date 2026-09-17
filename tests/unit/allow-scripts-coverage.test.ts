@@ -67,6 +67,11 @@ describe('allowScripts covers every package npm would otherwise block', () => {
     // Guards against the derivation below silently reducing to zero cases if npm ever
     // stops writing `hasInstallScript`, which would make the real check pass vacuously.
     expect(installScriptPackages.size).toBeGreaterThan(0);
+    // Named so the guard cannot pass on an empty or unrelated set. Keep this list to
+    // packages that compile or download at install time; a package can legitimately
+    // leave it by switching to prebuilds, which is what better-sqlite3 13 does
+    // (`gypfile: false` plus per-platform exports), so re-check it on that bump
+    // rather than assuming the pin is still true.
     for (const name of ['electron', 'better-sqlite3', 'node-pty']) {
       expect(installScriptPackages, `${name} should be one of them`).toContain(name);
     }
