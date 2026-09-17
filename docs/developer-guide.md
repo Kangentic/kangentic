@@ -174,7 +174,7 @@ Three parallel processes:
 2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the three `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/retrieval/embedder/embed-worker.ts`, `src/main/git/line-count/line-count-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
-Native modules (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `font-list`, `simple-git`) are marked external in esbuild -- loaded at runtime from `node_modules`.
+The esbuild externals (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `sqlite-vec`, `@huggingface/transformers`, `font-list`, plus `electron` itself) are not bundled. They load at runtime from `node_modules`, which is why each one also needs an entry in `electron-builder.yml`'s `files:` whitelist to reach a packaged build. The list is declared identically in `scripts/build.js` and `scripts/dev.js`; change one and change the other. Everything else, `simple-git` included, is bundled.
 
 Flags:
 - `--port=<n>` - override Vite port
