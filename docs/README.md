@@ -53,3 +53,4 @@ Point-in-time findings documents. Kept for the reasoning they record; not mainta
 evergreen references.
 
 - [Transcript Pipeline Audit](transcript-pipeline-audit.md) (2026-06-12) - Hardening the session-transcript pipeline for cross-agent consumption: per-adapter `parseTranscript`, Claude parser fidelity fixes, verified against real session files
+- [Board Card Drag Performance Audit](board-drag-perf-audit.md) (2026-09-16) - Measuring the board drag on a production build: the gesture drops no frames, the one stall inside it was an xterm construction from a previous drop's spawn, and dev mode is 4 to 7x slower on every synchronous cost
