@@ -173,10 +173,22 @@ function withRestoredMetadata(entry, resolved, integrity) {
   return { ...rebuilt, ...rest };
 }
 
-/** Workspace roots and symlinks legitimately have no registry tarball. */
+/**
+ * Workspace roots, symlinks, and anything not installed from the registry legitimately have
+ * no registry tarball. The last case is the one with teeth: npm records a git dependency
+ * with a `git+` URL and no `integrity` at all, so a naive "missing integrity" test reads it
+ * as damage. Repairing it would be worse than leaving it, because a fork that kept its
+ * upstream name and version satisfies every check in `resolveEntry`, and the rebuilt entry
+ * would point `npm ci` at the official tarball instead of the patched source, silently
+ * discarding the reason the git dependency exists. Exempt on a positive match against the
+ * registry rather than a denylist of schemes, so the next scheme is exempt by default.
+ */
 function needsRepair(lockfileKey, entry) {
   if (!lockfileKey.startsWith('node_modules/')) return false;
   if (entry.link) return false;
+  if (typeof entry.resolved === 'string' && !entry.resolved.startsWith(`${REGISTRY_BASE_URL}/`)) {
+    return false;
+  }
   return typeof entry.resolved !== 'string' || typeof entry.integrity !== 'string';
 }
 
@@ -245,7 +257,19 @@ async function main() {
   console.log('\nNow run `npm ci` to verify every restored hash against its tarball.');
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  packageNameFor,
+  encodePackageName,
+  unscopedPackageName,
+  integrityFromDist,
+  needsRepair,
+  withRestoredMetadata,
+  runWithConcurrency,
+};

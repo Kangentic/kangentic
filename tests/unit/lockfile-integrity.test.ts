@@ -20,6 +20,7 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const LOCKFILE_PATH = path.join(REPO_ROOT, 'package-lock.json');
 const REPAIR_COMMAND = 'node scripts/repair-lockfile-integrity.js';
+const REGISTRY_TARBALL_PREFIX = 'https://registry.npmjs.org/';
 
 interface LockfileEntry {
   version?: string;
@@ -29,15 +30,23 @@ interface LockfileEntry {
 }
 
 /**
- * Registry-installed packages only. Three kinds of entry legitimately have no tarball:
- * the root project (`''`), the workspace roots under `packages/`, and the `link: true`
- * symlinks npm creates for those workspaces inside node_modules.
+ * Registry-installed packages only. Four kinds of entry legitimately have no registry
+ * tarball: the root project (`''`), the workspace roots under `packages/`, the `link: true`
+ * symlinks npm creates for those workspaces inside node_modules, and anything installed
+ * from git, a file path, or a direct tarball URL, which npm records with a non-registry
+ * `resolved` and normally no `integrity` at all. That last exemption keeps a future git
+ * dependency from failing this scan on a healthy lockfile, which is how a guard gets
+ * disabled, and it mirrors `needsRepair` in the repair script so neither side treats a git
+ * entry as damage to fetch over.
  */
 function findMetadataOffenders(packages: Record<string, LockfileEntry>): string[] {
   const offenders: string[] = [];
   for (const [lockfileKey, entry] of Object.entries(packages)) {
     if (!lockfileKey.startsWith('node_modules/')) continue;
     if (entry.link) continue;
+    if (typeof entry.resolved === 'string' && !entry.resolved.startsWith(REGISTRY_TARBALL_PREFIX)) {
+      continue;
+    }
 
     const missing: string[] = [];
     if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith('https://')) {
@@ -46,7 +55,19 @@ function findMetadataOffenders(packages: Record<string, LockfileEntry>): string[
     if (typeof entry.integrity !== 'string' || entry.integrity.length === 0) {
       missing.push('integrity');
     }
-    if (missing.length > 0) offenders.push(`${lockfileKey} (missing ${missing.join(' and ')})`);
+    if (missing.length > 0) {
+      offenders.push(`${lockfileKey} (missing ${missing.join(' and ')})`);
+      continue;
+    }
+
+    // Both fields are present, so the remaining way to break `npm ci` is a resolved URL
+    // naming a different version than the entry pins: well-formed, passes every check
+    // above, and fails at install time with an integrity mismatch. The repair script
+    // asserts this at write time; nothing re-checked it afterwards, so a hand edit, a
+    // merge resolution, or a future regeneration bug could still land one.
+    if (typeof entry.version === 'string' && !entry.resolved.endsWith(`-${entry.version}.tgz`)) {
+      offenders.push(`${lockfileKey} (pins ${entry.version} but resolves to ${entry.resolved})`);
+    }
   }
   return offenders;
 }
@@ -63,18 +84,21 @@ describe('package-lock.json supply-chain metadata', () => {
     expect(lockfile.lockfileVersion).toBe(3);
   });
 
-  it('records resolved and integrity for every registry-installed package', () => {
+  it('resolves every registry-installed package to its own version, with integrity', () => {
     const offenders = findMetadataOffenders(lockfile.packages);
     const preview = offenders.slice(0, 15).join('\n  ');
     const overflow = offenders.length > 15 ? `\n  ...and ${offenders.length - 15} more` : '';
 
     expect(
       offenders,
-      `${offenders.length} lockfile entries install with no integrity verification, so \`npm ci\` ` +
-        `fetches them unchecked in CI and in the signed release build.\n\n` +
-        `This is what regenerating package-lock.json against a populated node_modules does. ` +
-        `\`npm install --package-lock-only\` will NOT fix it.\n\n` +
-        `Repair with: ${REPAIR_COMMAND}\n\n  ${preview}${overflow}`,
+      `${offenders.length} lockfile entries are not verifiable at install time, so \`npm ci\` ` +
+        `either fetches them unchecked or fetches the wrong tarball, in CI and in the signed ` +
+        `release build.\n\n` +
+        `A "missing" entry is what regenerating package-lock.json against a populated ` +
+        `node_modules does, and \`npm install --package-lock-only\` will NOT fix it. ` +
+        `A "pins X but resolves to Y" entry is a hand edit or a bad merge, and needs the ` +
+        `entry corrected by hand rather than refetched.\n\n` +
+        `Repair the missing ones with: ${REPAIR_COMMAND}\n\n  ${preview}${overflow}`,
     ).toEqual([]);
   });
 
@@ -108,5 +132,49 @@ describe('package-lock.json supply-chain metadata', () => {
     expect(findMetadataOffenders({ 'node_modules/semver': { version: '6.3.1' } })).toEqual([
       'node_modules/semver (missing resolved and integrity)',
     ]);
+  });
+
+  it('exempts a git-sourced entry with no integrity at all', () => {
+    // Mirrors needsRepair's non-registry exemption in the repair script: a git dependency's
+    // `resolved` legitimately points off-registry and normally carries no `integrity`, so a
+    // naive scan would flag every git dependency as damage on an otherwise healthy lockfile.
+    expect(
+      findMetadataOffenders({
+        'node_modules/some-lib': {
+          version: '4.2.3',
+          resolved: 'git+https://github.com/org/some-lib.git#abcdef',
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports an entry whose resolved URL names a different version than it pins', () => {
+    // Both fields are present, so the missing-field checks above pass. The version encoded
+    // in the tarball filename disagrees with the pinned version, which is the shape a hand
+    // edit or a bad merge produces and which fails at install time with an integrity
+    // mismatch rather than at scan time.
+    expect(
+      findMetadataOffenders({
+        'node_modules/some-lib': {
+          version: '4.2.3',
+          resolved: 'https://registry.npmjs.org/some-lib/-/some-lib-4.2.0.tgz',
+          integrity: 'sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==',
+        },
+      }),
+    ).toEqual([
+      'node_modules/some-lib (pins 4.2.3 but resolves to https://registry.npmjs.org/some-lib/-/some-lib-4.2.0.tgz)',
+    ]);
+  });
+
+  it('reports no offender when the resolved version matches the pinned version', () => {
+    expect(
+      findMetadataOffenders({
+        'node_modules/some-lib': {
+          version: '4.2.3',
+          resolved: 'https://registry.npmjs.org/some-lib/-/some-lib-4.2.3.tgz',
+          integrity: 'sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==',
+        },
+      }),
+    ).toEqual([]);
   });
 });
