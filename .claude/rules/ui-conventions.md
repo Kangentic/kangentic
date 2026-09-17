@@ -17,6 +17,12 @@ chrome unless these are stated.
   `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). Each carries
   a comment naming this rule. Adding a fourth needs the same justification, not a silent inline
   `<svg>`.
+- **List keys:** every JSX element rendered from `.map()` (or any array) carries a stable `key`.
+  This is review-only. `react/jsx-key` used to enforce it, but that rule ships with
+  `eslint-plugin-react`, which has no ESLint 10 release (its peer range stops at ESLint 9), so
+  since the ESLint 10 move no lint rule or CI test catches a missing key. React's dev runtime
+  logs a console warning, which CI never sees. Restore a lint rule in `eslint.config.mjs` once a
+  plugin that supports ESLint 10 ships one.
 - **Dropdowns:** use the shared `Select` component from
   `src/renderer/components/settings/shared.tsx`, never a raw `<select>` with inline classes.
   The shared component renders `appearance-none` with a custom ChevronDown for correct spacing.

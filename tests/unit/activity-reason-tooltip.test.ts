@@ -2,7 +2,9 @@
  * Unit tests for src/renderer/components/board/ActivityReasonTooltip.tsx's
  * plain-text formatter. Covers the idle/permission duration enrichment
  * (`reason.since`, epoch ms) and pins that every other reason kind is
- * unaffected.
+ * unaffected. Also covers the `ActivityReasonTooltip` component's `now` prop:
+ * the rendered duration is measured against the caller-supplied `now`, not
+ * against the wall clock.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
@@ -42,6 +44,28 @@ function markPropOfFirstChild(output: unknown): string {
   }
   expect(markElement.type).toBe(ActivityMark);
   return markElement.props.mark as string;
+}
+
+/**
+ * Reads the rendered text of `ActivityReasonTooltip`'s second child, the
+ * `<span>` that holds the label (icon + duration for idle/permission). JSX
+ * interpolation splits a literal-plus-expression body into a children array
+ * (e.g. `['Idle for ', '12m 34s']`), so this flattens and joins whatever
+ * shape that child's children take before returning the plain string.
+ */
+function textOfSecondChild(output: unknown): string {
+  if (!isElementLike(output)) throw new Error('ActivityReasonTooltip did not return an element');
+  const outerChildren = output.props.children;
+  if (!Array.isArray(outerChildren) || outerChildren.length < 2) {
+    throw new Error('expected at least two children on the outer element');
+  }
+  const labelElement = outerChildren[1];
+  if (!isElementLike(labelElement)) {
+    throw new Error('expected the second child to be a <span> element');
+  }
+  const labelChildren = labelElement.props.children;
+  const parts = Array.isArray(labelChildren) ? labelChildren : [labelChildren];
+  return parts.join('');
 }
 
 describe('ActivityReasonTooltip mark selection', () => {
@@ -86,5 +110,40 @@ describe('formatActivityReasonText', () => {
     vi.setSystemTime(now);
     const reason: ActivityReason = { kind: 'idle', since: now.getTime() };
     expect(formatActivityReasonText(reason)).toBe('Idle for 0s');
+  });
+});
+
+describe('ActivityReasonTooltip duration follows the now prop', () => {
+  // Deliberately far from the real wall clock: a component that reverted to
+  // reading Date.now() internally would render a duration in the decades,
+  // not the minutes/hours asserted below, so the failure is unambiguous.
+  const since = new Date('2026-01-01T00:00:00Z').getTime();
+
+  it('idle measures elapsed time against the now prop, not the wall clock', () => {
+    const firstOutput = ActivityReasonTooltip({
+      reason: { kind: 'idle', since },
+      now: since + 12 * 60_000 + 34_000,
+    });
+    expect(textOfSecondChild(firstOutput)).toBe('Idle for 12m 34s');
+
+    const secondOutput = ActivityReasonTooltip({
+      reason: { kind: 'idle', since },
+      now: since + 90 * 60_000,
+    });
+    expect(textOfSecondChild(secondOutput)).toBe('Idle for 1h 30m');
+  });
+
+  it('permission measures elapsed time against the now prop, not the wall clock', () => {
+    const firstOutput = ActivityReasonTooltip({
+      reason: { kind: 'permission', since },
+      now: since + 12 * 60_000 + 34_000,
+    });
+    expect(textOfSecondChild(firstOutput)).toBe('Awaiting permission for 12m 34s');
+
+    const secondOutput = ActivityReasonTooltip({
+      reason: { kind: 'permission', since },
+      now: since + 90 * 60_000,
+    });
+    expect(textOfSecondChild(secondOutput)).toBe('Awaiting permission for 1h 30m');
   });
 });

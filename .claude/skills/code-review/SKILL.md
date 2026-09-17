@@ -138,6 +138,7 @@ These are summarized for review convenience; the authoritative, enforced version
 - Single-command bash calls only (no `&&`, `||`, `|`, `;` chaining) - see `.claude/rules/bash-single-command.md`
 - House writing style in every piece of authored prose the change adds or rewrites: comments, docs, README, UI copy, and the PR body this pass writes. No em-dashes, en-dashes, `--` as a separator, or curly quotes; no model vocabulary or puffery; sentence-case headings; active voice; say what it does, not how it feels - see `.claude/rules/writing-style.md`. Judge only what the change touches; pre-existing prose is out of scope by that rule's own terms. This line is the docs backstop for the judgment half of the rule. `platform-guard` (see "## Finders") flags dashes and its gate does fire on an em-dash in any hunk, but it checks characters only, so a docs-only or markdown-only change reaches no other reviewer for vocabulary, sentence construction, and voice.
 - Lucide React icons only (no inline SVGs)
+- Every JSX element rendered from `.map()` (or any array) carries a stable `key`. This check is review-only, since `react/jsx-key` left with `eslint-plugin-react` and no ESLint 10 plugin has replaced it - see `.claude/rules/ui-conventions.md`
 - `data-testid` and `data-swimlane-name` attributes for test selectors
 - Zustand stores with IPC bridge pattern
 - IPC channels defined in `src/shared/ipc-channels.ts`
