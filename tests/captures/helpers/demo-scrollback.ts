@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEMO_SESSIONS, type DemoCellWidthTable, type DemoChangesMap, type DemoDiff, type DemoScrollbackMap } from './demo-dataset';
+import { DEMO_SESSIONS, type DemoCellWidthTable, type DemoChangesMap, type DemoDiff, type DemoHistory, type DemoScrollbackMap } from './demo-dataset';
 import { wcwidthV11 } from '../../../src/shared/xterm-unicode11';
 
 interface DemoCaptureRecord {
@@ -324,4 +324,26 @@ export function loadDemoChanges(fixturesDir: string = DEMO_FIXTURES_DIR): DemoCh
     }
   }
   return map;
+}
+
+/**
+ * The git history behind a scaffolded project (scripts/capture-demo-history.mjs): its commits
+ * newest first in git:commitGraph's shape, the diff each commit introduces, and the blame of
+ * every file a recorded session modified, keyed by session id and then path. Keyed by project
+ * NAME, the key the manifest's `repos` uses. A project without a history file (the two upstream
+ * clones) has none, and its History pane shows the empty state a shallow clone would.
+ */
+export function loadDemoHistory(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, DemoHistory> {
+  const historyDir = path.join(fixturesDir, 'history');
+  if (!fs.existsSync(historyDir)) return {};
+  const histories: Record<string, DemoHistory> = {};
+  for (const name of fs.readdirSync(historyDir)) {
+    if (!name.endsWith('.json')) continue;
+    const history = JSON.parse(fs.readFileSync(path.join(historyDir, name), 'utf-8')) as DemoHistory;
+    if (!Array.isArray(history.commits) || history.commits.length === 0) {
+      throw new Error(`[demo] ${name} carries no commits; re-run node scripts/capture-demo-history.mjs`);
+    }
+    histories[history.project] = history;
+  }
+  return histories;
 }

@@ -30,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildScaffoldRepo } from './lib/demo-scaffold-repo.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
@@ -139,11 +140,11 @@ function prepareRepo(name, spec) {
     console.error(`[matrix] ${name}: cloning ${spec.git}`);
     execFileSync('git', ['clone', '--depth', '1', spec.git, target], { stdio: 'inherit' });
   } else if (spec.scaffold) {
-    console.error(`[matrix] ${name}: copying scaffold ${spec.scaffold}`);
-    fs.cpSync(path.join(repoRoot, spec.scaffold), target, { recursive: true });
-    execFileSync('git', ['init', '-q'], { cwd: target, stdio: 'inherit' });
-    execFileSync('git', ['add', '-A'], { cwd: target, stdio: 'inherit' });
-    execFileSync('git', ['-c', 'user.name=Dev', '-c', 'user.email=dev@example.com', 'commit', '-q', '-m', 'Initial import'], { cwd: target, stdio: 'inherit' });
+    // The scaffold's commit plan gives the repo a real history (scripts/lib/demo-scaffold-repo.mjs),
+    // the same one the web build's History pane shows, so a session's branch and the base it
+    // forks from agree with the fixture scripts/capture-demo-history.mjs writes.
+    console.error(`[matrix] ${name}: building scaffold ${spec.scaffold} from its commit plan`);
+    buildScaffoldRepo(path.join(repoRoot, spec.scaffold), target);
     if (fs.existsSync(path.join(target, 'package.json'))) {
       console.error(`[matrix] ${name}: npm install`);
       execFileSync('npm', ['install', '--no-audit', '--no-fund', '--silent'], { cwd: target, stdio: 'inherit', shell: process.platform === 'win32' });
@@ -162,6 +163,8 @@ function prepareRepo(name, spec) {
 function refreshScaffold(name, spec, target) {
   if (!spec.scaffold) return;
   fs.cpSync(path.join(repoRoot, spec.scaffold), target, { recursive: true });
+  // The commit plan describes the repo; it is not a file in it.
+  fs.rmSync(path.join(target, 'commits.json'), { force: true });
   execFileSync('git', ['add', '-A'], { cwd: target, stdio: 'ignore' });
   try {
     execFileSync('git', ['-c', 'user.name=Dev', '-c', 'user.email=dev@example.com', 'commit', '-q', '-m', 'Refresh scaffold'], { cwd: target, stdio: 'ignore' });

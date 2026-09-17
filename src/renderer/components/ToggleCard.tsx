@@ -21,6 +21,8 @@ interface ToggleCardProps {
    * beside the label, so a verbose "how it works" note need not occupy layout.
    */
   info?: string;
+  /** `data-testid` for the card, so a toggle-led settings row is addressable like a `SettingRow`. */
+  testId?: string;
 }
 
 /**
@@ -70,12 +72,13 @@ export function ToggleIndicator({ checked, className = '' }: { checked: boolean;
  * Use this for any standalone boolean setting that has a label + description.
  * For dense lists of toggles, use `CompactToggleList` instead.
  */
-export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel, disabled, info }: ToggleCardProps) {
+export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel, disabled, info, testId }: ToggleCardProps) {
   const tone = TOGGLE_CARD_SURFACE;
   return (
     <button
       type="button"
       role="switch"
+      data-testid={testId}
       aria-checked={checked}
       aria-disabled={disabled || undefined}
       disabled={disabled}

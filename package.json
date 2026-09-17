@@ -23,7 +23,7 @@
     "lint": "eslint src/ packages/protocol/src/ --max-warnings 0",
     "test": "npx playwright test --project=ui --project=electron",
     "test:headed": "HEADED=1 npx playwright test --project=ui --project=electron",
-    "capture": "npx playwright test --project=captures",
+    "capture": "node scripts/build-demo.js && playwright test --project=captures",
     "test:unit": "vitest run tests/unit",
     "typecheck": "tsc --noEmit",
     "dev": "node scripts/dev.js",

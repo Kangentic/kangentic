@@ -8,9 +8,10 @@
  * false (no dev badge, no DevtoolsBootstrap), the Sentry sourcemap plugins are dropped by name,
  * and sourcemaps are off.
  *
- * One plugin injects four classic scripts ahead of the module bundle (demo/index.html documents
- * the order), emits them and the recordings under content-hashed names, and relocates the
- * emitted HTML from `demo/index.html` to the outDir root.
+ * One plugin injects five classic scripts ahead of the module bundle (demo/index.html documents
+ * the order), emits them, the recordings, and the guest pages under content-hashed names, plus
+ * the unhashed scenes.json, and relocates the emitted HTML from `demo/index.html` to the outDir
+ * root.
  *
  * `base` defaults to `/demo/`; the GitHub Pages deploy passes `--base=/kangentic/` on the CLI.
  */
@@ -19,8 +20,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildDemoPreConfig } from '../tests/captures/helpers/demo-dataset';
-import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
+import { buildDemoPreConfig, DEMO_PROJECTS } from '../tests/captures/helpers/demo-dataset';
+import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
 import { SCENES } from '../tests/captures/scenes';
@@ -47,6 +48,7 @@ const DEMO_BASE = '/demo/';
 const DEMO_HTML_INPUT = path.join(demoDir, 'index.html');
 const MOCK_SCRIPT_PATH = path.join(repoRoot, 'tests', 'ui', 'mock-electron-api.js');
 const BOOT_SCRIPT_PATH = path.join(demoDir, 'boot.js');
+const WEBVIEW_SHIM_PATH = path.join(demoDir, 'webview-shim.js');
 
 
 function readAppVersion(): string {
@@ -110,9 +112,21 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     geometry: recordings.geometry,
   };
   console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions, ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots`);
+  // The guest pages: what each project renders at its dev URL, for the Browser pane's iframe
+  // stand-in (demo/webview-shim.js). Keyed by the URL the pane shows, valued by the hashed file.
+  const guestPages: Record<string, string> = {};
+  for (const project of DEMO_PROJECTS) {
+    if (!project.dev_url || !project.guest_page) continue;
+    const source = readFileSync(path.join(demoDir, 'guest', project.guest_page), 'utf8');
+    const fileName = hashedName(`guest/${project.guest_page}`, source);
+    files.push({ fileName, source });
+    guestPages[project.dev_url] = `${base}${fileName}`;
+  }
+  console.log(`[demo] guest pages emitted: ${Object.keys(guestPages).length}`);
   const scripts = [
-    { name: 'demo-scenes.js', source: buildScenesScript(version, `window.__demoRecordings = ${JSON.stringify(index)};\n`) },
+    { name: 'demo-scenes.js', source: buildScenesScript(version, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\n`) },
     { name: 'demo-boot.js', source: readFileSync(BOOT_SCRIPT_PATH, 'utf8') },
+    { name: 'demo-webview.js', source: readFileSync(WEBVIEW_SHIM_PATH, 'utf8') },
     { name: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') },
     { name: 'demo-seed.js', source: buildSeedScript(version) },
   ].map((script) => ({ fileName: hashedName(script.name, script.source), source: script.source }));
@@ -122,6 +136,27 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
 
 function buildScenesScript(version: string, recordingsScript: string): string {
   return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\n${recordingsScript}`;
+}
+
+/** The frame every scene is authored at: the site's 1600 by 1000 (demo/stage.html). */
+const SCENE_FRAME = { width: 1600, height: 1000 };
+
+/**
+ * The hand-off to the site: which scenes this deployment serves, what each shows (the alt text a
+ * docs figure carries), which a page may embed (`reach`, so a rig-only scene is refused by name
+ * rather than rendering the error card inside a captioned figure), and which app version they
+ * belong to. Emitted UNHASHED beside index.html so the site's build can fetch it by a stable URL;
+ * generated from the same SCENES the page boots, so the two cannot drift. No timestamp: the build
+ * stays reproducible, and the version is the only freshness that matters.
+ */
+function buildScenesManifest(version: string): string {
+  const scenes = Object.values(SCENES).map((scene) => ({
+    name: scene.name,
+    reach: scene.reach,
+    alt: scene.alt,
+    description: scene.description,
+  }));
+  return `${JSON.stringify({ version, frame: SCENE_FRAME, scenes }, null, 2)}\n`;
 }
 
 function buildSeedScript(version: string): string {
@@ -144,6 +179,7 @@ function buildSeedScript(version: string): string {
       liveTailMs: readLiveTailMs(),
       appVersion: version,
       cellWidths: buildCellWidthTable(),
+      history: loadDemoHistory(),
     }),
     '};',
     'window.__demoBoot.afterSeed();',
@@ -179,6 +215,9 @@ function demoStaticSitePlugin(version: string): Plugin {
         // The host the page hands over to when opened directly (demo/stage.html): the frame at
         // the site's 1600 by 1000, scaled to the window, so the recordings always fit.
         this.emitFile({ type: 'asset', fileName: 'stage.html', source: readFileSync(path.join(demoDir, 'stage.html'), 'utf8') });
+        // The scene list the site reads at build time; unhashed, like the two entry pages.
+        this.emitFile({ type: 'asset', fileName: 'scenes.json', source: buildScenesManifest(version) });
+        console.log(`[demo] scenes.json emitted: ${Object.keys(SCENES).length} scenes`);
 
         const html = bundle[emittedHtmlName];
         if (html === undefined || html.type !== 'asset') {

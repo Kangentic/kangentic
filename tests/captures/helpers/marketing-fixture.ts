@@ -8,7 +8,7 @@
  */
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../../../src/main/agent/message-trail-tracker';
 import { buildDemoPreConfig } from './demo-dataset';
-import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoScrollback, readAppVersion, readLiveTailMs } from './demo-scrollback';
+import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoScrollback, readAppVersion, readLiveTailMs } from './demo-scrollback';
 
 export function buildMarketingPreConfig(): string {
   // No peekTimelines here on purpose. The rig has no recordings index, so no session's clock ever
@@ -24,5 +24,6 @@ export function buildMarketingPreConfig(): string {
     openFrames: loadDemoOpenFrames(), liveTailMs: readLiveTailMs(), appVersion: readAppVersion(),
     messageTrails: loadDemoMessageTrails(), messageTrailMaxEntries: MESSAGE_TRAIL_MAX_ENTRIES,
     cellWidths: buildCellWidthTable(),
+    history: loadDemoHistory(),
   });
 }

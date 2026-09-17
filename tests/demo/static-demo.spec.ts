@@ -89,7 +89,14 @@ async function gotoScene(page: Page, params: Record<string, string>): Promise<vo
   await waitForDemoReady(page);
 }
 
-/** One marker per bootable scene: the element a visitor would recognize the scene by. */
+/** The scenes the web build can boot by name; a driver scene is the rig's and is refused here. */
+const BOOTABLE_SCENES = Object.values(SCENES).filter((scene) => scene.reach !== 'driver');
+
+/**
+ * Deeper assertions for the scenes other tests in this file build on, beyond the `ready` selector
+ * every entry carries: the element a visitor would recognize the scene by, with the counts the
+ * sample install fixes. Every bootable scene is booted below whether or not it has one of these.
+ */
 const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   board: async (page) => {
     const swimlanes = page.locator('[data-swimlane-name]');
@@ -114,15 +121,108 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   },
 };
 
-for (const sceneName of Object.keys(SCENE_MARKERS)) {
-  test(`view=${sceneName} boots to its marker with a clean console`, async ({ page }) => {
+test('every deep marker names a scene the build can boot', () => {
+  // A marker for a renamed or retired scene would otherwise sit here asserting nothing.
+  const bootableNames = new Set(BOOTABLE_SCENES.map((scene) => scene.name));
+  for (const name of Object.keys(SCENE_MARKERS)) expect(bootableNames.has(name), `SCENE_MARKERS.${name}`).toBe(true);
+});
+
+for (const scene of BOOTABLE_SCENES) {
+  test(`view=${scene.name} boots to its ready element with a clean console`, async ({ page }) => {
     const getUnexpectedErrors = collectUnexpectedErrors(page);
-    await gotoScene(page, { view: sceneName, embed: '1', still: '1' });
-    await expect(page.locator('html')).toHaveAttribute('data-demo-scene', sceneName);
-    await SCENE_MARKERS[sceneName](page);
+    await gotoScene(page, { view: scene.name, embed: '1', still: '1' });
+    await expect(page.locator('html')).toHaveAttribute('data-demo-scene', scene.name);
+    // boot.js waited for this before it revealed; asserting it VISIBLE is the half boot.js cannot
+    // see, since it polls for existence and a mounted-but-hidden element would pass it.
+    await expect(page.locator(scene.ready).first()).toBeVisible();
+    const deepMarker = SCENE_MARKERS[scene.name];
+    if (deepMarker) await deepMarker(page);
+    if (scene.focus) {
+      // A focus the site crops to must be a real region: not a missing element (the ready
+      // message would carry null), not a zero box, and not the whole frame (the Quick Find
+      // scenes once named the palette's full-frame backdrop, which crops to nothing).
+      const focusRect = await page.evaluate((selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const box = element.getBoundingClientRect();
+        return { w: box.width / window.innerWidth, h: box.height / window.innerHeight };
+      }, scene.focus);
+      expect(focusRect, `${scene.name}.focus (${scene.focus}) matches no element`).not.toBeNull();
+      const focusArea = (focusRect?.w ?? 0) * (focusRect?.h ?? 0);
+      expect(focusArea, `${scene.name}.focus is an empty box`).toBeGreaterThan(0);
+      expect(focusArea, `${scene.name}.focus is the whole frame`).toBeLessThan(0.95);
+    }
     expect(getUnexpectedErrors()).toEqual([]);
   });
 }
+
+test('a driver scene is refused by name, with the rig named as the way to build it', async ({ page }) => {
+  const driverScene = Object.values(SCENES).find((scene) => scene.reach === 'driver');
+  if (!driverScene) throw new Error('the registry has no driver scene to refuse; add one or drop this test');
+  await page.goto(demoUrl({ view: driverScene.name, embed: '1', still: '1' }));
+  const errorCard = page.locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible();
+  await expect(errorCard).toContainText(`Scene "${driverScene.name}" needs the capture rig`);
+  await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
+});
+
+test('scenes.json is served unhashed, matches the registry, and names the build version', async ({ page, request }) => {
+  const response = await request.get(`${server.url}scenes.json`);
+  expect(response.ok(), 'scenes.json is not served beside index.html').toBe(true);
+  const manifest = await response.json() as { version: string; frame: { width: number; height: number }; scenes: Array<{ name: string; reach: string; alt: string; description: string }> };
+  expect(manifest.frame).toEqual({ width: 1600, height: 1000 });
+  expect(manifest.scenes.map((scene) => scene.name)).toEqual(Object.keys(SCENES));
+  for (const scene of manifest.scenes) {
+    expect(scene.reach, scene.name).toBe(SCENES[scene.name].reach);
+    expect(scene.alt.trim(), `${scene.name}.alt`).not.toBe('');
+  }
+  // The version a docs page stamps on its figure is the one the frame itself reports.
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  const frameVersion = await page.evaluate(() => (window as { __demoVersion?: string }).__demoVersion);
+  expect(manifest.version).toBe(frameVersion);
+});
+
+interface DemoReadyMessage { type: string; scene: string | null; version: string; focus: { x: number; y: number; w: number; h: number } | null }
+
+/**
+ * Host the frame in an iframe the way the site does and return the ready message it posts.
+ * boot.js posts to its parent only when it has one, so a top-level visit observes nothing.
+ */
+async function readyMessageFor(page: Page, sceneName: string): Promise<DemoReadyMessage> {
+  const src = demoUrl({ view: sceneName, embed: '1', still: '1' });
+  await page.setContent(
+    '<script>window.__demoMessages = []; window.addEventListener("message", (event) => { window.__demoMessages.push(event.data); });</script>'
+    + `<iframe id="demo" width="1600" height="1000" style="border:0" src="${src}"></iframe>`,
+  );
+  await expect(page.frameLocator('#demo').locator('html')).toHaveAttribute('data-demo-ready', '1', { timeout: READY_TIMEOUT_MS });
+  const readMessages = () => page.evaluate(() => (window as { __demoMessages?: DemoReadyMessage[] }).__demoMessages ?? []);
+  await expect.poll(async () => (await readMessages()).some((message) => message.type === 'kangentic-demo-ready')).toBe(true);
+  const message = (await readMessages()).find((candidate) => candidate.type === 'kangentic-demo-ready');
+  if (!message) throw new Error('no ready message');
+  return message;
+}
+
+test('the ready message carries the focus rect of a dialog scene, and null for a scene without one', async ({ page }) => {
+  // A dialog, not a popover: the New Task dialog is a large centred box, so a rect that is not
+  // its box (a null, a zero, the whole frame) is unmistakable.
+  const focusScene = SCENES['new-task'];
+  expect(focusScene.focus, 'the new-task scene stopped naming a focus element').toBeDefined();
+
+  const focused = await readyMessageFor(page, focusScene.name);
+  expect(focused.scene).toBe(focusScene.name);
+  expect(focused.focus).not.toBeNull();
+  for (const value of Object.values(focused.focus ?? {})) {
+    expect(value).toBeGreaterThanOrEqual(0);
+    expect(value).toBeLessThanOrEqual(1);
+  }
+  const area = (focused.focus?.w ?? 0) * (focused.focus?.h ?? 0);
+  expect(area, 'the dialog covers a real region of the frame').toBeGreaterThan(0.1);
+  expect(area, 'the dialog is not the whole frame').toBeLessThan(0.9);
+
+  const plain = await readyMessageFor(page, 'board');
+  expect(plain.scene).toBe('board');
+  expect(plain.focus).toBeNull();
+});
 
 test('embed=1 hides the OS window controls; without it they render', async ({ page }) => {
   await gotoScene(page, { view: 'board', embed: '1', still: '1' });
@@ -680,6 +780,35 @@ test('loop=1 and still=1 together are refused rather than silently reconciled', 
   const card = page.locator('[data-testid="demo-error"]');
   await expect(card).toBeVisible();
   await expect(card).toContainText('a still frame has no replay to loop');
+});
+
+test('a state= blob carrying a capture-rig step is refused', async ({ page }) => {
+  // boot.js's validateState checks a step's SHAPE (one of click/type/press) before it ever
+  // checks the per-key allowlist, so a bare `{ hover: ... }` step is refused for missing a
+  // discriminant key rather than for naming a capture-rig key. To reach the allowlist branch and
+  // pin its message, the step needs a valid `click` alongside the stray `hover` key. The click
+  // target is a real swimlane, which the mutation below depends on: it is a column container
+  // with no click handler, so clicking it is a no-op rather than something that opens a dialog.
+  const hoverStepBlob = encodeState({
+    steps: [{ click: '[data-swimlane-name="Executing"]', hover: '[data-swimlane-name="Executing"]' }],
+  });
+  await page.goto(demoUrl({ state: hoverStepBlob, embed: '1', still: '1' }));
+  const errorCard = page.locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible();
+  await expect(errorCard).toContainText('"hover" is a capture-rig step');
+  // Nothing was seeded: the seed script's afterSeed() call (applyScene) returns before it
+  // patches rows or calls __demoApplyFixture whenever validateState already recorded an error,
+  // so the board never mounts a single swimlane. Checked only after the card is visible, so this
+  // is not a race against a boot that was never going to happen.
+  await expect(page.locator('[data-swimlane-name]')).toHaveCount(0);
+  await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
+
+  // Positive control, in the same test: a press step carries only one discriminant key (press),
+  // so the same state= plumbing validates it and the sample install boots normally.
+  const pressStepBlob = encodeState({ steps: [{ press: 'Mouse:Back' }] });
+  await gotoScene(page, { state: pressStepBlob, embed: '1', still: '1' });
+  await expect(page.locator('[data-testid="demo-error"]')).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-demo-scene', 'state');
 });
 
 test('the live task scene fetches its session recording from the serving origin', async ({ page }) => {

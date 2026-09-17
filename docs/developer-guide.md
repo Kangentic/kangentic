@@ -183,7 +183,7 @@ Flags:
 
 **Single-instance lock warning:** a non-ephemeral launch whose Electron process exits almost immediately with code 0 means another Kangentic instance (usually the installed app) already holds the single-instance lock -- the loser exits silently and the holder's window is focused, which looks exactly like a successful dev launch while you are actually using the other build. `dev.js` detects that signature (non-ephemeral, exit 0, under 5s from spawn) and prints an unmissable warning: quit the other instance (including its tray icon and any background processes in Task Manager), then run `npm start` again. Ephemeral previews skip the lock and can never trigger it.
 
-**Dev build marker:** a dev build names itself `Kangentic (dev)` in the title-bar wordmark and in the OS window title, so a dogfooding `npm start` window is tellable from a packaged build in the taskbar without clicking into it. Both strings are gated on the build-time `__KANGENTIC_DEV__` flag and are dead-code-eliminated from a production build. A worktree preview is a dev window, so it gains the wordmark suffix on top of its preview pill, while its own `#<id> - <title>` label still wins the OS title. Marketing captures render against the Vite dev server, where the flag is true, so `hideDevOnlyChrome` in `tests/captures/helpers/capture-page.ts` hides the badge; a capture entry point that forgets the call fails `tests/unit/capture-dev-chrome-parity.test.ts`.
+**Dev build marker:** a dev build names itself `Kangentic (dev)` in the title-bar wordmark and in the OS window title, so a dogfooding `npm start` window is tellable from a packaged build in the taskbar without clicking into it. Both strings are gated on the build-time `__KANGENTIC_DEV__` flag and are dead-code-eliminated from a production build. A worktree preview is a dev window, so it gains the wordmark suffix on top of its preview pill, while its own `#<id> - <title>` label still wins the OS title. The two marketing captures (`walkthrough.capture.ts`, `agent-orchestration.capture.ts`) render against the Vite dev server, where the flag is true, so `hideDevOnlyChrome` in `tests/captures/helpers/capture-page.ts` hides the badge; a capture entry point that forgets the call fails `tests/unit/capture-dev-chrome-parity.test.ts`. The scene captures (`scenes.capture.ts`) render against the built demo, which has no badge, and call it only to satisfy that test.
 
 ### Production (`npm run build` / `scripts/build.js`)
 
@@ -206,24 +206,40 @@ The renderer built for a plain browser, so the site and the docs can embed the a
 second Vite invocation, never a second entry in the shared config: it reuses `vite.config.mts` as
 a factory, forces production semantics (`__KANGENTIC_DEV__` false, the Sentry plugins dropped by
 name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside every packaging
-glob. One plugin injects four classic scripts ahead of the module bundle: the scene registry, the
+glob. One plugin injects five classic scripts ahead of the module bundle: the scene registry, the
 boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
-pre-reveal click runner), `tests/ui/mock-electron-api.js` verbatim, and the generated seed (the
-sample install from `tests/captures/helpers/demo-dataset.ts` plus, per recording under
-`tests/captures/fixtures/demo/`, its opening and final terminal frames, its working-tree diff, the
-last output peek its Monitor row shows and, for a working session, how that peek changes over the
-recording, and the agent message trail a board card prints under the default Card Preview). The
+pre-reveal step runner, and a silent microphone in place of `getUserMedia`), the webview shim
+(`demo/webview-shim.js`: an iframe standing in for Electron's `<webview>` in the Browser pane,
+onto a bundled copy of what the project renders at its dev URL), `tests/ui/mock-electron-api.js`
+verbatim, and the generated seed (the sample install from `tests/captures/helpers/demo-dataset.ts`
+plus, per recording under `tests/captures/fixtures/demo/`, its opening and final terminal frames,
+its working-tree diff split into the three scopes, the last output peek its Monitor row shows and,
+for a working session, how that peek changes over the recording, the agent message trail a board
+card prints under the default Card Preview, and the scaffolded project's git history, blame, and
+per-commit diffs from `tests/captures/fixtures/demo/history/`, captured by
+`scripts/capture-demo-history.mjs` from the repo `scripts/lib/demo-scaffold-repo.mjs` builds
+out of the scaffold's `commits.json`). The
 plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, and the agent boots a drag or a new Command
 Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
-the dataset). The four scripts and the recordings carry a content hash in their names, as Vite's
-own chunks do, so a copy GitHub Pages cached from an earlier release is never paired with a new
-seed. `--base=<path>` on the CLI moves the base path; the GitHub Pages
-deploy (`.github/workflows/deploy-demo.yml`, called from the release graph after
-`publish-release`) builds with `--base=/kangentic/`. `demo/README.md` documents the URL contract,
-the scenes, the numbers, and the Electron-only surfaces that stay inert in a browser.
+the dataset). The five scripts, the recordings, and the guest pages carry a content hash in their
+names, as Vite's own chunks do, so a copy GitHub Pages cached from an earlier release is never
+paired with a new seed. Beside them it emits `scenes.json` unhashed: the scene list (name, reach, the alt text a
+docs figure carries, the maintainer description), the frame size (1600 by 1000), and the app
+version, generated from the same registry the page boots, which is what kangentic.com reads at
+build time to embed a scene by name. `--base=<path>` on the CLI
+moves the base path; the GitHub Pages deploy (`.github/workflows/deploy-demo.yml`, called from
+the release graph after `publish-release`) builds with `--base=/kangentic/`. `demo/README.md`
+documents the URL contract, the scenes, the numbers, and the Electron-only surfaces that stay
+inert in a browser.
+
+The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run capture` builds
+the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
+screenshots it per theme into the gitignored `captures/<timestamp>/scenes/`, playing the gesture
+a `driver` scene needs (a held drag, a right-click) with Playwright. The rig has no scene applier
+of its own; `demo/boot.js` is the applier for both consumers.
 
 ### Worktree Dev
 
@@ -306,9 +322,14 @@ npm run test:demo
 - **Runner:** Playwright with headless Chromium, one worker, against `dist/demo/` served by
   `demo/static-server.mjs` from `beforeAll` (deliberately not a `webServer` entry, which would
   start for every project filter and break the UI tier whenever the build is absent)
-- **What it asserts:** every bootable scene reaches its marker, `embed=1` hides the window
-  controls, `theme=` applies, an unknown scene shows the error card, the console stays clean, and
-  boot makes no request off the serving origin
+- **What it asserts:** every bootable scene in the registry reaches its `ready` element (the
+  loop iterates `SCENES`, so a new entry is covered with no test change) and, where it names a
+  `focus`, that element is a real region rather than nothing, an empty box, or the whole frame; a
+  `driver` scene is refused by name, `scenes.json` is served and matches the registry, the ready
+  message carries a dialog scene's focus rect, `embed=1` hides the window controls, `theme=`
+  applies, an unknown
+  scene shows the error card, the console stays clean, and boot makes no request off the serving
+  origin
 - **Build required** before running; the `demo` CI job and the Pages deploy both run it on the
   exact bytes they ship
 
