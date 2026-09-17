@@ -42,6 +42,7 @@ import type {
   SpawnSessionInput,
   PerToolStat,
   PtyResizeOrigin,
+  SessionResizeResult,
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
 import type { CapturedSessionTree } from '../activity-engine/background-shell/process-tree';
@@ -1163,7 +1164,7 @@ export class SessionManager extends EventEmitter {
     // pty-resize emit, never passed through resize(). Deriving from the shared
     // type keeps the two unions linked when PtyResizeOrigin grows.
     origin: Exclude<PtyResizeOrigin, 'spawn'> = 'desktop',
-  ): { colsChanged: boolean; refused?: true } {
+  ): SessionResizeResult {
     const session = this.registry.get(sessionId);
 
     // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
@@ -1282,8 +1283,11 @@ export class SessionManager extends EventEmitter {
       });
       // `refused` tells the echo re-assert (the width-drift self-heal) that
       // main is deliberately holding this grid, so it stops immediately
-      // instead of burning its retry budget against the floor.
-      return { colsChanged: false, refused: true };
+      // instead of burning its retry budget against the floor. `held` names
+      // the grid kept, so the refused terminal can conform to it (resize its
+      // own grid to the PTY's and scale its font to fit) instead of showing
+      // the taller frame clipped.
+      return { colsChanged: false, refused: true, held: { cols: session.pty.cols, rows: session.pty.rows } };
     }
 
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols, clampedRows);

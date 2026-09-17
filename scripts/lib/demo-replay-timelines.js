@@ -22,6 +22,8 @@
  */
 'use strict';
 
+const { serializePhysicalRows } = require('./demo-frame-serializer');
+
 /**
  * Footer, status, and input-placeholder rows are each CLI's chrome, not the agent's output; the
  * Monitor peek skips them (Claude's mode footer, Codex's prompt hint and model line, Copilot's
@@ -95,23 +97,30 @@ function sampleByReadingTime(changes) {
 const FRAME_INTERVAL_MS = 250;
 
 /**
+ * A headless terminal at the recording's grid, on the Unicode 11 width table every xterm in the
+ * app runs (src/shared/xterm-unicode11.ts). One constructor for the three scripts that replay a
+ * recording's bytes, so none of them can drift to a different width table or scrollback.
+ */
+function createReplayTerminal(cols, rows) {
+  const { Terminal } = require('@xterm/headless');
+  const { Unicode11Addon } = require('@xterm/addon-unicode11');
+  const terminal = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 5000 });
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = '11';
+  return terminal;
+}
+
+/**
  * Both timelines, from one pass over the stream.
  *
  * Frames serialize the visible screen only (scrollback 0): that is what a repaint replaces, and
- * it keeps an entry the size of one screen rather than of the whole session.
+ * it keeps an entry the size of one screen rather than of the whole session. They are physical
+ * rows (scripts/lib/demo-frame-serializer.js), so a frame fits any grid without a row spilling.
  */
 async function computeReplayTimelines(options) {
   const stream = Array.isArray(options.stream) ? options.stream : [];
   if (stream.length === 0) return { peekTimeline: [], frameTimeline: [] };
-  const { Terminal } = require('@xterm/headless');
-  const { SerializeAddon } = require('@xterm/addon-serialize');
-  const { Unicode11Addon } = require('@xterm/addon-unicode11');
-  const terminal = new Terminal({ cols: options.cols, rows: options.rows, allowProposedApi: true, scrollback: 5000 });
-  // The Unicode 11 width table, as every xterm in the app runs (src/shared/xterm-unicode11.ts).
-  terminal.loadAddon(new Unicode11Addon());
-  terminal.unicode.activeVersion = '11';
-  const serializer = new SerializeAddon();
-  terminal.loadAddon(serializer);
+  const terminal = createReplayTerminal(options.cols, options.rows);
 
   const peekChanges = [];
   const frameTimeline = [];
@@ -132,7 +141,7 @@ async function computeReplayTimelines(options) {
 
     if (window.t < nextFrameAt) continue;
     nextFrameAt = window.t + FRAME_INTERVAL_MS;
-    const frame = serializer.serialize({ scrollback: 0 });
+    const frame = serializePhysicalRows(terminal, { scrollback: 0 });
     if (frame === previousFrame) continue;
     previousFrame = frame;
     frameTimeline.push({ t: window.t, frame });
@@ -145,4 +154,4 @@ async function computeReplayTimelines(options) {
   return { peekTimeline: sampleByReadingTime(peekChanges), frameTimeline, finalPeek };
 }
 
-module.exports = { PEEK_CHROME, peekFromTerminal, computeReplayTimelines, readingTimeOf, FRAME_INTERVAL_MS };
+module.exports = { PEEK_CHROME, peekFromTerminal, computeReplayTimelines, createReplayTerminal, readingTimeOf, FRAME_INTERVAL_MS };

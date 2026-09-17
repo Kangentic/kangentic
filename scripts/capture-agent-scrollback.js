@@ -322,18 +322,12 @@ function collectChanges(cwd, sanitizer) {
 }
 
 // ---------------------------------------------------------------- serialization
+// Physical rows with an absolute cursor (scripts/lib/demo-frame-serializer.js), the shape the
+// web demo fits to any grid; the backfill script produces the same bytes from a stream on disk.
 async function serializeThroughXterm(raw, cols, rows) {
-  const { Terminal } = require('@xterm/headless');
-  const { SerializeAddon } = require('@xterm/addon-serialize');
-  const { Unicode11Addon } = require('@xterm/addon-unicode11');
-  const terminal = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 5000 });
-  // The Unicode 11 width table, as every xterm in the app runs (src/shared/xterm-unicode11.ts).
-  terminal.loadAddon(new Unicode11Addon());
-  terminal.unicode.activeVersion = '11';
-  const serializer = new SerializeAddon();
-  terminal.loadAddon(serializer);
+  const terminal = createReplayTerminal(cols, rows);
   await new Promise((resolve) => terminal.write(raw, resolve));
-  const serialized = serializer.serialize({ scrollback: 5000 });
+  const serialized = serializePhysicalRows(terminal, { scrollback: 5000 });
   const altScreen = terminal.buffer.active.type === 'alternate';
   const peek = peekFromTerminal(terminal);
   terminal.dispose();
@@ -342,7 +336,8 @@ async function serializeThroughXterm(raw, cols, rows) {
 
 // The Monitor peek, and the two timelines derived from a recording's own stream, are computed by
 // the one module the backfill script shares, so a new recording and an old one cannot disagree.
-const { peekFromTerminal, computeReplayTimelines } = require('./lib/demo-replay-timelines');
+const { peekFromTerminal, computeReplayTimelines, createReplayTerminal } = require('./lib/demo-replay-timelines');
+const { serializePhysicalRows } = require('./lib/demo-frame-serializer');
 
 // ---------------------------------------------------------------- main
 async function main() {

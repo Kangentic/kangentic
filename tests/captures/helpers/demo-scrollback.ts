@@ -11,7 +11,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEMO_SESSIONS, type DemoChangesMap, type DemoDiff, type DemoScrollbackMap } from './demo-dataset';
+import { DEMO_SESSIONS, type DemoCellWidthTable, type DemoChangesMap, type DemoDiff, type DemoScrollbackMap } from './demo-dataset';
+import { wcwidthV11 } from '../../../src/shared/xterm-unicode11';
 
 interface DemoCaptureRecord {
   agent: string;
@@ -99,36 +100,31 @@ export interface DemoRecordingsIndex {
 export const DEMO_FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures', 'demo');
 
 /**
- * Drop the default-styled spaces that end each row of a serialized frame. A ConPTY frame pads
- * every row to the recorded width with plain spaces. On the recorded grid they paint nothing;
- * on a narrower grid (the frame a scaled display or a smaller surface falls back to) each padded
- * row wraps into a blank row, and the wraps push the frame's final cursor position off its row.
- * Styled padding is kept, since it paints (a diff row's background): the trim applies only when
- * the last SGR sequence before the trailing spaces is a reset, or there is none. A logical line
- * the serializer joined across wrapped rows is one row here, so only its end is touched.
+ * The column width of every code point that is not one cell wide, as ranges, from the exact
+ * table the app's xterm instances run (src/shared/xterm-unicode11.ts). The seed's frame applier
+ * clips a row at the mounted grid's edge by counting cells, and a hand-rolled parser that counted
+ * code units would drift a column per emoji against the terminal it writes into
+ * (.claude/rules/xterm-unicode11-parity.md). Derived at build time rather than committed, so it
+ * cannot go stale against an xterm upgrade; ~1.1 million lookups, well under a second.
  */
-export function trimRowPadding(serialized: string): string {
-  const SGR_RESET = /^\x1b\[0?m$/;
-  return serialized.split('\r\n').map((row) => {
-    const trailing = /( +)((?:\x1b\[[0-9;]*m)*)$/.exec(row);
-    if (!trailing) return row;
-    const prefix = row.slice(0, row.length - trailing[0].length);
-    const sequences = prefix.match(/\x1b\[[0-9;]*m/g);
-    const lastSequence = sequences ? sequences[sequences.length - 1] : null;
-    if (lastSequence !== null && !SGR_RESET.test(lastSequence)) return row;
-    return prefix + trailing[2];
-  }).join('\r\n');
-}
-
-
-/**
- * The frame timeline, with each frame trimmed the way the final frame is. A ConPTY frame pads
- * every row to the recorded width, and those pads wrap into blank rows on a narrower grid, which
- * is precisely the grid a frame timeline exists to serve.
- */
-function framesOf(record: DemoCaptureRecord): Array<{ t: number; frame: string }> {
-  if (!Array.isArray(record.frameTimeline)) return [];
-  return record.frameTimeline.map((step) => ({ t: step.t, frame: trimRowPadding(step.frame) }));
+export function buildCellWidthTable(): DemoCellWidthTable {
+  const wide: number[] = [];
+  const zero: number[] = [];
+  let runWidth = 1;
+  let runStart = 0;
+  const close = (end: number): void => {
+    if (runWidth === 2) wide.push(runStart, end);
+    else if (runWidth === 0) zero.push(runStart, end);
+  };
+  for (let codepoint = 0; codepoint <= 0x10ffff; codepoint++) {
+    const width = wcwidthV11(codepoint);
+    if (width === runWidth) continue;
+    close(codepoint - 1);
+    runWidth = width;
+    runStart = codepoint;
+  }
+  close(0x10ffff);
+  return { wide, zero };
 }
 
 export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): DemoRecordingsIndex {
@@ -140,7 +136,7 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
   // list, still read from disk.
   const entryOf = (file: string, record: DemoCaptureRecord): DemoRecordingEntry | null => {
     if (typeof record.serialized !== 'string' || record.serialized.length === 0) return null;
-    return { file, serialized: trimRowPadding(record.serialized), stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '', frameTimeline: framesOf(record) };
+    return { file, serialized: record.serialized, stream: Array.isArray(record.stream) ? record.stream : [], peek: Array.isArray(record.peek) ? record.peek : [], cols: record.cols ?? 0, rows: record.rows ?? 0, stopReason: record.stopReason ?? '', frameTimeline: Array.isArray(record.frameTimeline) ? record.frameTimeline : [] };
   };
   const read = (file: string): DemoRecordingEntry | null =>
     entryOf(file, JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord);
@@ -206,7 +202,7 @@ export function loadDemoScrollback(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
   const map: DemoScrollbackMap = {};
   for (const { sessionId, record } of loadRecordings(fixturesDir)) {
     if (typeof record.serialized === 'string' && record.serialized.length > 0) {
-      map[sessionId] = trimRowPadding(record.serialized);
+      map[sessionId] = record.serialized;
     }
   }
   return map;
@@ -267,7 +263,7 @@ export function loadDemoOpenFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Rec
     if (record.openFrame.beforeEndMs !== expectedTail) {
       throw new Error(`${sessionId}: its recording's open frame was kept ${record.openFrame.beforeEndMs} ms before the end, but the live frame opens it ${expectedTail} ms before. Re-run scripts/capture-demo-sessions.mjs --only ${sessionId.replace(/^sess-[a-z]+-/, '')}`);
     }
-    frames[sessionId] = { serialized: trimRowPadding(record.openFrame.serialized), peek: Array.isArray(record.openFrame.peek) ? record.openFrame.peek : [] };
+    frames[sessionId] = { serialized: record.openFrame.serialized, peek: Array.isArray(record.openFrame.peek) ? record.openFrame.peek : [] };
   }
   return frames;
 }

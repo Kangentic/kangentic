@@ -52,6 +52,20 @@ export type FitOutcome =
 
 const MINIMUM_COLS = 2;
 const MINIMUM_ROWS = 1;
+/** proposeFontSizeForGrid rounds down to this step. */
+export const CONFORM_FONT_STEP_PX = 0.25;
+/** Below this, a held grid is not shown scaled: the caller keeps its own fit. */
+export const CONFORM_MIN_FONT_PX = 4;
+
+type FitInputs =
+  | { applied: true; cellWidth: number; cellHeight: number; availableWidth: number; availableHeight: number }
+  | { applied: false; reason: FitBailReason };
+
+/** A cell's CSS size, as the renderer measured it at some font. */
+export interface CellSize {
+  width: number;
+  height: number;
+}
 /** Scrollbar gutter assumed only before `.xterm-viewport` has been laid out, so
  *  `offsetWidth - clientWidth` cannot be measured yet. Matches the global
  *  `::-webkit-scrollbar` width in `index.css` (the width the browser actually
@@ -92,6 +106,78 @@ export class FitAddon implements ITerminalAddon {
    * is the lossy public view of it.
    */
   public describeProposedDimensions(): FitOutcome {
+    const inputs = this._measureFitInputs();
+    if (!inputs.applied) return inputs;
+    const cols = Math.max(MINIMUM_COLS, Math.floor(inputs.availableWidth / inputs.cellWidth));
+    const rows = Math.max(MINIMUM_ROWS, Math.floor(inputs.availableHeight / inputs.cellHeight));
+    // The padding reads above can be NaN of their own (a computed style that
+    // answers '' or 'auto'), which Math.max propagates rather than clamps. This
+    // was fit()'s own isNaN guard; it lives here so proposeDimensions() and
+    // fit() bail on exactly the same inputs.
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) {
+      return { applied: false, reason: 'non-finite-dims' };
+    }
+
+    return { applied: true, cols, rows };
+  }
+
+  /**
+   * The largest font size at which a FIXED grid of `cols` by `rows` fits the
+   * container, or null when the container cannot be measured or the grid would
+   * need type smaller than CONFORM_MIN_FONT_PX.
+   *
+   * The inverse of describeProposedDimensions(): that one takes the font as
+   * given and asks how many cells fit; this one takes the cells as given and
+   * asks how big the font can be. A terminal uses it when main HOLDS a grid
+   * against its resize (SessionResizeResult.held): the PTY keeps addressing
+   * that grid, so the terminal shows exactly that grid, scaled into its pane,
+   * rather than its own fit with the PTY's frame wrapped or clipped inside it.
+   *
+   * A cell scales with the font size linearly enough that one measurement at
+   * the current size is the whole calculation; the caller re-measures after
+   * applying and steps down if rounding left the grid a pixel over. The result
+   * is floored to a quarter pixel so two panes a few pixels apart land on the
+   * same size and the texture atlas is not re-rasterized for every subpixel.
+   */
+  public proposeFontSizeForGrid(cols: number, rows: number, currentFontSize: number): number | null {
+    const inputs = this._measureFitInputs();
+    if (!inputs.applied || !(cols > 0) || !(rows > 0) || !(currentFontSize > 0)) return null;
+    const scale = Math.min(
+      inputs.availableWidth / (cols * inputs.cellWidth),
+      inputs.availableHeight / (rows * inputs.cellHeight),
+    );
+    if (!Number.isFinite(scale) || scale <= 0) return null;
+    const fontSize = Math.floor((currentFontSize * scale) / CONFORM_FONT_STEP_PX) * CONFORM_FONT_STEP_PX;
+    return fontSize >= CONFORM_MIN_FONT_PX ? fontSize : null;
+  }
+
+  /** The cell the renderer measures at the terminal's current font, or null before it has one. */
+  public measureCell(): CellSize | null {
+    const inputs = this._measureFitInputs();
+    return inputs.applied ? { width: inputs.cellWidth, height: inputs.cellHeight } : null;
+  }
+
+  /**
+   * The grid the container would take with the given cell, without applying
+   * anything: the same division as describeProposedDimensions over the current
+   * box. A held terminal (conformed to another grid at another font) probes main
+   * with this, passing the cell it measured at the CONFIGURED font, so the answer
+   * is about the grid it would fit on its own, not the one it is showing on
+   * main's behalf. The cell is remembered rather than derived from the current
+   * one: a cell does not scale linearly with the font (the renderer rounds it to
+   * device pixels), and the estimate was off by ten columns in practice.
+   */
+  public proposeDimensionsForCell(cell: CellSize): ITerminalDimensions | undefined {
+    const inputs = this._measureFitInputs();
+    if (!inputs.applied || !(cell.width > 0) || !(cell.height > 0)) return undefined;
+    const cols = Math.max(MINIMUM_COLS, Math.floor(inputs.availableWidth / cell.width));
+    const rows = Math.max(MINIMUM_ROWS, Math.floor(inputs.availableHeight / cell.height));
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return undefined;
+    return { cols, rows };
+  }
+
+  /** The inputs both proposals share: the cell the renderer measured and the box left for the grid. */
+  private _measureFitInputs(): FitInputs {
     if (!this._terminal || !this._terminal.element || !this._terminal.element.parentElement) {
       return { applied: false, reason: 'no-element' };
     }
@@ -131,20 +217,13 @@ export class FitAddon implements ITerminalAddon {
     const paddingHorizontal = parseInt(elementStyle.getPropertyValue('padding-right'))
       + parseInt(elementStyle.getPropertyValue('padding-left'));
 
-    const availableHeight = parentHeight - paddingVertical;
-    const availableWidth = parentWidth - paddingHorizontal - scrollbarWidth;
-
-    const cols = Math.max(MINIMUM_COLS, Math.floor(availableWidth / cellWidth));
-    const rows = Math.max(MINIMUM_ROWS, Math.floor(availableHeight / cellHeight));
-    // The padding reads above can be NaN of their own (a computed style that
-    // answers '' or 'auto'), which Math.max propagates rather than clamps. This
-    // was fit()'s own isNaN guard; it lives here so proposeDimensions() and
-    // fit() bail on exactly the same inputs.
-    if (!Number.isFinite(cols) || !Number.isFinite(rows)) {
-      return { applied: false, reason: 'non-finite-dims' };
-    }
-
-    return { applied: true, cols, rows };
+    return {
+      applied: true,
+      cellWidth,
+      cellHeight,
+      availableHeight: parentHeight - paddingVertical,
+      availableWidth: parentWidth - paddingHorizontal - scrollbarWidth,
+    };
   }
 
   /**

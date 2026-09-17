@@ -3259,9 +3259,11 @@ describe('Resting grid restore', () => {
 
     // `refused` marks the one outcome where main deliberately HOLDS the grid
     // against the caller. The echo re-assert (width-drift self-heal) reads it
-    // to stop after a single refused IPC instead of retrying to its cap; every
-    // other early return stays the bare { colsChanged: false }.
-    expect(result).toEqual({ colsChanged: false, refused: true });
+    // to stop after a single refused IPC instead of retrying to its cap, and
+    // `held` names the grid kept, which the refused terminal conforms to
+    // (useTerminal's conformToHeldGrid); every other early return stays the
+    // bare { colsChanged: false }.
+    expect(result).toEqual({ colsChanged: false, refused: true, held: { cols: 120, rows: 30 } });
     expect(mockPty.resize).not.toHaveBeenCalled();
     expect(resizes).toEqual([]);
     expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
