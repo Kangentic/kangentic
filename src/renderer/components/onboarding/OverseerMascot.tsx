@@ -112,15 +112,22 @@ export interface OverseerMascotProps {
  * - At most one Overseer per view (sprite-drafting convention).
  */
 export function OverseerMascot({ scale, sequence = 'none', intro, className = '' }: OverseerMascotProps) {
-  const [introPlaying, setIntroPlaying] = useState(intro !== undefined);
-  const introDoneRef = useRef(false);
+  // Whether the current intro has finished. State rather than a ref, so the
+  // playing flag is derived from it and the intro prop, and a swap of intro
+  // resets it during render (React's "adjusting state when a prop changes"
+  // pattern) instead of through an effect. Setting it twice (wave-once lands
+  // two animationend events) is idempotent, which is all the old ref guard
+  // bought.
+  const [introDone, setIntroDone] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Replay the intro if the caller swaps it (also resets on remount).
-  useEffect(() => {
-    introDoneRef.current = false;
-    setIntroPlaying(intro !== undefined);
-  }, [intro]);
+  // Replay the intro if the caller swaps it (a remount starts fresh anyway).
+  const [seenIntro, setSeenIntro] = useState(intro);
+  if (intro !== seenIntro) {
+    setSeenIntro(intro);
+    setIntroDone(false);
+  }
+  const introPlaying = intro !== undefined && !introDone;
 
   // A zero-length intro has already ended, so hand off without waiting for an
   // `animationend` that is not coming. Chromium stopped firing that event for a
@@ -138,7 +145,7 @@ export function OverseerMascot({ scale, sequence = 'none', intro, className = ''
   // nothing at all (see the note above). Only an animation that IS applied and
   // runs for zero time counts as already finished.
   useEffect(() => {
-    if (!introPlaying || introDoneRef.current) return;
+    if (!introPlaying) return;
     const node = rootRef.current;
     if (!node) return;
     const { animationName, animationDuration } = getComputedStyle(node);
@@ -147,8 +154,7 @@ export function OverseerMascot({ scale, sequence = 'none', intro, className = ''
       .split(',')
       .every((track) => Number.parseFloat(track) === 0);
     if (!everyTrackIsInstant) return;
-    introDoneRef.current = true;
-    setIntroPlaying(false);
+    setIntroDone(true);
   }, [introPlaying]);
 
   const activeSequence = introPlaying && intro ? intro : sequence;
@@ -169,10 +175,8 @@ export function OverseerMascot({ scale, sequence = 'none', intro, className = ''
       style={{ width: scale * 18 }}
       onAnimationEnd={() => {
         // wave-once animates both its rest and wave tracks, so two events land;
-        // the ref makes the handoff idempotent.
-        if (introDoneRef.current) return;
-        introDoneRef.current = true;
-        setIntroPlaying(false);
+        // setting the same flag twice is idempotent.
+        if (introPlaying) setIntroDone(true);
       }}
     >
       {mountedFrames.map((frameKey) => (

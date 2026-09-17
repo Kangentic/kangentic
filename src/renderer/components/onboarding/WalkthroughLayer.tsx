@@ -35,6 +35,10 @@ interface Rect {
 /** Also the scrim's test id. Named so `openDialogRects` can exclude this overlay's own bands. */
 const WALKTHROUGH_LAYER_TEST_ID = 'walkthrough-layer';
 
+// Stable empty list so "no dialogs to avoid" keeps a referentially constant value.
+// hmr-safe: never mutated; a referential-identity sentinel.
+const EMPTY_RECTS: Rect[] = [];
+
 /** Smallest rect containing all of the given rects. */
 function unionRects(rects: Rect[]): Rect | null {
   if (rects.length === 0) return null;
@@ -71,25 +75,25 @@ function sameRect(first: Rect | null, second: Rect | null): boolean {
  * drag, a sibling panel resizing. The loop only runs while a step is active.
  */
 function useTargetRect(selector: string | null): { rect: Rect | null; everFound: boolean; measured: boolean } {
-  const [rect, setRect] = useState<Rect | null>(null);
-  const [everFound, setEverFound] = useState(false);
-  // Distinguishes "not looked yet" from "looked and there is nothing there". Without it the
-  // caller cannot tell the two apart on the first frame, and has to choose between flashing
-  // an unanchored callout before the target resolves or rendering nothing at all when the
+  // The latest measurement, stamped with the selector it was taken for, so a
+  // change of selector reads as "not looked yet" at once and nothing has to be
+  // reset in an effect. `measured` distinguishes "not looked yet" from "looked
+  // and there is nothing there". Without it the caller cannot tell the two
+  // apart on the first frame, and has to choose between flashing an unanchored
+  // callout before the target resolves or rendering nothing at all when the
   // target never existed (step 5 on a board with no task).
-  const [measured, setMeasured] = useState(false);
+  const [measurement, setMeasurement] = useState<{ selector: string; rect: Rect | null; everFound: boolean } | null>(null);
+  const current = selector !== null && measurement?.selector === selector ? measurement : null;
+  const rect = current?.rect ?? null;
+  const everFound = current?.everFound ?? false;
+  const measured = selector === null || current !== null;
 
   useEffect(() => {
-    if (!selector) {
-      setRect(null);
-      setEverFound(false);
-      setMeasured(true);
-      return;
-    }
-    setEverFound(false);
-    setMeasured(false);
+    if (!selector) return;
     let frameId: number | undefined;
     let currentRect: Rect | null = null;
+    let found = false;
+    let measuredOnce = false;
 
     const measure = () => {
       // A step may name several elements (the four project-default controls are one
@@ -107,12 +111,14 @@ function useTargetRect(selector: string | null): { rect: Rect | null; everFound:
       // only over-expand the spotlight into empty space.
       const targetRects = measureAll(selector);
       const nextRect = targetRects.length > 0 ? unionRects(targetRects) : null;
-      if (!sameRect(currentRect, nextRect)) {
+      // The first frame always commits (it is what flips `measured`); later
+      // frames only when the rect actually changed.
+      if (!measuredOnce || !sameRect(currentRect, nextRect)) {
+        measuredOnce = true;
         currentRect = nextRect;
-        setRect(nextRect);
-        if (nextRect) setEverFound(true);
+        if (nextRect) found = true;
+        setMeasurement({ selector, rect: nextRect, everFound: found });
       }
-      setMeasured(true);
       frameId = requestAnimationFrame(measure);
     };
 
@@ -141,13 +147,20 @@ function sameRects(first: Rect[], second: Rect[]): boolean {
  * re-rendered afterwards.
  */
 function useDialogRects(active: boolean): Rect[] {
-  const [rects, setRects] = useState<Rect[]>([]);
+  // Derived to the empty list while inactive, and reset on the activation edge
+  // during render (React's "adjusting state when a prop changes" pattern), so
+  // a previous activation's rects never place a callout before the loop has
+  // measured twice. No effect sets state to clear anything.
+  const [measuredRects, setRects] = useState<Rect[]>(EMPTY_RECTS);
+  const [seenActive, setSeenActive] = useState(active);
+  if (active !== seenActive) {
+    setSeenActive(active);
+    if (active) setRects(EMPTY_RECTS);
+  }
+  const rects = active ? measuredRects : EMPTY_RECTS;
 
   useEffect(() => {
-    if (!active) {
-      setRects([]);
-      return;
-    }
+    if (!active) return;
     let frameId: number | undefined;
     let committedRects: Rect[] = [];
     let previousRects: Rect[] | null = null;

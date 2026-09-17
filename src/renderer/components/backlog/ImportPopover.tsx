@@ -64,6 +64,17 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
     if (addPhase === 'url') urlInputRef.current?.focus();
   }, [addPhase]);
 
+  // Declared ahead of the effects that call it. They only ran it from
+  // listeners, after it existed, but that is a timing accident the compiler
+  // rules read as a use before declaration.
+  const resetAddFlow = () => {
+    setAddPhase(null);
+    setSelectedProvider(null);
+    setSelectedSourceType(null);
+    setNewSourceUrl('');
+    setError(null);
+  };
+
   // Close on click outside
   useEffect(() => {
     if (!open) return;
@@ -110,14 +121,6 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
     document.addEventListener('keydown', handleEscape, true);
     return () => document.removeEventListener('keydown', handleEscape, true);
   }, [open, addPhase, setupDialogOpen]);
-
-  const resetAddFlow = () => {
-    setAddPhase(null);
-    setSelectedProvider(null);
-    setSelectedSourceType(null);
-    setNewSourceUrl('');
-    setError(null);
-  };
 
   /**
    * Advance past the provider selection step to either sourceType or url,

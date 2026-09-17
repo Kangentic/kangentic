@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Plus, Pencil, ExternalLink, Trash2, X } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -79,9 +79,13 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
   // Highest pasted-filename index handed out so far, per prefix. Monotonic on
   // purpose - see reserveNextPastedIndex.
   const issuedPastedIndex = useRef<Record<string, number>>({});
-  // Ref tracks current attachments for cleanup on unmount (avoids stale closure)
+  // Ref tracks current attachments for cleanup on unmount (avoids stale
+  // closure). Written on commit (a layout effect), never during render, which
+  // the compiler rules forbid.
   const attachmentsRef = useRef<DisplayAttachment[]>([]);
-  attachmentsRef.current = attachments;
+  useLayoutEffect(() => {
+    attachmentsRef.current = attachments;
+  });
 
   // Only PENDING attachments make the form dirty - a freshly loaded saved
   // attachment is not an edit the user made, so it must not trip the

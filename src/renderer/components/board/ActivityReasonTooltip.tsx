@@ -51,20 +51,29 @@ export function formatActivityReasonText(reason: ActivityReason): string {
  *   background-shell - Terminal
  *   permission       - Lock
  */
-export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): ReactNode {
+export function ActivityReasonTooltip({ reason, now }: {
+  reason: ActivityReason;
+  /**
+   * The moment the elapsed idle / permission wait is measured against, epoch
+   * ms. Supplied by the host rather than read from the clock here: a render
+   * must be pure (React's compiler rules), and the host decides how often the
+   * duration ticks.
+   */
+  now: number;
+}): ReactNode {
   switch (reason.kind) {
     case 'idle':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <ActivityMark mark="agent-idle" size={12} className="text-attention" />
-          <span>Idle for {formatDurationBetween(reason.since, Date.now())}</span>
+          <span>Idle for {formatDurationBetween(reason.since, now)}</span>
         </span>
       );
     case 'permission':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Lock size={12} className="text-attention" />
-          <span>Awaiting permission for {formatDurationBetween(reason.since, Date.now())}</span>
+          <span>Awaiting permission for {formatDurationBetween(reason.since, now)}</span>
         </span>
       );
     case 'tool':

@@ -187,34 +187,40 @@ export function SegmentedControl<T extends string>({
    * exact, so the loop can run until the transform is genuinely gone.
    */
   const measure = useCallback(() => {
-    const active = optionRefs.current[activeIndex];
-    const row = rowRef.current;
-    if (!active || !row) return;
-    const rowRect = row.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
+    // A hoisted inner function rather than the callback scheduling itself: a
+    // `useCallback` initializer that names its own binding reads, to the
+    // compiler rules, as a use before declaration.
+    function measureOnce(): void {
+      const active = optionRefs.current[activeIndex];
+      const row = rowRef.current;
+      if (!active || !row) return;
+      const rowRect = row.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
 
-    // `width` resolves against `box-sizing`, and the row sets no border or
-    // padding, so this is its border-box width with no transform applied. It is
-    // `auto` (NaN here) only when the row is not being rendered, which is the
-    // one case with nothing to measure anyway.
-    const layoutWidth = Number.parseFloat(getComputedStyle(row).width);
-    const transformed = layoutWidth > 0 && Math.abs(rowRect.width - layoutWidth) > 0.05;
-    const divisor = transformed ? rowRect.width / layoutWidth : 1;
-    const next = {
-      left: (activeRect.left - rowRect.left) / divisor,
-      width: activeRect.width / divisor,
-    };
-    setThumb((current) =>
-      current && current.left === next.left && current.width === next.width ? current : next,
-    );
+      // `width` resolves against `box-sizing`, and the row sets no border or
+      // padding, so this is its border-box width with no transform applied. It is
+      // `auto` (NaN here) only when the row is not being rendered, which is the
+      // one case with nothing to measure anyway.
+      const layoutWidth = Number.parseFloat(getComputedStyle(row).width);
+      const transformed = layoutWidth > 0 && Math.abs(rowRect.width - layoutWidth) > 0.05;
+      const divisor = transformed ? rowRect.width / layoutWidth : 1;
+      const next = {
+        left: (activeRect.left - rowRect.left) / divisor,
+        width: activeRect.width / divisor,
+      };
+      setThumb((current) =>
+        current && current.left === next.left && current.width === next.width ? current : next,
+      );
 
-    // The correction is exact at every frame, but the LAYOUT it corrects is not
-    // final until the animation is: a mid-animation reflow would leave the thumb
-    // on a stale option width. So keep re-measuring until the transform is gone.
-    // Self-terminating, the entrance is ~150ms, and at rest the branch is dead.
-    if (transformed) {
-      retryRef.current = requestAnimationFrame(measure);
+      // The correction is exact at every frame, but the LAYOUT it corrects is not
+      // final until the animation is: a mid-animation reflow would leave the thumb
+      // on a stale option width. So keep re-measuring until the transform is gone.
+      // Self-terminating, the entrance is ~150ms, and at rest the branch is dead.
+      if (transformed) {
+        retryRef.current = requestAnimationFrame(measureOnce);
+      }
     }
+    measureOnce();
   }, [activeIndex]);
 
   useLayoutEffect(() => {

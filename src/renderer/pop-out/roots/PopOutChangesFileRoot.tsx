@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import type { PopOutChangesFileParams } from '../../../shared/pop-out';
@@ -122,7 +122,11 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   // refcounting in main (DiffSubscriptionRegistry) keeps this window's teardown
   // from touching the in-app panel's or sibling file windows' watches.
   const runFetchRef = useRef(runFetch);
-  runFetchRef.current = runFetch;
+  // Written on commit (a layout effect, ahead of the passive effect below),
+  // never during render, which the compiler rules forbid.
+  useLayoutEffect(() => {
+    runFetchRef.current = runFetch;
+  });
   useEffect(() => {
     const watchPath = worktreePath ?? projectPath;
     if (!watchPath) return;

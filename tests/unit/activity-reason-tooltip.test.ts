@@ -46,12 +46,13 @@ function markPropOfFirstChild(output: unknown): string {
 
 describe('ActivityReasonTooltip mark selection', () => {
   it('idle renders the agent-idle mark (matches the TaskCard idle indicator)', () => {
-    const output = ActivityReasonTooltip({ reason: { kind: 'idle', since: Date.now() } });
+    const now = Date.now();
+    const output = ActivityReasonTooltip({ reason: { kind: 'idle', since: now }, now });
     expect(markPropOfFirstChild(output)).toBe('agent-idle');
   });
 
   it('turn-active renders the agent-working mark (matches the TaskCard thinking indicator)', () => {
-    const output = ActivityReasonTooltip({ reason: { kind: 'turn-active' } });
+    const output = ActivityReasonTooltip({ reason: { kind: 'turn-active' }, now: Date.now() });
     expect(markPropOfFirstChild(output)).toBe('agent-working');
   });
 });
