@@ -274,22 +274,33 @@ describe('ChunkedOfflineEngine', () => {
     expect(Array.from(harness.offlineWaveforms[0].samples)).toEqual([0.5, 0.5]);
   });
 
-  it('skips a tick while a decode is still running so passes never overlap', async () => {
+  it('never overlaps passes, and backs the next one off by how long the last took', async () => {
     const engine = new ChunkedOfflineEngine('en');
     await engine.load([nemoModel()]);
     const session = engine.createSession(sessionOptions());
     session.push(new Int16Array([1, 2, 3]));
 
+    // The loop is a self-rescheduling timeout, not a fixed interval, so the first
+    // pass starts one floor-length gap after the session opens.
     harness.holdDecode = true;
     await vi.advanceTimersByTimeAsync(350);
     expect(harness.offlineDecodeCalls).toBe(1);
 
-    // Two more intervals elapse with the first decode still in flight.
+    // Nothing is armed while a pass is on the threadpool, so no amount of elapsed
+    // time can start a second decode. This is the no-overlap guarantee.
     await vi.advanceTimersByTimeAsync(700);
     expect(harness.offlineDecodeCalls).toBe(1);
 
+    // Releasing it arms the next pass, and the gap is the greater of the floor and
+    // how long that pass took. This one ran 700ms, so the next starts 700ms later,
+    // not at the 350ms floor. A fixed interval would fire here and saturate the
+    // model once decode cost outgrows the interval, which is what the scaling is
+    // for.
     harness.pendingDecodeRelease?.();
     harness.holdDecode = false;
+    await vi.advanceTimersByTimeAsync(350);
+    expect(harness.offlineDecodeCalls, 'the scaled gap has not elapsed yet').toBe(1);
+
     await vi.advanceTimersByTimeAsync(350);
     expect(harness.offlineDecodeCalls).toBe(2);
   });
