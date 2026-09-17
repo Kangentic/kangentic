@@ -663,6 +663,10 @@ export function useTerminal(options: UseTerminalOptions) {
    *  held terminal can say what grid it would fit on its own (fitTerminal's
    *  probe) without touching the font it is conformed to. */
   const naturalCellRef = useRef<CellSize | null>(null);
+  /** The cell measured right after the last conform, at the conformed font,
+   *  under the renderer of that moment: what a renderer swap is measured
+   *  against to rescale the natural-cell memo (handleRendererChange). */
+  const conformedCellRef = useRef<CellSize | null>(null);
 
   /**
    * Show the grid main is HOLDING instead of our own container fit.
@@ -711,6 +715,7 @@ export function useTerminal(options: UseTerminalOptions) {
     const fontChanged = conformedFontRef.current !== fontSize;
     heldGridRef.current = { cols: grid.cols, rows: grid.rows };
     conformedFontRef.current = fontSize;
+    conformedCellRef.current = fitAddon.measureCell();
     terminal.resize(grid.cols, grid.rows);
     // The WebGL atlas is keyed on the font; a size change needs fresh glyphs.
     if (fontChanged && rendererKeyRef.current) notifyFontChanged(rendererKeyRef.current);
@@ -751,7 +756,14 @@ export function useTerminal(options: UseTerminalOptions) {
       }
       if (!result?.refused && held && (cols !== held.cols || rows !== held.rows)) {
         releaseHeldGrid(origin);
-        fitAddonRef.current?.fit();
+        // The same pin the hook's fit() keeps: a terminal at its bottom stays there
+        // through the grid change, rather than landing a row or two up.
+        const wasAtBottom = isAtBottomRef.current;
+        const outcome = fitAddonRef.current?.fit();
+        if (outcome?.applied) {
+          naturalCellRef.current = fitAddonRef.current?.measureCell() ?? null;
+          if (wasAtBottom) xtermRef.current?.scrollToBottom();
+        }
       }
       return result;
     });
@@ -787,6 +799,36 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     return { applied: true, cols: held.cols, rows: held.rows };
   }, [conformToHeldGrid, releaseHeldGrid, requestGrid]);
+
+  /**
+   * The renderer swapped (WebGL attached, lost, budget-suspended, or resumed),
+   * and the DOM renderer measures a wider cell than WebGL for the same font. An
+   * unheld terminal at the configured font just re-measures its natural cell. A
+   * held one cannot (its font is the conformed one), so the memo is rescaled by
+   * how much the conformed cell moved across the swap, and the held grid is
+   * conformed again for the new metrics.
+   */
+  const handleRendererChange = useCallback((): void => {
+    const fitAddon = fitAddonRef.current;
+    const terminal = xtermRef.current;
+    if (!fitAddon || !terminal) return;
+    if (!heldGridRef.current) {
+      if (terminal.options.fontSize === configuredFontRef.current) {
+        naturalCellRef.current = fitAddon.measureCell() ?? naturalCellRef.current;
+      }
+      return;
+    }
+    const before = conformedCellRef.current;
+    const after = fitAddon.measureCell();
+    const natural = naturalCellRef.current;
+    if (before && after && natural && before.width > 0 && before.height > 0) {
+      naturalCellRef.current = {
+        width: natural.width * (after.width / before.width),
+        height: natural.height * (after.height / before.height),
+      };
+    }
+    fitTerminal('renderer-change', false);
+  }, [fitTerminal]);
   backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
   /** Updated every render (same pattern as pasteImageTemplateRef) so the settle
    *  paths attached by initTerminal/reloadScrollback always call the caller's
@@ -1121,7 +1163,7 @@ export function useTerminal(options: UseTerminalOptions) {
     // key for a session-less pane so the devtools report can distinguish them.
     const rendererKey = options.sessionId ?? `transient-${nextTransientRendererKey()}`;
     const webglStartedAt = readClock();
-    disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey);
+    disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey, { onRendererChange: handleRendererChange });
     webglElapsedMs = readClock() - webglStartedAt;
     rendererKeyRef.current = rendererKey;
 
@@ -1364,7 +1406,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fitElapsedMs = readClock() - fitStartedAt;
       traceInitTiming('session-less');
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
