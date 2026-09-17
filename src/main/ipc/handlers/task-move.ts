@@ -1387,7 +1387,7 @@ export async function handleTaskMove(
         // surfaced to the renderer distinguishes worktree failures from
         // later spawn failures.
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Worktree setup failed: ${message}`);
+        throw new Error(`Worktree setup failed: ${message}`, { cause: error });
       }
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).

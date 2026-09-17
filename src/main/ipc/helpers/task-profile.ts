@@ -29,7 +29,7 @@ export function loadTaskProfile(
 ): BoardProfile | null {
   if (!task.profile_id) return null;
 
-  let profiles: BoardProfile[] = [];
+  let profiles: BoardProfile[];
   try {
     profiles = context.boardConfigManager.getBoardProfiles(projectPath ?? undefined);
   } catch (error) {

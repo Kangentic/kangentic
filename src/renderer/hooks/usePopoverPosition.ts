@@ -78,7 +78,7 @@ export function usePopoverPosition(
     const viewportHeight = window.innerHeight;
 
     let resolvedVertical: 'below' | 'above' = 'below';
-    let resolvedHorizontal: 'left' | 'right' = 'right';
+    let resolvedHorizontal: 'left' | 'right';
 
     if (mode === 'dropdown') {
       // Resolve auto preference: right-align when trigger center is in right half

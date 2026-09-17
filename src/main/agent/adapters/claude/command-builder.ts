@@ -344,7 +344,7 @@ export class CommandBuilder {
       fs.mkdirSync(sessionDir, { recursive: true });
     } catch (err) {
       console.error(`[spawn_agent] Failed to create session directory: ${sessionDir}`, err);
-      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
+      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
     }
 
     // Write the per-session MCP config pointing at the in-process HTTP

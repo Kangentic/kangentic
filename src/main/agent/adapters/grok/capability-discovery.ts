@@ -107,7 +107,7 @@ function readModelsCache(): AgentCapabilities | null {
 }
 
 async function readHelpCapabilities(cliPath: string): Promise<AgentCapabilities> {
-  let helpText = '';
+  let helpText: string;
   try {
     if (process.platform === 'win32') {
       const { stdout } = await execAsync(`"${cliPath}" --help`, {

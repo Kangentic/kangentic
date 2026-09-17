@@ -279,7 +279,7 @@ export class ConfigManager {
 
   loadProjectOverrides(projectPath: string): Partial<AppConfig> | null {
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
-    let overrides: Record<string, unknown> | null = null;
+    let overrides: Record<string, unknown> | null;
     try {
       const raw = fs.readFileSync(configPath, 'utf-8');
       overrides = JSON.parse(raw);

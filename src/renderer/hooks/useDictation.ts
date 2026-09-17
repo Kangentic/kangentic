@@ -443,7 +443,7 @@ export function useDictation(): void {
       return;
     }
     useDictationStore.getState().setFinalizing();
-    let finalText = '';
+    let finalText: string;
     try {
       // Pass the sent-frame count so finalize drains the tail before decoding.
       finalText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);

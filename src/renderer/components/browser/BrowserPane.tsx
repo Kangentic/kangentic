@@ -401,7 +401,7 @@ function BrowserPaneActive({
 
   const navigate = useCallback((target: string) => {
     const candidate = target.match(/^https?:\/\//i) ? target : `http://${target}`;
-    let parsed: URL | null = null;
+    let parsed: URL;
     try {
       parsed = new URL(candidate);
     } catch {

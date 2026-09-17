@@ -926,7 +926,7 @@ export class AzureDevOpsImporter {
         { label: 'System Info', value: fields['Microsoft.VSTS.TCM.SystemInfo'] },
       ];
       const populatedFields = contentFields.filter((field) => field.value);
-      let htmlDescription = '';
+      let htmlDescription: string;
       if (populatedFields.length === 1) {
         // Single field - no need for section headers
         htmlDescription = populatedFields[0].value ?? '';

@@ -266,7 +266,7 @@ export class BoardConfigManager {
 
     const filePath = path.join(this.activeProjectPath, TEAM_FILE);
 
-    let existing: Partial<BoardConfig> = {};
+    let existing: Partial<BoardConfig>;
     try {
       const raw = fs.readFileSync(filePath, 'utf-8');
       existing = JSON.parse(raw) as Partial<BoardConfig>;
@@ -351,7 +351,7 @@ export class BoardConfigManager {
       id: profile.id || crypto.randomUUID(),
     }));
 
-    let existing: Partial<BoardConfig> = {};
+    let existing: Partial<BoardConfig>;
     try {
       existing = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<BoardConfig>;
     } catch {

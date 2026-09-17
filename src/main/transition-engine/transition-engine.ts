@@ -475,7 +475,7 @@ export class TransitionEngine {
       fs.mkdirSync(sessionDir, { recursive: true });
     } catch (err) {
       console.error(`[spawnAgent] Failed to create session directory: ${sessionDir}`, err);
-      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
+      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
     }
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 

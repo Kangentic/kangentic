@@ -331,7 +331,7 @@ export class AsanaClient {
    */
   private async downloadOne(url: string, filename: string): Promise<DownloadedAttachment | null> {
     const credential = this.ensureCredential(false);
-    let host = '';
+    let host: string;
     try {
       host = new URL(url).host;
     } catch {
