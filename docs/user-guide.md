@@ -37,7 +37,7 @@ board, not from the defaults. A column's message to its agent is one kind of aut
 
 ### Create a Task
 
-Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
+Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
 Pasted screenshots are capped at a 2000px long edge, which bounds a multi-monitor grab without costing the detail an agent needs to read small text. Oversized pastes are re-encoded as WebP, stepping quality down until each image lands under a ~1.5MB target, so a large grab is not rejected by the API. Small pastes (under 500KB), GIFs, SVGs, and PNGs already inside the cap are attached as-is.
 
@@ -269,6 +269,11 @@ Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is o
 
 The Backlog is a staging area for tasks before they reach the board. Switch between **Board** and **Backlog** views using the tabs at the top.
 
+Both views share one toolbar row, and it adapts to the space it has. As the window narrows or the
+sidebar widens, its controls drop their text and become icons in the same positions, keeping the
+label as a tooltip. Nothing is hidden and nothing moves, so every control named below is still
+where this guide says it is, just narrower. At the smallest window size the whole row is icons.
+
 ### Creating Items
 
 Click **New Task** in the backlog toolbar to create a backlog item with a title, description, priority, labels, and optional file attachments. You can paste or drag-and-drop any file type as an attachment.
@@ -374,7 +379,8 @@ Active filters show a count badge on the filter icon. Click "Clear all filters" 
 
 ### Add a Column
 
-Click the **+** button at the end of the column row.
+Click **Add column** at the right-hand end of the board toolbar. It becomes a plain **+** once the
+toolbar runs short of room.
 
 ### Edit a Column
 

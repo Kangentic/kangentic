@@ -151,24 +151,37 @@ export function TitleBar({
         )}
       </div>
 
-      {/* Centered project name */}
-      {currentProject && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="max-w-[50%] flex items-center gap-2">
-            <span className="text-base font-semibold text-fg truncate">
+      {/*
+        Centered project name, IN FLOW, and doubling as the spacer that pushes the
+        right-aligned controls to the edge.
+
+        It used to be `absolute inset-0 ... max-w-[50%]`, which truncated it against
+        half the WINDOW rather than against the space actually left between the two
+        icon clusters. Being absolute it also could not push anything and painted
+        OVER the icons, so a long name ran across the Monitor and Stats buttons at a
+        narrow window. As a flex child with `min-w-0` it simply truncates earlier,
+        and overlap becomes structurally impossible.
+
+        `flex-1 min-w-0` keeps this the element that gives, so the branding on the
+        left and the controls on the right are never pushed. The row itself stays
+        the OS drag region (`WebkitAppRegion: 'drag'` on the parent) and this
+        element adds no `no-drag`, so the newly in-flow middle of the title bar is
+        still draggable; the button clusters keep their own `no-drag` opt-out.
+      */}
+      <div className="flex-1 min-w-0 flex items-center justify-center gap-2 px-3">
+        {currentProject && (
+          <div className="min-w-0 flex items-center gap-2" data-testid="titlebar-project-name">
+            <span className="text-base font-semibold text-fg truncate" title={currentProject.name}>
               {currentProject.name}
             </span>
             {isWorktree && (
               <span className="text-xs text-amber-500/70 flex-shrink-0">(worktree)</span>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Spacer to push right-aligned controls to the edge */}
-      <div className="flex-1" />
-
-      <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      <div className="flex items-center gap-1" data-testid="titlebar-actions" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {/* "New terminal" + the Command Terminal toggle are the LEFT-MOST icons
             in this row on purpose: this row is right-anchored (the flex-1
             spacer eats the space to its left), so an element's on-screen

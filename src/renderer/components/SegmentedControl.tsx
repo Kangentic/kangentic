@@ -3,6 +3,14 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 export interface SegmentedControlOption<T extends string> {
   value: T;
   label: string;
+  /**
+   * Accessible name, when the visible label is not the whole story. Defaults to
+   * `label`. Needed wherever `trailing` carries meaning the label does not: the
+   * board toolbar's Backlog option has a count badge, and the option's name is
+   * always set from here rather than read off the rendered text, so that count
+   * would otherwise be lost to a screen reader at every width.
+   */
+  ariaLabel?: string;
   /** Optional leading glyph. Render at 14px to sit on the 14px label. */
   icon?: React.ReactNode;
   /** Optional trailing node, e.g. a `CountBadge`. */
@@ -55,6 +63,14 @@ interface SegmentedControlProps<T extends string> {
    * corner radius. Overrides `ground`.
    */
   quiet?: boolean;
+  /**
+   * Extra classes on every option's label span. Opt-in, for a group that has to
+   * shed its text in a tight row: the board toolbar passes a container-query
+   * class that hides the label and shows an icon in its place. Omitted, nothing
+   * changes. The option button always carries `aria-label`, so a hidden label
+   * never leaves the option unnamed.
+   */
+  labelClassName?: string;
   /** Stretch to fill the container, options sharing the width equally. */
   fullWidth?: boolean;
   /** Group-level test hook. */
@@ -121,6 +137,7 @@ export function SegmentedControl<T extends string>({
   onChange,
   ground = 'control',
   quiet = false,
+  labelClassName = '',
   fullWidth = false,
   testId,
   ariaLabel,
@@ -309,6 +326,13 @@ export function SegmentedControl<T extends string>({
               // Roving tabindex: the group is one tab stop, arrows move within it.
               tabIndex={selected ? 0 : -1}
               disabled={optionDisabled}
+              // Unconditional, not only when `labelClassName` hides the label:
+              // `hidden` takes the span out of the accessibility tree, so without
+              // this a collapsed option has no accessible name at all. When the
+              // label IS showing it repeats the visible text, which is harmless -
+              // but it also REPLACES whatever `trailing` contributed, which is why
+              // an option with a meaningful badge passes its own `ariaLabel`.
+              aria-label={option.ariaLabel ?? option.label}
               title={option.title}
               onClick={() => onChange(option.value)}
               data-testid={option.testId}
@@ -324,7 +348,7 @@ export function SegmentedControl<T extends string>({
               } ${optionDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
             >
               {option.icon}
-              <span>{option.label}</span>
+              <span className={labelClassName}>{option.label}</span>
               {option.trailing}
             </button>
           );

@@ -8,8 +8,18 @@ import { useConfigStore } from '../../../stores/config-store';
 import type { AppConfig } from '../../../../shared/types';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
+import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
 
-export function LabelsPopover() {
+interface LabelsPopoverProps {
+  /**
+   * The container-query pair that sheds this trigger's text in a tight toolbar
+   * row. Omitted, the button always shows its label, which is what a mount site
+   * outside the toolbar's `@container` needs.
+   */
+  collapse?: ToolbarControlCollapse;
+}
+
+export function LabelsPopover({ collapse }: LabelsPopoverProps) {
   const [open, setOpen] = useState(false);
   const [pendingDeleteLabel, setPendingDeleteLabel] = useState<{ name: string; count: number } | null>(null);
   const [addingLabel, setAddingLabel] = useState(false);
@@ -107,20 +117,22 @@ export function LabelsPopover() {
   }, [deleteLabel]);
 
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded transition-colors ${
+        title="Labels"
+        aria-label="Labels"
+        className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
           open
             ? 'text-fg border-accent/50 bg-surface-control/40'
             : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
         }`}
         data-testid="manage-labels-btn"
       >
-        <Tags size={14} />
-        Labels
+        <Tags size={14} className="shrink-0" />
+        <span className={collapse?.label}>Labels</span>
       </button>
 
       <PopoverShell open={open} popoverRef={popoverRef}>

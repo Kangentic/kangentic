@@ -22,8 +22,14 @@ import { useHmrGeneration } from '../../../utils/hmr-generation';
 import type { AppConfig } from '../../../../shared/types';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
+import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
 
-export function PrioritiesPopover() {
+interface PrioritiesPopoverProps {
+  /** See LabelsPopover: the container-query pair that sheds this trigger's text. */
+  collapse?: ToolbarControlCollapse;
+}
+
+export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
   const [open, setOpen] = useState(false);
   const [pendingDeletePriority, setPendingDeletePriority] = useState<{ index: number; label: string; count: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -145,20 +151,22 @@ export function PrioritiesPopover() {
   }, [priorities]);
 
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <button
         ref={buttonRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded transition-colors ${
+        title="Priorities"
+        aria-label="Priorities"
+        className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
           open
             ? 'text-fg border-accent/50 bg-surface-control/40'
             : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
         }`}
         data-testid="manage-priorities-btn"
       >
-        <Flag size={14} />
-        Priorities
+        <Flag size={14} className="shrink-0" />
+        <span className={collapse?.label}>Priorities</span>
       </button>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
