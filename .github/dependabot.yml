@@ -1,7 +1,7 @@
 # Dependabot is scoped to GitHub Actions only, deliberately.
 #
 # npm is NOT covered. Several dependencies are pinned exact because a floating
-# range has broken the app before (electron 41.10.7, recharts 3.9.2), so npm
+# range has broken the app before (electron 41.10.7, recharts 3.10.1), so npm
 # bumps need a human deciding when to take them. Add the npm ecosystem here
 # later if that changes, with its own grouping.
 #

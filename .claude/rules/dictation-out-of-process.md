@@ -1,3 +1,7 @@
+---
+paths:
+  - "src/main/transcription/**"
+---
 # Rule: the dictation engine never runs in the main process
 
 DESKTOP-X: an unhandled C++ exception inside `sherpa-onnx.node`, the dictation engine's native
