@@ -88,6 +88,28 @@ afterEach(() => {
 });
 
 describe('attachWebglRenderer', () => {
+  it('reports every renderer flip through onRendererChange, and only real flips', () => {
+    // The DOM renderer measures a wider cell than WebGL for the same font, so a
+    // caller holding a cell metric (useTerminal's natural-cell memo) needs to
+    // hear each swap: the attach, a context loss, and the recovery. A failed
+    // retry that leaves the terminal on DOM is not a flip and stays silent.
+    const { createAddon, addons } = makeAddonFactory(['ok', 'throw', 'ok']);
+    const flips: string[] = [];
+    const dispose = attachWebglRenderer(fakeTerminal, 'sess-renderer-change', {
+      createAddon, retryDelaysMs: RETRY_DELAYS, onRendererChange: (renderer) => flips.push(renderer),
+    });
+    expect(flips).toEqual(['webgl']);
+    addons[0].triggerLoss();
+    expect(flips).toEqual(['webgl', 'dom']);
+    // First retry throws: still DOM, no flip reported.
+    vi.advanceTimersByTime(RETRY_DELAYS[0]);
+    expect(flips).toEqual(['webgl', 'dom']);
+    // Second retry recovers.
+    vi.advanceTimersByTime(RETRY_DELAYS[1]);
+    expect(flips).toEqual(['webgl', 'dom', 'webgl']);
+    dispose();
+  });
+
   it('reports the webgl renderer on a successful attach', () => {
     const dispose = attachWebglRenderer(fakeTerminal, 'k-attach', {
       createAddon: makeFakeAddon,

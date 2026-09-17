@@ -74,6 +74,13 @@ interface AttachWebglOptions {
   retryDelaysMs?: number[];
   /** Live-attachment cap, injectable for tests. Defaults to WEBGL_ATTACH_BUDGET. */
   attachBudget?: number;
+  /**
+   * Called on every renderer flip (an attach, a context loss, a budget suspend,
+   * a resume), after xterm has swapped. The DOM renderer measures a wider cell
+   * than WebGL for the same font, so a caller that remembers a cell metric
+   * (useTerminal's natural-cell memo for a held grid) re-measures here.
+   */
+  onRendererChange?: (renderer: TerminalRendererType) => void;
 }
 
 /**
@@ -252,6 +259,17 @@ export function attachWebglRenderer(
   };
   rendererStatusByKey.set(rendererKey, status);
 
+  /** The one writer of `status.renderer`; a real flip tells the caller. */
+  const flipRenderer = (renderer: TerminalRendererType): void => {
+    if (status.renderer === renderer) return;
+    status.renderer = renderer;
+    try {
+      options?.onRendererChange?.(renderer);
+    } catch (error) {
+      console.warn(`[terminal-webgl] onRendererChange threw for ${rendererKey}`, error);
+    }
+  };
+
   let currentAddon: WebglAddonLike | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
@@ -276,7 +294,7 @@ export function attachWebglRenderer(
       // Nothing was handed to xterm, so there is nothing to dispose. The real
       // addon's constructor throws only on old Safari; the WebGL2 acquisition
       // happens inside loadAddon below.
-      status.renderer = 'dom';
+      flipRenderer('dom');
       return false;
     }
     try {
@@ -291,11 +309,11 @@ export function attachWebglRenderer(
       // entry back out; the addon registers its renderer-swap teardown only
       // after its renderer constructs, so this swaps nothing.
       try { addon.dispose(); } catch { /* best-effort */ }
-      status.renderer = 'dom';
+      flipRenderer('dom');
       return false;
     }
     currentAddon = addon;
-    status.renderer = 'webgl';
+    flipRenderer('webgl');
     status.failedAttempts = 0;
     return true;
   };
@@ -378,7 +396,7 @@ export function attachWebglRenderer(
     if (disposed || suspended || addon !== currentAddon) return;
     try { addon.dispose(); } catch { /* addon may already be gone */ }
     currentAddon = null;
-    status.renderer = 'dom';
+    flipRenderer('dom');
     status.contextLossCount += 1;
     recordFailureAndArm('context-loss');
   }
@@ -397,7 +415,7 @@ export function attachWebglRenderer(
       try { currentAddon.dispose(); } catch { /* best-effort */ }
       currentAddon = null;
     }
-    status.renderer = 'dom';
+    flipRenderer('dom');
     status.suspendedByBudget = true;
     // Traced at the FLIP, not at applyWebglAttachmentPlan: the coordinator
     // re-applies the full plan on every window/store change, so tracing the call

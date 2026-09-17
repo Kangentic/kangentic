@@ -61,10 +61,11 @@ workflow calls it after `publish-release`, so the web build always shows the shi
 
 Opened directly (a docs link, a review), the page hands over to `stage.html`, which hosts the
 same frame at 1600 by 1000, centered, and scaled down when the window is smaller. That size is
-not cosmetic: every terminal recording was made at the size of the surface it plays on, and a
-replay cannot follow a window the way a live PTY does, so a wider window would unwrap lines a
-CLI painted around and a narrower one would wrap them (see Live replay below). A host that
-sizes the iframe itself, like the site, passes `embed=1` and gets the frame edge to edge.
+the one every terminal recording was made at, so at the stage the byte stream replays into the
+very grid it was recorded for and the windows and the panel sit where the recordings were made
+against. A host that sizes the iframe itself, like the site, passes `embed=1` and gets the frame
+edge to edge; its terminals still replay exactly, held at their recording's grid and scaled to
+fit (see Live replay below).
 
 Two one-time repository settings, both manual because the default token cannot make them:
 

@@ -16,11 +16,12 @@
     (function () {
       'use strict';
       // Hosts the frame at the site's size, 1600 by 1000, whatever the window is. Every terminal
-      // recording was made at that size, and a replay cannot renegotiate a PTY the way the
-      // desktop does when its window changes: a wider window would unwrap lines a CLI painted
-      // around, and a narrower one would wrap them. A larger window gets margin; a smaller one
-      // gets the frame scaled down, which keeps its DOM (and every terminal's grid) at the size
-      // the recordings fit. demo/boot.js sends the page here unless embed=1 or stage=0.
+      // recording was made at that size, so here each byte stream replays into the very grid it
+      // was recorded for, and the windows and the panel sit where the recordings were made
+      // against (a host that sizes the frame differently still gets an exact replay: the
+      // terminal is held at its recording's grid and scaled to fit, see demo/README.md). A
+      // larger window gets margin; a smaller one gets the frame scaled down, which keeps its
+      // DOM at that size. demo/boot.js sends the page here unless embed=1 or stage=0.
       var WIDTH = 1600;
       var HEIGHT = 1000;
       var LIGHT_THEMES = ['light', 'sand', 'mint', 'sky', 'peach'];
