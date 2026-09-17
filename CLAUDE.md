@@ -413,6 +413,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `ipc-7-layer-parity.md` - wire an IPC endpoint through all 7 layers.
 - `project-scoped-ipc.md` - renderer-driven task/session mutations forward an explicit interaction-time `projectId` (`src/preload/`, `src/main/ipc/`, `src/renderer/stores/`).
 - `esbuild-cjs-imports.md` - ES `import`, not bare `require()`, in bundled main/preload code.
+- `dependency-block-parity.md` - `dependencies` is the esbuild externals (minus `electron`) plus what `electron-builder.yml`'s `files:` names; everything bundled goes in `devDependencies` (`package.json`).
 - `agent-adapters-boundary.md` - no agent-name branching outside `src/main/agent/adapters/`.
 - `automation-adapters.md` - an automation type is declared once in `AUTOMATION_MANIFEST` and implemented under `src/main/automations/adapters/`; the runner owns escaping, timeouts and retry (`src/main/automations/`).
 - `cli-features-over-custom-layers.md` - do not shadow an agent CLI's native controls (`src/main/agent/`).
