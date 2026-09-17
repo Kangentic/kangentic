@@ -38,7 +38,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Terminal } from '@xterm/xterm';
-import { FitAddon, FALLBACK_SCROLLBAR_WIDTH } from '../../src/renderer/addons/fit-addon';
+import { FitAddon, FALLBACK_SCROLLBAR_WIDTH, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX } from '../../src/renderer/addons/fit-addon';
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
@@ -66,11 +66,15 @@ function makeElements(viewport: ViewportStub | null = { offsetWidth: 800, client
 }
 
 /** Build a minimal Terminal-shaped stub. The private _core path uses `as any`
- *  in the source, so a plain object satisfies it without type gymnastics. */
+ *  in the source, so a plain object satisfies it without type gymnastics.
+ *  `cell` defaults to the file's standard 8x16 fixture cell; the
+ *  proposeFontSizeForGrid / proposeDimensionsForCell tests below override it
+ *  to reach specific scale ratios. */
 function makeTerminalStub(
   elementEl: object,
   bufferType: 'normal' | 'alternate' = 'normal',
   scrollback = 1000,
+  cell: { width: number; height: number } = { width: CELL_WIDTH, height: 16 },
 ): Terminal {
   return {
     element: elementEl,
@@ -78,7 +82,7 @@ function makeTerminalStub(
     buffer: { active: { type: bufferType } },
     _core: {
       _renderService: {
-        dimensions: { css: { cell: { width: CELL_WIDTH, height: 16 } } },
+        dimensions: { css: { cell: { width: cell.width, height: cell.height } } },
       },
     },
   } as unknown as Terminal;
@@ -439,5 +443,250 @@ describe('FitAddon.fit - reports what it did, and why it declined', () => {
     // And the lossy public view still collapses it to undefined, so the two
     // stay consistent about which inputs are fittable.
     expect(fitAddon.proposeDimensions()).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// proposeFontSizeForGrid / measureCell / proposeDimensionsForCell
+//
+// These three back the "held grid" conform path (conformToHeldGrid in
+// useTerminal.ts): when main REFUSES a resize and names a grid it is holding
+// the PTY at instead, the terminal shows that grid by picking the font size
+// that fits it into the pane (proposeFontSizeForGrid), remembers the cell it
+// would measure on its own at the configured font (measureCell), and later
+// asks "what grid would I take on my own, at that remembered cell" so main
+// can tell when the hold's reason has passed (proposeDimensionsForCell).
+//
+// Each test below writes its own parent box and cell rather than reusing
+// makeWindowStub's fixed 800x600/no-padding geometry, because these methods
+// need specific scale ratios (0.9, 0.2, a negative box, an underflowing one)
+// that box does not exercise. The scrollbar gutter is pinned to 0 throughout
+// (offsetWidth === clientWidth) so every expected value below is exact
+// arithmetic, with no measured-gutter term to add in.
+// ---------------------------------------------------------------------------
+
+/** Window stub with a caller-supplied parent box and terminal-element
+ *  padding. Same shape as makeWindowStub/makeCollapsedWindowStub/
+ *  makeNaNWindowStub above; those are fixed at 800x600 with zero padding,
+ *  which does not reach the scales the tests below need. */
+function makeGeometryWindowStub(
+  parentEl: object,
+  parent: { width: number; height: number },
+  padding: { left: number; right: number; top: number; bottom: number } = { left: 0, right: 0, top: 0, bottom: 0 },
+): unknown {
+  return {
+    getComputedStyle: (element: unknown) => ({
+      getPropertyValue: (prop: string): string => {
+        if (element === parentEl) {
+          if (prop === 'width') return String(parent.width);
+          if (prop === 'height') return String(parent.height);
+        }
+        if (prop === 'padding-left') return String(padding.left);
+        if (prop === 'padding-right') return String(padding.right);
+        if (prop === 'padding-top') return String(padding.top);
+        if (prop === 'padding-bottom') return String(padding.bottom);
+        return '0';
+      },
+    }),
+  };
+}
+
+/** A zero-gutter viewport (offsetWidth === clientWidth), so
+ *  availableWidth === parentWidth - paddingHorizontal exactly, with no
+ *  scrollbar term folded into the expected values below. */
+function makeZeroGutterElements() {
+  return makeElements({ offsetWidth: 800, clientWidth: 800 });
+}
+
+describe('FitAddon.proposeFontSizeForGrid -- the font size a held grid gets scaled to', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('floors the proposed size to a quarter pixel, not the raw scaled value', () => {
+    // Geometry: parent 800x540, cell 8x20, no padding, zero gutter.
+    //   widthScale  = 800 / (10 cols * 8)  = 10
+    //   heightScale = 540 / (30 rows * 20) = 0.9   <- the limiting axis
+    // scale = min(10, 0.9) = 0.9; raw = 14 * 0.9 = 12.6.
+    // floor(12.6 / 0.25) * 0.25 = floor(50.4) * 0.25 = 50 * 0.25 = 12.5.
+    //
+    // RED: returning the raw scaled value instead of the floored one makes
+    // this 12.6, a size two panes a few pixels apart would then rarely
+    // share, re-rasterizing the shared glyph atlas for every fractional px.
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 540 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl, 'normal', 1000, { width: 8, height: 20 }));
+    expect(fitAddon.proposeFontSizeForGrid(10, 30, 14)).toBe(12.5);
+    // The step itself, so a change to CONFORM_FONT_STEP_PX is visible here too.
+    expect(CONFORM_FONT_STEP_PX).toBe(0.25);
+  });
+
+  it('returns null when the fitted size would be below CONFORM_MIN_FONT_PX', () => {
+    // Same shape as above, but a smaller box: heightScale = 200 / (50*20) = 0.2.
+    // raw = 14 * 0.2 = 2.8, floored to 2.75, below the 4px floor.
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 200 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl, 'normal', 1000, { width: 8, height: 20 }));
+    expect(fitAddon.proposeFontSizeForGrid(10, 50, 14)).toBeNull();
+    expect(CONFORM_MIN_FONT_PX).toBe(4);
+  });
+
+  it('returns null when the computed scale is zero or negative', () => {
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+
+    // Padding exactly consumes the box: availableWidth === 0, so scale === 0.
+    vi.stubGlobal(
+      'window',
+      makeGeometryWindowStub(parentEl, { width: 800, height: 600 }, { left: 800, right: 0, top: 0, bottom: 0 }),
+    );
+    expect(fitAddon.proposeFontSizeForGrid(10, 30, 14)).toBeNull();
+
+    // Padding wider than the box drives availableWidth negative, which makes
+    // the width-axis scale negative too. Math.min propagates that even
+    // though the height axis is a normal 1.25 (600 / (30 * 16)).
+    vi.stubGlobal(
+      'window',
+      makeGeometryWindowStub(parentEl, { width: 800, height: 600 }, { left: 900, right: 0, top: 0, bottom: 0 }),
+    );
+    expect(fitAddon.proposeFontSizeForGrid(10, 30, 14)).toBeNull();
+  });
+
+  it('returns null when the computed scale is non-finite', () => {
+    // Number.MIN_VALUE (the smallest positive double) times 0.5 underflows
+    // to exactly 0 under IEEE 754 round-to-nearest-even, standardized
+    // floating-point behavior, identical on every platform, not a font or OS
+    // dependency. Both axes then divide a positive box by a zero
+    // denominator and come back Infinity, so Math.min(Infinity, Infinity)
+    // is Infinity, which Number.isFinite rejects.
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 600 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(
+      makeTerminalStub(elementEl, 'normal', 1000, { width: Number.MIN_VALUE, height: Number.MIN_VALUE }),
+    );
+    expect(fitAddon.proposeFontSizeForGrid(0.5, 0.5, 14)).toBeNull();
+  });
+
+  it('returns null for a non-positive cols, rows, or currentFontSize', () => {
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 600 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    // Sanity: the same call with all-positive arguments succeeds, so the
+    // nulls below are this guard firing, not an unrelated measurement bail.
+    expect(fitAddon.proposeFontSizeForGrid(80, 24, 14)).not.toBeNull();
+    expect(fitAddon.proposeFontSizeForGrid(0, 24, 14)).toBeNull();
+    expect(fitAddon.proposeFontSizeForGrid(-1, 24, 14)).toBeNull();
+    expect(fitAddon.proposeFontSizeForGrid(80, 0, 14)).toBeNull();
+    expect(fitAddon.proposeFontSizeForGrid(80, -1, 14)).toBeNull();
+    expect(fitAddon.proposeFontSizeForGrid(80, 24, 0)).toBeNull();
+    expect(fitAddon.proposeFontSizeForGrid(80, 24, -1)).toBeNull();
+  });
+
+  it('returns null when the container cannot be measured', () => {
+    const { parentEl, elementEl } = makeElements();
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.proposeFontSizeForGrid(80, 24, 14)).toBeNull();
+  });
+});
+
+describe('FitAddon.measureCell -- the cell the renderer measured, for a held terminal to remember', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the measured cell when the terminal has an element and a parent box', () => {
+    const { parentEl, elementEl } = makeElements();
+    vi.stubGlobal('window', makeWindowStub(parentEl));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.measureCell()).toEqual({ width: CELL_WIDTH, height: 16 });
+  });
+
+  it('returns null when there is no terminal at all', () => {
+    const fitAddon = new FitAddon();
+    // Never activated - the same state a terminal disposed mid-replay leaves.
+    expect(fitAddon.measureCell()).toBeNull();
+  });
+
+  it('returns null when the terminal has no element', () => {
+    const fitAddon = new FitAddon();
+    fitAddon.activate({ element: null } as unknown as Terminal);
+    expect(fitAddon.measureCell()).toBeNull();
+  });
+
+  it('returns null when the terminal element has no parent element', () => {
+    const fitAddon = new FitAddon();
+    fitAddon.activate({ element: { parentElement: null } } as unknown as Terminal);
+    expect(fitAddon.measureCell()).toBeNull();
+  });
+
+  it('returns null when the render service has not measured a cell yet', () => {
+    // The most realistic null in production: handleRendererChange calls
+    // measureCell mid renderer swap (WebGL attaching or being disposed),
+    // between the old renderer detaching and the new one's first measure.
+    const { parentEl, elementEl } = makeElements();
+    vi.stubGlobal('window', makeWindowStub(parentEl));
+    const fitAddon = new FitAddon();
+    const terminal = makeTerminalStub(elementEl, 'normal', 1000, { width: 0, height: 0 });
+    fitAddon.activate(terminal);
+    expect(fitAddon.measureCell()).toBeNull();
+  });
+});
+
+describe('FitAddon.proposeDimensionsForCell -- the grid a REMEMBERED cell would take', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('follows the passed cell, not the terminal\'s own measured cell', () => {
+    // The terminal's own measured cell is the file's standard 8x16 fixture.
+    // The passed cell is double that. If the method read the terminal's own
+    // cell instead of the one it was given, this would come back
+    // {cols: 100, rows: 37} (the same 800x600 box divided by 8x16, matching
+    // the "reserves exactly the measured gutter" describe above) rather than
+    // the half-density grid the passed cell actually produces.
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 600 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.proposeDimensionsForCell({ width: 16, height: 32 })).toEqual({ cols: 50, rows: 18 });
+  });
+
+  it('returns undefined for a zero or negative cell width or height', () => {
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 600 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.proposeDimensionsForCell({ width: 0, height: 16 })).toBeUndefined();
+    expect(fitAddon.proposeDimensionsForCell({ width: 16, height: 0 })).toBeUndefined();
+    expect(fitAddon.proposeDimensionsForCell({ width: -5, height: 16 })).toBeUndefined();
+    expect(fitAddon.proposeDimensionsForCell({ width: 16, height: -5 })).toBeUndefined();
+  });
+
+  it('returns undefined when the container cannot be measured', () => {
+    const { parentEl, elementEl } = makeElements();
+    vi.stubGlobal('window', makeCollapsedWindowStub(parentEl, 'both'));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.proposeDimensionsForCell({ width: 8, height: 16 })).toBeUndefined();
+  });
+
+  it('clamps to the module MINIMUM_COLS (2) / MINIMUM_ROWS (1) floors', () => {
+    // A cell bigger than the whole box floors to 0 columns and 0 rows on
+    // both axes; proposeDimensionsForCell clamps up to the same floors
+    // describeProposedDimensions uses, so a hold can never collapse to an
+    // empty grid.
+    const { parentEl, elementEl } = makeZeroGutterElements();
+    vi.stubGlobal('window', makeGeometryWindowStub(parentEl, { width: 800, height: 600 }));
+    const fitAddon = new FitAddon();
+    fitAddon.activate(makeTerminalStub(elementEl));
+    expect(fitAddon.proposeDimensionsForCell({ width: 2000, height: 3000 })).toEqual({ cols: 2, rows: 1 });
   });
 });
