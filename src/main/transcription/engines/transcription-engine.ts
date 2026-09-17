@@ -41,6 +41,18 @@ export interface TranscriptionEngineSession {
   finalize(): Promise<string>;
   cancel(): void;
   dispose(): void;
+  /**
+   * Resolves once work this session put on the libuv threadpool has settled.
+   * `cancel()` and `dispose()` are synchronous by contract, so neither can wait
+   * for a decode already running; the worker calls this afterwards and holds off
+   * disposing the engine until it resolves. Optional because most engines end a
+   * session with nothing outstanding: the streaming transducer decodes inside
+   * `push()`, and the remote and stub engines hold no threadpool work. The two
+   * offline engines do, on two paths - the chunked-offline live loop between
+   * passes, and either of them during the final decode, which a cancel can land
+   * on top of. Never rejects.
+   */
+  drain?(): Promise<void>;
 }
 
 /**

@@ -53,10 +53,32 @@ export class HybridEngine implements TranscriptionEngine {
 
   createSession(options: CreateSessionOptions): TranscriptionEngineSession {
     // The live sub-session forwards partials; the final buffers silently.
-    const liveSession = this.live ? this.live.engine.createSession(options) : null;
-    const finalSession = this.final
-      ? this.final.engine.createSession({ ...options, onPartial: () => undefined })
+    // The last hypothesis the live slot emitted, kept as the fallback for when a
+    // final pass fails. It is the text the user has been watching, so falling
+    // back to it is also the least surprising thing that can happen on screen.
+    let lastLivePartial = '';
+    const liveSession = this.live
+      ? this.live.engine.createSession({
+          ...options,
+          onPartial: (text: string) => {
+            lastLivePartial = text;
+            options.onPartial(text);
+          },
+        })
       : null;
+    let finalSession: TranscriptionEngineSession | null = null;
+    try {
+      finalSession = this.final
+        ? this.final.engine.createSession({ ...options, onPartial: () => undefined })
+        : null;
+    } catch (error) {
+      // Nothing holds the live session yet, so without this nothing could ever
+      // stop it: the chunked live engine's decode loop would tick for the life of
+      // the worker, and the worker's maybeDisposeEngine cannot reach it (an
+      // engine's dispose only drops its recognizer reference).
+      liveSession?.dispose();
+      throw error;
+    }
 
     return {
       push(pcm: Int16Array): void {
@@ -64,27 +86,34 @@ export class HybridEngine implements TranscriptionEngine {
         finalSession?.push(pcm);
       },
       async finalize(): Promise<string> {
-        // Flush the live session (stops the live partials); keep its text as a
-        // fallback / as the result when there is no final pass.
-        let liveText = '';
-        if (liveSession) {
+        // With no final slot the live text IS the committed text, so it has to be
+        // a complete decode of the buffer rather than a partial.
+        if (!finalSession) {
+          if (!liveSession) return '';
           try {
-            liveText = await liveSession.finalize();
+            return await liveSession.finalize();
           } catch {
-            // The live preview is best-effort.
+            // The live preview is best-effort, and with nothing behind it the
+            // last partial the user watched is the closest thing to a result.
+            return lastLivePartial;
           }
         }
-        if (finalSession) {
-          try {
-            return await finalSession.finalize();
-          } catch (error) {
-            // The accurate final failed (e.g. the cloud endpoint is not configured
-            // yet, or a network error). Fall back to the live text rather than nothing.
-            if (liveText.trim().length > 0) return liveText;
-            throw error;
-          }
+        // A final slot will produce the committed text, so finalizing the live
+        // slot too would run a second full-buffer decode whose result is read
+        // only on the error path below. On a 30s hold with the chunked live
+        // engine that is about another 0.6s of release-to-insert latency spent
+        // on a string that is normally thrown away. Stop it instead.
+        liveSession?.cancel();
+        try {
+          return await finalSession.finalize();
+        } catch (error) {
+          // The accurate final failed (e.g. the cloud endpoint is not configured
+          // yet, or a network error). Fall back to the live text rather than
+          // nothing. It lags the tail of the utterance by up to one live pass,
+          // which is the price of not paying for that decode every single time.
+          if (lastLivePartial.trim().length > 0) return lastLivePartial;
+          throw error;
         }
-        return liveText;
       },
       cancel(): void {
         liveSession?.cancel();
@@ -93,6 +122,9 @@ export class HybridEngine implements TranscriptionEngine {
       dispose(): void {
         liveSession?.dispose();
         finalSession?.dispose();
+      },
+      async drain(): Promise<void> {
+        await Promise.all([liveSession?.drain?.(), finalSession?.drain?.()]);
       },
     };
   }
