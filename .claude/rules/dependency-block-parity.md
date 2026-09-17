@@ -1,3 +1,7 @@
+---
+paths:
+  - "package.json"
+---
 # Rule: `dependencies` is what ships as node_modules, nothing else
 
 electron-builder computes the production dependency tree from `package.json` and copies all of
@@ -19,11 +23,17 @@ drift is the resting state and something has to hold the line.
 
 ## The rule
 
-`dependencies` is exactly:
+`dependencies` is at most:
 
 - the esbuild `external` list in `scripts/build.js`, minus `electron`, plus
 - any package named directly by a `node_modules/<name>/**` glob in `electron-builder.yml`'s
   `files:`.
+
+Every external except `electron` has to be there. The `files:` half is a permission, not a
+requirement: most of what `files:` names arrives transitively under an external and carries no
+root declaration, which is why `onnxruntime-node`, `sharp`, `@img/*`, `detect-libc` and `semver`
+are absent from the block while `files:` still whitelists them. Read as an equality, the rule
+would put all five back and re-inflate the closure it exists to shrink.
 
 Everything else goes in `devDependencies`, including packages that unambiguously ship, because
 shipping bundled is not the same as shipping as node_modules.
