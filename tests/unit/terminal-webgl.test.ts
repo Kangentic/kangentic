@@ -148,6 +148,26 @@ describe('attachWebglRenderer', () => {
     dispose();
   });
 
+  it('does not let a throwing onRendererChange break the flip it is reporting', () => {
+    // onRendererChange is useTerminal's handleRendererChange doing live DOM
+    // reads (measureCell); a throw there must not escape flipRenderer and take
+    // down tryAttach's caller, or a terminal fails to mount on the very flip
+    // this callback exists to report.
+    const boom = new Error('boom');
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-throwing-callback', {
+      createAddon: makeFakeAddon,
+      retryDelaysMs: RETRY_DELAYS,
+      onRendererChange: () => { throw boom; },
+    });
+    const status = getTerminalRendererReport()['k-throwing-callback'];
+    expect(status.renderer).toBe('webgl');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('onRendererChange threw for k-throwing-callback'),
+      boom,
+    );
+    dispose();
+  });
+
   it('reports the webgl renderer on a successful attach', () => {
     const dispose = attachWebglRenderer(fakeTerminal, 'k-attach', {
       createAddon: makeFakeAddon,
@@ -453,6 +473,24 @@ describe('budget suspend/resume', () => {
   const emptyPlan = { attachKeys: new Set<string>(), suspendKeys: new Set<string>() };
   const suspendPlan = (...keys: string[]) => ({ ...emptyPlan, suspendKeys: new Set(keys) });
   const attachPlan = (...keys: string[]) => ({ ...emptyPlan, attachKeys: new Set(keys) });
+
+  it('reports a flip through onRendererChange on both a suspend and its resume', () => {
+    // The flip test above covers attach/loss/retry-recovery; a coordinator
+    // driving the WebGL attachment budget across many windows suspends and
+    // resumes terminals constantly, and a held-grid terminal needs to hear
+    // both to re-measure its cell against whichever renderer it landed on.
+    const { createAddon } = makeAddonFactory(['ok', 'ok']);
+    const flips: string[] = [];
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-suspend-resume-change', {
+      createAddon, retryDelaysMs: RETRY_DELAYS, onRendererChange: (renderer) => flips.push(renderer),
+    });
+    expect(flips).toEqual(['webgl']);
+    applyWebglAttachmentPlan(suspendPlan('k-suspend-resume-change'));
+    expect(flips).toEqual(['webgl', 'dom']);
+    applyWebglAttachmentPlan(attachPlan('k-suspend-resume-change'));
+    expect(flips).toEqual(['webgl', 'dom', 'webgl']);
+    dispose();
+  });
 
   it('suspend keeps the status entry and never counts as a context loss', () => {
     const { createAddon, addons } = makeAddonFactory(['ok']);
