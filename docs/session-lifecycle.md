@@ -782,6 +782,15 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   `tests/ui/window-reveal-grid-width.spec.ts`, which deliberately keeps WebGL on and asserts on the
   renderer trace ring, because the specs that read terminal CONTENT pass `--disable-webgl` and so
   cannot reproduce a renderer swap at all.
+
+  A terminal CONFORMED to a held grid (above) needs a third answer here, because the two above
+  cannot reach it: it runs at a derived font, so it cannot simply re-measure its natural cell at
+  the configured size the way an unheld terminal does, and the grid it probes main with would
+  drift by that same ~10% across a swap. `attachWebglRenderer` therefore takes an
+  `onRendererChange` callback, fired on each real flip (attach, context loss, budget suspend,
+  resume), and `handleRendererChange` answers it: an unheld terminal re-measures, while a held one
+  rescales its remembered natural cell by how far its conformed cell moved across the swap and
+  re-conforms the held grid for the new metrics.
 - **A session nobody is showing goes back to the spawn grid (the resting grid).** A PTY has ONE
   grid and every surface fits it to its own box, so a session last shown in the bottom panel was
   left at that panel's strip - measured live at 306x14 - with nothing to give it back. The agent
@@ -881,13 +890,20 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   the pre-send fit can move the terminal's own dims and a burned signature would stop binding
   exactly then). The refusal also names the grid main keeps (`SessionResizeResult.held`), and
   the terminal CONFORMS to it (`conformToHeldGrid` in `useTerminal.ts`): it resizes its own
-  xterm to the held grid and scales its font to fit that grid into the pane, letterboxed and
-  never above 1.5 times the configured size (`CONFORM_MAX_SCALE`), so the frame the PTY paints
+  xterm to the held grid and scales its font DOWN to fit that grid into the pane, letterboxed
+  and never above the configured size (`CONFORM_MAX_SCALE` is 1), so the frame the PTY paints
   is the frame the user sees rather than the taller grid clipped. A
-  held terminal keeps probing main with the grid it would fit on its own (`fitTerminal`, on
-  every refit), and the first accepted probe releases the hold and restores the configured font.
-  The web demo's mock holds a replayed session at its recording's grid through the same answer
-  (demo/README.md, "Live replay"). Gated by `tests/ui/terminal-held-grid-conform.spec.ts`. Every renderer resize sender now traces `resize-request` with an origin
+  held terminal keeps probing main with the grid it would fit on its own, and the first accepted
+  probe releases the hold and restores the configured font. Only the container fit probes
+  (`fitTerminal`'s probe argument, passed true by the `fit()` callback alone): a replay, a reload,
+  or a renderer swap re-conforms the held grid without asking main anything.
+  A conform that the pane cannot show (the grid needs type below the 4 px floor, the box cannot
+  be measured, or the step-down budget runs out before the grid fits) is DECLINED: the hold is
+  released and the terminal keeps its own fit, rather than committing a font size nothing
+  verified. The web demo's mock holds a replayed session at its recording's grid through the same
+  answer (demo/README.md, "Live replay"). Gated by `tests/ui/terminal-held-grid-conform.spec.ts`.
+
+  Every renderer resize sender now traces `resize-request` with an origin
   tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every
   resize outcome (`resize-applied`/`resize-noop`/`resize-refused`/`resize-stash`/
   `resize-ignored`/`resize-invalid`/`resize-failed` (node-pty threw on a just-died child; main

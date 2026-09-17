@@ -407,12 +407,13 @@ answers a replayed session's resize the way main answers one it refuses: with th
 that grid and scaling its font to fit the pane, letterboxed (`conformToHeldGrid` in
 `useTerminal`). The picture is then the recording's, exact, at whatever size the host gave the
 frame and on any display: the dialog at 1440 by 900 shows the 154-column session at about
-9 px type, a 2560 by 1440 display at about 16. Whether to hold is decided by the scale the pane
-would need (`HOLD_MIN_SCALE` in the seed's resize wrapper, 0.6): below it the type would be
-unreadable, so the terminal keeps its own grid and plays frames instead. The bottom panel is
-that case, 15 rows against a recording's 37 or 39. Upward the renderer caps the conformed font
-at 1.5 times the configured size (`CONFORM_MAX_SCALE` in `useTerminal`) and letterboxes past
-it, so a held terminal never reads as a different scale from the UI around it. A held terminal keeps probing with the grid
+9 px type. Whether to hold is decided by the scale the pane would need (`HOLD_MIN_SCALE` in
+the seed's resize wrapper, 0.6): below it the type would be unreadable, so the terminal keeps
+its own grid and plays frames instead. The bottom panel is that case, 15 rows against a
+recording's 37 or 39. The conform only ever scales DOWN (`CONFORM_MAX_SCALE` in `useTerminal`
+is 1): a pane larger than the held grid needs, a 2560 by 1440 display say, shows it at the
+configured size and letterboxes the rest, so a held terminal is never in bigger type than the
+panel beside it. Two font sizes on one screen was the first thing a live look caught. A held terminal keeps probing with the grid
 it would fit on its own, so a Command Terminal that tiles still switches to the boot recorded at
 the tiled width, and the desktop's own hold (a phone streaming the session) ends the moment
 main accepts the probe.

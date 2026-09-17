@@ -543,11 +543,13 @@ export function resolveReplayWidthAction(input: ReplayWidthInput): ReplayWidthDe
 /** How many quarter-pixel steps conformToHeldGrid takes below its proposal
  *  before giving up on a grid the box will not hold. */
 const CONFORM_MAX_STEPS = 4;
-/** A held grid is never shown at more than this multiple of the configured
- *  font: past it the terminal reads as a different scale from the UI around
- *  it, so the grid letterboxes inside the pane instead. At the largest frame
- *  the site embeds (2099 by 1313) the scale is about 1.3, under this. */
-export const CONFORM_MAX_SCALE = 1.5;
+/** A held grid is never shown above the configured font. Scaling DOWN is the
+ *  point of conforming (the whole held grid fits a pane too small for it);
+ *  scaling UP would put a terminal in bigger type than the panel beside it,
+ *  which read as two font sizes on one screen the first time it was seen. A
+ *  pane larger than the held grid needs shows it at the normal size,
+ *  letterboxed. */
+export const CONFORM_MAX_SCALE = 1;
 
 export function useTerminal(options: UseTerminalOptions) {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -667,6 +669,12 @@ export function useTerminal(options: UseTerminalOptions) {
    *  under the renderer of that moment: what a renderer swap is measured
    *  against to rescale the natural-cell memo (handleRendererChange). */
   const conformedCellRef = useRef<CellSize | null>(null);
+  /** Bumped per outgoing grid request. Several can be in flight at once (every
+   *  refit probes while held) and they resolve in whatever order main answers,
+   *  so an answer acts only if no later request has been sent since. Without
+   *  this, an early probe still carrying `held` can land after a later one was
+   *  accepted and re-establish the hold that was just correctly released. */
+  const gridRequestGenerationRef = useRef(0);
 
   /**
    * Show the grid main is HOLDING instead of our own container fit.
@@ -693,33 +701,78 @@ export function useTerminal(options: UseTerminalOptions) {
     const currentFont = typeof terminal.options.fontSize === 'number' && terminal.options.fontSize > 0
       ? terminal.options.fontSize
       : configuredFontRef.current;
-    let fontSize = fitAddon.proposeFontSizeForGrid(grid.cols, grid.rows, currentFont);
+    const fontSize = fitAddon.proposeFontSizeForGrid(grid.cols, grid.rows, currentFont);
     if (fontSize === null) {
       traceTerminalRenderer(sessionId, 'conform-declined', { cols: grid.cols, rows: grid.rows, origin });
       return false;
     }
-    fontSize = Math.min(fontSize, configuredFontRef.current * CONFORM_MAX_SCALE);
+    let candidateFontSize = Math.min(fontSize, configuredFontRef.current * CONFORM_MAX_SCALE);
+    // The size the loop actually VERIFIED against the box. It stays null until a
+    // measurement says the grid fits, so every way out of the loop that did not
+    // prove a fit declines below rather than committing a size nothing checked.
+    let verifiedFontSize: number | null = null;
+    let declineReason = 'steps';
     for (let attempt = 0; attempt < CONFORM_MAX_STEPS; attempt++) {
       // xterm re-measures the cell as soon as the option is assigned, so the
       // proposal right after reads the new metrics.
-      if (terminal.options.fontSize !== fontSize) terminal.options.fontSize = fontSize;
+      if (terminal.options.fontSize !== candidateFontSize) terminal.options.fontSize = candidateFontSize;
       const check = fitAddon.proposeDimensions();
-      if (!check || (check.cols >= grid.cols && check.rows >= grid.rows)) break;
-      fontSize -= CONFORM_FONT_STEP_PX;
-      if (fontSize < CONFORM_MIN_FONT_PX) {
-        terminal.options.fontSize = conformedFontRef.current ?? configuredFontRef.current;
-        traceTerminalRenderer(sessionId, 'conform-declined', { cols: grid.cols, rows: grid.rows, origin, reason: 'floor' });
-        return false;
+      // An unmeasurable box is a decline, not a fit: committing here would hold
+      // the grid at a size nothing verified, which is the clipped frame this
+      // whole path exists to avoid.
+      if (!check) {
+        declineReason = 'unmeasurable';
+        break;
+      }
+      if (check.cols >= grid.cols && check.rows >= grid.rows) {
+        verifiedFontSize = candidateFontSize;
+        break;
+      }
+      candidateFontSize -= CONFORM_FONT_STEP_PX;
+      if (candidateFontSize < CONFORM_MIN_FONT_PX) {
+        declineReason = 'floor';
+        break;
       }
     }
-    const fontChanged = conformedFontRef.current !== fontSize;
+    if (verifiedFontSize === null) {
+      // Floor, an unmeasurable box, or a step budget that ran out before the
+      // grid fit. All three mean this pane cannot show the held grid, so the
+      // caller keeps its own fit instead of showing the frame clipped.
+      terminal.options.fontSize = conformedFontRef.current ?? configuredFontRef.current;
+      traceTerminalRenderer(sessionId, 'conform-declined', { cols: grid.cols, rows: grid.rows, origin, reason: declineReason });
+      return false;
+    }
     heldGridRef.current = { cols: grid.cols, rows: grid.rows };
-    conformedFontRef.current = fontSize;
+    conformedFontRef.current = verifiedFontSize;
     conformedCellRef.current = fitAddon.measureCell();
     terminal.resize(grid.cols, grid.rows);
-    // The WebGL atlas is keyed on the font; a size change needs fresh glyphs.
-    if (fontChanged && rendererKeyRef.current) notifyFontChanged(rendererKeyRef.current);
-    traceTerminalRenderer(sessionId, 'conform', { cols: grid.cols, rows: grid.rows, fontSize, origin });
+    // Record what xterm now runs at, WITHOUT notifying. The display-settings
+    // effect gates its atlas clear on this terminal's own applied font having
+    // moved, which is only safe if the ref tracks every move. A size changed
+    // HERE and left unrecorded is seen by that effect later, on an unrelated
+    // theme or cursor change, and clears a SHARED atlas while re-rendering only
+    // this terminal - garbling every sibling on it, which is the bug the gate
+    // exists to prevent. Only the size moves; conform never touches the family.
+    // Left null when null: the effect has not run yet, and writing it here
+    // would suppress a first-mount clear that is genuinely due.
+    if (lastAppliedFontRef.current) {
+      lastAppliedFontRef.current = { ...lastAppliedFontRef.current, size: verifiedFontSize };
+    }
+    // No notifyFontChanged here, deliberately. The WebGL glyph atlas is SHARED:
+    // @xterm/addon-webgl's CharAtlasCache is a module-level list, and
+    // acquireTextureAtlas hands the SAME atlas to every terminal whose config
+    // matches (configEquals compares the font family and size, the measured
+    // char size, the device pixel ratio and the palette). clearTextureAtlas()
+    // then wipes that shared texture but re-renders only the caller
+    // (`_charAtlas.clearTexture()` plus `_clearModel(true)` on this renderer
+    // alone), so every other terminal on the atlas keeps glyph coordinates into
+    // a texture that no longer holds those glyphs and paints garbage. The
+    // bottom panel did exactly that, the moment a window conformed to the same
+    // 12 px it runs at. A size change needs no clear anyway: the size is part
+    // of the config, so the conformed terminal acquires its own atlas. The
+    // display-settings effect still clears on a global font change, where every
+    // terminal's effect fires and each one re-renders its own model.
+    traceTerminalRenderer(sessionId, 'conform', { cols: grid.cols, rows: grid.rows, fontSize: verifiedFontSize, origin });
     return true;
   }, []);
 
@@ -728,10 +781,20 @@ export function useTerminal(options: UseTerminalOptions) {
     if (!heldGridRef.current) return;
     heldGridRef.current = null;
     conformedFontRef.current = null;
+    // The conformed cell belonged to the font the hold ran at, so it is stale
+    // the moment the hold ends. Every read is gated on heldGridRef today, but
+    // clearing it keeps that gate from being the only thing standing between a
+    // future reader and a cell measured at a size nothing is running at.
+    conformedCellRef.current = null;
     const terminal = xtermRef.current;
     if (terminal && terminal.options.fontSize !== configuredFontRef.current) {
+      // Same reason as conformToHeldGrid: no atlas clear on a size change, and
+      // the same duty to record it so the display-settings effect does not see
+      // this move later and clear a shared atlas on an unrelated change.
       terminal.options.fontSize = configuredFontRef.current;
-      if (rendererKeyRef.current) notifyFontChanged(rendererKeyRef.current);
+      if (lastAppliedFontRef.current) {
+        lastAppliedFontRef.current = { ...lastAppliedFontRef.current, size: configuredFontRef.current };
+      }
     }
     traceTerminalRenderer(sessionIdRef.current, 'unhold', { origin });
   }, []);
@@ -745,12 +808,21 @@ export function useTerminal(options: UseTerminalOptions) {
    */
   const requestGrid = useCallback((sessionId: string, cols: number, rows: number, origin: string): Promise<SessionResizeResult | undefined> => {
     traceTerminalRenderer(sessionId, 'resize-request', { cols, rows, origin });
+    const generation = ++gridRequestGenerationRef.current;
     return window.electronAPI.sessions.resize(sessionId, cols, rows).then((result) => {
       if (sessionIdRef.current !== sessionId || !xtermRef.current) return result;
+      // A later request has already been sent, so this answer describes a grid
+      // question that is no longer the one being asked. Acting on it would
+      // re-conform to a hold a newer answer released.
+      if (generation !== gridRequestGenerationRef.current) return result;
       const held = heldGridRef.current;
       if (result?.held) {
         if (!held || held.cols !== result.held.cols || held.rows !== result.held.rows) {
-          conformToHeldGrid(result.held, origin);
+          // A decline means this pane cannot show the grid main is holding, so
+          // the terminal must not keep claiming the hold it had. Falling through
+          // with a stale heldGridRef leaves it conformed to a grid main has
+          // moved on from, showing a frame the PTY is no longer painting.
+          if (!conformToHeldGrid(result.held, origin)) releaseHeldGrid(origin);
         }
         return result;
       }
@@ -1093,6 +1165,18 @@ export function useTerminal(options: UseTerminalOptions) {
       cursor: customCursor,
     });
 
+    // Seed the applied-font memo with what the terminal is CONSTRUCTED with, so
+    // the display-settings effect's first run compares against the truth rather
+    // than against null. Null reads as "my font moved" and fires the shared
+    // atlas clear on a terminal that has applied nothing yet: opening a task
+    // window while the bottom panel already runs at the same font wiped the
+    // atlas they share and re-rendered only the new terminal, garbling the
+    // panel. The effect recomputes these two expressions exactly, so a fresh
+    // mount now notifies nothing and a genuine font change still does.
+    lastAppliedFontRef.current = {
+      family: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
+      size: options.fontSize || 14,
+    };
     const terminal = new Terminal({
       fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
       fontSize: options.fontSize || 14,
@@ -1696,6 +1780,12 @@ export function useTerminal(options: UseTerminalOptions) {
       lastAppliedFontRef.current = null;
       heldGridRef.current = null;
       conformedFontRef.current = null;
+      // The two cell memos belong to the terminal being disposed, measured under
+      // its font and renderer. Cleared with the rest of the hold state so the
+      // whole family resets together and a next mount cannot read a cell from
+      // the last one.
+      conformedCellRef.current = null;
+      naturalCellRef.current = null;
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -1776,10 +1866,17 @@ export function useTerminal(options: UseTerminalOptions) {
     // which also stops per-keystroke atlas thrash while a font name is being
     // typed in Settings (onChange commits per character, across every mounted
     // terminal).
+    //
+    // The comparison is against the size this terminal will APPLY, not the one
+    // configured: while main holds its grid the two diverge (the conformed size
+    // is what xterm runs at), and a configured-size change that leaves the
+    // conformed size where it was changes nothing here. That distinction is
+    // load-bearing for the atlas clear below - see applyOptions.
+    const appliedFontSize = conformedFontRef.current ?? fontSize;
     const fontChanged =
       !lastAppliedFontRef.current ||
       lastAppliedFontRef.current.family !== fontFamily ||
-      lastAppliedFontRef.current.size !== fontSize;
+      lastAppliedFontRef.current.size !== appliedFontSize;
     let cancelled = false;
 
     const applyOptions = () => {
@@ -1787,11 +1884,15 @@ export function useTerminal(options: UseTerminalOptions) {
       // below was in flight (see the cleanup below), or if the terminal was
       // torn down in the meantime.
       if (cancelled || !xtermRef.current) return;
+      // Read fresh rather than from the effect's capture: a conform can land in
+      // the document.fonts.load gap, and what is recorded below has to be what
+      // was actually assigned here.
+      const applied = conformedFontRef.current ?? fontSize;
       xtermRef.current.options = {
         fontFamily,
         // While main holds the grid the size is the conformed one; the fit()
         // below re-derives it for the new family's metrics.
-        fontSize: conformedFontRef.current ?? fontSize,
+        fontSize: applied,
         cursorStyle: options.cursorStyle || 'block',
         scrollback: TERMINAL_SCROLLBACK_LINES,
         theme: buildTerminalTheme({
@@ -1801,12 +1902,23 @@ export function useTerminal(options: UseTerminalOptions) {
         }),
       };
       fit();
-      if (fontChanged) {
-        lastAppliedFontRef.current = { family: fontFamily, size: fontSize };
+      const previousFont = lastAppliedFontRef.current;
+      // The gate is MY OWN applied font moving, which is what makes the clear
+      // below safe by construction rather than by which call site reaches it.
+      // The WebGL glyph atlas is shared between every terminal whose font
+      // config matches, and clearing it re-renders only the caller, so a clear
+      // by a terminal whose font did NOT move paints garbage in every other
+      // terminal on that atlas (see conformToHeldGrid). A held terminal is
+      // exactly where that can happen: a global size change from 12 to 13
+      // leaves its conformed 9 px alone, and a sibling window conformed to the
+      // same 9 px is on the same atlas.
+      if (!previousFont || previousFont.family !== fontFamily || previousFont.size !== applied) {
+        lastAppliedFontRef.current = { family: fontFamily, size: applied };
         // xterm re-measures character size as soon as `options.fontFamily` is
         // assigned above. Force the WebGL renderer to re-rasterize every glyph
         // under the new metrics rather than risk it reusing a stale cache entry
-        // from the previous font.
+        // from the previous font. Safe here because a genuine font change fires
+        // every mounted terminal's effect, so each one re-renders its own model.
         if (rendererKeyRef.current) notifyFontChanged(rendererKeyRef.current);
       }
     };
