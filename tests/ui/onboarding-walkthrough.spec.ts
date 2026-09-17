@@ -69,6 +69,31 @@ async function pressEscapeUntilChecklistReturns(page: Page): Promise<void> {
 }
 
 /**
+ * Assert the checklist's progress text, right after a return trip through
+ * `pressEscapeUntilChecklistReturns`.
+ *
+ * That helper only proves the checklist was present for ONE instant (its own
+ * `count() > 0` check). A second Escape still in flight, or the checklist's
+ * own listener attaching a commit late (the same class of gap documented on
+ * that helper), can flip the checklist closed and back open again right
+ * after. Two sequential assertions - `toBeVisible()` then a separate
+ * `toHaveText()` on the progress span inside it - can straddle that flip:
+ * the first resolves against an instant that is about to be replaced, and
+ * the second then polls a sibling element while the checklist it belongs to
+ * is transiently gone, missing the whole timeout even though a live
+ * checklist eventually settles. Re-deriving both the checklist's presence
+ * and its progress text together on every poll tick converges on whichever
+ * mount is the one that stays.
+ */
+async function expectChecklistProgress(page: Page, text: string): Promise<void> {
+  await expect.poll(async () => {
+    const checklist = page.locator('[data-testid="onboarding-checklist"]');
+    if (await checklist.count() === 0) return null;
+    return page.locator('[data-testid="onboarding-progress"]').textContent();
+  }, { timeout: 5000 }).toBe(text);
+}
+
+/**
  * Bring the checklist back without going through the UI.
  *
  * The only re-entry affordance is the dev-only "Restart checklist" trigger on the Developer
@@ -669,8 +694,7 @@ test.describe('Onboarding checklist', () => {
     await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 5000 });
     await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
-    await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('1 of 5 done');
+    await expectChecklistProgress(page, '1 of 5 done');
   });
 
   test('creating a task ticks step 3 without any manual check-off', async () => {
@@ -726,8 +750,7 @@ test.describe('Onboarding checklist', () => {
 
     await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
-    await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done');
+    await expectChecklistProgress(page, '0 of 5 done');
   });
 
   test('backing out of "Create a task" via Escape brings the checklist back, not a silent end', async () => {
@@ -751,8 +774,7 @@ test.describe('Onboarding checklist', () => {
 
     await pressEscapeUntilChecklistReturns(page);
 
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
-    await expect(page.locator('[data-testid="onboarding-progress"]')).toHaveText('0 of 5 done');
+    await expectChecklistProgress(page, '0 of 5 done');
   });
 });
 
