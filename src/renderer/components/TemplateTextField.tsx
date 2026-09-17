@@ -146,7 +146,7 @@ export function TemplateTextField({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const [trigger, setTrigger] = useState<{ query: string; rangeStart: number; rangeEnd: number } | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [storedActiveIndex, setActiveIndex] = useState(0);
 
   const available = useMemo(() => templateVarsFor(context), [context]);
   const known = useMemo(() => new Set(available.map((info) => info.name as string)), [available]);
@@ -164,10 +164,10 @@ export function TemplateTextField({
   }, [trigger, available]);
 
   // Clamp rather than reset: retyping a character that narrows the list should
-  // not throw the highlight back to the top every keystroke.
-  useEffect(() => {
-    setActiveIndex((current) => (current < matches.length ? current : 0));
-  }, [matches.length]);
+  // not throw the highlight back to the top every keystroke. A derivation, not
+  // an effect writing the state back: the stored index survives the narrowing
+  // and reads as 0 only while it is out of range.
+  const activeIndex = storedActiveIndex < matches.length ? storedActiveIndex : 0;
 
   /** Mirror the textarea's scroll so a long value keeps the paint on the text. */
   const syncScroll = useCallback(() => {
@@ -251,14 +251,16 @@ export function TemplateTextField({
       setTrigger(null);
       return;
     }
+    // Step from the CLAMPED index, so a stored index the list has outgrown
+    // steps from 0, where the highlight actually is.
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex((current) => (current + 1) % matches.length);
+      setActiveIndex((activeIndex + 1) % matches.length);
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      setActiveIndex((current) => (current - 1 + matches.length) % matches.length);
+      setActiveIndex((activeIndex - 1 + matches.length) % matches.length);
       return;
     }
     if (event.key === 'Enter' || event.key === 'Tab') {

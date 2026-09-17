@@ -65,7 +65,13 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
     }), []);
 
     useEffect(() => {
-      const timer = setTimeout(() => setDebouncedQuery(query), DEBOUNCE_MS);
+      const timer = setTimeout(() => {
+        setDebouncedQuery(query);
+        // A new query starts with no current match. Reset here, the only place
+        // the debounced query changes, rather than in an effect that syncs the
+        // two.
+        setCurrentMatchIndex(-1);
+      }, DEBOUNCE_MS);
       return () => clearTimeout(timer);
     }, [query]);
 
@@ -87,10 +93,6 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
       }
       return results;
     }, [rows, debouncedQuery]);
-
-    useEffect(() => {
-      setCurrentMatchIndex(-1);
-    }, [debouncedQuery]);
 
     const goToMatchIndex = useCallback(
       (index: number) => {

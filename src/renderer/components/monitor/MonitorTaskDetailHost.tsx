@@ -59,32 +59,74 @@ export function MonitorTaskDetailHost({
    *  still in flight, and the older reply must not win over the newer one. */
   const requestGenerationRef = useRef(0);
 
-  const refresh = useCallback(async () => {
+  /**
+   * One fetch, claimed against the generation counter. Resolves to the bundle,
+   * `null` when the task or its project is gone, or `undefined` when the reply
+   * is stale (a newer fetch was issued) or the API is absent, in which case the
+   * caller changes nothing. Touches no state itself, so the mount effect can
+   * call it directly and apply the result in its own continuation.
+   */
+  const fetchBundle = useCallback(async (): Promise<TaskDetailBundle | null | undefined> => {
     const api = window.electronAPI?.monitor;
-    if (!api?.getTaskDetail) return;
+    if (!api?.getTaskDetail) return undefined;
     const generation = ++requestGenerationRef.current;
+    const next = await api.getTaskDetail(projectId, taskId);
+    return generation === requestGenerationRef.current ? next : undefined;
+  }, [projectId, taskId]);
+
+  const applyBundle = useCallback((next: TaskDetailBundle | null | undefined) => {
+    if (next === undefined) return;
+    if (next === null) {
+      onUnavailable();
+      return;
+    }
+    setBundle(next);
+  }, [onUnavailable]);
+
+  const refresh = useCallback(async () => {
     try {
-      const next = await api.getTaskDetail(projectId, taskId);
-      if (generation !== requestGenerationRef.current) return;
-      if (!next) {
-        onUnavailable();
-        return;
-      }
-      setBundle(next);
+      applyBundle(await fetchBundle());
     } catch (error) {
       console.error('[monitor] Failed to load task detail bundle:', error);
     }
-  }, [projectId, taskId, onUnavailable]);
+  }, [fetchBundle, applyBundle]);
 
   useEffect(() => {
-    void refresh();
+    fetchBundle()
+      .then(applyBundle)
+      .catch((error) => { console.error('[monitor] Failed to load task detail bundle:', error); });
     // Invalidate this fetch on unmount / re-fire, so a reply that lands after the
     // host has moved to another task cannot call setBundle or onUnavailable.
     return () => { requestGenerationRef.current += 1; };
-  }, [refresh, snapshotGeneration]);
+  }, [fetchBundle, applyBundle, snapshotGeneration]);
 
-  const value = useMemo<TaskDetailHostValue | null>(() => {
-    if (!bundle) return null;
+  if (!bundle) return null;
+  return (
+    <MonitorTaskDetailHostValue bundle={bundle} refresh={refresh} settingsOpen={settingsOpen}>
+      {children}
+    </MonitorTaskDetailHostValue>
+  );
+}
+
+/**
+ * The host value, built from a resolved bundle. A separate component so the
+ * fetch state above stays out of the memo: `refresh` reaches the generation
+ * ref, and React's compiler rules treat an object holding a ref-reading
+ * function as a ref read wherever render inspects it. Here `refresh` is a
+ * prop, the bundle is never null, and render inspects nothing.
+ */
+function MonitorTaskDetailHostValue({
+  bundle,
+  refresh,
+  settingsOpen,
+  children,
+}: {
+  bundle: TaskDetailBundle;
+  refresh: () => Promise<void>;
+  settingsOpen: boolean;
+  children: (task: Task) => ReactNode;
+}) {
+  const value = useMemo<TaskDetailHostValue>(() => {
     return {
       projectId: bundle.projectId,
       projectPath: bundle.projectPath,
@@ -128,6 +170,5 @@ export function MonitorTaskDetailHost({
     };
   }, [bundle, refresh, settingsOpen]);
 
-  if (!value || !bundle) return null;
   return <TaskDetailHostProvider value={value}>{children(bundle.task)}</TaskDetailHostProvider>;
 }

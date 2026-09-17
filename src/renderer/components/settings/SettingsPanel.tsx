@@ -37,7 +37,7 @@ export function SettingsPanel() {
   const setLastSettingsTab = useConfigStore((state) => state.setLastSettingsTab);
   const [shells, setShells] = useState<Array<{ name: string; path: string }>>([]);
   const [fonts, setFonts] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState(() => {
+  const [selectedTab, setActiveTab] = useState(() => {
     const state = useConfigStore.getState();
     // An explicit open-to-tab (sidebar) wins; otherwise resume the last viewed
     // tab so closing and reopening returns to the same section.
@@ -45,7 +45,24 @@ export function SettingsPanel() {
     if (state.lastSettingsTab) return state.lastSettingsTab;
     return hasProject ? 'general' : tabs[0].id;
   });
+  // Clamped to the tabs on offer, which change when a project opens or closes:
+  // a derivation rather than an effect writing the selection back, so the
+  // panel never paints a tab that is no longer listed.
+  const activeTab = tabs.some((tab) => tab.id === selectedTab) ? selectedTab : tabs[0].id;
   const [searchQuery, setSearchQuery] = useState('');
+
+  // When opening settings for a different project via sidebar gear icon, pick
+  // up the initial tab if set. A render-time adjustment on the path transition
+  // (React's "adjusting state when a prop changes" pattern); the initializer
+  // above already covers the mount.
+  const projectSettingsInitialTab = useConfigStore((state) => state.projectSettingsInitialTab);
+  const [seenProjectSettingsPath, setSeenProjectSettingsPath] = useState(projectSettingsPath);
+  if (projectSettingsPath !== seenProjectSettingsPath) {
+    setSeenProjectSettingsPath(projectSettingsPath);
+    if (projectSettingsInitialTab && tabs.some((tab) => tab.id === projectSettingsInitialTab)) {
+      setActiveTab(projectSettingsInitialTab);
+    }
+  }
 
   // Remember the active tab (including clamps to a valid tab) so the next open
   // resumes here. Reads back via the initializer above.
@@ -69,27 +86,6 @@ export function SettingsPanel() {
     const { agentList } = useConfigStore.getState();
     if (agentList.length === 0) loadAgentList();
   }, [loadAgentList]);
-
-  // When opening settings for a different project via sidebar gear icon,
-  // pick up the initial tab if set.
-  useEffect(() => {
-    const initialTab = useConfigStore.getState().projectSettingsInitialTab;
-    if (initialTab) {
-      const validIds = tabs.map((tab) => tab.id);
-      if (validIds.includes(initialTab)) {
-        setActiveTab(initialTab);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on projectSettingsPath; tabs is a stable module constant and tab validity is handled by the separate clamp effect below
-  }, [projectSettingsPath]);
-
-  // Clamp activeTab when available tabs change (e.g. project opened/closed)
-  useEffect(() => {
-    const validIds = tabs.map((tab) => tab.id);
-    if (!validIds.includes(activeTab)) {
-      setActiveTab(validIds[0]);
-    }
-  }, [tabs, activeTab]);
 
   // Search computation
   const searchResults = useMemo(
