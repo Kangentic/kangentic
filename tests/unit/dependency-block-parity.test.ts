@@ -14,7 +14,7 @@
  *
  * The block had drifted a long way from that. It carried monaco-editor, recharts,
  * react-markdown, turndown, @sentry/electron and nine more, all of them already
- * inside .vite/build/**, which resolved to 314 production packages where 122 were
+ * inside .vite/build/**, which resolved to 302 production packages where 121 were
  * needed. npm's default is to write a new install into `dependencies`, so the drift
  * is the resting state and something has to hold the line.
  *

@@ -97,7 +97,7 @@ npm run dev
 ```
 
 Requires:
-- Node.js 22+
+- Node.js 22.12+ (the test runner declares `^22.12.0 || ^24.0.0 || >=26.0.0`)
 - C++ build tools for native modules (better-sqlite3, node-pty)
   - **Windows:** `npm install -g windows-build-tools` or install Visual Studio Build Tools
   - **macOS:** Xcode Command Line Tools (`xcode-select --install`)

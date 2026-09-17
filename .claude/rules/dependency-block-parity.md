@@ -16,8 +16,8 @@ node_modules directories is small and derivable.
 
 The block had drifted a long way from that. It carried `monaco-editor`, `recharts`,
 `react-markdown`, `turndown`, `@sentry/electron`, `@aptabase/electron` and eight more, every one
-of them already inside `.vite/build/**`. Measured on 0.41.0: 314 production packages resolved
-where 122 were needed, 192 packages and about 117 MB of node_modules copied into the asar for
+of them already inside `.vite/build/**`. Measured on 0.41.0: 302 production packages resolved
+where 121 were needed, 181 packages and about 117 MB of node_modules copied into the asar for
 code that already shipped bundled. npm writes a new install into `dependencies` by default, so
 drift is the resting state and something has to hold the line.
 
