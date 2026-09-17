@@ -181,6 +181,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                       <div className={`${sectionHeaderClass} pt-3 pb-1`}>{TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>]}</div>
                     )}
                     <button
+                      data-testid={`settings-tab-${tab.id}`}
                       onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
                       title={tab.tooltip}
                       className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
@@ -463,6 +464,7 @@ export function SettingToggleRow({ label, description, searchId, checked, onChan
       onChange={onChange}
       icon={icon}
       disabled={disabled}
+      testId={searchId ? `setting-row-${searchId}` : undefined}
     />
   );
 }

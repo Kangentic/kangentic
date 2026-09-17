@@ -20,7 +20,8 @@ npm run build:demo -- --base=/kangentic/   # what the GitHub Pages deploy runs
 npm run test:demo                     # the demo smoke tier against dist/demo/
 npm run demo:measure                  # bundle weight, boot timings, frames-per-page cost
 npm run demo:serve                    # serve dist/demo/ and stay up for a manual look
-npm run capture                       # the marketing PNGs, into a gitignored captures/<timestamp>/
+npm run capture                       # build, then one still per scene and theme (and the marketing
+                                      # video and walkthrough), into a gitignored captures/<timestamp>/
 ```
 
 `demo:serve` prints a board URL. The one to open for a look is `stage.html`, the fixed-size host a
@@ -37,10 +38,13 @@ serves none of this; the web build is a separate artifact and needs a static ser
 
 **A dataset change is not finished until the captures are re-run.** The web demo rebuilds itself on
 every release (`deploy-demo.yml`), and the marketing PNGs do not: no workflow runs `npm run capture`.
-Both seed `demo-dataset.ts`, so anything that changes what a card says lands in the live embed on its
-own and leaves the site's screenshots behind until someone regenerates them by hand.
-`tests/unit/demo-dataset-consumer-parity.test.ts` keeps the two SEEDS in step; it cannot know when a
-PNG was last shot.
+The scene stills are shot FROM the built demo (`tests/captures/features/scenes.capture.ts` opens
+each registry scene by URL and screenshots it), so they cannot describe a state the live embed does
+not, but a PNG someone copied into the site stays as old as the day it was shot. The hover video
+(`agent-orchestration.capture.ts`) is now the only capture that seeds the dev server with
+`marketing-fixture.ts` (the walkthrough builds its own state), and
+`tests/unit/demo-dataset-consumer-parity.test.ts` keeps that seed and the build's in step; retire
+the video and that fixture has no consumer left. Nothing can know when a PNG was last shot.
 
 `scripts/build-demo.js` pins `NODE_ENV=production` before Vite starts; a bare
 `vite build --config demo/vite.config.mts` from a shell that exports `development` is refused,
@@ -82,7 +86,7 @@ All parameters are optional; `demo/boot.js` reads them once, before the mock loa
 
 | Parameter | Values | Effect |
 |---|---|---|
-| `view` | `board`, `task`, `changes`, `monitor` | A named scene from the registry. Default `board` unless `state=` is given. |
+| `view` | any scene in `scenes.json` whose `reach` is not `driver` | A named scene from the registry. Default `board` unless `state=` is given. |
 | `state` | base64url JSON of a `DemoState` | Declarative state merged over the scene, or standalone. Data only, never code. |
 | `theme` | `kangentic-light`, `kangentic-dark`, `night`, or any app theme id | The two Kangentic ids are the product palette, built from the site's own `tokens.css`, so a page can embed the frame in either and stay branded. `night` is an alias for the app's dark theme (its no-class default), and `kangentic` is an alias for `kangentic-light`. |
 | `embed` | `1` | Hides the OS window controls and renders edge to edge, for a host that sizes the iframe itself. Onboarding, update, and announcement toasts are already silent. |
@@ -92,10 +96,19 @@ All parameters are optional; `demo/boot.js` reads them once, before the mock loa
 | `fs` | `8` to `32` | Root font size for the UI and the terminal font size, in pixels. |
 
 On success the frame stamps `data-demo-ready="1"` and `data-demo-scene` on `<html>` and posts
-`{ type: 'kangentic-demo-ready', scene, version }` to its parent; a page fades the frame in on
-that message. An unknown scene, a rig-only scene, or a malformed `state=` renders a full-frame
-error card, logs the reason, posts `{ type: 'kangentic-demo-error', reason }`, and seeds nothing:
-a page can never caption a scene the visitor is not looking at.
+`{ type: 'kangentic-demo-ready', scene, version, focus }` to its parent; a page fades the frame in
+on that message. Ready fires only once the scene's `ready` element exists (a restored task window
+mounts a beat after the swimlanes, and a page lifting its poster on the message must not see the
+board without the window the caption describes). `focus` is the rect of the scene's `focus`
+element as fractions of the frame (`{ x, y, w, h }`), or null when the scene names none: a dialog
+scene is small inside a 1600 by 1000 frame scaled into a docs column, and the rect is what lets the
+page crop to the dialog without knowing the layout. It is posted once, at ready, and that is
+enough: the frame is a fixed 1600 by 1000 inside the iframe whatever the host does, so the
+fractions stay valid across a resize or a zoom and the host re-derives pixels from its own iframe
+size. There is no follow-up message to listen for. An unknown scene, a rig-only scene, or a
+malformed `state=` renders a full-frame error card, logs the reason, posts
+`{ type: 'kangentic-demo-error', reason }`, and seeds nothing: a page can never caption a scene
+the visitor is not looking at.
 
 A `DemoState` (also the shape of every registry entry) is:
 
@@ -105,7 +118,11 @@ A `DemoState` (also the shape of every registry entry) is:
   tasks?: Array<{ id: string } & Record<string, unknown>>;   // patches merged by id into the sample install's rows
   sessions?: Record<string, { activity?: 'thinking' | 'idle' | 'permission' }>;
   seeds?: Record<`__mock${string}`, unknown>;   // window globals the mock reads (diffs, branch summary, ...)
-  steps?: Array<{ click: string; waitFor?: string }>;   // synthetic clicks before the reveal
+  steps?: Array<                                        // played before the reveal, in order
+    | { click: string; waitFor?: string }               // a selector to click
+    | { type: string; text: string; waitFor?: string }  // a field selector and the text set in it
+    | { press: string; waitFor?: string }               // a hotkey in the registry's spelling, held
+  >;
 }
 ```
 
@@ -119,8 +136,11 @@ location.search = '?state=' + btoa(JSON.stringify(state)).replace(/\+/g, '-').re
 
 ## Scenes
 
-`tests/captures/scenes.ts` is the registry; the capture rig (#632) reads the same file. Each
-entry carries a `reach`:
+`tests/captures/scenes.ts` is the registry, and it has two consumers: this build resolves
+`view=<name>` through it, and the capture rig (`tests/captures/features/scenes.capture.ts`)
+opens the same names in the built demo and screenshots them. A scene is how a docs figure scopes
+to one section of the app, and it is DATA: config overrides, task-row patches, session activity,
+`__mock*` seeds, and a short list of steps. Each entry carries a `reach`:
 
 | reach | Meaning | Who can build it |
 |---|---|---|
@@ -128,8 +148,184 @@ entry carries a `reach`:
 | `boot` | state plus a few pre-reveal clicks | the web build and the rig |
 | `driver` | needs a hover, a drag, or an open menu | the rig only; the web build refuses it |
 
-Adding a scene is one entry. `board`, `task`, and `changes` are `state`; `monitor` is `boot`
-(one click on the monitor button, since the Monitor has no persisted open flag).
+Three fields leave this repo. `alt` is the reader-facing text a docs figure carries, authored
+beside the state it describes (nobody else knows what the frame shows) and emitted into
+`scenes.json` (below). `ready` is the selector that must exist before the frame counts as built:
+the boot script waits for it before the reveal, the smoke tier asserts it visible for every
+bootable entry, and the rig shoots after it. `focus`, when set, is the element whose rect rides
+the ready message; name the box a reader would crop to, never an overlay's backdrop (the smoke
+tier fails a focus that matches nothing, is empty, or is the whole frame). A scene may also say
+`install: 'empty'`, which seeds no project at all (the
+welcome screen). `tests/unit/scene-registry.test.ts` pins the rest: a `state` scene has no
+steps, a `boot` scene carries only boot steps (a `click`, a `type` with `text`, or a `press` of a
+hotkey in the registry's spelling, held for the frame, each with an optional `waitFor`), a
+`driver` scene carries at least one rig step (`hover`, `contextmenu`, or `drag` with a `hold` that
+leaves the pointer down), every patched task or session id is one the sample install seeds,
+every config key is an `AppConfig` key, and the alt strings carry no dash or curly quote (the
+writing-style scan excludes `tests/`). A boot step waits for its own target the way it waits for
+`waitFor`: a restored window's panel mounts a beat after the board.
+
+Adding a scene is one entry: the smoke tier boots it, the rig shoots it, and `scenes.json`
+lists it, with no other file touched. What the catalog holds, and where each comes from:
+
+| Scene | reach | Built from |
+|---|---|---|
+| `welcome` | state | `install: 'empty'`: no project seeded, the boot gate is the scene's own ready element |
+| `board` | boot | one click on the panel tab for the working middleware session |
+| `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
+| `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
+| `task`, `browser` | state | `workspaceByProject` (a floating window at 0.64 of the frame, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
+| `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
+| `changes`, `changes-working`, `changes-staged`, `changes-history` | state | a maximized window plus `detail_view_state` (`changesScope`, `changesSelectedFile`, `changesViewedFiles`, `changesHistoryOpen`, `changesSelectedCommit`); the scopes, the graph, and the commit diff come from the seed (Git history below) |
+| `changes-blame` | boot | the View options menu, then Show blame (blame is per-file view state, never persisted) |
+| `monitor`, `monitor-table` | boot | one click; the layout is `config.monitor.layout`, which persists |
+| `command-terminal` | boot | the title-bar toggle; the window's rect is the global `commandTerminalWorkspace` blob the scene seeds (the same 0.64 as the task window, for the same reason) |
+| `usage`, `backlog`, `quick-find`, `new-task`, `edit-columns`, `completed-tasks` | boot | one click each; `usage` also sets `usageStatsScope` and `usageStatsPeriod` |
+| `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
+| `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS` |
+| `card-drag`, `card-menu`, `window-dock` | driver | a held drag over Executing, a right-click on a card, a window dragged to the right edge |
+
+Three things the catalog corrected against the source while it was seeded, recorded so the next
+reader does not re-derive them: `lastSettingsTab` is renderer store state and never reaches
+config, so a settings tab is a click, not a config key; the Monitor's layout does persist
+(`config.monitor.layout`) though its open flag does not; and `board` clicks, so it is `boot`.
+
+Terminal type size is decided per scene by one rule: a terminal that is the SUBJECT of its
+figure is at native type, and a terminal that is context beside a panel may be held. Every task
+recording is 154 columns, and at the rig's launch (a real 2x scale, where the renderer rounds
+the 12px Consolas cell to 6.5 CSS px) the window manager's default window (0.58 of the frame)
+fits 142, so the seed holds the recording's grid at 0.92 of the type size. The floating scenes
+(`task`, `dictation`, `window-dock`, `command-terminal`) therefore open their window at 0.64 of
+the frame instead: 157 columns fit, the hold lands at 154 with the native cell (a held grid never
+scales up), and the terminal reads at the size the board's bottom panel does. The Browser and
+Changes scenes keep their terminal held (0.71 at the Browser split, 0.67 at the Changes split)
+because the panel is the subject there, and the 0.65 of the width a native terminal needs
+truncates the address bar and the note field, or clips a split diff mid-line. Below the seed's
+0.6 floor the terminal would play frames at native type instead, which in a narrow pane wraps
+the transcript mid-word and reads as broken, so the context terminal is never narrowed past it.
+
+Two scenes are deliberately absent by that same rule. In a tiled figure the terminals ARE the
+subject, and a half-width pane holds a 154-column recording at about two-thirds type, so
+`windows-tiled` and `command-terminal-tiled` wait for a recording at the tiled width, the way
+the Command Terminal boots already carry one (`terminal-<project>-tiled.json`); that is a
+capture-matrix change, not a scene change. Also absent, needing dataset work the sample install
+does not carry: the conversation viewer (no transcript is seeded). Two settings scenes render
+empty lists on purpose and say so in their alts rather than being deferred: `settings-shortcuts`
+(the sample install configures no project shortcuts, so the tab is its Add Shortcut and Presets
+controls) and `settings-mobile` (no device is paired). Seeding either is a dataset decision, not
+a bug in the scene.
+
+### Quick Find
+
+The desktop runs FTS5 in main over the tasks, the backlog, and the sessions' events. The seed
+answers `search.everything` with a keyword match over the same rows it installed, scoped the way
+the palette asks (this project or all), and builds the `task`, `backlog`, and `session_event`
+hit shapes, so a visitor's query finds what the desktop's would and `quick-find-results` types
+one. Conversation hits (the memory index) have no rows to search here and do not appear.
+
+### Git history, blame, and the three scopes
+
+`scripts/demo-repos/contoso-web` now carries `commits.json`, a commit plan (an author, and an
+ordered list of commits naming the paths each adds; whatever is left lands in the last one).
+`scripts/lib/demo-scaffold-repo.mjs` builds the scaffold as a real repository from it, with the
+dates pinned and autocrlf off, so the hashes are the same on every machine; the capture matrix
+records against that repo, and `node scripts/capture-demo-history.mjs` reads out of it, never
+out of a hand-written list: the log in git:commitGraph's shape, the diff each commit introduces,
+and `git blame` of every file a recorded session modified, run over the working tree that
+session left behind (its recorded diff applied uncommitted), so the agent's own lines blame as
+uncommitted the way they do on the desktop. The fixture is
+`tests/captures/fixtures/demo/history/contoso-web.json`; re-run the script when the scaffold or
+its plan changes. The seed serves it per worktree through `__mockCommitGraphByWorktree`,
+`__mockBranchSummaryByWorktree`, `__mockBlameByWorktree`, `__mockFileHistoryByWorktree`, and
+`__mockGitDiffByCommit`, matched on the worktree path the way the diff fixtures are. The two
+upstream clones are shallow, with one commit of history; their History pane shows the empty
+state a shallow clone would.
+
+The three scopes of a recorded working tree are derived from the recorded statuses: a file the
+agent ADDED is the staged set (an agent stages a new file with git add so it is tracked), the
+files it MODIFIED are the working set, and Branch is everything against the base, which with
+nothing committed on the task branch is the whole diff. A session that only edited existing
+files has an empty Staged tab, as it would.
+
+### Browser guest
+
+No browser has Electron's `<webview>`, so `demo/webview-shim.js` is the mock of that one Electron
+surface, the way `tests/ui/mock-electron-api.js` is the mock of the bridge: it watches for
+`<webview>` elements, gives each an iframe and the method set the pane calls, and fires the
+events the pane waits on as the iframe loads. The renderer is untouched (a custom element cannot
+do this, since `webview` has no hyphen). What the iframe loads is `window.__demoGuestPages`,
+built at build time from the sample install: a project's Browser default URL (`dev_url` on the
+project, which the seed writes into its project config) maps to a bundled page under
+`demo/guest/` that is what the project renders there (`guest_page`), so the address bar shows the
+desktop's URL and the page shows the desktop's page. `demo/guest/contoso-web.html` is what
+`scripts/demo-repos/contoso-web`'s `src/App.tsx` renders signed in as the store's admin user,
+unstyled because the scaffold ships no stylesheet. Any other URL loads nothing. Inert: Inspect
+(finds nothing), Draw capture (rejects), history (always empty), and the agent driving the pane.
+
+### Dictation
+
+`demo/boot.js` replaces `getUserMedia` with a silent stream from an audio graph, so a press of
+the push-to-talk hotkey runs the renderer's whole pipeline with no permission prompt: the mock
+grants the mic, starts a stub engine session, and the app's own audio worklet runs over silence.
+The chip appears anchored to the target terminal in its live state, which is what `dictation`
+shows. The words themselves land in the terminal on release (the popup experience), drawn by
+the CLI's own echo of what main typed into the PTY, and no mock can draw that; so nothing is
+transcribed and nothing authored ships. A visitor who presses the button sees the chip and,
+on release, nothing typed, which is the one place the frame is quieter than the desktop.
+
+### scenes.json, the hand-off to the site
+
+The build emits `scenes.json` UNHASHED at the root, beside `index.html` and `stage.html`:
+
+```json
+{ "version": "0.41.0", "frame": { "width": 1600, "height": 1000 },
+  "scenes": [ { "name": "board", "reach": "boot", "alt": "...", "description": "..." }, ... ] }
+```
+
+Generated from the same `SCENES` the page boots, so the two cannot drift; the smoke tier asserts
+it is served, lists exactly the registry's names, and names the version the frame reports. It is
+what a docs page reads: the site fetches it from the deployed demo at build time, validates every
+figure's scene name (an unknown name or a `driver` scene fails the site build rather than
+rendering the error card inside a captioned figure), and takes `alt` and `version` from it. A URL
+cannot lag the way a vendored package does, which is the failure `@kangentic/branding` plus
+`scripts/sync-brand.mjs` is known for. Placing frames on pages is the site's job (kangentic.com
+#78 and #79); this file and the registry are the whole app-side contract.
+
+### One viewport, one scale
+
+Every scene is authored at one viewport, the 1600 by 1000 frame `scenes.json` names, at the
+app's default type size, and the smoke tier boots every one of them at exactly that size. The
+registry carries no per-scene size on purpose: a reader scrolling a docs page should meet the same
+app at the same apparent size in every figure, only a different part of it, and a catalog that let
+one scene pick its own viewport would break that the first time someone used it. The site has
+full authority over how a figure is sized and cropped, within three rules that keep the frames
+consistent with each other:
+
+- **Never display a frame larger than 1600 CSS pixels wide.** The renderer's text scales as
+  vectors, so a frame shown smaller than its viewport is as crisp as the app itself at any device
+  pixel ratio. A terminal, though, is a canvas: xterm paints it as a bitmap at the frame's own
+  size, and any upscale blurs it.
+- **One display scale for the whole docs site, never per figure.** A dialog scene cropped to its
+  dialog and shown at 1x beside a board scene shown whole at 0.45x is two different apps to the
+  eye. Pick the scale once, from the figure slot's width, and apply it to every scene. The `focus`
+  rect is for choosing WHERE a figure looks (a crop, a highlight ring), never for choosing how big
+  it renders; a figure that crops to `focus` still renders at the site-wide scale, so it shows
+  less of the frame rather than a bigger frame.
+- **Readable means expandable, not rescaled.** At a 720px docs column the whole frame is 0.45x
+  and its 12px type is 5px, which is a thumbnail, not a figure. Do not answer that by rendering
+  different scenes at different scales. Either widen the figure slot (a full-bleed figure at 1000px
+  or more reads at 0.6x and above) or keep the column and give every figure the same
+  click-to-expand to 1:1, which the landing page's demo dialog already does for the hero. `fs=`
+  can raise the app's type size, but it changes the layout too (fewer columns fit, the sidebar
+  takes more of the width), so if the site uses it, it uses one value everywhere; the alts were
+  written at the default.
+
+This is also why the catalog has no tiled-window scene and why the floating scenes open a wider
+window than the default (Scenes above): a terminal that is the subject of its figure is at the
+same type size as every other frame's, and a tiled terminal cannot be until it has a recording
+at the tiled width. A held terminal's exact scale also moves a little with the reader's device
+pixel ratio, because the renderer rounds the cell to device pixels; the column counts above are
+what the rig's launch measures.
 
 ## The sample install
 
@@ -548,13 +744,13 @@ every bridge method (`tests/unit/mock-electron-api-parity.test.ts` keeps that tr
 | Command Terminal | The window opens on the project's default agent booting, from its recording; typing into it reaches no process. |
 | Drag into an auto-spawn column, Resume | The agent starts from the boot recorded for that task and mode, or resumes on its transcript (Live replay above). |
 | Add project | The mock's folder dialog returns a fixed path; a fourth project appears in the sidebar. |
-| Task-detail Browser pane | Shows the "Open a URL" empty state; there is no `<webview>` outside Electron. |
+| Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled copy of what the project renders at its dev URL (Browser guest below). Inspect finds nothing, capture rejects, and history is empty. |
 | Folder pill, PR links, external links | Inert: `shell.openPath` and `openExternal` are logged by the mock. |
 | Pop-out (Monitor, Changes, Stats) | Inert: the in-app surface stays where it is. |
-| Dictation | The mock reports a stub engine; the microphone is never requested unless the visitor starts dictation, and a cross-origin iframe without `allow="microphone"` denies it. |
+| Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state. The words land in the terminal on release as the CLI's echo, which cannot be shown (Dictation below). |
 | Updater | Silent: no update is ever "downloaded". |
 
-The two things a docs page cannot show live are the Browser pane's guest and dictation.
+Two things stay out of reach of a live frame: the Browser pane's REAL guest (a page the agent is driving) and a dictated transcript landing in the terminal.
 
 ## Observations for the docs-visuals decision (#632)
 
@@ -562,10 +758,12 @@ The two things a docs page cannot show live are the Browser pane's guest and dic
   a row in the desktop app is reachable here with no driver: `workspaceByProject` restores a
   task window (and stamps `skipEnterAnimation`, so it paints flat), `detail_view_state` opens the
   Changes panel on a tab and a file, `monitorWorkspace` and `commandTerminalWorkspace` restore
-  their layouts once their surfaces open. Two corrections to the list #632 derived from source: the
-  Monitor's OPEN state is not persisted (only its view settings and its inner windows), and the
-  Command Terminal layer's open state is component state, so both need one click. Extension: the
-  usage dashboard, the backlog view, Quick Find, and settings are all reachable by one click too.
+  their layouts once their surfaces open. Three corrections to the list #632 derived from source: the
+  Monitor's OPEN state is not persisted (only its view settings and its inner windows), the
+  Command Terminal layer's open state is component state, so both need one click, and
+  `lastSettingsTab` is renderer store state that never reaches config, so a settings tab is a
+  second click after the gear. Extension: the usage dashboard, the backlog view, Quick Find, and
+  settings are all reachable by one click too.
 - **The boot-time scene builder is viable and stays small.** `steps` is a list of
   `{ click, waitFor }`; the runner is under forty lines of `demo/boot.js`, veils `#root` while it
   runs, and reveals on the last `waitFor`. It is deterministic because every step waits for a
@@ -578,18 +776,21 @@ The two things a docs page cannot show live are the Browser pane's guest and dic
 ## Layout of `dist/demo/`
 
 ```
-index.html                       the entry, four classic scripts then the module bundle
+index.html                       the entry, five classic scripts then the module bundle
 stage.html                       the fixed-size host a direct visit lands on
-demo-scenes-<hash>.js            the registry, the app version, the recordings index
+scenes.json                      the scene list the site reads at build time: name, reach, alt, version
+demo-scenes-<hash>.js            the registry, the app version, the recordings index, the guest pages
 demo-boot-<hash>.js              demo/boot.js verbatim
+demo-webview-<hash>.js           demo/webview-shim.js verbatim: the iframe standing in for <webview>
 mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim
-demo-seed-<hash>.js              the sample install, final frames and diffs embedded
+demo-seed-<hash>.js              the sample install, final frames, diffs, and history embedded
 recordings/<name>-<hash>.json    one timed stream per recording, fetched when a terminal mounts
+guest/<name>-<hash>.html         what a project renders at its dev URL, for the Browser pane
 assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```
 
-Every file but the two entry pages carries the first eight hex digits of its content's SHA-256,
-the way Vite names its own chunks. GitHub Pages serves everything with a ten-minute cache, and a
+Every file but the two entry pages and `scenes.json` carries the first eight hex digits of its
+content's SHA-256, the way Vite names its own chunks. GitHub Pages serves everything with a ten-minute cache, and a
 visitor who opens the page across a release must never pair a new seed with an old recording:
 a recording replays only into the grid its seed describes, and a stale one lands two frames'
 text on one row. With the hash in the name a changed file is a new URL, an unchanged one is

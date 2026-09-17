@@ -28,6 +28,8 @@
  * A scene the registry does not know, a rig-only scene, or a malformed state= blob renders a
  * full-frame error card and boots nothing: a page must never caption a scene the visitor is not
  * looking at. The parent frame is told either way (kangentic-demo-ready / kangentic-demo-error).
+ * Ready fires only once the scene's `ready` element exists, and carries the rect of its `focus`
+ * element (fractions of the frame) so a host can crop a dialog scene to the dialog.
  */
 (function () {
   'use strict';
@@ -40,6 +42,20 @@
   // resolving rather than hitting the error card.
   var THEME_ALIASES = { night: 'dark', kangentic: 'kangentic-light' };
   var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
+  // A boot step clicks, types into a field, or presses a hotkey (a keyboard combo or a mouse
+  // button, in the registry's own spelling, held for the frame); anything else (a hover, a
+  // drag, a right-click) is the capture rig's and is refused here.
+  var BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
+  // Mouse buttons as src/shared/keybindings.ts spells them for a hotkey: `button` is the code a
+  // pointer event reports, `flag` its bit in the event's `buttons` mask, which is what the
+  // renderer's matcher reads on pointerdown (src/renderer/utils/keybindings.ts). The bit is not
+  // 1 << code: middle is code 1 but bit 4, since bit 2 is the right button.
+  // tests/unit/demo-boot-mouse-buttons.test.ts pins this table to the registry.
+  var MOUSE_BUTTONS = {
+    'Mouse:Middle': { button: 1, flag: 4 },
+    'Mouse:Back': { button: 3, flag: 8 },
+    'Mouse:Forward': { button: 4, flag: 16 },
+  };
   var BOOT_TIMEOUT_MS = 10000;
 
   var scenes = window.__demoScenes || {};
@@ -87,12 +103,55 @@
     if (state.steps !== undefined) {
       if (!Array.isArray(state.steps)) throw new Error(origin + '.steps must be an array');
       state.steps.forEach(function (step) {
-        if (!isPlainObject(step) || typeof step.click !== 'string') throw new Error(origin + '.steps entries need a click selector');
+        if (!isPlainObject(step)) throw new Error(origin + '.steps entries must be objects');
+        var isClick = typeof step.click === 'string';
+        var isType = typeof step.type === 'string' && typeof step.text === 'string';
+        var isPress = typeof step.press === 'string';
+        if (!isClick && !isType && !isPress) throw new Error(origin + '.steps entries need a click selector, a type selector with text, or a press combo');
         Object.keys(step).forEach(function (key) {
-          if (key !== 'click' && key !== 'waitFor') throw new Error(origin + '.steps only support click and waitFor here; "' + key + '" is a capture-rig step');
+          if (BOOT_STEP_KEYS.indexOf(key) === -1) throw new Error(origin + '.steps only support click, type, text, press, and waitFor here; "' + key + '" is a capture-rig step');
         });
       });
     }
+  }
+
+  /**
+   * Press a hotkey and hold it: a mouse button as one pointerdown, a keyboard combo as one
+   * keydown, dispatched where the registry listens (a capture-phase listener on window sees
+   * an event dispatched on the document). Nothing releases it, so a push-to-talk stays open
+   * for the frame.
+   */
+  function pressCombo(combo) {
+    if (Object.prototype.hasOwnProperty.call(MOUSE_BUTTONS, combo)) {
+      var mouse = MOUSE_BUTTONS[combo];
+      document.dispatchEvent(new PointerEvent('pointerdown', { button: mouse.button, buttons: mouse.flag, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+      return;
+    }
+    var parts = combo.split('+');
+    var key = parts[parts.length - 1];
+    var modifiers = parts.slice(0, -1);
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: key.length === 1 ? key.toLowerCase() : key,
+      code: key.length === 1 ? 'Key' + key.toUpperCase() : key,
+      ctrlKey: modifiers.indexOf('Ctrl') !== -1 || modifiers.indexOf('Control') !== -1 || modifiers.indexOf('Mod') !== -1,
+      metaKey: modifiers.indexOf('Meta') !== -1 || modifiers.indexOf('Cmd') !== -1,
+      shiftKey: modifiers.indexOf('Shift') !== -1,
+      altKey: modifiers.indexOf('Alt') !== -1,
+      bubbles: true,
+      cancelable: true,
+    }));
+  }
+
+  /**
+   * Type into a field the way a visitor would: the value goes through the element's own setter
+   * (React watches the native one, not the instance property) and one input event, so a
+   * controlled input takes it. No timing and no per-keystroke drama: a typed query is state.
+   */
+  function typeInto(target, text) {
+    var prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+    if (descriptor && descriptor.set) descriptor.set.call(target, text); else target.value = text;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   /** Later sources win per key; arrays concatenate; nested config objects are replaced whole. */
@@ -208,6 +267,22 @@
     injectStyle('[data-testid="window-controls"] { display: none !important; }');
   }
 
+  // The microphone is never requested: dictation's capture (src/renderer/audio/audio-capture.ts)
+  // opens the mic with getUserMedia and runs it through the app's own worklet, and here the mic
+  // is a silent stream from an audio graph, so the renderer's whole pipeline runs with no
+  // permission prompt and nothing heard. The chip then shows its real listening state; the
+  // words themselves land in the terminal on release, which is the CLI's echo and cannot be
+  // shown here (demo/README.md, Dictation).
+  var silentMicrophone = null;
+  function silentMicrophoneStream() {
+    if (!silentMicrophone) {
+      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      silentMicrophone = new AudioContextCtor().createMediaStreamDestination().stream;
+    }
+    return Promise.resolve(silentMicrophone);
+  }
+  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = silentMicrophoneStream;
+
   if (still) {
     // Zero durations, never `animation: none`, on the general rules: the overlay-* classes
     // unmount on animationend, which still fires at 0s and never at none. The activity marks
@@ -225,6 +300,11 @@
   }
 
   // ---------------------------------------------------------------- scene application
+  // Which install the seed builds: the sample install, or nothing at all for the welcome screen
+  // a first launch lands on. Read by the seed before it installs a row.
+  var emptyInstall = !!(scene && scene.install === 'empty');
+  window.__demoInstall = emptyInstall ? 'empty' : 'sample';
+
   function applyScene() {
     // The version is stamped even when nothing else is: the mock reports 0.1.0 and the
     // overrides above already claim this build's version as seen, so a mismatch here would
@@ -298,10 +378,27 @@
     document.body.appendChild(card);
   }
 
+  /**
+   * The rect of the scene's `focus` element as fractions of the frame, so a host can crop a
+   * dialog scene to the dialog without knowing the layout. Null when the scene names none or the
+   * element is not on screen; a host crops nothing on null.
+   */
+  function focusRect() {
+    if (!scene || !scene.focus) return null;
+    var element = document.querySelector(scene.focus);
+    if (!element) return null;
+    var rect = element.getBoundingClientRect();
+    var width = window.innerWidth;
+    var height = window.innerHeight;
+    if (!width || !height || !rect.width || !rect.height) return null;
+    var round = function (value) { return Math.round(value * 10000) / 10000; };
+    return { x: round(rect.left / width), y: round(rect.top / height), w: round(rect.width / width), h: round(rect.height / height) };
+  }
+
   function markReady() {
     document.documentElement.setAttribute('data-demo-ready', '1');
     document.documentElement.setAttribute('data-demo-scene', sceneName || 'state');
-    notifyParent({ type: 'kangentic-demo-ready', scene: sceneName, version: version });
+    notifyParent({ type: 'kangentic-demo-ready', scene: sceneName, version: version, focus: focusRect() });
   }
 
   function runBootSteps() {
@@ -309,15 +406,31 @@
     var deadline = Date.now() + BOOT_TIMEOUT_MS;
     var veiled = effective.steps.length > 0;
     if (veiled && root) root.style.visibility = 'hidden';
-    var chain = waitForSelector('[data-swimlane-name]', deadline);
+    // The board is the gate every step waits behind; an empty install never mounts one, so its
+    // gate is the scene's own ready element.
+    var chain = waitForSelector(emptyInstall && scene && scene.ready ? scene.ready : '[data-swimlane-name]', deadline);
     effective.steps.forEach(function (step) {
       chain = chain.then(function () {
-        var target = document.querySelector(step.click);
-        if (!target) throw new Error('Boot step could not find ' + step.click);
-        target.click();
+        if (typeof step.press === 'string') {
+          pressCombo(step.press);
+          return null;
+        }
+        // A step's target may mount a beat after the board (a restored window's panel, a lazy
+        // chunk), so it is waited for like anything else, against the same deadline.
+        var selector = typeof step.type === 'string' ? step.type : step.click;
+        return waitForSelector(selector, deadline).then(function (target) {
+          if (typeof step.type === 'string') typeInto(target, step.text); else target.click();
+        });
+      }).then(function () {
         return step.waitFor ? waitForSelector(step.waitFor, deadline) : null;
       });
     });
+    // A scene is built when its `ready` element exists, not when the board is up: a restored
+    // task window mounts a beat after the swimlanes, and a host that lifts its poster on the
+    // ready message must not see the board without the window the caption describes.
+    if (scene && scene.ready) {
+      chain = chain.then(function () { return waitForSelector(scene.ready, deadline); });
+    }
     chain.then(function () {
       if (veiled && root) root.style.visibility = '';
       markReady();

@@ -31,8 +31,26 @@ three things staying in step, and each is enforced rather than remembered.
   and never branches on being embedded. The one renderer concession is a `data-testid` on the
   window-controls cluster so the demo can hide it by selector.
 - **A scene is data.** Config overrides, task-row patches, session activity, `__mock*` seeds, and
-  at most a short list of synthetic clicks. No code travels through a scene or a `state=` URL.
-  A scene the demo cannot build (`reach: 'driver'`) is refused loudly, never approximated.
+  at most a short list of boot steps: a click, a typed query, or a held hotkey, each a state and
+  none a choreography (no timing, no narration). No code travels through a scene or a `state=`
+  URL. A scene the demo cannot build (`reach: 'driver'`) is refused loudly, never approximated;
+  its gesture (a `hover`, a `contextmenu`, a `drag` that may `hold`) is data too, and only the
+  capture rig plays it.
+- **A surface Electron alone provides is mocked as a surface, never faked as content.** The
+  `<webview>` tag has an iframe standing in for it (`demo/webview-shim.js`), loading a bundled
+  copy of what the project really renders at its dev URL; the microphone is a silent stream so
+  dictation's real pipeline runs, and no transcript is authored because the desktop draws the
+  words through the CLI's echo. Git history is a real repository built from a commit plan and
+  read with git. The line is the same one the terminal rule draws: mock the bridge, record or
+  derive the content, and where content cannot be honest, show the surface without it. Every entry carries the three fields that leave this repo: `alt`, the
+  reader-facing text a docs figure carries; `ready`, the selector the frame is built at; and an
+  optional `focus`, the element whose rect the ready message reports. The registry has two
+  consumers by construction (`demo/boot.js` at `view=`, the rig at
+  `tests/captures/features/scenes.capture.ts` against the BUILT demo) and the rig keeps no
+  applier of its own, so the two cannot describe one state two ways.
+- **The site learns the list from the build, never from a copy.** The build emits `scenes.json`
+  unhashed beside `index.html`, generated from `SCENES`: name, reach, alt, description, and the
+  app version. A vendored or packaged copy can lag what is deployed; a URL cannot.
 - **The sample install is one dataset.** The marketing captures and the web build both seed
   `demo-dataset.ts`; terminal content comes from recordings in `tests/captures/fixtures/demo/`
   made by `scripts/capture-agent-scrollback.js` and sanitized at record time. There is no
@@ -110,8 +128,25 @@ three things staying in step, and each is enforced rather than remembered.
 - **Test (behavior, CI):** `tests/ui/terminal-held-grid-conform.spec.ts` drives the renderer's
   conform against the mock's held answer: a held grid is taken at a smaller font, an accepted probe
   releases it, and a plain refusal conforms nothing.
-- **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots every bootable scene from a
-  static server and asserts the marker, the embed and theme parameters, the error card for an
+- **Test (mechanical, CI):** `tests/unit/scene-registry.test.ts` runs over the real `SCENES`
+  and fails when a reach tag disagrees with the steps (a `state` scene with steps, a `boot` scene
+  with a rig step, a `driver` scene with none), when `alt`, `ready`, or `description` is missing
+  or an alt carries a dash or a curly quote (the writing-style scan excludes `tests/`, so this is
+  the only check the alts get), when a patched task or session id is not one the sample install
+  seeds, when a config key is not an `AppConfig` key (the mock's `Object.assign` accepts any key
+  and the renderer never reads it), when the settings scenes stop matching `SETTINGS_TABS` one to
+  one or a `setting-row-<id>` marker names a row that is not on that tab, and when `boot.js`'s
+  `STATE_KEYS` or `demo/vite.config.mts`'s `scenes.json` fields drift from the type. Runs via
+  `npm run test:unit`.
+- **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
+  registry from a static server (the loop iterates `SCENES`, so a new entry is covered with no
+  test change, and a stale deep marker for a retired scene fails) and asserts its `ready` element
+  visible and, where the scene names a `focus`, that the element exists and covers a real region
+  of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
+  full-frame backdrop, which crops to nothing), that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
+  the registry, and names the frame's version, that the ready message posted to an iframe host
+  carries a dialog scene's focus rect and null for a scene without one, the embed and theme
+  parameters, the error card for an
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
   recording, that the live frame fetches its session's recording, that a live Monitor's output
   peeks change while a still frame's do not, that `loop=1` brings a finished session back and its

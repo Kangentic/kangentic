@@ -43,6 +43,39 @@ export interface DemoChangesMap {
   [sessionId: string]: DemoDiff;
 }
 
+/** One commit of a scaffolded project's history, in git:commitGraph's shape. */
+export interface DemoHistoryCommit {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  authorName: string;
+  authorTimestamp: string;
+  subject: string;
+}
+
+export interface DemoBlameLine {
+  line: number;
+  hash: string;
+  shortHash: string;
+  author: string;
+  date: string;
+}
+
+/**
+ * The git history behind a scaffolded project, as scripts/capture-demo-history.mjs reads it out
+ * of the repo the capture matrix records against: commits newest first, the diff each commit
+ * introduces, and the blame of every file a recorded session modified (its recorded working
+ * tree applied uncommitted, so the agent's own lines blame as uncommitted).
+ */
+export interface DemoHistory {
+  project: string;
+  branch: string;
+  tipHash: string;
+  commits: DemoHistoryCommit[];
+  diffs: Record<string, DemoDiff>;
+  blame: Record<string, Record<string, { lines: DemoBlameLine[] }>>;
+}
+
 interface DemoProjectGroup {
   id: string;
   name: string;
@@ -60,6 +93,11 @@ interface DemoProject {
   position: number;
   lastOpenedMinutesAgo: number;
   createdDaysAgo: number;
+  /** The project's Browser default URL (Settings, Browser): where a task's Browser pane opens. */
+  dev_url?: string;
+  /** A page under demo/guest/ that is what the project renders at `dev_url`, for the web build's
+   *  iframe stand-in of the desktop's webview (demo/webview-shim.js). */
+  guest_page?: string;
 }
 
 interface DemoLane {
@@ -147,6 +185,11 @@ export const GROUP_CONTOSO = 'group-contoso';
 export const GROUP_OSS = 'group-open-source';
 
 export const TASK_MIDDLEWARE = 'task-cw-middleware';
+// The other tasks a scene names: the second working session (tiled beside the middleware
+// window), the Planning card a drag scene lifts, and the To Do card a context-menu scene opens on.
+export const TASK_API_CLIENT = 'task-cw-api-client';
+export const TASK_WEBSOCKET = 'task-cw-websocket';
+export const TASK_AUTH = 'task-cw-auth';
 export const SESSION_WEBSOCKET = 'sess-cw-websocket';
 export const SESSION_MIDDLEWARE = 'sess-cw-middleware';
 export const SESSION_API_CLIENT = 'sess-cw-api-client';
@@ -179,7 +222,9 @@ export const DEMO_GROUPS: DemoProjectGroup[] = [
 ];
 
 export const DEMO_PROJECTS: DemoProject[] = [
-  { id: PROJECT_CONTOSO, name: 'contoso-web', path: `${HOME}\\work\\contoso-web`, github_url: 'https://github.com/contoso/contoso-web', default_agent: 'claude', group_id: GROUP_CONTOSO, position: 0, lastOpenedMinutesAgo: 2, createdDaysAgo: 140 },
+  // The dev URL is the scaffold's own Vite port (its `dev` script, which the Command Terminal
+  // recording lists); the guest page is what src/App.tsx renders there.
+  { id: PROJECT_CONTOSO, name: 'contoso-web', path: `${HOME}\\work\\contoso-web`, github_url: 'https://github.com/contoso/contoso-web', default_agent: 'claude', group_id: GROUP_CONTOSO, position: 0, lastOpenedMinutesAgo: 2, createdDaysAgo: 140, dev_url: 'http://localhost:5173/', guest_page: 'contoso-web.html' },
   { id: PROJECT_PETCLINIC, name: 'spring-petclinic', path: `${HOME}\\oss\\spring-petclinic`, github_url: 'https://github.com/spring-projects/spring-petclinic', default_agent: 'codex', group_id: GROUP_OSS, position: 1, lastOpenedMinutesAgo: 35, createdDaysAgo: 61 },
   { id: PROJECT_BOUTIQUE, name: 'online-boutique', path: `${HOME}\\oss\\online-boutique`, github_url: 'https://github.com/GoogleCloudPlatform/microservices-demo', default_agent: 'codex', group_id: GROUP_OSS, position: 2, lastOpenedMinutesAgo: 90, createdDaysAgo: 24 },
 ];
@@ -282,11 +327,11 @@ const BOUTIQUE = `${HOME}\\oss\\online-boutique`;
 
 export const DEMO_TASKS: DemoTask[] = [
   // contoso-web
-  { id: 'task-cw-auth', projectId: PROJECT_CONTOSO, display_id: 1, title: 'Add user auth flow', description: 'Implement OAuth2 login with GitHub and Google providers', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['feature', 'security'], priority: 2, attachment_count: 1, createdDaysAgo: 3, updatedMinutesAgo: 340 },
+  { id: TASK_AUTH, projectId: PROJECT_CONTOSO, display_id: 1, title: 'Add user auth flow', description: 'Implement OAuth2 login with GitHub and Google providers', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['feature', 'security'], priority: 2, attachment_count: 1, createdDaysAgo: 3, updatedMinutesAgo: 340 },
   { id: 'task-cw-api-errors', projectId: PROJECT_CONTOSO, display_id: 2, title: 'Refactor API error handling', description: 'Standardize error responses and add error codes', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['refactor'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 1500 },
-  { id: 'task-cw-websocket', projectId: PROJECT_CONTOSO, display_id: 3, title: 'Fix WebSocket reconnection', description: 'Handle dropped connections with exponential backoff', lane: 'planning', position: 0, agent: 'claude', session_id: SESSION_WEBSOCKET, worktree_folder: 'fix-websocket-abc123', branch_name: 'fix-websocket-reconnection', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['bug'], priority: 3, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 4 },
+  { id: TASK_WEBSOCKET, projectId: PROJECT_CONTOSO, display_id: 3, title: 'Fix WebSocket reconnection', description: 'Handle dropped connections with exponential backoff', lane: 'planning', position: 0, agent: 'claude', session_id: SESSION_WEBSOCKET, worktree_folder: 'fix-websocket-abc123', branch_name: 'fix-websocket-reconnection', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['bug'], priority: 3, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 4 },
   { id: TASK_MIDDLEWARE, projectId: PROJECT_CONTOSO, display_id: 4, title: 'Extract auth middleware', description: 'Move auth logic into reusable Express middleware', lane: 'executing', position: 0, agent: 'claude', session_id: SESSION_MIDDLEWARE, worktree_folder: 'auth-middleware-def456', branch_name: 'extract-auth-middleware', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['refactor'], priority: 2, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 1 },
-  { id: 'task-cw-api-client', projectId: PROJECT_CONTOSO, display_id: 5, title: 'Generate API client types', description: 'Request and response interfaces for every route in server/routes.ts, and apiFetch generic over them', lane: 'executing', position: 1, agent: 'claude', session_id: SESSION_API_CLIENT, worktree_folder: 'api-types-ghi789', branch_name: 'generate-api-types', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 12 },
+  { id: TASK_API_CLIENT, projectId: PROJECT_CONTOSO, display_id: 5, title: 'Generate API client types', description: 'Request and response interfaces for every route in server/routes.ts, and apiFetch generic over them', lane: 'executing', position: 1, agent: 'claude', session_id: SESSION_API_CLIENT, worktree_folder: 'api-types-ghi789', branch_name: 'generate-api-types', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 12 },
   { id: 'task-cw-empty-states', projectId: PROJECT_CONTOSO, display_id: 8, title: 'Onboarding empty states', description: 'First-run screens for the dashboard, projects, and billing pages before any data exists', lane: 'planning', position: 1, agent: null, session_id: SESSION_EMPTY_STATES, worktree_folder: 'empty-states-stu901', branch_name: 'onboarding-empty-states', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['design'], priority: 2, attachment_count: 3, createdDaysAgo: 4, updatedMinutesAgo: 95 },
   { id: 'task-cw-rate-limit', projectId: PROJECT_CONTOSO, display_id: 6, title: 'Add rate limiting', description: 'Implement per-user rate limiting on API endpoints', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_RATE_LIMIT, worktree_folder: 'rate-limit-jkl012', branch_name: 'add-rate-limiting', pr_number: 42, pr_url: 'https://github.com/contoso/contoso-web/pull/42', pr_state: 'open', base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 22 },
   { id: 'task-cw-integration', projectId: PROJECT_CONTOSO, display_id: 7, title: 'Integration test coverage', description: 'Add integration tests for auth and billing flows', lane: 'testing', position: 0, agent: 'cursor', session_id: SESSION_INTEGRATION, worktree_folder: 'integration-tests-mno345', branch_name: 'integration-tests', pr_number: 38, pr_url: 'https://github.com/contoso/contoso-web/pull/38', pr_state: 'open', pr_merge_readiness: 'blocked', base_branch: 'main', labels: ['tests'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 6 },
@@ -406,6 +451,8 @@ export function buildDemoPreConfig(options: {
   appVersion?: string;
   /** Cell widths for the frame applier (buildCellWidthTable); every code point outside the ranges is one cell. */
   cellWidths?: DemoCellWidthTable;
+  /** Each scaffolded project's git history (loadDemoHistory), keyed by project name. */
+  history?: Record<string, DemoHistory>;
 } = {}): string {
   const dataset = {
     groups: DEMO_GROUPS,
@@ -470,6 +517,7 @@ export function buildDemoPreConfig(options: {
       var messageTrails = ${JSON.stringify(messageTrails)};
       var messageTrailMaxEntries = ${JSON.stringify(messageTrailMaxEntries)};
       var cellWidths = ${JSON.stringify(options.cellWidths ?? { wide: [], zero: [] })};
+      var history = ${JSON.stringify(options.history ?? {})};
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
@@ -506,7 +554,18 @@ export function buildDemoPreConfig(options: {
         return Math.max(0, duration - tail);
       }
 
+      // An EMPTY install: the welcome screen a first launch lands on. The frame's boot script sets
+      // window.__demoInstall from the scene; nothing but the returning-user markers is seeded, so
+      // the renderer hydrates with no project and mounts the welcome screen, whose agent detection
+      // grid reads the same agent list the sample install reports.
+      var emptyInstall = window.__demoInstall === 'empty';
+
       window.__mockPreConfigure(function (state) {
+        if (emptyInstall) {
+          if (data.appVersion) state.config.lastWhatsNewShownVersion = data.appVersion;
+          mockState = state;
+          return { currentProjectId: null };
+        }
         data.groups.forEach(function (group) {
           state.projectGroups.push({ id: group.id, name: group.name, position: group.position, is_collapsed: group.is_collapsed });
         });
@@ -516,6 +575,11 @@ export function buildDemoPreConfig(options: {
             default_agent: project.default_agent, group_id: project.group_id, position: project.position,
             last_opened: minutesAgo(project.lastOpenedMinutesAgo), created_at: daysAgo(project.createdDaysAgo),
           });
+          // The project's Browser default URL, which every task's Browser pane opens on unless
+          // the task pins its own (Settings, Browser, Default URL).
+          if (project.dev_url) {
+            state.projectConfigs[project.path] = Object.assign({}, state.projectConfigs[project.path], { browser: { defaultUrl: project.dev_url } });
+          }
           (data.lanesByProject[project.id] || []).forEach(function (lane, index) {
             state.swimlanes.push({
               id: 'lane-' + project.id.replace(/^proj-/, '') + '-' + lane.slug,
@@ -587,6 +651,74 @@ export function buildDemoPreConfig(options: {
       }
       window.__mockAgentListOverrides = data.agentOverrides;
 
+      // Dictation needs nothing seeded. The renderer's whole pipeline runs for real on a press
+      // (the hotkey, the mic request the mock grants, the engine start, the audio worklet over
+      // the silent stream demo/boot.js supplies), and the chip shows its live state. What the
+      // engine would transcribe cannot be shown: with the popup experience the words land in
+      // the terminal on release, drawn by the CLI's own echo, and no mock can produce that.
+
+      // Quick Find answers from the sample install itself: a keyword match over the tasks, the
+      // backlog, and each session's events, scoped the way the palette asks (this project or all
+      // of them). The desktop runs FTS5 in main over the same rows; here the rows are the index,
+      // so a visitor's query finds what the desktop's would, ranked title matches first.
+      function searchSnippet(text, query) {
+        var haystack = String(text || '');
+        var at = haystack.toLowerCase().indexOf(query);
+        if (at === -1) return null;
+        var start = Math.max(0, at - 40);
+        var snippet = (start > 0 ? '…' : '') + haystack.slice(start, Math.min(haystack.length, at + query.length + 60));
+        var offset = at - start + (start > 0 ? 1 : 0);
+        return { snippet: snippet, matchStart: offset, matchEnd: offset + query.length };
+      }
+      window.electronAPI.search.everything = function (request) {
+        var query = String((request && request.query) || '').trim().toLowerCase();
+        if (!query || !mockState) return Promise.resolve([]);
+        var scopeProject = request && request.scope === 'all' ? null : (request && request.currentProjectId) || null;
+        var inScope = function (projectId) { return !scopeProject || projectId === scopeProject; };
+        var hits = [];
+        var taskHit = function (task, archived) {
+          if (!inScope(task.projectId)) return;
+          var fromTitle = searchSnippet(task.title, query);
+          var match = fromTitle || searchSnippet(task.description, query);
+          if (!match) return;
+          hits.push({
+            kind: 'task', projectId: task.projectId, projectName: projectsById[task.projectId].name,
+            snippet: match.snippet, matchStart: match.matchStart, matchEnd: match.matchEnd,
+            taskId: task.id, displayId: task.display_id, taskTitle: task.title, archived: archived,
+            snippetField: fromTitle ? 'title' : 'description',
+          });
+        };
+        mockState.tasks.forEach(function (task) { taskHit(task, false); });
+        mockState.archivedTasks.forEach(function (task) { taskHit(task, true); });
+        mockState.backlogTasks.forEach(function (item) {
+          if (!inScope(item.projectId)) return;
+          var fromTitle = searchSnippet(item.title, query);
+          var match = fromTitle || searchSnippet(item.description, query);
+          if (!match) return;
+          hits.push({
+            kind: 'backlog', projectId: item.projectId, projectName: projectsById[item.projectId].name,
+            snippet: match.snippet, matchStart: match.matchStart, matchEnd: match.matchEnd,
+            backlogId: item.id, backlogTitle: item.title, snippetField: fromTitle ? 'title' : 'description',
+          });
+        });
+        mockState.sessions.forEach(function (session) {
+          if (!session.taskId || !inScope(session.projectId)) return;
+          var task = tasksById[session.taskId];
+          if (!task) return;
+          (mockState.eventCache[session.id] || []).forEach(function (event) {
+            var match = searchSnippet((event.tool || '') + ' ' + (event.detail || ''), query);
+            if (!match) return;
+            hits.push({
+              kind: 'session_event', projectId: session.projectId, projectName: projectsById[session.projectId].name,
+              snippet: match.snippet, matchStart: match.matchStart, matchEnd: match.matchEnd,
+              taskId: task.id, taskTitle: task.title, sessionId: session.id, agentName: task.agent || projectsById[session.projectId].default_agent,
+              eventTs: event.ts, eventKey: session.id + ':' + event.ts, eventType: event.type,
+            });
+          });
+        });
+        return Promise.resolve(hits);
+      };
+
       // Monitor rows are DERIVED from the sessions so the two views cannot disagree. The output
       // peek is the recording's own last lines as the terminal displays them (rendered at build
       // time by loadDemoPeeks), or for a working session the lines at the moment the frame opens
@@ -596,7 +728,7 @@ export function buildDemoPreConfig(options: {
         if (open) return open.peek;
         return peeks[session.id] || session.peek;
       }
-      window.__mockMonitorRows = data.sessions.map(function (session) {
+      window.__mockMonitorRows = (emptyInstall ? [] : data.sessions).map(function (session) {
         var project = projectsById[session.projectId];
         var task = session.taskId ? tasksById[session.taskId] : null;
         return {
@@ -1389,15 +1521,73 @@ export function buildDemoPreConfig(options: {
       };
 
       // The working tree each recorded session left behind, keyed by its task's worktree folder,
-      // so a task's Changes panel shows what its agent changed. Nothing is committed on a scratch
-      // clone, so the Working and Branch scopes show the same files and Staged is empty.
+      // so a task's Changes panel shows what its agent changed, in three scopes. The Branch scope is everything the branch
+      // changes against its base, which with nothing committed is the whole recorded diff. The
+      // split between Working and Staged follows what an agent does with a NEW file: it stages
+      // it (git add) so the file is tracked and shows in git diff --cached, while its edits
+      // to existing files stay unstaged. So added files are the staged set and modified files
+      // the working set, derived from the recorded statuses rather than authored per task; a
+      // session that only edited existing files has an empty Staged tab, as it would.
+      function scopeOf(diff, keep) {
+        var files = diff.files.filter(keep);
+        return {
+          files: files,
+          totalInsertions: files.reduce(function (sum, file) { return sum + (file.insertions || 0); }, 0),
+          totalDeletions: files.reduce(function (sum, file) { return sum + (file.deletions || 0); }, 0),
+        };
+      }
       var diffByWorktree = {};
       data.tasks.forEach(function (task) {
         var diff = task.session_id && changes[task.session_id];
         if (!diff || !task.worktree_folder) return;
-        diffByWorktree[task.worktree_folder] = { working: diff, branch: diff, staged: { files: [], totalInsertions: 0, totalDeletions: 0 } };
+        diffByWorktree[task.worktree_folder] = {
+          working: scopeOf(diff, function (file) { return file.status !== 'A'; }),
+          staged: scopeOf(diff, function (file) { return file.status === 'A'; }),
+          branch: diff,
+        };
       });
       window.__mockGitDiffByWorktree = diffByWorktree;
+
+      // A scaffolded project's real history (loadDemoHistory), served per worktree the way the
+      // desktop's git reads it: the History pane's graph, the diff a selected commit introduces,
+      // the header's branch summary, each file's history, and the blame gutter over the working
+      // tree the session left. A task branch has no commits of its own, so its tip IS the base
+      // and the graph's three anchors coincide, which is what a fresh worktree shows.
+      var commitGraphByWorktree = {};
+      var branchSummaryByWorktree = {};
+      var blameByWorktree = {};
+      var fileHistoryByWorktree = {};
+      var diffByCommit = {};
+      data.tasks.forEach(function (task) {
+        var project = projectsById[task.projectId];
+        var projectHistory = project && history[project.name];
+        if (!projectHistory || !task.worktree_folder) return;
+        var tip = projectHistory.commits[0];
+        commitGraphByWorktree[task.worktree_folder] = {
+          commits: projectHistory.commits, tipHash: projectHistory.tipHash, baseHash: projectHistory.tipHash,
+          mergeBaseHash: projectHistory.tipHash, currentBranch: task.branch_name, truncated: false,
+        };
+        branchSummaryByWorktree[task.worktree_folder] = {
+          currentBranch: task.branch_name, ahead: 0, behind: 0,
+          lastCommit: { hash: tip.shortHash, subject: tip.subject, timestamp: tip.authorTimestamp },
+        };
+        var byPath = {};
+        projectHistory.commits.forEach(function (commit) {
+          var diff = projectHistory.diffs[commit.hash];
+          (diff ? diff.files : []).forEach(function (file) {
+            if (!byPath[file.path]) byPath[file.path] = { commits: [] };
+            byPath[file.path].commits.push({ hash: commit.hash, shortHash: commit.shortHash, authorName: commit.authorName, authorTimestamp: commit.authorTimestamp, subject: commit.subject });
+          });
+        });
+        fileHistoryByWorktree[task.worktree_folder] = byPath;
+        if (task.session_id && projectHistory.blame[task.session_id]) blameByWorktree[task.worktree_folder] = projectHistory.blame[task.session_id];
+        Object.keys(projectHistory.diffs).forEach(function (hash) { diffByCommit[hash] = projectHistory.diffs[hash]; });
+      });
+      window.__mockCommitGraphByWorktree = commitGraphByWorktree;
+      window.__mockBranchSummaryByWorktree = branchSummaryByWorktree;
+      window.__mockBlameByWorktree = blameByWorktree;
+      window.__mockFileHistoryByWorktree = fileHistoryByWorktree;
+      window.__mockGitDiffByCommit = diffByCommit;
 
       // A deterministic usage dashboard: fourteen days of sessions per project, seeded so every
       // boot draws the same charts, scaled by the project's share of the sample install.

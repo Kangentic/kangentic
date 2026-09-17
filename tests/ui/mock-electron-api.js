@@ -108,6 +108,27 @@
   // commit selection overrides scope), or per-worktree fixtures via
   // window.__mockGitDiffByWorktree = { '<worktree folder>': { working, staged, branch } },
   // matched on the request's worktreePath (the sample install seeds one per task).
+  // Resolve a per-worktree fixture map (keyed by worktree FOLDER name) for a request's
+  // worktreePath. A worktree path ends in its folder, so the path's last segment is tried
+  // first. The substring scan below it is unanchored: it matches any key that appears anywhere
+  // in the path, so two slugs where one is a prefix of the other would resolve by Object.keys
+  // order rather than by which folder the path is actually in. Today's slugs carry random
+  // suffixes and do not collide, which is why the scan is kept as the fallback rather than
+  // replaced outright. Shared by diffFiles, branchSummary, commitGraph, fileHistory, and blame,
+  // which the sample install seeds per task (window.__mock*ByWorktree).
+  function resolveByWorktree(byWorktree, worktreePath) {
+    if (!byWorktree || !worktreePath) return null;
+    var segments = worktreePath.split(/[\\/]/);
+    var lastSegment = segments[segments.length - 1] || segments[segments.length - 2] || '';
+    if (byWorktree[lastSegment]) return byWorktree[lastSegment];
+    var folders = Object.keys(byWorktree);
+    for (var folderIndex = 0; folderIndex < folders.length; folderIndex++) {
+      var folder = folders[folderIndex];
+      if (worktreePath.indexOf(folder) !== -1 && byWorktree[folder]) return byWorktree[folder];
+    }
+    return null;
+  }
+
   function resolveGitDiffFixture(request) {
     var commitOid = request && request.commitOid;
     var byCommit = (typeof window !== 'undefined' && window.__mockGitDiffByCommit) || null;
@@ -116,25 +137,8 @@
     var byScope = (typeof window !== 'undefined' && window.__mockGitDiffByScope) || null;
     if (byScope && byScope[scope]) return byScope[scope];
     var byWorktree = (typeof window !== 'undefined' && window.__mockGitDiffByWorktree) || null;
-    var worktreePath = (request && request.worktreePath) || '';
-    if (byWorktree && worktreePath) {
-      // The keys are worktree FOLDER names and a worktree path ends in its folder, so try the
-      // path's last segment first. The substring scan below it is unanchored: it matches any key
-      // that appears anywhere in the path, so two slugs where one is a prefix of the other would
-      // resolve by Object.keys order rather than by which folder the path is actually in. Today's
-      // slugs carry random suffixes and do not collide, which is why the scan is kept as the
-      // fallback rather than replaced outright.
-      var segments = worktreePath.split(/[\\/]/);
-      var lastSegment = segments[segments.length - 1] || segments[segments.length - 2] || '';
-      if (byWorktree[lastSegment] && byWorktree[lastSegment][scope]) return byWorktree[lastSegment][scope];
-      var folders = Object.keys(byWorktree);
-      for (var folderIndex = 0; folderIndex < folders.length; folderIndex++) {
-        var folder = folders[folderIndex];
-        if (worktreePath.indexOf(folder) !== -1 && byWorktree[folder] && byWorktree[folder][scope]) {
-          return byWorktree[folder][scope];
-        }
-      }
-    }
+    var forWorktree = resolveByWorktree(byWorktree, (request && request.worktreePath) || '');
+    if (forWorktree && forWorktree[scope]) return forWorktree[scope];
     return (typeof window !== 'undefined' && window.__mockGitDiff) || null;
   }
 
@@ -3244,6 +3248,12 @@
         if (typeof window !== 'undefined' && window.__mockBranchSummary) {
           return window.__mockBranchSummary;
         }
+        // Per-worktree summaries, as the sample install seeds them (one per task with a
+        // worktree), keyed by worktree folder name.
+        var summaryForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockBranchSummaryByWorktree, (request && request.worktreePath) || '')
+          : null;
+        if (summaryForWorktree) return summaryForWorktree;
         return { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
       },
       worktreeHead: async function () {
@@ -3256,29 +3266,48 @@
         }
         return { branch: null, sha: null };
       },
-      commitGraph: async function () {
+      commitGraph: async function (request) {
         // Test hook: seed the commit-graph pane via window.__mockCommitGraph =
         // { commits: [{ hash, shortHash, parents, authorName, authorTimestamp, subject }],
         //   tipHash, baseHash, mergeBaseHash, currentBranch, truncated }.
         if (typeof window !== 'undefined' && window.__mockCommitGraph) {
           return window.__mockCommitGraph;
         }
+        // Per-worktree graphs (window.__mockCommitGraphByWorktree, keyed by worktree folder), as
+        // the sample install seeds a scaffolded project's real history.
+        var graphForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockCommitGraphByWorktree, (request && request.worktreePath) || '')
+          : null;
+        if (graphForWorktree) return graphForWorktree;
         return { commits: [], tipHash: null, baseHash: null, mergeBaseHash: null, currentBranch: null, truncated: false };
       },
-      fileHistory: async function () {
+      fileHistory: async function (request) {
         // Test hook: seed the file-history popover via window.__mockFileHistory =
         // { commits: [{ hash, shortHash, authorName, authorTimestamp, subject }] }.
         if (typeof window !== 'undefined' && window.__mockFileHistory) {
           return window.__mockFileHistory;
         }
+        // Per-worktree, per-file (window.__mockFileHistoryByWorktree[folder][filePath]).
+        var historyForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockFileHistoryByWorktree, (request && request.worktreePath) || '')
+          : null;
+        var filePath = (request && request.filePath) || '';
+        if (historyForWorktree && historyForWorktree[filePath]) return historyForWorktree[filePath];
         return { commits: [] };
       },
-      blame: async function () {
+      blame: async function (request) {
         // Test hook: seed the blame gutter via window.__mockBlame =
         // { lines: [{ line, hash, shortHash, author, date }] }.
         if (typeof window !== 'undefined' && window.__mockBlame) {
           return window.__mockBlame;
         }
+        // Per-worktree, per-file (window.__mockBlameByWorktree[folder][filePath]), the blame of
+        // the working tree a recorded session left behind.
+        var blameForWorktree = typeof window !== 'undefined'
+          ? resolveByWorktree(window.__mockBlameByWorktree, (request && request.worktreePath) || '')
+          : null;
+        var blamePath = (request && request.filePath) || '';
+        if (blameForWorktree && blameForWorktree[blamePath]) return blameForWorktree[blamePath];
         return { lines: [] };
       },
     },

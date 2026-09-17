@@ -34,7 +34,7 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
     developerConfig.recordIpcTraffic ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-testid="developer-tab">
       <GroupHeading>Diagnostics</GroupHeading>
 
       <section className="space-y-2">

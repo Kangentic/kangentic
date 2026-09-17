@@ -304,6 +304,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
         className={`absolute top-20 left-1/2 -translate-x-1/2 w-[70%] max-w-3xl ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
         onMouseDown={(event) => event.stopPropagation()}
+        data-testid="search-palette-card"
       >
         <div className="bg-surface-raised border border-edge rounded-lg shadow-2xl overflow-hidden flex flex-col">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-edge">

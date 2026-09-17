@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kangentic demo</title>
     <!--
-      The web build of the desktop renderer. demo/vite.config.mts injects four classic
+      The web build of the desktop renderer. demo/vite.config.mts injects five classic
       scripts here, in this order, ahead of the module bundle below (each name carries a
       content hash, as Vite's own chunks do, so a cached copy can never be a stale one):
-        demo-scenes-<hash>.js       the scene registry, the app version, and the recordings index (generated at build time)
+        demo-scenes-<hash>.js       the scene registry, the app version, the recordings index, and the guest pages (generated at build time)
         demo-boot-<hash>.js         demo/boot.js: the URL contract, config overrides, still/embed CSS
+        demo-webview-<hash>.js      demo/webview-shim.js: an iframe standing in for Electron's <webview> tag
         mock-electron-api-<hash>.js tests/ui/mock-electron-api.js, verbatim
         demo-seed-<hash>.js         the sample install and the scene applier (generated at build time)
       A classic script runs while the parser reaches it; the module script is deferred, so the
