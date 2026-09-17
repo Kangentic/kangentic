@@ -83,9 +83,13 @@ describe('getProgressColor CSS token declarations', () => {
     // declaration) would be mistaken for a live declaration.
     const indexCssWithoutComments = indexCssContents.replace(/\/\*[\s\S]*?\*\//g, '');
 
-    const rootBlockMatch = indexCssWithoutComments.match(/:root\s*\{([\s\S]*?)\}/);
+    // The palette block is `:root, .theme-dark {` (grouped so the Theme tab's
+    // Dark tile can paint inside a light app; theme-registry-parity pins the
+    // selector). A bare `:root\s*\{` skips it and lands on the later `:root {`
+    // that holds only the overlay durations, which declares no --kng-* token.
+    const rootBlockMatch = indexCssWithoutComments.match(/:root(?:\s*,\s*\.theme-dark)?\s*\{([\s\S]*?)\}/);
     if (!rootBlockMatch) {
-      throw new Error('Could not locate the :root block in src/renderer/index.css');
+      throw new Error('Could not locate the :root palette block in src/renderer/index.css');
     }
     const rootBlockContents = rootBlockMatch[1];
 
