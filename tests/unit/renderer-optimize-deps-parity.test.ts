@@ -55,7 +55,7 @@ function isOptimizerCandidate(specifier: string): boolean {
 }
 
 // '@dnd-kit/core' is a package NAME (scoped packages span two segments);
-// 'monaco-editor/esm/vs/base/common/errors' is a deep subpath of 'monaco-editor'.
+// 'monaco-editor/base/common/errors' is a deep subpath of 'monaco-editor'.
 function packageNameOf(specifier: string): string {
   const segments = specifier.split('/');
   return specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
