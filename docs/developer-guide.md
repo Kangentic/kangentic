@@ -375,6 +375,7 @@ npm run test:unit                 # Unit (separate runner)
 - **Test selectors** -- `data-testid` and `data-swimlane-name` attributes
 - **Escape key** -- all dialogs use global `useEffect` listener
 - **IPC channels** -- `src/shared/ipc-channels.ts` is the single source of truth
+- **Lockfile metadata** - never regenerate `package-lock.json` against a populated `node_modules`. npm writes every already-installed package with no `resolved` and no `integrity`, which drops `npm ci`'s supply-chain verification for most of the tree without failing anything. `npm install --package-lock-only` does not repair it; `node scripts/repair-lockfile-integrity.js` does, and `tests/unit/lockfile-integrity.test.ts` fails CI when an entry is missing either field
 
 ## Environment Variables
 

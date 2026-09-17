@@ -1,5 +1,5 @@
 /**
- * Ambient type declarations for sherpa-onnx-node (1.13.x), which ships no
+ * Ambient type declarations for sherpa-onnx-node (1.13.8), which ships no
  * TypeScript types. Covers only the surface the dictation engines use:
  * streaming (OnlineRecognizer), offline whisper (OfflineRecognizer), and
  * punctuation. Recognizer config objects are passed straight through to the
@@ -38,7 +38,9 @@ declare module 'sherpa-onnx-node' {
   export class OfflineRecognizer {
     constructor(config: unknown);
     static createAsync(config: unknown): Promise<OfflineRecognizer>;
-    createStream(): OfflineStream;
+    /** `hotwords` is space-separated and optional (added in 1.13.4). Omitting it
+     *  takes the addon's no-hotwords path, which is what the engines here do. */
+    createStream(hotwords?: string): OfflineStream;
     decode(stream: OfflineStream): void;
     decodeAsync(stream: OfflineStream): Promise<RecognizerResult>;
     getResult(stream: OfflineStream): RecognizerResult;

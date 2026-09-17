@@ -141,7 +141,7 @@
     "recharts": "3.9.2",
     "remark-gfm": "^4.0.1",
     "remove-markdown": "^0.6.4",
-    "sherpa-onnx-node": "^1.13.3",
+    "sherpa-onnx-node": "^1.13.8",
     "sqlite-vec": "^0.1.9",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"
