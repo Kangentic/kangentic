@@ -38,12 +38,18 @@ const MIN_DECODE_GAP_MS = 350;
  * utterances and is not meant to. Every pass decodes the FULL buffer either way,
  * so live accuracy is untouched; only the cadence stretches.
  *
- * Decodes never overlap, which is what `decodeInFlight` and finalize's wait on it
- * are for. Sherpa's OfflineRecognizer decodes one stream at a time (its batch
- * DecodeStreams form is how it expects to be asked for more), so two concurrent
- * decodeAsync calls would share the recognizer's decoder and model across two
- * threadpool threads. They would also double the outstanding napi async work,
- * which is the shape DESKTOP-X came from (.claude/rules/dictation-out-of-process.md).
+ * Decodes never overlap WITHIN a session, which is what `decodeInFlight` and
+ * finalize's wait on it are for. Sherpa's OfflineRecognizer decodes one stream at a
+ * time (its batch DecodeStreams form is how it expects to be asked for more), so
+ * two concurrent decodeAsync calls would share the recognizer's decoder and model
+ * across two threadpool threads. They would also double the outstanding napi async
+ * work, which is the shape DESKTOP-X came from
+ * (.claude/rules/dictation-out-of-process.md). Mind that scope: `decodeInFlight` is
+ * per-session closure state while the recognizer belongs to the ENGINE, so two
+ * sessions drawn from the same warm engine can still decode on one recognizer at
+ * once. That gap predates this loop (the flag it replaced was scoped identically),
+ * is not closed here, and would need a queue owned by the engine rather than by
+ * the session.
  * Serializing costs release-to-insert latency whenever a pass is in flight at the
  * moment the key comes up: about one decode, so roughly 0.6s after a 30s hold. How
  * often that is paid is exactly the duty cycle, which is the second reason the

@@ -427,6 +427,48 @@ describe('ChunkedOfflineEngine', () => {
     expect(onPartial).toHaveBeenCalledTimes(1);
   });
 
+  // Two sessions on one warm engine is reachable in production: main tracks
+  // dictation sessions in a Map (TranscriptionService), so two overlapping
+  // holds with the same engine config share this engine's warm cache. The
+  // single-session dispose test above cannot tell a Set-based `dispose()`
+  // (stops every running session) from a naive single-pointer one (only the
+  // most recently created session is stoppable) - they only diverge at N>1.
+  it('stops every running session when the engine is disposed, not just the most recent one', async () => {
+    const engine = await loadedEngine();
+    const onPartialA = vi.fn();
+    const onPartialB = vi.fn();
+    const sessionA = engine.createSession({ ...options, onPartial: onPartialA });
+    sessionA.push(audioFrame(100));
+
+    // Stagger session B's start so the two loops are not in lockstep.
+    await vi.advanceTimersByTimeAsync(100);
+    const sessionB = engine.createSession({ ...options, onPartial: onPartialB });
+    sessionB.push(audioFrame(100));
+
+    // Session A's first pass fires 350ms after ITS creation (t=350).
+    await vi.advanceTimersByTimeAsync(250);
+    expect(state.decodeCalls).toBe(1);
+    state.pending[0].resolve('a first');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onPartialA).toHaveBeenCalledTimes(1);
+
+    // Session B's first pass fires 350ms after ITS creation (t=450).
+    await vi.advanceTimersByTimeAsync(100);
+    expect(state.decodeCalls).toBe(2);
+    state.pending[1].resolve('b first');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onPartialB).toHaveBeenCalledTimes(1);
+
+    await engine.dispose();
+
+    // Both sessions have a pass already scheduled (A at t=700, B at t=800).
+    // Neither must fire.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(state.decodeCalls).toBe(2);
+    expect(onPartialA).toHaveBeenCalledTimes(1);
+    expect(onPartialB).toHaveBeenCalledTimes(1);
+  });
+
   it('drains the in-flight pass so the engine is never disposed mid-decode', async () => {
     const engine = await loadedEngine();
     const session = engine.createSession(options);

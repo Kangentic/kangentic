@@ -217,6 +217,42 @@ describe('HybridEngine', () => {
     expect(final.session.drain).toHaveBeenCalledTimes(1);
   });
 
+  // The default production shape for both slots: SherpaOnlineEngine (the
+  // streaming live engine) and RemoteOpenAiEngine (the cloud final engine)
+  // both deliberately omit `drain` (it is optional on the contract - see
+  // transcription-engine.ts). Only the two offline engines implement it.
+  // `makeFakeEngine`'s session has no `drain` property, so this models that
+  // pairing without adding a third fake type.
+  it('drains cleanly when neither sub-session implements drain', async () => {
+    const live = makeFakeEngine('live text');
+    const final = makeFakeEngine('final text');
+    const engine = new HybridEngine({
+      live: { factory: () => live, modelId: 'live-model' },
+      final: { factory: () => final, modelId: 'final-model' },
+    });
+
+    const session = engine.createSession(makeOptions());
+    await expect(session.drain?.()).resolves.toBeUndefined();
+  });
+
+  // The mixed pairing: a streaming live engine (no drain) feeding an offline
+  // final engine (has drain, since sherpa-whisper-engine.ts's finalize decode
+  // is exactly what drain() has to wait out).
+  it('drains cleanly when only the final sub-session implements drain', async () => {
+    const live = makeFakeEngine('live text');
+    const final = makeFakeEngine('final text');
+    final.session.drain = vi.fn(async () => undefined);
+    const engine = new HybridEngine({
+      live: { factory: () => live, modelId: 'live-model' },
+      final: { factory: () => final, modelId: 'final-model' },
+    });
+
+    const session = engine.createSession(makeOptions());
+    await expect(session.drain?.()).resolves.toBeUndefined();
+
+    expect(final.session.drain).toHaveBeenCalledTimes(1);
+  });
+
   it('routes each resolved model to the slot that asked for it', async () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
