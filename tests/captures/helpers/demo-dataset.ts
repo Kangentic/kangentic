@@ -1327,6 +1327,12 @@ export function buildDemoPreConfig(options: {
         var scale = Math.min(cols / entry.grid.cols, rows / entry.grid.rows);
         return scale >= HOLD_MIN_SCALE ? { cols: entry.grid.cols, rows: entry.grid.rows } : null;
       }
+      // The last grid the RENDERER named for each session, before any hold. A held session's
+      // mountedGeometry is the recording's grid, which can stay identical across a real window
+      // resize, so it cannot be what decides whether the window moved. It is kept apart rather
+      // than folded into mountedGeometry because the frame fitter and geometryFits both need the
+      // grid the terminal actually has, which is the held one.
+      var naturalGeometry = {};
       var originalResize = window.electronAPI.sessions.resize;
       window.electronAPI.sessions.resize = function (sessionId, cols, rows) {
         // The renderer resizes before it asks for the scrollback, so a mount's grid is known when
@@ -1339,12 +1345,22 @@ export function buildDemoPreConfig(options: {
         // the boot is chosen by that width, and the held grid, when there is one, is the grid the
         // terminal will actually have.
         var previous = mountedGeometry[sessionId];
+        var previousNatural = naturalGeometry[sessionId];
         var entry = replays[sessionId];
         if (entry) applyLayout(entry, cols);
         var held = recordings ? heldGridFor(entry, cols, rows) : null;
         var effective = held || { cols: cols, rows: rows };
         mountedGeometry[sessionId] = effective;
-        var changed = !!previous && (previous.cols !== effective.cols || previous.rows !== effective.rows);
+        naturalGeometry[sessionId] = { cols: cols, rows: rows };
+        // A repaint follows a real WINDOW resize, so the natural grid decides, not the held one.
+        // While a session is held the held grid can be identical either side of a resize (a
+        // Command Terminal that tiles still fits its recording's grid), and keying off it alone
+        // skipped the repaint entirely. Whether it skipped depended on where the natural width
+        // fell against the single-window threshold, which moves with the platform's font metrics:
+        // Windows crossed it and Linux CI did not, so the tiling case passed locally and failed
+        // on every CI run.
+        var changed = (!!previousNatural && (previousNatural.cols !== cols || previousNatural.rows !== rows))
+          || (!!previous && (previous.cols !== effective.cols || previous.rows !== effective.rows));
         var answer = originalResize.apply(this, arguments);
         if (held) answer = answer.then(function (base) { return Object.assign({}, base, { colsChanged: false, refused: true, held: held }); });
         if (live && entry && changed) {
