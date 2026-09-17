@@ -168,7 +168,7 @@ export class ConversationIndexer {
     if (!adapter.locateSessionHistoryFile || !record.agent_session_id) {
       return { path: null, mtimeMs: null, size: null };
     }
-    let path: string | null = null;
+    let path: string | null;
     try {
       path = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd);
     } catch {

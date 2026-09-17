@@ -184,7 +184,7 @@ async function buildRecord(
   // Dirty status. `simple-git`'s status() throws when invoked on a
   // half-broken worktree (mid-rebase, missing HEAD); we treat those as
   // "unknown" rather than fail.
-  let dirty = false;
+  let dirty: boolean;
   try {
     const status = await worktreeGit.status();
     dirty = !status.isClean();
@@ -193,7 +193,7 @@ async function buildRecord(
   }
 
   // Last commit timestamp on the current branch.
-  let lastCommitTs: string | null = null;
+  let lastCommitTs: string | null;
   try {
     const isoTimestamp = (await worktreeGit.raw(['log', '-1', '--format=%cI'])).trim();
     lastCommitTs = isoTimestamp || null;
@@ -211,7 +211,7 @@ async function buildRecord(
   let baseRef: string | null = null;
   let commitsAhead: number | null = null;
   let commitsBehind: number | null = null;
-  let baseBranch: string | null = null;
+  let baseBranch: string | null;
   try {
     baseBranch = resolveBaseRef?.({
       projectId,

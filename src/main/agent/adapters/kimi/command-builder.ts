@@ -168,7 +168,7 @@ export class KimiCommandBuilder {
           fs.mkdirSync(sessionDir, { recursive: true });
         } catch (err) {
           console.error(`[kimi command-builder] Failed to create session directory: ${sessionDir}`, err);
-          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
+          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
         }
         const mcpConfigPath = path.join(sessionDir, 'mcp.json');
         // sync-write-ok: this must throw, not degrade - the path below is

@@ -1,23 +1,26 @@
 // @ts-check
+import { defineConfig } from 'eslint/config';
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
-import reactPlugin from 'eslint-plugin-react';
-import reactHooksPlugin from 'eslint-plugin-react-hooks';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
-export default tseslint.config(
+export default defineConfig(
   // packages/launcher is deliberately zero-dep plain CommonJS with no build
   // step; packages/protocol IS linted under the same strict rules as src/
   // and tests/ below (see the `packages/protocol/src/**` entry in the next
   // block's `files`), so it is NOT in this ignore list.
   { ignores: ['node_modules/', '.vite/', '.kangentic/', 'dist/', 'build/', 'packages/launcher/'] },
   eslint.configs.recommended,
-  ...tseslint.configs.recommended,
+  tseslint.configs.recommended,
   {
     files: ['src/**/*.{ts,tsx}', 'tests/**/*.{ts,tsx}', 'packages/protocol/src/**/*.ts'],
-    plugins: {
-      'react-hooks': reactHooksPlugin,
-    },
+    // The preset React's own docs name (react.dev, "ESLint plugin"): rules-of-hooks
+    // and exhaustive-deps plus the React Compiler rules. There is no separate JSX
+    // plugin: React recommends none, and eslint-plugin-react (our old source of
+    // react/jsx-key) has no ESLint 10 release. React's dev runtime still warns on
+    // a missing key.
+    extends: [reactHooks.configs.flat['recommended-latest']],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },
@@ -33,18 +36,10 @@ export default tseslint.config(
         varsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_',
       }],
-
-      // React hooks - catches stale closures and rules-of-hooks violations
-      'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
-    },
-  },
-  {
-    files: ['src/**/*.tsx'],
-    ...reactPlugin.configs.flat['jsx-runtime'],
-    rules: {
-      // Missing keys in .map() JSX - catches real bugs
-      'react/jsx-key': 'error',
+      // We do not run React Compiler. This rule only reports that the compiler
+      // would skip memoizing a component that calls TanStack Virtual's
+      // useVirtualizer (five sites), which has no code-side fix.
+      'react-hooks/incompatible-library': 'off',
     },
   },
   {

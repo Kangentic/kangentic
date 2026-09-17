@@ -76,7 +76,7 @@ export function useAddProject() {
       git = { ok: false, created: false, error: 'Unknown error' };
     }
 
-    let added: Project | null = null;
+    let added: Project | null;
     try {
       added = await openProjectByPath(selectedPath, { name: probe.suggestedName });
     } catch (error) {

@@ -844,7 +844,7 @@ export class WorktreeManager {
       await fs.promises.mkdir(worktreesDir, { recursive: true });
     } catch (err) {
       console.error(`[WORKTREE] Failed to create worktrees directory: ${worktreesDir}`, err);
-      throw new Error(`Cannot create worktrees directory at ${worktreesDir}: ${(err as Error).message}`);
+      throw new Error(`Cannot create worktrees directory at ${worktreesDir}: ${(err as Error).message}`, { cause: err });
     }
 
     // Fetch the latest from origin so worktrees start from up-to-date code.
@@ -917,7 +917,7 @@ export class WorktreeManager {
             `[WorktreeManager] Could not inspect stale worktree dir: ${worktreePath} `
             + `(code=${errnoError.code ?? 'unknown'} errno=${errnoError.errno ?? '?'} syscall=${errnoError.syscall ?? '?'}): ${errnoError.message}`
           );
-          throw new Error(staleWorktreeError(worktreePath, 'unreadable', outcome.holders));
+          throw new Error(staleWorktreeError(worktreePath, 'unreadable', outcome.holders), { cause: error });
         }
         if (leftover.length > 0) {
           throw new Error(staleWorktreeError(worktreePath, 'not-empty', outcome.holders));

@@ -384,7 +384,7 @@ export async function retryFailedDoneCleanups(
       // caller with no per-iteration guard, so an unhandled throw here would
       // propagate out of withTaskLock and abandon every REMAINING Done task in
       // the pass, not just the one with the bad row.
-      let removed = false;
+      let removed: boolean;
       try {
         removed = await worktreeManager.withLock(
           () => worktreeManager.removeWorktree(current.worktree_path!, { timeoutMs: 3000, removalProfile: 'fast' }),

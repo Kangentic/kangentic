@@ -61,7 +61,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     // Best-effort fetch from origin (throttled, network-failure-safe)
     const startPoint = await fetchIfStale(git, projectRoot, targetBranch);
 
-    let branch = targetBranch;
+    let branch: string;
     let checkoutError: string | undefined;
     try {
       const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();

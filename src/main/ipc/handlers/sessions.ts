@@ -190,7 +190,7 @@ export function registerSessionHandlers(context: IpcContext): void {
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
           const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-          throw new Error(`Worktree setup failed: ${message}`);
+          throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
         }
 
         // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY

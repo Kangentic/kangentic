@@ -328,6 +328,7 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
           if (!relativeDir) {
             throw new Error(
               `Unable to scan workspace entries at '${cwd}': ${error instanceof Error ? error.message : 'unknown error'}`,
+              { cause: error },
             );
           }
           return { relativeDir, dirents: null };

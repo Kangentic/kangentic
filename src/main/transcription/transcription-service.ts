@@ -264,7 +264,7 @@ export class TranscriptionService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Model download failed';
       this.emitModelProgress({ modelId: selected.models[0].id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
-      throw new Error(message);
+      throw new Error(message, { cause: error });
     }
   }
 
@@ -304,7 +304,7 @@ export class TranscriptionService extends EventEmitter {
       // (which would double-dispose and emit a spurious empty 'final').
       if (!this.active.has(dictationSessionId)) return '';
     }
-    let text = '';
+    let text: string;
     try {
       text = await this.client.finalize(dictationSessionId);
     } catch (error) {

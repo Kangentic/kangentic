@@ -816,7 +816,7 @@ async function respondTerminalForensics(
   // capturing), but a capture taken MID-STREAM can show a legitimate
   // main-vs-renderer difference that is not loss. `serializedAt` is stamped so
   // that ambiguity is visible rather than assumed away.
-  let mainGrid: { rows: string[]; error?: string } = { rows: [] };
+  let mainGrid: { rows: string[]; error?: string };
   let serializedFrameBytes = 0;
   try {
     const frame = await sessionManager.getSerializedFrame(sessionId);
@@ -1718,7 +1718,7 @@ async function respondPtyInput(
   if (typeof params.sessionId !== 'string') {
     return respondError(response, 400, 'missing-sessionId', '`sessionId` is required.');
   }
-  let toWrite: string | null = null;
+  let toWrite: string | null;
   if (typeof params.keys === 'string') {
     toWrite = mapKeysToBytes(params.keys);
   } else if (typeof params.bytes === 'string') {

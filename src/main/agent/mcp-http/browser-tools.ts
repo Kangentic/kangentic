@@ -564,7 +564,7 @@ export function registerBrowserTools(
       // legitimately closes between polls, which is also right: an agent
       // sleeping five seconds between DOM reads is not driving the pane, and
       // the user should get their focus back.
-      let result: DriverResult<{ matched: boolean; matchedAt?: string; timedOutAfterMs?: number }> | null = null;
+      let result: DriverResult<{ matched: boolean; matchedAt?: string; timedOutAfterMs?: number }>;
       for (;;) {
         result = await drive('observe', { sessionId, taskId }, async (webContents) => {
           const target = selector ?? 'body';

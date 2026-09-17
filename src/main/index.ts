@@ -314,7 +314,7 @@ app.on('web-contents-created', (_event, contents) => {
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
 
-    let allowed = false;
+    let allowed: boolean;
     try {
       const parsed = new URL(params.src);
       allowed = parsed.protocol === 'http:' || parsed.protocol === 'https:';
