@@ -18,8 +18,19 @@ export default defineConfig(
     // The preset React's own docs name (react.dev, "ESLint plugin"): rules-of-hooks
     // and exhaustive-deps plus the React Compiler rules. There is no separate JSX
     // plugin: React recommends none, and eslint-plugin-react (our old source of
-    // react/jsx-key) has no ESLint 10 release. React's dev runtime still warns on
-    // a missing key.
+    // react/jsx-key) has no ESLint 10 release; its peer range stops at ESLint 9.
+    // So a missing `key` on a list element has NO CI check any more. It is caught
+    // by React's dev-runtime console warning and by /code-review, which lists it
+    // as a review-only convention. Restore a lint rule here once a plugin that
+    // supports ESLint 10 ships one.
+    //
+    // The compiler rules move every render-time `ref.current = value` mirror into
+    // a dependency-less `useLayoutEffect`. That mirror is hand-written at each
+    // site on purpose: a shared `useLatestRef` hook fails `exhaustive-deps`,
+    // which treats a ref as stable only when it comes from a same-file `useRef()`
+    // call and suppresses its "ref value will have changed by cleanup" warning
+    // only when a same-file `.current =` assignment exists, so a hook-returned
+    // ref trips both at every consumer.
     extends: [reactHooks.configs.flat['recommended-latest']],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },

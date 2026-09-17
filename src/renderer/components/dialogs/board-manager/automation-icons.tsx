@@ -27,12 +27,9 @@ const ICONS: Record<string, LucideIcon> = {
 /**
  * Render an automation type's icon by name.
  *
- * The lookup lives in one component and goes through `createElement` on
- * purpose: React's compiler rules read `const Icon = lookup(name)` followed by
- * `<Icon />` as a component created during render, which they forbid. The map
- * holds module-level lucide components, so the identity is in fact stable,
- * but the rule cannot see through the call. See `RegistryIcon` in
- * `utils/swimlane-icons.tsx`, which is the same shape for column icons.
+ * Same shape as `RegistryIcon` in `utils/swimlane-icons.tsx`, and for the same
+ * reason: see that JSDoc for why the lookup goes through `createElement` in one
+ * place instead of `const Icon = lookup(name)` at each call site.
  */
 export function AutomationIcon({ name, ...iconProps }: { name: string } & LucideProps): ReactElement {
   return createElement(ICONS[name] ?? Zap, iconProps);
