@@ -305,6 +305,198 @@ describe('dictation-worker', () => {
     expect(port.postMessage).toHaveBeenCalledWith({ type: 'result', id: 1 });
   });
 
+  // Disposing an engine while one of its sessions still has a decode on the libuv
+  // threadpool is the DESKTOP-X shape. closeSession removes the session from
+  // `active` synchronously (so no late push routes into it) but holds the engine
+  // until drain() settles.
+  it('holds engine disposal until the session has drained', async () => {
+    const port = makeFakeParentPort();
+    installParentPort(port);
+    const session = makeFakeSession();
+    let releaseDrain: () => void = () => {};
+    (session as unknown as { drain: () => Promise<void> }).drain = vi.fn(
+      () => new Promise<void>((resolve) => { releaseDrain = resolve; }),
+    );
+    const engine = makeFakeEngine(session);
+    mockBuildEngine.mockReturnValue(engine);
+    await importWorker();
+
+    port.emit('message', {
+      data: {
+        type: 'createSession',
+        id: 1,
+        dictationSessionId: 'dictation-1',
+        ...ensureEngineFields('key-a'),
+        sessionOptions: { language: 'en', punctuation: true },
+      },
+    });
+    await flush();
+
+    port.emit('message', { data: { type: 'disposeWarm' } });
+    port.emit('message', { data: { type: 'cancel', dictationSessionId: 'dictation-1' } });
+    await flush();
+
+    // The session is closed, but the decode has not settled, so the engine lives.
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(engine.dispose).not.toHaveBeenCalled();
+
+    // A push arriving now must route nowhere: the entry left `active` already.
+    port.emit('message', { data: { type: 'push', dictationSessionId: 'dictation-1', pcm: new ArrayBuffer(8) } });
+    expect(session.push).not.toHaveBeenCalled();
+
+    releaseDrain();
+    await flush();
+    expect(engine.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  // drain() is documented never to reject, but nothing enforces that on a
+  // composed session (HybridEngine fans its own drain() out through
+  // Promise.all), so closeSession must not let a violation cost the engine.
+  it('closeSession still disposes the engine when drain() rejects', async () => {
+    const port = makeFakeParentPort();
+    installParentPort(port);
+    const session = makeFakeSession();
+    let rejectDrain: (error: Error) => void = () => {};
+    (session as unknown as { drain: () => Promise<void> }).drain = vi.fn(
+      () => new Promise<void>((_resolve, reject) => { rejectDrain = reject; }),
+    );
+    const engine = makeFakeEngine(session);
+    mockBuildEngine.mockReturnValue(engine);
+    await importWorker();
+
+    port.emit('message', {
+      data: {
+        type: 'createSession',
+        id: 1,
+        dictationSessionId: 'dictation-1',
+        ...ensureEngineFields('key-a'),
+        sessionOptions: { language: 'en', punctuation: true },
+      },
+    });
+    await flush();
+
+    port.emit('message', { data: { type: 'disposeWarm' } });
+    port.emit('message', { data: { type: 'cancel', dictationSessionId: 'dictation-1' } });
+    await flush();
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(engine.dispose).not.toHaveBeenCalled();
+
+    rejectDrain(new Error('drain blew up'));
+    await flush();
+    expect(engine.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closeSession still disposes the engine when drain() throws synchronously', async () => {
+    const port = makeFakeParentPort();
+    installParentPort(port);
+    const session = makeFakeSession();
+    (session as unknown as { drain: () => Promise<void> }).drain = vi.fn(() => {
+      throw new Error('drain blew up synchronously');
+    });
+    const engine = makeFakeEngine(session);
+    mockBuildEngine.mockReturnValue(engine);
+    await importWorker();
+
+    port.emit('message', {
+      data: {
+        type: 'createSession',
+        id: 1,
+        dictationSessionId: 'dictation-1',
+        ...ensureEngineFields('key-a'),
+        sessionOptions: { language: 'en', punctuation: true },
+      },
+    });
+    await flush();
+
+    port.emit('message', { data: { type: 'disposeWarm' } });
+    port.emit('message', { data: { type: 'cancel', dictationSessionId: 'dictation-1' } });
+    await flush();
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(engine.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  // Nothing else bounds a session. A finalize/cancel lost in flight, or main
+  // dying mid-hold, used to leave the entry in `active` forever: the engine
+  // pinned out of the warm LRU, and the chunked live engine's decode loop still
+  // running for the life of the worker.
+  it('expires a session that is never finalized or cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      const port = makeFakeParentPort();
+      installParentPort(port);
+      const session = makeFakeSession();
+      const engine = makeFakeEngine(session);
+      mockBuildEngine.mockReturnValue(engine);
+      await importWorker();
+
+      port.emit('message', {
+        data: {
+          type: 'createSession',
+          id: 1,
+          dictationSessionId: 'dictation-1',
+          ...ensureEngineFields('key-a'),
+          sessionOptions: { language: 'en', punctuation: true },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(session.cancel).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+      expect(session.cancel).toHaveBeenCalledTimes(1);
+      expect(session.dispose).toHaveBeenCalledTimes(1);
+
+      // The entry is gone, so a late push routes nowhere and a finalize reports
+      // the session as lost rather than hanging. The message names the expiry as
+      // its own cause, distinct from a plain worker restart: a finalize for an id
+      // this worker never created reports the restart message instead, covered
+      // by the "finalize on an unknown session id" test above.
+      port.emit('message', { data: { type: 'finalize', id: 2, dictationSessionId: 'dictation-1' } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(port.postMessage).toHaveBeenCalledWith({
+        type: 'error',
+        id: 2,
+        message: 'The dictation session was closed after ten minutes without a finalize',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the expiry when a session finalizes normally', async () => {
+    vi.useFakeTimers();
+    try {
+      const port = makeFakeParentPort();
+      installParentPort(port);
+      const session = makeFakeSession();
+      const engine = makeFakeEngine(session);
+      mockBuildEngine.mockReturnValue(engine);
+      await importWorker();
+
+      port.emit('message', {
+        data: {
+          type: 'createSession',
+          id: 1,
+          dictationSessionId: 'dictation-1',
+          ...ensureEngineFields('key-a'),
+          sessionOptions: { language: 'en', punctuation: true },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      port.emit('message', { data: { type: 'finalize', id: 2, dictationSessionId: 'dictation-1' } });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      // The expiry must not fire a second teardown on an already-closed session.
+      expect(session.cancel).not.toHaveBeenCalled();
+      expect(session.dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reuses the same warm engine for a second request with the same engineKey (no second build)', async () => {
     const port = makeFakeParentPort();
     installParentPort(port);
@@ -387,6 +579,9 @@ describe('dictation-worker', () => {
     expect(engine.dispose).not.toHaveBeenCalled();
 
     port.emit('message', { data: { type: 'cancel', dictationSessionId: 'dictation-1' } });
+    // The session leaves `active` synchronously, but the engine is only released
+    // once closeSession's drain settles, so this needs a turn.
+    await flush();
     expect(engine.dispose).toHaveBeenCalledTimes(1);
   });
 

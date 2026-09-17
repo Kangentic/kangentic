@@ -65,10 +65,15 @@ export class SherpaOnlineEngine implements TranscriptionEngine {
         return recognizer.getResult(stream).text.trim();
       },
       cancel(): void {
-        // Nothing to release; the recognizer is disposed with the engine.
+        // Nothing to release: this engine decodes synchronously inside push(),
+        // so a session never ends with work outstanding. That is why it needs no
+        // drain() either, unlike the chunked-offline live engine.
       },
       dispose(): void {
-        // Stream handles are reclaimed natively when the recognizer is freed.
+        // The stream's native handle is freed by the addon's napi finalizer once
+        // V8 collects this closure, not by anything callable from here: the JS
+        // wrapper exposes no free/dispose, and freeing the recognizer does not
+        // reach it. Nothing to do, but not for the reason it looks like.
       },
     };
   }

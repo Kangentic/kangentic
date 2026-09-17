@@ -115,9 +115,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Failed to prepare the dictation engine';
 }
 
+/** A hold that never ends is a bug upstream: a finalize/cancel lost in flight, or
+ *  main dying mid-dictation. Nothing else bounds a session, so without this its
+ *  engine stays pinned out of the warm LRU and, for the chunked live engine, its
+ *  decode loop keeps running for the life of the worker. Ten minutes is far past
+ *  any real push-to-talk hold. */
+const MAX_SESSION_MS = 10 * 60 * 1000;
+
+/** Ids the expiry above closed. A finalize or cancel for one of them arrives
+ *  after the entry is already gone, and without this it would be reported as a
+ *  worker restart, which is the one cause it is not. Each id is dropped as soon
+ *  as it is read, and main never reuses one. */
+const expired = new Set<string>();
+
 interface ActiveSession {
   engine: TranscriptionEngine;
   session: TranscriptionEngineSession;
+  /** Fires MAX_SESSION_MS after createSession; cleared when the session ends. */
+  expiry: ReturnType<typeof setTimeout>;
 }
 
 /** Live (loaded) sessions, keyed by the `dictationSessionId` main assigned -
@@ -213,6 +228,44 @@ function maybeDisposeEngine(engine: TranscriptionEngine): void {
   void engine.dispose();
 }
 
+/**
+ * End a session and release what it held. Removal from `active` is synchronous,
+ * so no later push can route into a closed session, but the ENGINE is only
+ * released once the session's outstanding threadpool work has settled: tearing a
+ * recognizer down under a running decode is the DESKTOP-X shape. Sessions with
+ * nothing outstanding do not implement `drain`, and resolve immediately.
+ */
+function closeSession(dictationSessionId: string, entry: ActiveSession): void {
+  clearTimeout(entry.expiry);
+  active.delete(dictationSessionId);
+  entry.session.dispose();
+  void (async () => {
+    try {
+      await entry.session.drain?.();
+    } catch {
+      // drain() is documented never to reject, but nothing enforces that on a
+      // composed session (HybridEngine fans out through Promise.all), and a
+      // violation must not cost the engine. Swallowing it here is what keeps
+      // the disposal below on every path: otherwise the engine stays pinned out
+      // of the warm LRU for the life of the worker, which is the leak this
+      // function closes, and the rejection goes unhandled, which by Node's
+      // default takes the worker down. The await also catches a synchronous
+      // throw from drain() itself, which on the MAX_SESSION_MS timer path has
+      // no caller to land in.
+    }
+    maybeDisposeEngine(entry.engine);
+  })();
+}
+
+/** Abort a session without committing. Used by the cancel message and by the
+ *  MAX_SESSION_MS expiry. */
+function cancelSession(dictationSessionId: string): void {
+  const entry = active.get(dictationSessionId);
+  if (!entry) return;
+  entry.session.cancel();
+  closeSession(dictationSessionId, entry);
+}
+
 /** Release every warm engine (dictation disabled main-side, or shutdown). */
 function disposeWarm(): void {
   warmGeneration += 1; // supersede any in-flight load so it is not re-cached
@@ -262,7 +315,11 @@ async function handleCreateSession(message: CreateSessionMessage): Promise<void>
     // The claim, which is what keeps a superseded engine alive: from here on
     // maybeDisposeEngine sees it in `active`, and finalize/cancel is what
     // finally disposes it.
-    active.set(message.dictationSessionId, { engine, session });
+    const expiry = setTimeout(() => {
+      expired.add(message.dictationSessionId);
+      cancelSession(message.dictationSessionId);
+    }, MAX_SESSION_MS);
+    active.set(message.dictationSessionId, { engine, session, expiry });
     post({ type: 'result', id: message.id });
   } catch (error) {
     // The engine loaded but the session did not, so nothing will ever claim
@@ -283,13 +340,21 @@ async function handleFinalize(message: FinalizeMessage): Promise<void> {
   const entry = active.get(message.dictationSessionId);
   if (!entry) {
     // Main only ever sends `finalize` for a session id its own `active` map
-    // still holds, so a miss here means THIS worker instance never created
-    // it - the worker restarted (a crash) between createSession and this
-    // finalize. Report it as a failure rather than silently returning '':
-    // dictation has no fallback engine, and useDictation.ts's "never fail
-    // SILENTLY" contract depends on a lost session surfacing as an error,
-    // not as an empty committed transcript.
-    post({ type: 'error', id: message.id, message: 'The dictation worker restarted before this session finished' });
+    // still holds, so a miss here has two causes: the MAX_SESSION_MS expiry
+    // closed the session, or THIS worker instance never created it - the
+    // worker restarted (a crash) between createSession and this finalize.
+    // Report either as a failure rather than silently returning '': dictation
+    // has no fallback engine, and useDictation.ts's "never fail SILENTLY"
+    // contract depends on a lost session surfacing as an error, not as an
+    // empty committed transcript. Naming the right cause matters as much,
+    // since "the worker restarted" sends anyone reading it to the crash logs.
+    post({
+      type: 'error',
+      id: message.id,
+      message: expired.delete(message.dictationSessionId)
+        ? 'The dictation session was closed after ten minutes without a finalize'
+        : 'The dictation worker restarted before this session finished',
+    });
     return;
   }
   try {
@@ -298,19 +363,15 @@ async function handleFinalize(message: FinalizeMessage): Promise<void> {
   } catch (error) {
     post({ type: 'error', id: message.id, message: errorMessage(error) });
   } finally {
-    entry.session.dispose();
-    active.delete(message.dictationSessionId);
-    maybeDisposeEngine(entry.engine);
+    closeSession(message.dictationSessionId, entry);
   }
 }
 
 function handleCancel(message: CancelMessage): void {
-  const entry = active.get(message.dictationSessionId);
-  if (!entry) return;
-  entry.session.cancel();
-  entry.session.dispose();
-  active.delete(message.dictationSessionId);
-  maybeDisposeEngine(entry.engine);
+  // Main cancelling an already-expired session is the other way that id leaves
+  // `expired`, so the set cannot outlive the sessions it describes.
+  expired.delete(message.dictationSessionId);
+  cancelSession(message.dictationSessionId);
 }
 
 parentPort.on('message', (event: Electron.MessageEvent) => {
