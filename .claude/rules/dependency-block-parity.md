@@ -64,6 +64,24 @@ A bundled package's advisory is real. `electron-updater` is a devDependency and
 `src/main/updater.ts` value-imports it, so `builder-util-runtime`'s credential leak on redirect
 was live in a shipped binary while `--omit=dev` said nothing.
 
+### Deprecation warnings on install
+
+A clean `npm i` prints seven `npm warn deprecated` lines. Every one was traced on 2026-09-17,
+none is a direct dependency, and none clears by bumping the direct dependency that pulls it in,
+so there are no `overrides` for them: an override would swap a package that is never executed
+for a warning that is cosmetic.
+
+| Warning | Owner chain | Why it stays |
+|---|---|---|
+| `glob@7.2.3` (twice), `inflight@1.0.6` | `@electron/asar@3.4.1`, pinned exactly by `app-builder-lib`, and `rimraf@2.6.3`'s nested copy | `app-builder-lib` 26.16.1 still pins `@electron/asar 3.4.1`. |
+| `rimraf@2.6.3` | `temp@0.9.4` under `electron-winstaller@5.4.0`, a peer of `app-builder-lib` via `electron-builder-squirrel-windows` | squirrel 26.16.1 still pins winstaller 5.4.0, though 5.4.4 exists. |
+| `boolean@3.2.0` | `global-agent@3.0.0`, optional under `@electron/get@3.1.0`, under `app-builder-lib` | 26.16.1 still has `@electron/get ^3.0.0`. |
+| `lodash.isequal@4.5.0` | `electron-updater@6.8.9`, the latest release | Bundled into main by esbuild; no fixed release. |
+| `prebuild-install@7.1.3` | `better-sqlite3@12.11.1`, its only consumer | Only `better-sqlite3@13` clears it (a Node-API rewrite that also drops `bindings` and publishes its own prebuilds). That is a native-module major touching `scripts/rebuild-native.js`, `electron-builder.yml`'s `files:`, `allowScripts`, and the Electron 41 pin, so it is its own change, not a warning fix. |
+
+`electron-builder` 26.15.3 to 26.16.1 clears none of these, which is why it was not bumped
+alongside. Re-trace with `npm ls <package>` before assuming any row above still holds.
+
 ### `allowScripts` is live npm config. Do not delete it.
 
 npm 12 blocks a dependency's `install` / `postinstall` script unless `allowScripts` in
