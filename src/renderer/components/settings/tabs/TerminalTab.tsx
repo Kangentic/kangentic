@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import type { AppConfig, ThemeMode, TerminalColorOverrides } from '../../../../shared/types';
-import { DEFAULT_CONFIG, THEME_BACKGROUNDS, THEME_FOREGROUNDS } from '../../../../shared/types';
+import { DEFAULT_CONFIG, THEME_BACKGROUNDS, THEME_FOREGROUNDS, resolveTheme } from '../../../../shared/types';
 import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
+import { useConfigStore } from '../../../stores/config-store';
 import { SectionHeader, SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { ColorPickerPopover, PRESET_COLORS } from '../../backlog/manage-labels/ColorPickerPopover';
@@ -91,9 +92,10 @@ const TERMINAL_COLOR_FIELDS: { key: TerminalColorKey; label: string }[] = [
  * preferences, and shell in particular was never reliably project-scoped at
  * the PTY-spawn level (SessionManager caches a single configuredShell keyed
  * to whichever project is currently focused). `config` is still needed
- * read-only for `config.theme`, which drives the Colors section's
- * theme-match swatch - that must track whichever theme is actually resolved
- * (project override or global), not just the global default.
+ * read-only for the theme choice, which drives the Colors section's
+ * theme-match swatch - that must track whichever theme is actually painted
+ * (project override or global, and the OS side when following the system),
+ * not just the global default.
  */
 export function TerminalTab({ config, globalConfig, shells, fonts }: {
   config: AppConfig;
@@ -102,6 +104,11 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
   fonts: string[];
 }) {
   const updateGlobal = useScopedUpdate('global');
+  // The theme-match swatch offers the RESOLVED committed theme (config-store.ts's
+  // vocabulary: resolved is committed plus the OS side, shown adds a hover preview),
+  // which with "follow system appearance" on is the pair member for the OS's side.
+  const systemPrefersDark = useConfigStore((state) => state.systemPrefersDark);
+  const resolvedTheme = resolveTheme(config, systemPrefersDark);
   // `?? {}` mirrors the optional-chaining every other reader of this field uses
   // (resolveTerminalBackground, useTerminal): the indexed reads below would
   // throw on a config source that predates the field or shallow-merges the
@@ -182,7 +189,7 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
               label={label}
               value={terminalColors[key] || TERMINAL_DEFAULT_COLORS[key]}
               defaultColor={TERMINAL_DEFAULT_COLORS[key]}
-              themeMatchColor={getThemeMatchColor(key, config.theme)}
+              themeMatchColor={getThemeMatchColor(key, resolvedTheme)}
               onChange={(color) => updateGlobal({ terminal: { colors: { ...terminalColors, [key]: color } } })}
             />
           ))}

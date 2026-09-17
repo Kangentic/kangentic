@@ -243,14 +243,17 @@ test('theme=sand adds theme-sand to <html>; theme=night leaves no theme- class',
   expect(themeClasses).toEqual([]);
 });
 
-test('both Kangentic ids resolve, and the bare kangentic alias still lands on the light one', async ({ page }) => {
-  // The site embeds this frame by URL, so these three spellings are its contract. Nothing ties
-  // demo/boot.js's APP_THEMES to ThemeMode in src/shared/types.ts, which makes this the only
-  // mechanical guard that a theme added to the type is reachable from the web build at all.
+test('both product ids resolve, and every spelling the site may have written still lands', async ({ page }) => {
+  // The site embeds this frame by URL, so these spellings are its contract: the ids, the bare
+  // `kangentic` alias, and the pair's short-lived earlier ids. Nothing ties demo/boot.js's
+  // APP_THEMES to ThemeMode in src/shared/types.ts, which makes this the only mechanical guard
+  // that a theme added to the type is reachable from the web build at all.
   for (const [requested, expected] of [
-    ['kangentic-light', 'theme-kangentic-light'],
-    ['kangentic-dark', 'theme-kangentic-dark'],
-    ['kangentic', 'theme-kangentic-light'],
+    ['clay', 'theme-clay'],
+    ['rust', 'theme-rust'],
+    ['kangentic', 'theme-clay'],
+    ['kangentic-light', 'theme-clay'],
+    ['kangentic-dark', 'theme-rust'],
   ]) {
     await gotoScene(page, { view: 'board', theme: requested, embed: '1', still: '1' });
     const themeClasses = await page.evaluate(() =>

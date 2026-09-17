@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { AppConfig, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace } from '../../shared/types';
-import { DEFAULT_CONFIG } from '../../shared/types';
+import type { AppConfig, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
+import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
 import { parseModelId } from '../../shared/model-id';
@@ -31,6 +31,15 @@ if (import.meta.hot) {
     data.onboardingStepsCompleted = onboardingStepsCompletedHmr;
   });
 }
+
+/** The OS appearance query. In Electron `prefers-color-scheme` follows the OS because
+ *  `nativeTheme.themeSource` is `'system'`, so no IPC is needed; the UI tier's Chromium
+ *  answers it too (and Playwright can emulate either side). Null where `matchMedia`
+ *  does not exist (a unit test that imports the store under node). */
+// hmr-safe: a fresh query object on HMR is equivalent; the listener is re-attached below and removed on dispose
+const systemAppearance: MediaQueryList | null = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null;
 
 /** Throttle for the on-demand model rescan a Model dropdown fires when it opens
  *  (`rescanModels`). Models ship rarely and each forced rescan spawns a fresh
@@ -133,6 +142,16 @@ interface ConfigStore {
    *  returns to the same section instead of resetting to the first tab. */
   lastSettingsTab: string | null;
   setLastSettingsTab: (tabId: string) => void;
+  /** The theme the Theme tab is trying on while the pointer rests on a tile, or null.
+   *  Renderer-only and never persisted: the html class and the diff pane show it in
+   *  place of `config.theme` without writing anything, and the grid clears it when the
+   *  pointer leaves, on any commit, and on unmount. */
+  themePreview: ThemeMode | null;
+  setThemePreview: (theme: ThemeMode | null) => void;
+  /** The OS appearance, read off `prefers-color-scheme` and kept live by the media
+   *  query listener below. Only `resolveTheme` consults it, and only when
+   *  `config.themeFollowsSystem` is on. */
+  systemPrefersDark: boolean;
 
   // -- Onboarding checklist + walkthrough (ephemeral UI state, like settingsOpen) --
   /** Whether the checklist dialog is on screen. Distinct from `onboardedProjectIds`:
@@ -246,6 +265,9 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     return workspace;
   };
 
+  /** The tail of the project-override write chain; see `updateProjectOverride`. */
+  let projectOverrideWrites: Promise<void> = Promise.resolve();
+
   return {
     config: DEFAULT_CONFIG,
     globalConfig: DEFAULT_CONFIG,
@@ -257,6 +279,8 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     workspaceSeeded: false,
     settingsOpen: false,
     lastSettingsTab: lastSettingsTabHmr,
+    themePreview: null,
+    systemPrefersDark: systemAppearance?.matches ?? false,
     onboardingChecklistOpen: false,
     walkthroughStep: null,
     onboardingStepsCompleted: onboardingStepsCompletedHmr,
@@ -502,6 +526,10 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       set({ lastSettingsTab: tabId });
     },
 
+    setThemePreview: (theme) => {
+      if (get().themePreview !== theme) set({ themePreview: theme });
+    },
+
     // -- Project settings --
     openProjectSettings: (projectPath, projectName, initialTab) => {
       const currentPath = get().projectSettingsPath;
@@ -528,28 +556,76 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       }
     },
 
-    updateProjectOverride: async (partial) => {
-      const projectPath = get().projectSettingsPath;
-      if (!projectPath) return;
-      const current = get().projectOverrides || {};
-      const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
-      await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
-      const effective = deepMergeConfig(get().globalConfig, merged);
-      set({ projectOverrides: merged, config: effective });
+    updateProjectOverride: (partial) => {
+      // Each write merges over the PREVIOUS write's result, not over the snapshot
+      // both read at call time. The Theme tab commits on every arrow key and can
+      // fire a tile commit and the follow-system toggle inside one round trip;
+      // unchained, whichever landed last would carry only its own keys and
+      // silently drop the other's.
+      const write = async () => {
+        const projectPath = get().projectSettingsPath;
+        if (!projectPath) return;
+        const current = get().projectOverrides || {};
+        const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
+        await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
+        const effective = deepMergeConfig(get().globalConfig, merged);
+        set({ projectOverrides: merged, config: effective });
+      };
+      projectOverrideWrites = projectOverrideWrites.then(write, write);
+      return projectOverrideWrites;
     },
 
   };
 });
 
-// Sync resolved theme -> localStorage + <html> class whenever it changes.
-// Runs outside React render so the DOM is always in sync, including for
-// the FOUC-prevention script on next load.
+/** The committed theme as the app resolves it: the hand-picked one, or with
+ *  `themeFollowsSystem` on, the pair member for the OS's current side. */
+export function resolvedTheme(state: Pick<ConfigStore, 'config' | 'systemPrefersDark'>): ThemeMode {
+  return resolveTheme(state.config, state.systemPrefersDark);
+}
+
+/** The theme the app is painting right now: a hover preview from the Theme tab while
+ *  one is resting, otherwise the resolved committed theme. */
+export function shownTheme(state: Pick<ConfigStore, 'config' | 'themePreview' | 'systemPrefersDark'>): ThemeMode {
+  return state.themePreview ?? resolvedTheme(state);
+}
+
+// Keep the OS reading live. A theme following the system repaints through the
+// subscription below the moment the OS flips, with no restart and no config write.
+if (systemAppearance) {
+  const onAppearanceChange = (event: MediaQueryListEvent) => useConfigStore.setState({ systemPrefersDark: event.matches });
+  systemAppearance.addEventListener('change', onAppearanceChange);
+  // The callback body sits on its own line so the suppression covers only the
+  // `import.meta.hot` access, as the dispose block at the top of the file does.
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot?.dispose(() => {
+    systemAppearance.removeEventListener('change', onAppearanceChange);
+  });
+}
+
+// Sync the shown theme -> <html> class whenever it changes, and the RESOLVED committed
+// theme -> localStorage, which seeds the FOUC-prevention script on the next launch and
+// so must never see a preview. Runs outside React render so the DOM is always in sync.
 useConfigStore.subscribe((state, prevState) => {
-  if (state.config.theme !== prevState.config.theme) {
-    try { localStorage.setItem('kng-resolved-theme', state.config.theme); } catch { /* localStorage may be unavailable */ }
+  const resolved = resolvedTheme(state);
+  if (resolved !== resolvedTheme(prevState)) {
+    try { localStorage.setItem('kng-resolved-theme', resolved); } catch { /* localStorage may be unavailable */ }
+    // A commit from the Theme tab parks the preview ON the committed theme while the
+    // config write is in flight, so the app never drops back to the old theme for the
+    // round trip. Once the write lands the preview is redundant; retire it here, where
+    // the catch-up is visible, and nothing repaints because shown stays the same. A
+    // parked commit for the OTHER OS side never equals `resolved`, so it is the grid's
+    // own landing watch that ends that one (`commit` in ThemeTab.tsx).
+    if (state.themePreview === resolved) {
+      useConfigStore.setState({ themePreview: null });
+      return;
+    }
+  }
+  const shown = shownTheme(state);
+  if (shown !== shownTheme(prevState)) {
     const classList = document.documentElement.classList;
     classList.forEach(className => { if (className.startsWith('theme-')) classList.remove(className); });
-    if (state.config.theme !== 'dark') classList.add(`theme-${state.config.theme}`);
+    if (shown !== 'dark') classList.add(`theme-${shown}`);
   }
 });
 

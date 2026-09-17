@@ -30,6 +30,7 @@ vi.mock('../../src/main/config/paths', () => ({
 }));
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: vi.fn(() => '/mock/app') },
+  nativeTheme: { shouldUseDarkColors: true },
   screen: {
     getAllDisplays: vi.fn(),
     getDisplayMatching: vi.fn(),
@@ -37,8 +38,9 @@ vi.mock('electron', () => ({
 }));
 
 import fs from 'node:fs';
-import { screen } from 'electron';
-import { computeWindowTitle, resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
+import { nativeTheme, screen } from 'electron';
+import { THEME_BACKGROUNDS } from '../../src/shared/types';
+import { computeWindowTitle, resolveBackgroundColor, resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
 
 interface FakeDisplay {
   id: number;
@@ -282,6 +284,35 @@ describe('computeWindowTitle', () => {
     const resolvePreviewTaskTitle = vi.fn(() => null);
     computeWindowTitle('Kangentic (dev)', 'C:\\Users\\dev\\projects\\kangentic', resolvePreviewTaskTitle);
     expect(resolvePreviewTaskTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveBackgroundColor', () => {
+  // The launch background must resolve the theme the same way the renderer will paint it,
+  // or a follow-system install flashes the hand-picked theme's colour before first paint.
+  it('uses the hand-picked theme when not following the system', () => {
+    mockConfigFile({ theme: 'moon', themeFollowsSystem: false, themeLight: 'sky', themeDark: 'ember' });
+    nativeTheme.shouldUseDarkColors = true;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.moon);
+  });
+
+  it('uses the pair member for the OS side when following the system', () => {
+    mockConfigFile({ theme: 'moon', themeFollowsSystem: true, themeLight: 'sky', themeDark: 'ember' });
+    nativeTheme.shouldUseDarkColors = true;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.ember);
+    nativeTheme.shouldUseDarkColors = false;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.sky);
+  });
+
+  it('fills a config file that predates the pair from the defaults', () => {
+    mockConfigFile({ theme: 'forest' });
+    nativeTheme.shouldUseDarkColors = false;
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.forest);
+  });
+
+  it('falls back to the dark default when the file is unreadable', () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.dark);
   });
 });
 

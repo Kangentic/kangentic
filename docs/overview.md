@@ -84,7 +84,7 @@ A built-in search bar filters settings by keyword with multi-token matching, gro
 
 ### Multiple Themes
 
-Twelve built-in themes: Dark, Light, the product pair Kangentic Dark and Kangentic Light, then Moon, Forest, Ocean, Ember, Sand, Mint, Sky, and Peach.
+Twelve built-in themes, picked from a swatch grid that shows each one in its own colours: the neutral Graphite and Paper, the product pair Rust and Clay, then Moon, Forest, Ocean, Ember, Sand, Mint, Sky, and Peach. A switch keeps one for when the OS is light and another for when it is dark.
 
 ## How It Works
 

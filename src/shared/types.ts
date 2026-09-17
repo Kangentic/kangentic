@@ -2385,15 +2385,20 @@ export function resolvePermissionForAgent(agentList: AgentDetectionInfo[], agent
   return agentInfo.defaultPermission;
 }
 
+/**
+ * `dark` and `light` are the neutral defaults (labelled Graphite and Paper); their ids
+ * predate the names and live in every config file, so they stay. `rust` and `clay` are
+ * the product pair.
+ */
 export type ThemeMode = 'dark' | 'light'
-  | 'kangentic-light' | 'kangentic-dark'
+  | 'rust' | 'clay'
   | 'moon' | 'forest' | 'ocean' | 'ember'
   | 'sand' | 'mint' | 'sky' | 'peach';
 
 /** Background colors for BrowserWindow (prevents flash on launch). */
 export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
   dark: '#18181b', light: '#f5f5f4',
-  'kangentic-light': '#f6f1e8', 'kangentic-dark': '#2d2017',
+  rust: '#2d2017', clay: '#f6f1e8',
   moon: '#1a1d2e', forest: '#1a2318', ocean: '#0f1923', ember: '#1f1a17',
   sand: '#f5f0e8', mint: '#eef5f0', sky: '#edf3f8', peach: '#f8f0ec',
 };
@@ -2406,7 +2411,7 @@ export const THEME_BACKGROUNDS: Record<ThemeMode, string> = {
  *  before the terminal had its own fixed color scheme. */
 export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
   dark: '#e4e4e7', light: '#292524',
-  'kangentic-light': '#332e27', 'kangentic-dark': '#ded4c8',
+  rust: '#ded4c8', clay: '#332e27',
   moon: '#c6c8d0', forest: '#c6cac4', ocean: '#c0c6ce', ember: '#ccc8c4',
   sand: '#3d3228', mint: '#1e3028', sky: '#1a2a3a', peach: '#3a2520',
 };
@@ -2415,43 +2420,68 @@ export const THEME_FOREGROUNDS: Record<ThemeMode, string> = {
  * Whether each theme is light or dark underneath. `Record<ThemeMode, ...>`, so tsc
  * refuses a new theme that does not answer the question.
  *
- * This exists because the answer used to be read off NAMED_THEMES, which lists only
- * the NAMED themes: `dark` and `light` are hardcoded in the settings dropdown and are
- * not in it. `DiffViewer` resolved Monaco's theme with a `?? 'dark'` fallback for an
- * unlisted id, so the shipped Light theme rendered a BLACK diff pane inside an
- * otherwise light app, and any future theme would have inherited the same trap by
- * omission. A total record cannot be omitted from.
+ * This exists because the answer used to be read off NAMED_THEMES, which at the time
+ * listed only the NAMED themes: `dark` and `light` were hardcoded in the settings
+ * dropdown and not in it. `DiffViewer` resolved Monaco's theme with a `?? 'dark'`
+ * fallback for an unlisted id, so the shipped Light theme rendered a BLACK diff pane
+ * inside an otherwise light app, and any future theme would have inherited the same
+ * trap by omission. NAMED_THEMES is total now, but only a test holds it there; a
+ * total record cannot be omitted from, so this stays the light-or-dark source.
  */
 export const THEME_BASES: Record<ThemeMode, 'dark' | 'light'> = {
   dark: 'dark', light: 'light',
-  'kangentic-light': 'light', 'kangentic-dark': 'dark',
+  rust: 'dark', clay: 'light',
   moon: 'dark', forest: 'dark', ocean: 'dark', ember: 'dark',
   sand: 'light', mint: 'light', sky: 'light', peach: 'light',
 };
 
+/** The three keys the theme resolves from; a `Pick` so main can pass a parsed config file. */
+export type ThemeChoice = Pick<AppConfig, 'theme' | 'themeFollowsSystem' | 'themeLight' | 'themeDark'>;
+
 /**
- * UI metadata for the settings dropdown. The light-or-dark question is answered by
- * THEME_BASES above, not here, so a theme missing from this list costs it a dropdown
- * entry and nothing else.
+ * The theme the app paints, given the OS appearance. With `themeFollowsSystem` off it
+ * is the hand-picked `theme`; on, it is the pair member for the system's side. Shared
+ * by the renderer (the html class, the diff pane, the terminal's theme-match preset)
+ * and by main (the launch background), so the two cannot disagree on what "following
+ * the system" means. Guards against a pair member of the wrong base, which an edited
+ * config file can carry: a light theme in the dark slot falls back to the default pair.
+ */
+export function resolveTheme(choice: ThemeChoice, systemPrefersDark: boolean): ThemeMode {
+  if (!choice.themeFollowsSystem) return choice.theme;
+  if (systemPrefersDark) return THEME_BASES[choice.themeDark] === 'dark' ? choice.themeDark : 'dark';
+  return THEME_BASES[choice.themeLight] === 'light' ? choice.themeLight : 'light';
+}
+
+/**
+ * The Theme tab's picker list: one tile per theme, in the order the grid shows them.
+ * The light-or-dark question is answered by THEME_BASES above, not by position here;
+ * the grid groups by THEME_BASES and only keeps this order within each group. A theme
+ * missing from this list has no tile, so `theme-registry-parity.test.ts` requires the
+ * list to name every `ThemeMode` exactly once.
  *
- * `group` lifts a theme out of the by-base palette lists into its own optgroup. The
- * product theme gets one because every other group label answers "what are these?":
- * Standard is the two neutrals, Dark/Light Palette are variations picked for taste.
- * Folding Kangentic into Standard made that label describe nothing in particular, and
- * split the pair's identity across two entries that only a shared prefix tied together.
+ * Within a base the default comes first, then the product theme, then the palettes
+ * picked for taste. Every label is one word for what the swatch shows, like the
+ * eight palettes always were: the two defaults used to be "Dark" and "Light", which
+ * under a grid grouped by base said nothing twice, and the product pair used to be
+ * "Kangentic Dark" / "Kangentic Light", which inside Kangentic's own settings read as
+ * "Default". Those two were renamed id and all (`rust`, `clay`) before any release
+ * carried them; `dark` and `light` keep their ids because every config file has them.
  *
- * It ships as a light/dark PAIR rather than one theme because a lone "Kangentic" reads
- * as if it follows your light/dark preference. It does not, and a dark-mode user picking
- * the product's own theme would get a bright app.
+ * `group: 'kangentic'` marks the product pair, which the grid draws with the brand
+ * mark so the pair reads as the product's own without a group of its own or a shared
+ * name. It ships as a light/dark PAIR rather than one theme because a lone product
+ * theme reads as if it follows your light/dark preference. It does not, and a
+ * dark-mode user picking the product's own theme would get a bright app.
  */
 export const NAMED_THEMES: { id: ThemeMode; label: string; group?: 'kangentic' }[] = [
-  // Dark before light, matching the Standard group above it, so both read the same way down.
-  { id: 'kangentic-dark', label: 'Kangentic Dark', group: 'kangentic' },
-  { id: 'kangentic-light', label: 'Kangentic Light', group: 'kangentic' },
+  { id: 'dark', label: 'Graphite' },
+  { id: 'rust', label: 'Rust', group: 'kangentic' },
   { id: 'moon', label: 'Moon' },
   { id: 'forest', label: 'Forest' },
   { id: 'ocean', label: 'Ocean' },
   { id: 'ember', label: 'Ember' },
+  { id: 'light', label: 'Paper' },
+  { id: 'clay', label: 'Clay', group: 'kangentic' },
   { id: 'sand', label: 'Sand' },
   { id: 'mint', label: 'Mint' },
   { id: 'sky', label: 'Sky' },
@@ -2923,7 +2953,20 @@ export interface MonitorView {
 }
 
 export interface AppConfig {
+  /** The theme picked by hand. What the app paints when `themeFollowsSystem` is off. */
   theme: ThemeMode;
+  /**
+   * Follow the OS appearance: paint `themeDark` while the system is dark and
+   * `themeLight` while it is light, ignoring `theme`. Off by default. The three keys
+   * are project-scoped together with `theme` (the Theme tab), and the OS reading is
+   * never written to config: the renderer resolves it live (`resolveTheme`), and main
+   * resolves the launch background the same way from `nativeTheme`.
+   */
+  themeFollowsSystem: boolean;
+  /** The theme for a light system appearance when following. Must be a light base. */
+  themeLight: ThemeMode;
+  /** The theme for a dark system appearance when following. Must be a dark base. */
+  themeDark: ThemeMode;
   sidebarVisible: boolean;
   boardLayout: 'horizontal' | 'vertical';
   cardDensity: 'compact' | 'default' | 'comfortable';
@@ -3480,6 +3523,9 @@ export type SerializedTileNode =
 
 export const DEFAULT_CONFIG: AppConfig = {
   theme: 'dark',
+  themeFollowsSystem: false,
+  themeLight: 'light',
+  themeDark: 'dark',
   sidebarVisible: true,
   boardLayout: 'horizontal',
   cardDensity: 'default',

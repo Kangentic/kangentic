@@ -24,7 +24,11 @@
 
 /* ── Semantic Color Tokens ── */
 
-:root {
+/* `.theme-dark` is grouped in so the palette exists as a CLASS as well as the
+   default: the Theme tab's swatch tiles scope each tile to its own theme by
+   putting `theme-<id>` on the tile, and a Dark tile inside a light app has no
+   other way to paint dark. config-store still adds no <html> class for dark. */
+:root, .theme-dark {
   /* Surface (backgrounds) */
   --kng-surface: #18181b;          /* zinc-900 */
   --kng-surface-raised: #27272a;   /* zinc-800 */
@@ -191,11 +195,12 @@
   --kng-accent-on: #1f1a17;
 }
 
-/* ── Standard: the product theme (one light, one dark) ── */
+/* ── The product theme: Clay (light) and Rust (dark) ── */
 
 /* Kangentic's own theme, shipped as a light/dark pair so the marketing site can embed
    the web demo in either and stay branded. Values come from kangentic.com's tokens.css
-   rather than being matched by eye.
+   rather than being matched by eye. The Settings tiles label them Clay and Rust; the
+   ids match.
 
    Light: surface is the site's --panel (the tint its sections and board columns use),
    raised a warmed --cream, inset its --card, fg its --ink, accent its --rust /
@@ -226,7 +231,7 @@
 
    Colour only, both of them: the site's Bricolage Grotesque and Switzer do not come with
    the theme, and the terminal keeps its own colour scheme. */
-.theme-kangentic-light {
+.theme-clay {
   --kng-surface: #f6f1e8;
   --kng-surface-raised: #faf6ee;
   --kng-surface-hover: #eae2d2;
@@ -247,7 +252,7 @@
   --kng-accent-on: #ffffff;
 }
 
-.theme-kangentic-dark {
+.theme-rust {
   --kng-surface: #2d2017;
   --kng-surface-raised: #3a2b20;
   --kng-surface-hover: #4a382a;
@@ -356,7 +361,7 @@
 
 /* Light-base themes share the light-surface categorical steps. Validated
    2026-07-10 with the dataviz palette validator against every theme's raised
-   surface: all 10 pass. Kangentic Light joined on 2026-09-14 and was measured
+   surface: all 10 pass. Clay joined on 2026-09-14 and was measured
    rather than assumed: its warmed #faf6ee card is the DARKEST raised surface of
    the set, so every slot reads a little lower there than on any other light theme
    (4.10 / 2.61 / 2.01 / 4.59 / 7.94 / 3.67) - the family's spread is 0.13 at the
@@ -366,7 +371,7 @@
    light surfaces (inherent to the reference light set) and slot 4 is at
    2.87-2.96:1 on moon/forest. Do NOT brighten slot 4 to fix that - it
    collapses protan separation from slot 3 (measured dE 0.4). */
-.theme-light, .theme-kangentic-light, .theme-sand, .theme-mint, .theme-sky, .theme-peach {
+.theme-light, .theme-clay, .theme-sand, .theme-mint, .theme-sky, .theme-peach {
   --kng-chart-1: #2a78d6;
   --kng-chart-2: #1baf7a;
   --kng-chart-3: #eda100;
