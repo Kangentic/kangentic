@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  packageNameFor,
+  unscopedPackageName,
+} from '../../scripts/repair-lockfile-integrity.js';
 
 // package-lock.json is the only thing standing between `npm ci` and an unverified tarball.
 // An entry with no `integrity` hash installs whatever the registry hands back, with nothing
@@ -23,6 +27,7 @@ const REPAIR_COMMAND = 'node scripts/repair-lockfile-integrity.js';
 const REGISTRY_TARBALL_PREFIX = 'https://registry.npmjs.org/';
 
 interface LockfileEntry {
+  name?: string;
   version?: string;
   resolved?: string;
   integrity?: string;
@@ -67,6 +72,25 @@ function findMetadataOffenders(packages: Record<string, LockfileEntry>): string[
     // merge resolution, or a future regeneration bug could still land one.
     if (typeof entry.version === 'string' && !entry.resolved.endsWith(`-${entry.version}.tgz`)) {
       offenders.push(`${lockfileKey} (pins ${entry.version} but resolves to ${entry.resolved})`);
+    } else if (typeof entry.version === 'string') {
+      // The version suffix matches, so a version-only check like the one above is blind to
+      // a resolved URL naming a DIFFERENT PACKAGE at the SAME version number - e.g. a
+      // key-parsing slip pointing node_modules/semver at lodash-6.3.1.tgz. That is exactly
+      // the failure the repair script's resolveEntry asserts against at write time
+      // (`manifest.name !== packageName`, repair-lockfile-integrity.js), which is
+      // otherwise never re-checked once the entry is committed. Compare the tarball's
+      // basename to the package name derived from the lockfile key (mirroring
+      // packageNameFor/unscopedPackageName in the repair script) so an npm alias
+      // (`wrap-ansi-cjs` naming `wrap-ansi`), a scoped package, and a nested duplicate
+      // under a sub node_modules all resolve to their own tarball, not merely one whose
+      // version number happens to match.
+      const expectedTarballName = `${unscopedPackageName(packageNameFor(lockfileKey, entry))}-${entry.version}.tgz`;
+      const actualTarballName = entry.resolved.slice(entry.resolved.lastIndexOf('/') + 1);
+      if (actualTarballName !== expectedTarballName) {
+        offenders.push(
+          `${lockfileKey} (resolves to a different package: got "${actualTarballName}", expected "${expectedTarballName}")`,
+        );
+      }
     }
   }
   return offenders;
@@ -173,6 +197,56 @@ describe('package-lock.json supply-chain metadata', () => {
           version: '4.2.3',
           resolved: 'https://registry.npmjs.org/some-lib/-/some-lib-4.2.3.tgz',
           integrity: 'sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==',
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports an entry whose resolved URL names a different package at the SAME version', () => {
+    // The version-suffix check above is blind to this: lodash-6.3.1.tgz ends in
+    // "-6.3.1.tgz" just like semver-6.3.1.tgz does, so a key-parsing slip or a bad merge
+    // that points node_modules/semver at lodash's tarball (with a coincidentally matching
+    // version number) passes every check except this one. This is the exact identity
+    // resolveEntry asserts at write time in the repair script; nothing re-checked it once
+    // committed until this case.
+    const integrity =
+      'sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==';
+    expect(
+      findMetadataOffenders({
+        'node_modules/semver': {
+          version: '6.3.1',
+          resolved: 'https://registry.npmjs.org/lodash/-/lodash-6.3.1.tgz',
+          integrity,
+        },
+      }),
+    ).toEqual([
+      'node_modules/semver (resolves to a different package: got "lodash-6.3.1.tgz", expected "semver-6.3.1.tgz")',
+    ]);
+  });
+
+  it('does not false-positive the name check on a scoped package, an npm alias, or a nested duplicate', () => {
+    const integrity =
+      'sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==';
+    expect(
+      findMetadataOffenders({
+        // Scoped: the tarball basename drops the scope.
+        'node_modules/@babel/core': {
+          version: '7.29.0',
+          resolved: 'https://registry.npmjs.org/@babel/core/-/core-7.29.0.tgz',
+          integrity,
+        },
+        // npm alias: entry.name ("wrap-ansi") wins over the lockfile key ("wrap-ansi-cjs").
+        'node_modules/wrap-ansi-cjs': {
+          name: 'wrap-ansi',
+          version: '7.0.0',
+          resolved: 'https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz',
+          integrity,
+        },
+        // Nested duplicate: the package name is everything after the LAST node_modules/.
+        'node_modules/@babel/core/node_modules/semver': {
+          version: '6.3.1',
+          resolved: 'https://registry.npmjs.org/semver/-/semver-6.3.1.tgz',
+          integrity,
         },
       }),
     ).toEqual([]);
