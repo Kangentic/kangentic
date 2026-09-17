@@ -8,7 +8,7 @@ import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { SETTING_DESCRIPTION_CLASS, SETTING_LABEL_CLASS } from '../../SettingText';
 import { ToggleSwitch } from '../../settings/shared';
-import { automationIcon } from './automation-icons';
+import { AutomationIcon } from './automation-icons';
 import { SectionCard, GroupHeading, DisabledSectionNotice } from './form-layout';
 import {
   TRIGGERS,
@@ -318,7 +318,6 @@ function AutomationRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: draft.id });
   const runnable = canRunRow(draft, column);
   const entry = AUTOMATION_MANIFEST[draft.type];
-  const RowIcon = automationIcon(entry.icon);
   const legacy = entry.status === 'legacy';
   const lastRun = lastRunLabel?.(draft.id) ?? null;
 
@@ -435,7 +434,7 @@ function AutomationRow({
       </span>
 
       <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-fg-faint">{index + 1}</span>
-      <RowIcon size={13} className="shrink-0 text-fg-muted" />
+      <AutomationIcon name={entry.icon} size={13} className="shrink-0 text-fg-muted" />
 
       {/* The SHARED label/description pair, not a bespoke one. A row is a
           setting's title over its supporting line, exactly like the ToggleCards

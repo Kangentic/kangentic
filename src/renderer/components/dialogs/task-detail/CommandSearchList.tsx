@@ -54,11 +54,6 @@ export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListP
     );
   }, [commands, searchFilter]);
 
-  // Reset selection when the filter changes.
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [searchFilter]);
-
   // Keep the selected item in view.
   useEffect(() => {
     if (!listRef.current) return;
@@ -92,7 +87,12 @@ export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListP
           type="text"
           placeholder="Search commands & skills..."
           value={searchFilter}
-          onChange={(event) => setSearchFilter(event.target.value)}
+          onChange={(event) => {
+            setSearchFilter(event.target.value);
+            // Reset the selection with the filter: the only place the filter
+            // changes, so no effect has to sync the two.
+            setSelectedIndex(0);
+          }}
           className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-faint outline-none"
           data-testid="command-search-input"
         />

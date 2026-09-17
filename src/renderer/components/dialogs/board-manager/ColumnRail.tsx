@@ -16,7 +16,7 @@ import {
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ICON_REGISTRY, ROLE_DEFAULTS } from '../../../utils/swimlane-icons';
+import { RegistryIcon, getSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import type { SwimlaneRole } from '../../../../shared/types';
 
@@ -97,7 +97,7 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
     transition,
     opacity: isDragging ? 0.5 : 1,
   };
-  const Icon = row.icon ? ICON_REGISTRY.get(row.icon) : (row.role ? ROLE_DEFAULTS[row.role] : null);
+  const iconName = getSwimlaneIconName(row);
 
   // Single-line row of uniform height: variable-height rows break @dnd-kit's
   // verticalListSortingStrategy (drag displacement looks amplified/jumpy). At-a-
@@ -138,8 +138,8 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
             : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
         }`}
       >
-        {Icon ? (
-          <Icon size={14} strokeWidth={1.75} style={{ color: row.color }} className="flex-shrink-0" />
+        {iconName ? (
+          <RegistryIcon name={iconName} size={14} strokeWidth={1.75} style={{ color: row.color }} className="flex-shrink-0" />
         ) : (
           <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
         )}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, type RefObject } from 'react';
+import { useState, useCallback, useRef, type RefObject } from 'react';
 import { useSessionStore } from '../stores/session-store';
 import { startPanelDrag } from './panel-drag';
 
@@ -35,23 +35,26 @@ export function useTaskSplitResize(
   const storedRatio = useSessionStore((state) => state.dividerRatio[taskId] ?? DEFAULT_SPLIT_RATIO);
   const setDividerRatio = useSessionStore((state) => state.setDividerRatio);
 
-  const [ratio, setRatio] = useState(storedRatio);
+  // The live ratio while a drag is in flight; the stored ratio otherwise, so an
+  // external change (switching to a different task, or the value being
+  // cleared) shows at once and never mid-drag. Derived rather than resynced
+  // from the store in an effect, the cascading-render shape React's compiler
+  // rules forbid. The ref carries the latest value for the release handler.
+  const [liveRatio, setLiveRatio] = useState(storedRatio);
   const [isResizing, setIsResizing] = useState(false);
   const latestRatioRef = useRef(storedRatio);
-
-  // Resync local state when the stored ratio changes externally (switching to a
-  // different task, or the value being cleared), but never mid-drag.
-  useEffect(() => {
-    if (isResizing) return;
-    setRatio(storedRatio);
-    latestRatioRef.current = storedRatio;
-  }, [storedRatio, isResizing]);
+  const ratio = isResizing ? liveRatio : storedRatio;
 
   const onResizeStart = useCallback((event: React.MouseEvent) => {
     const container = containerRef.current;
     if (!container) return;
 
     setIsResizing(true);
+    // Start the live ratio where the divider already is, so the first frame of
+    // the drag (before any mousemove) does not jump.
+    const startRatio = useSessionStore.getState().dividerRatio[taskId] ?? DEFAULT_SPLIT_RATIO;
+    setLiveRatio(startRatio);
+    latestRatioRef.current = startRatio;
 
     startPanelDrag(event, {
       cursor: 'col-resize',
@@ -59,7 +62,7 @@ export function useTaskSplitResize(
         const rect = container.getBoundingClientRect();
         if (rect.width === 0) return;
         const nextRatio = clampRatio((moveEvent.clientX - rect.left) / rect.width);
-        setRatio(nextRatio);
+        setLiveRatio(nextRatio);
         latestRatioRef.current = nextRatio;
       },
       onRelease: () => {

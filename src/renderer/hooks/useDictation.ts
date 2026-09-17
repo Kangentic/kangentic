@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useConfigStore } from '../stores/config-store';
 import { useDictationStore } from '../stores/dictation-store';
 import { useKeybinding } from './useKeybinding';
@@ -161,8 +161,12 @@ export function useDictation(): void {
    *  stamped when the browser created the event, so it measures the finger. */
   const pressedAtRef = useRef<number | null>(null);
   // Latest config read by the press/release handlers without re-arming them.
+  // Written on commit (a layout effect), never during render, which the
+  // compiler rules forbid.
   const optionsRef = useRef({ engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience });
-  optionsRef.current = { engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience };
+  useLayoutEffect(() => {
+    optionsRef.current = { engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience };
+  });
 
   /** Drop this utterance's transient handles. Called on every path that ends a
    *  dictation - commit, cancel, release, an abandoned start, and unmount - so

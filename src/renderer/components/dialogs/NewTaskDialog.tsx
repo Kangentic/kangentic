@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -156,8 +156,12 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   // unmount-only cleanup revokes the CURRENT set: a [] dep captures the
   // mount-time (empty) array and leaks later previews, while an `attachments`
   // dep would revoke URLs still on screen on every add/remove.
+  // Written on commit (a layout effect), never during render, which the
+  // compiler rules forbid.
   const attachmentsRef = useRef(attachments);
-  attachmentsRef.current = attachments;
+  useLayoutEffect(() => {
+    attachmentsRef.current = attachments;
+  });
   useEffect(() => {
     return () => {
       attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl));

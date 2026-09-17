@@ -121,6 +121,17 @@ function clampGroupDelta(
   return { dx: clamp(deltaX, minDx, maxDx), dy: clamp(deltaY, minDy, maxDy) };
 }
 
+/**
+ * Apply one transform to every frame of a docked group (the empty string clears
+ * it). A module-level helper rather than an inline loop: the frames live inside
+ * the drag session, which is held in a ref, and React's compiler rules treat
+ * everything reached through a ref as unmodifiable, DOM nodes included. A call
+ * into a plain function is how a mutation of them is expressed.
+ */
+function setGroupTransform(frames: readonly HTMLElement[], transform: string): void {
+  for (const element of frames) element.style.transform = transform;
+}
+
 /** Hard-clamp a proposed top-left so the whole frame stays inside the overlay
  *  (used on release; the drag itself is unclamped). */
 function clampToOverlay(left: number, top: number, drag: DragSession): { left: number; top: number } {
@@ -238,7 +249,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       if (frame.hasPointerCapture(drag.pointerId)) frame.releasePointerCapture(drag.pointerId);
       frame.style.transform = '';
     }
-    for (const element of drag.groupMove?.frames ?? []) element.style.transform = '';
+    if (drag.groupMove) setGroupTransform(drag.groupMove.frames, '');
     return true;
   }, [frameRef, snap]);
 
@@ -465,8 +476,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     // footprint stays on-screen). No snap/dock - the group just repositions.
     if (drag.groupMove) {
       const moved = clampGroupDelta(drag.groupMove.startRect, deltaX, deltaY, drag.overlay);
-      const groupTransform = `translate3d(${moved.dx}px, ${moved.dy}px, 0)`;
-      for (const element of drag.groupMove.frames) element.style.transform = groupTransform;
+      setGroupTransform(drag.groupMove.frames, `translate3d(${moved.dx}px, ${moved.dy}px, 0)`);
       return;
     }
 

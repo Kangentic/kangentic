@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
@@ -122,7 +122,6 @@ export function DiffViewer({
 
   // Blame gutter: off by default, toggled per file (reset below on file switch).
   const [blameOn, setBlameOn] = useState(false);
-  const [blame, setBlame] = useState<GitBlameLine[] | null>(null);
   const blameDecorationsRef = useRef<MonacoEditorNamespace.IEditorDecorationsCollection | null>(null);
   const blameUnavailable = binary || status === 'D' || !blameEligible;
 
@@ -130,43 +129,45 @@ export function DiffViewer({
   // each file opens on its diff - like changeIndexRef / pendingRevealRef,
   // which also reset per file. DiffViewer is never re-keyed per file (Monaco
   // stays mounted), so the reset is manual. Adjust state during render
-  // (React's supported reset-on-prop-change pattern) rather than in an
-  // effect, so switching files never paints a frame of the previous file's
-  // preview or blame.
-  const previousFilePathRef = useRef(filePath);
-  if (previousFilePathRef.current !== filePath) {
-    previousFilePathRef.current = filePath;
+  // (React's supported reset-on-prop-change pattern, with the previous path
+  // held in state rather than a ref, which render may not read) rather than
+  // in an effect, so switching files never paints a frame of the previous
+  // file's preview or blame.
+  const [previousFilePath, setPreviousFilePath] = useState(filePath);
+  if (previousFilePath !== filePath) {
+    setPreviousFilePath(filePath);
     setShowMarkdownPreview(false);
     setBlameOn(false);
   }
 
-  // Fetch blame when toggled on. `cancelled` guards against a slow fetch
-  // landing after the user switched files or toggled blame off; the effect
-  // re-runs (cancelling the previous request) on any of those changes.
+  // Turn blame back off when it becomes unavailable (a binary/deleted file, or
+  // browsing a historical commit), so re-entering an eligible file or scope
+  // starts from the "off by default" state rather than a stale "on". The same
+  // render-time adjustment as the file-change reset above.
+  if (blameUnavailable && blameOn) setBlameOn(false);
+
+  // Fetch blame when toggled on. The result is stored with the key it was
+  // fetched for and `blame` is derived from it, so a switch of file or scope,
+  // or toggling blame off, reads as "no blame" at once without an effect
+  // having to clear anything; `cancelled` still stops a slow fetch from
+  // landing after the effect has re-run for a newer key.
+  const blameKey = JSON.stringify([worktreePath, projectPath, filePath]);
+  const [fetchedBlame, setFetchedBlame] = useState<{ key: string; lines: GitBlameLine[] } | null>(null);
+  const blame = blameOn && !blameUnavailable && fetchedBlame?.key === blameKey ? fetchedBlame.lines : null;
   useEffect(() => {
-    if (!blameOn || blameUnavailable) {
-      setBlame(null);
-      return;
-    }
+    if (!blameOn || blameUnavailable) return;
     let cancelled = false;
     window.electronAPI.git.blame({ worktreePath, projectPath, filePath })
       .then((result) => {
-        if (!cancelled) setBlame(result.lines);
+        if (!cancelled) setFetchedBlame({ key: blameKey, lines: result.lines });
       })
       .catch(() => {
-        if (!cancelled) setBlame([]);
+        if (!cancelled) setFetchedBlame({ key: blameKey, lines: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [blameOn, blameUnavailable, worktreePath, projectPath, filePath]);
-
-  // Turn blame back off when it becomes unavailable (a binary/deleted file, or
-  // browsing a historical commit), so re-entering an eligible file or scope
-  // starts from the "off by default" state rather than a stale "on".
-  useEffect(() => {
-    if (blameUnavailable) setBlameOn(false);
-  }, [blameUnavailable]);
+  }, [blameOn, blameUnavailable, worktreePath, projectPath, filePath, blameKey]);
 
   // Diff-rendering preferences are single global config keys (the View options
   // menu and the Changes settings tab read and write the same keys), so the
@@ -198,23 +199,33 @@ export function DiffViewer({
   };
 
   const collapseUnchangedRef = useRef(collapseUnchanged);
-  collapseUnchangedRef.current = collapseUnchanged;
 
   // Mirror nav props into refs so the stable navigateChange callback and the
   // once-subscribed onDidUpdateDiff listener always read the latest values.
   const onCrossFileRef = useRef(onCrossFile);
-  onCrossFileRef.current = onCrossFile;
   const pendingChangeFocusRef = useRef(pendingChangeFocus);
-  pendingChangeFocusRef.current = pendingChangeFocus;
   const onPendingChangeFocusConsumedRef = useRef(onPendingChangeFocusConsumed);
-  onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
+  // Written on commit, in a layout effect, never during render (which the
+  // compiler rules forbid). The ordering the listeners need still holds: every
+  // layout effect of a commit runs before any passive effect of it, and
+  // @monaco-editor/react flushes new model content (firing onDidUpdateDiff and
+  // scroll events synchronously) from a passive effect, so these are current
+  // by the time that flush happens.
+  useLayoutEffect(() => {
+    collapseUnchangedRef.current = collapseUnchanged;
+    onCrossFileRef.current = onCrossFile;
+    pendingChangeFocusRef.current = pendingChangeFocus;
+    onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
+  });
 
-  // Mirror blame state into refs so the once-subscribed onDidUpdateDiff
-  // listener (below) always reads the latest values.
+  // Mirror the derived blame (null whenever the toggle is off or blame is
+  // unavailable) into a ref so the once-subscribed onDidUpdateDiff listener
+  // (below) always reads the latest value. Written on commit, in a layout
+  // effect that runs ahead of the passive effect below; never during render.
   const blameRef = useRef(blame);
-  blameRef.current = blame;
-  const blameOnRef = useRef(blameOn);
-  blameOnRef.current = blameOn;
+  useLayoutEffect(() => {
+    blameRef.current = blame;
+  });
 
   // Apply (or clear) the blame gutter as `before`-content decorations on the
   // modified editor: a fixed-width column at the start of each line reading
@@ -226,7 +237,7 @@ export function DiffViewer({
     const monacoInstance = monacoRef.current;
     if (diffEditor === null || monacoInstance === null) return;
     const modifiedEditor = diffEditor.getModifiedEditor();
-    const blameLines = blameOnRef.current ? blameRef.current : null;
+    const blameLines = blameRef.current;
     if (!blameLines) {
       blameDecorationsRef.current?.clear();
       return;
@@ -261,7 +272,7 @@ export function DiffViewer({
 
   useEffect(() => {
     applyBlameDecorations();
-  }, [blame, blameOn, applyBlameDecorations]);
+  }, [blame, applyBlameDecorations]);
 
   // Apply (or clear) the unchanged-region fold on the live editor. Monaco folds
   // only on a false->true transition of hideUnchangedRegions, so a diff that
@@ -356,14 +367,19 @@ export function DiffViewer({
     return true;
   }, [revealChangeLine]);
 
-  // Refs assigned during render so the once-subscribed Monaco event handlers
-  // always read the current file's values, even for scroll events the child
-  // DiffEditor fires synchronously while flushing new model content.
+  // Refs the once-subscribed Monaco event handlers read for the current file's
+  // values, even for scroll events the child DiffEditor fires synchronously
+  // while flushing new model content. Written in a layout effect, which runs
+  // before that flush (a passive effect in @monaco-editor/react) on every
+  // commit; see the nav refs above.
   const scrollMemoryKey = makeDiffScrollKey(scrollKey, filePath);
   const scrollMemoryKeyRef = useRef(scrollMemoryKey);
-  scrollMemoryKeyRef.current = scrollMemoryKey;
-  const contentMatchesRef = useRef(false);
-  contentMatchesRef.current = contentFilePath !== null && contentFilePath === filePath && !binary;
+  const contentMatches = contentFilePath !== null && contentFilePath === filePath && !binary;
+  const contentMatchesRef = useRef(contentMatches);
+  useLayoutEffect(() => {
+    scrollMemoryKeyRef.current = scrollMemoryKey;
+    contentMatchesRef.current = contentMatches;
+  });
 
   const lastScrollRef = useRef<TrackedScroll | null>(null);
   // Memory key still awaiting its initial positioning; null once consumed.

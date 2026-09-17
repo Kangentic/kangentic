@@ -34,7 +34,12 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
 
   const [summaries, setSummaries] = useState<Record<string, SessionSummary>>({});
-  const [loadingFullArchive, setLoadingFullArchive] = useState(false);
+  // "Still loading" is derived from the store's own loaded flag, with a failed
+  // load for this project recorded so its spinner still stops; no effect sets
+  // a loading flag, which the compiler rules forbid.
+  const archivedFullyLoaded = useBoardStore((state) => state.archivedFullyLoaded);
+  const [archiveLoadFailedFor, setArchiveLoadFailedFor] = useState<string | null>(null);
+  const loadingFullArchive = !archivedFullyLoaded && archiveLoadFailedFor !== currentProjectId;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [restorePopoverId, setRestorePopoverId] = useState<string | null>(null);
@@ -58,10 +63,9 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   useEffect(() => {
     if (useBoardStore.getState().archivedFullyLoaded) return;
     let cancelled = false;
-    setLoadingFullArchive(true);
     useBoardStore.getState().loadArchivedTasks()
-      .catch(() => { /* keep the preview rows already on screen */ })
-      .finally(() => { if (!cancelled) setLoadingFullArchive(false); });
+      // Keep the preview rows already on screen; just stop the spinner.
+      .catch(() => { if (!cancelled) setArchiveLoadFailedFor(currentProjectId); });
     return () => { cancelled = true; };
   }, [currentProjectId]);
 

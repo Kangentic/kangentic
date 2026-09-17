@@ -111,8 +111,10 @@ function WindowManagerSurface({
   backdrop,
 }: Pick<WindowManagerLayerProps, 'portalHostId' | 'overlayTestId' | 'overlayClassName' | 'bridges' | 'backdrop'>) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const hostRef = useRef<HTMLElement | null>(null);
-  if (!hostRef.current) hostRef.current = getPortalHost(portalHostId);
+  // The portal host, resolved once per mount by a lazy initializer. State, not
+  // a lazily filled ref: render reads it (for `createPortal`), which React's
+  // compiler rules forbid for a ref.
+  const [portalHost] = useState(() => getPortalHost(portalHostId));
 
   const { manager } = useWindowManager();
   const layerStore = manager.store;
@@ -223,7 +225,7 @@ function WindowManagerSurface({
         <SnapPreview />
       </div>
     </>,
-    hostRef.current,
+    portalHost,
   );
 }
 

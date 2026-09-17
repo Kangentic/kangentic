@@ -244,20 +244,21 @@ export function TaskDetailHeader({
   // running) means history is already known synchronously; otherwise a
   // session may still exist from a prior run, so check once per task.
   const liveSessionId = useSessionStore((state) => state._sessionByTaskId.get(task.id)?.id ?? null);
-  const [historicalConversationAvailable, setHistoricalConversationAvailable] = useState(false);
+  // The answer is stored with the key it was checked for and derived from it,
+  // so a change of task or host reads as "unknown" (false) at once, with no
+  // effect having to clear the previous answer first.
+  const historyKey = JSON.stringify([task.id, hostProjectId || null]);
+  const [historicalConversation, setHistoricalConversation] = useState<{ key: string; available: boolean } | null>(null);
+  const historicalConversationAvailable = historicalConversation?.key === historyKey && historicalConversation.available;
   useEffect(() => {
-    if (liveSessionId) {
-      setHistoricalConversationAvailable(false);
-      return;
-    }
+    if (liveSessionId) return;
     let cancelled = false;
-    setHistoricalConversationAvailable(false);
     window.electronAPI.transcripts
       .listSessions(task.id, hostProjectId || null)
-      .then((list) => { if (!cancelled) setHistoricalConversationAvailable(list.length > 0); })
-      .catch(() => { if (!cancelled) setHistoricalConversationAvailable(false); });
+      .then((list) => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: list.length > 0 }); })
+      .catch(() => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: false }); });
     return () => { cancelled = true; };
-  }, [task.id, liveSessionId, hostProjectId]);
+  }, [task.id, liveSessionId, hostProjectId, historyKey]);
   const conversationAvailable = Boolean(liveSessionId) || historicalConversationAvailable;
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only

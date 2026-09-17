@@ -45,14 +45,44 @@ import { ICON_REGISTRY } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
-import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useLayerStore } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
-import type { AgentCommand } from '../../../shared/types';
+import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
+
+/** What a window attaches to at mount; see `resolveMountAttach`. */
+type MountAttach =
+  | { kind: 'reattach'; sessionId: string }
+  | { kind: 'adopt'; sessionId: string; session: Session }
+  | null;
+
+/**
+ * Decide, from the store as it stands at the first render, whether the slot's
+ * window reattaches to its own live PTY, adopts a reload survivor, or spawns.
+ *
+ * A stale map entry (the session died while the layer was hidden and the exit
+ * is not yet applied) is not a reattach: it falls through to the adopt check
+ * and then to a spawn, with the launch shimmer. Being adoptable is a strictly
+ * stronger condition than "this is an HMR remount": it means main is running a
+ * live PTY for this exact slot, which is reason enough to attach shimmer-free
+ * however the renderer got here, including a cold page reload, where the map
+ * is gone and the HMR flag reads false.
+ */
+function resolveMountAttach(slot: string): MountAttach {
+  const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+  if (!currentProjectId) return null;
+  const state = useSessionStore.getState();
+  const existing = state.transientSessions[transientKey(currentProjectId, slot)];
+  if (existing && state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running')) {
+    return { kind: 'reattach', sessionId: existing.sessionId };
+  }
+  const adoptable = findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot);
+  if (adoptable) return { kind: 'adopt', sessionId: adoptable.id, session: adoptable };
+  return null;
+}
 
 /**
  * The Stop button glyph, carrying the same activity ring the task-detail header folds into its
@@ -120,7 +150,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const isTiled = layerStore((state) => state.windows[windowId]?.leafId != null);
   const { hideLayer } = useCommandTerminalLayer();
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  // What this window attaches to at mount, decided ONCE, before the first
+  // paint, so the mount effect below only performs side effects and the two
+  // states seeded from it never need a synchronous set inside that effect.
+  // `reattach`: the slot's map entry names a live PTY (the layer was hidden
+  // and reopened, or an HMR remount). `adopt`: no map entry, but main still
+  // runs a PTY stamped with this slot (a renderer reload destroys the map while
+  // every transient PTY survives; `syncSessions` normally re-pairs first, so
+  // this covers a window that mounts ahead of it - strip it and
+  // `command-terminal.spec.ts`'s "adopts the live PTY for its slot" test spawns
+  // a second PTY and strands the first). `null`: spawn.
+  const [mountAttach] = useState<MountAttach>(() => resolveMountAttach(slot));
+  const [sessionId, setSessionId] = useState<string | null>(mountAttach?.sessionId ?? null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // Stop is async (kill IPC, then close). Without a pending state the button looks
   // inert for the duration, which is exactly how a DROPPED click presented, so the
@@ -222,13 +263,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // that entry on reattach and on every watcher fire. A per-window copy would
   // be a second, stale answer to a per-project question. The ref bridges the
   // one gap: a picker switch scrubs the entry before the respawn writes the new
-  // one, and the pill should not flash the default branch in between.
+  // one, and the pill should not flash the default branch in between. It is
+  // state set during render (React's "information from previous renders"
+  // pattern) rather than a ref, which render may neither read nor write.
   const mapBranch = useSessionStore((state) =>
     projectId ? state.transientSessions[transientKey(projectId, slot)]?.branch ?? null : null,
   );
-  const lastKnownBranchRef = useRef<string | null>(null);
-  if (mapBranch) lastKnownBranchRef.current = mapBranch;
-  const branch = mapBranch ?? lastKnownBranchRef.current;
+  const [lastKnownBranch, setLastKnownBranch] = useState<string | null>(null);
+  if (mapBranch && mapBranch !== lastKnownBranch) setLastKnownBranch(mapBranch);
+  const branch = mapBranch ?? lastKnownBranch;
 
   // Spawn this slot's transient session on mount, or reattach to an existing one
   // (the PTY survives a layer hide, so reopening reattaches instead of
@@ -244,34 +287,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       return;
     }
 
-    const existing = state.transientSessions[transientKey(currentProjectId, slot)];
-    if (existing) {
-      // Reattach only if the PTY is still alive; a stale map entry (session died
-      // while stashed) falls through to a fresh spawn.
-      const alive = state.sessions.find((session) => session.id === existing.sessionId && session.status === 'running');
-      if (alive) {
-        // Reattach only. No fetch, no checkout: the PTY may be running an agent,
-        // and moving HEAD under it is the class of thing #558 refused. The branch
-        // pill is corrected from live HEAD by the layer's tracker instead.
-        setSessionId(existing.sessionId);
-        setTerminalReady(true);
-        return;
-      }
-    }
+    // Reattach only. No fetch, no checkout: the PTY may be running an agent,
+    // and moving HEAD under it is the class of thing #558 refused. The branch
+    // pill is corrected from live HEAD by the layer's tracker instead. The
+    // session id was seeded from `mountAttach` at the first render.
+    if (mountAttach?.kind === 'reattach') return;
 
-    // No map entry, but main may still be running a PTY stamped with this slot: a
-    // renderer reload destroys the map while every transient PTY survives.
-    // Spawning here would manufacture a duplicate AND leave that survivor
-    // unreachable, which is the bug this guard closes. `syncSessions` normally
-    // re-pairs first, so this covers a window that mounts ahead of it - not a
-    // theoretical case: strip this branch and
-    // `command-terminal.spec.ts`'s "adopts the live PTY for its slot" test spawns
-    // a second PTY and strands the first.
-    const adoptable = findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot);
-    if (adoptable) {
-      state.adoptTransientSession(currentProjectId, slot, adoptable);
-      setSessionId(adoptable.id);
-      setTerminalReady(true);
+    if (mountAttach?.kind === 'adopt') {
+      state.adoptTransientSession(currentProjectId, slot, mountAttach.session);
       return;
     }
 
@@ -298,47 +321,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const hasFirstOutput = useSessionStore((state) => (sessionId ? !!state.sessionFirstOutput[sessionId] : false));
   const hasUsage = useSessionStore((state) => (sessionId ? !!state.sessionUsage[sessionId] : false));
   const hasSessionStarted = hasFirstOutput || hasUsage;
-  // On an HMR remount, skip the shimmer when reattaching to a live transient
-  // session (otherwise useState(false) would flash the launch overlay).
-  const [terminalReady, setTerminalReady] = useState(() => {
-    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
-    if (!currentProjectId) return false;
-    const state = useSessionStore.getState();
-    // An adoptable survivor attaches without spawning, so it must skip the
-    // shimmer - otherwise a reload-recovered terminal flashes the launch overlay
-    // over a conversation that is already running.
-    //
-    // Checked BEFORE the HMR gate below, not after, because a genuine page reload
-    // is the case it exists for and `getIsHmrReload()` is FALSE there: the flag is
-    // "false on cold start, true after any HMR cycle" (utils/hmr-flag.ts), and a
-    // full reload is a cold start. Behind the gate this branch could only ever run
-    // under Fast Refresh, which is the one path that does not need it - the map
-    // survives HMR via import.meta.hot.data, so the entry check below already
-    // covers it. Being adoptable is a strictly stronger condition than "this is
-    // HMR" anyway: it means main is running a live PTY for this exact slot, which
-    // is reason enough to skip the launch overlay however the renderer got here.
-    if (findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot)) return true;
-    if (!getIsHmrReload()) return false;
-    // Reattach shimmer-free only if the slot's session is still alive; a stale
-    // entry (session died while the layer was hidden, exit event not yet applied)
-    // must fall through to the spawn path WITH the shimmer, mirroring the mount
-    // effect's alive check below.
-    const existing = state.transientSessions[transientKey(currentProjectId, slot)];
-    if (existing) {
-      return state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running');
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    if (hasSessionStarted && !terminalReady) setTerminalReady(true);
-  }, [hasSessionStarted, terminalReady]);
+  // The launch shimmer lifts when the session has started, or when something
+  // else says the terminal is ready: an exit before any usage arrives, or a
+  // mount that attached to a PTY already running (a reattach after the layer
+  // was hidden, an HMR remount, or an adopted reload survivor), which must not
+  // flash the launch overlay over a conversation that is already running.
+  // Derived, not synced: `terminalReady` used to be state that an effect set
+  // from `hasSessionStarted`, which is the cascading-render shape React's
+  // compiler rules forbid. The latch holds the two non-derivable answers.
+  const [readyLatch, setReadyLatch] = useState(() => mountAttach !== null);
+  const terminalReady = readyLatch || hasSessionStarted;
 
   // Lift the shimmer if the session exits before usage arrives.
   useEffect(() => {
     if (!sessionId || terminalReady) return;
     const cleanup = window.electronAPI.sessions.onExit((exitSessionId) => {
-      if (exitSessionId === sessionId) setTerminalReady(true);
+      if (exitSessionId === sessionId) setReadyLatch(true);
     });
     return cleanup;
   }, [sessionId, terminalReady]);
@@ -387,7 +385,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         });
       }
       setSessionId(null);
-      setTerminalReady(false);
+      setReadyLatch(false);
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
       setSessionId(result.session.id);
       if (result.checkoutError) {
