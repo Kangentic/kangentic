@@ -13,8 +13,10 @@
  *    configured 14 px, because the held grid is wider than the pane's natural fit.
  * 2. A probe main accepts releases the hold: once the mock stops holding, a refit sends the
  *    natural grid, main takes it, and the terminal goes back to its own fit at 14 px.
- * 3. A held grid far smaller than the pane is capped at 1.5 times the configured font.
+ * 3. A held grid far smaller than the pane stays at the configured font (no scaling up).
  * 4. A plain refusal without a held grid conforms nothing (the echo re-assert's contract).
+ * 5. A SECOND held grid the pane cannot show at any font releases the hold instead of leaving
+ *    the terminal silently claiming the first one (requestGrid's held-grid-changed branch).
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -145,10 +147,10 @@ test('an accepted probe releases the hold and the terminal returns to its own fi
   }
 });
 
-test('a held grid much smaller than the pane is capped at 1.5 times the configured font', async () => {
+test('a held grid much smaller than the pane stays at the configured font, letterboxed', async () => {
   // A 60 by 12 grid would fit the window at several times the configured size; the terminal
-  // stops at CONFORM_MAX_SCALE and letterboxes, so it never reads as a different scale from the
-  // UI around it.
+  // never scales up (CONFORM_MAX_SCALE is 1) and letterboxes instead, so it is never in bigger
+  // type than the panel beside it.
   const small = { cols: 60, rows: 12 };
   const { browser, page } = await launch(preConfig(JSON.stringify({ colsChanged: false, refused: true, held: small })));
   try {
@@ -157,7 +159,7 @@ test('a held grid much smaller than the pane is capped at 1.5 times the configur
     const conforms = await readEvents(page, 'conform');
     expect(conforms.length).toBeGreaterThan(0);
     const fontSize = conforms[conforms.length - 1].detail?.fontSize as number;
-    expect(fontSize).toBe(CONFIGURED_FONT_PX * 1.5);
+    expect(fontSize).toBe(CONFIGURED_FONT_PX);
   } finally {
     await browser.close();
   }
@@ -172,6 +174,61 @@ test('a refusal without a held grid conforms nothing', async () => {
     expect((await readEvents(page, 'conform')).length).toBe(0);
     const grid = await readGrid(page);
     expect(grid && (grid.cols !== HELD.cols || grid.rows !== HELD.rows)).toBe(true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a second held grid the pane cannot show releases the hold instead of keeping the first', async () => {
+  const { browser, page } = await launch(preConfig(JSON.stringify({ colsChanged: false, refused: true, held: HELD })));
+  try {
+    await openTaskWindow(page);
+    // Confirm the FIRST hold actually conforms before moving it, so this pins the A-then-B
+    // transition rather than "one unfittable held grid declines" (which the accepted-probe
+    // test above already covers via a fittable B).
+    await expect.poll(async () => (await readGrid(page)) ?? undefined, { timeout: 15000 }).toMatchObject(HELD);
+    expect((await readEvents(page, 'conform')).length).toBeGreaterThan(0);
+
+    // Main moves the hold to a grid roughly 10x larger on each axis than any pane on any
+    // platform can show, even at the 4px floor. The margin matters: the assertion below is
+    // "conforming declined", never a measured pixel size, so this must clear
+    // CONFORM_MIN_FONT_PX by a wide margin regardless of Windows-vs-Linux monospace metrics.
+    const TOO_BIG = { cols: 4000, rows: 2000 };
+    // The baseline is taken BEFORE the hold moves, and that ordering is the whole difference
+    // between a deterministic test and one that can never pass. The terminal probes main on
+    // every refit, so a probe can already be in flight when the mock switches; it then answers
+    // TOO_BIG, declines, and spends the release before a baseline read placed after the switch
+    // ever runs. The assertion below would then be waiting for a SECOND release that cannot
+    // come, since nothing is held any more. Reading it here counts that release too.
+    const unholdCountBeforeHoldMoved = (await readEvents(page, 'unhold')).length;
+    await page.evaluate((grid) => {
+      (window as unknown as TestWindow).__mockResizeResult = { colsChanged: false, refused: true, held: grid };
+    }, TOO_BIG);
+    // ENLARGE the viewport, not shrink it. A resize is what triggers the ResizeObserver ->
+    // fit() -> fitTerminal('fit', true) that both probes main (asking "what grid would I take
+    // on my own") and, in the SAME synchronous call, re-conforms to whatever grid is CURRENTLY
+    // held (still HELD at this point, since the probe answer has not landed yet) so the pane
+    // keeps showing HELD while the probe is in flight. A shrink risks that re-conform itself
+    // failing (HELD no longer fitting the smaller box even at 4px) and releasing the hold for a
+    // reason that has nothing to do with the second held grid this test is pinning - the
+    // resulting `unhold` would be a false positive for a reverted fix. Growing the box can only
+    // make the existing HELD conform easier, so the only way `unhold` fires below is the probe's
+    // answer (TOO_BIG) landing back at requestGrid and being declined.
+    await page.setViewportSize({ width: 1900, height: 1000 });
+
+    // The discriminating assertion. `conform-declined` alone does not tell the fixed behavior
+    // apart from the reverted one: conformToHeldGrid traces it either way. Only `unhold` proves
+    // heldGridRef actually let go of the FIRST grid - reverting requestGrid's release (calling
+    // conformToHeldGrid(result.held, origin) unconditionally, with no fallback release on a
+    // decline) leaves this at unholdCountBeforeHoldMoved forever, because the terminal keeps
+    // silently claiming HELD.
+    await expect
+      .poll(async () => (await readEvents(page, 'unhold')).length, { timeout: 15000 })
+      .toBeGreaterThan(unholdCountBeforeHoldMoved);
+
+    const declines = await readEvents(page, 'conform-declined');
+    expect(declines.length).toBeGreaterThan(0);
+    expect(declines[declines.length - 1].detail).toMatchObject({ cols: TOO_BIG.cols, rows: TOO_BIG.rows });
   } finally {
     await browser.close();
   }

@@ -10,6 +10,8 @@
  * so the state machine can be driven deterministically with fake timers.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Terminal } from '@xterm/xterm';
 import {
   attachWebglRenderer,
@@ -85,6 +87,42 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   warnSpy.mockRestore();
+});
+
+describe('the shared glyph atlas is cleared only where every terminal re-renders', () => {
+  // The WebGL char atlas is shared between every terminal with the same font config, and
+  // clearTextureAtlas() re-renders only the terminal that called it: the others keep glyph
+  // coordinates into a texture that no longer holds those glyphs and paint garbage. So
+  // notifyFontChanged may run from the display-settings effect (a global font change, where every
+  // terminal clears its own model) and never from a per-terminal path. useTerminal's conform to
+  // a held grid did, and the bottom panel garbled the moment a window conformed to the same
+  // 12 px it ran at.
+  const hookSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'renderer', 'hooks', 'useTerminal.ts'), 'utf-8');
+  const bodyOf = (name: string): string => {
+    const start = hookSource.indexOf(`const ${name} = useCallback(`);
+    expect(start, `${name} not found in useTerminal.ts`).toBeGreaterThan(-1);
+    const end = hookSource.indexOf('\n  }, [', start);
+    expect(end, `${name} has no dependency array`).toBeGreaterThan(start);
+    return hookSource.slice(start, end);
+  };
+
+  it.each(['conformToHeldGrid', 'releaseHeldGrid', 'requestGrid', 'fitTerminal', 'handleRendererChange'])('%s never calls notifyFontChanged', (name) => {
+    expect(bodyOf(name)).not.toContain('notifyFontChanged(');
+  });
+
+  it('clears from exactly one call site, gated on this terminal\'s OWN applied font', () => {
+    // One site, so the invariant is "clear only when my applied font moved" by
+    // construction rather than by the call-site list above.
+    expect(hookSource.match(/notifyFontChanged\(rendererKeyRef\.current\)/g) ?? []).toHaveLength(1);
+    // The size assigned to xterm is the conformed one while a grid is held, and
+    // the gate compares against THAT, not the configured size. Comparing the
+    // configured size would clear the shared atlas when a global size change
+    // left a held terminal's own size untouched, garbling every sibling
+    // conformed to the same size.
+    expect(hookSource).toContain('const applied = conformedFontRef.current ?? fontSize;');
+    expect(hookSource).toContain('previousFont.size !== applied');
+    expect(hookSource).toContain('lastAppliedFontRef.current = { family: fontFamily, size: applied };');
+  });
 });
 
 describe('attachWebglRenderer', () => {
