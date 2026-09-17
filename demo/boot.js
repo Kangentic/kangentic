@@ -36,11 +36,12 @@
 
   // Hand-maintained mirror of ThemeMode in src/shared/types.ts. Nothing ties the two
   // together, so a theme added there has to be added here or ?theme=<id> is refused.
-  var APP_THEMES = ['dark', 'light', 'kangentic-light', 'kangentic-dark',
+  var APP_THEMES = ['dark', 'light', 'rust', 'clay',
     'moon', 'forest', 'ocean', 'ember', 'sand', 'mint', 'sky', 'peach'];
   // The site embeds this frame by URL, so a spelling it may already have written keeps
-  // resolving rather than hitting the error card.
-  var THEME_ALIASES = { night: 'dark', kangentic: 'kangentic-light' };
+  // resolving rather than hitting the error card. The product pair shipped briefly as
+  // kangentic-light / kangentic-dark before being named clay / rust.
+  var THEME_ALIASES = { night: 'dark', kangentic: 'clay', 'kangentic-light': 'clay', 'kangentic-dark': 'rust' };
   var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
   // A boot step clicks, types into a field, or presses a hotkey (a keyboard combo or a mouse
   // button, in the registry's own spelling, held for the frame); anything else (a hover, a

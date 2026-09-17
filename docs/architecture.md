@@ -752,7 +752,7 @@ State: `sessions`, `activeSessionId`, `detailTaskId`, `dialogSessionIds`, `sessi
 
 State: `config` (AppConfig), `globalConfig`, `appVersion`, `agentList`, `gitInfo`, `settingsOpen`, `projectOverrides`
 
-- **Theme subscription** -- watches theme changes, updates `<html>` class for CSS variables.
+- **Theme subscription** -- resolves the shown theme (the Theme tab's hover preview if one is resting, else `resolveTheme(config, systemPrefersDark)`: the hand-picked `theme`, or with `themeFollowsSystem` on, the pair member for the OS side read off `prefers-color-scheme`), swaps the `theme-*` class on `<html>` (no class for `dark`), and mirrors the RESOLVED committed theme, never a preview, to `localStorage` to seed the next launch's FOUC guard. A media-query listener keeps `systemPrefersDark` live, so a follow-system install repaints when the OS flips with no restart or config write.
 - **App version** -- `loadAppVersion()` fetches the Electron app version via IPC.
 - **Agent inventory** - `loadAgentList()` probes every registered agent adapter and returns per-agent found/path/version/displayName (`AgentDetectionInfo[]`); consumers look up their own agent's entry rather than reading a single Claude-only detection result.
 - **Git detection** -- `detectGit()` checks for git installation, version, and minimum version requirement.

@@ -1,18 +1,29 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { app, screen, type BrowserWindow } from 'electron';
+import { app, nativeTheme, screen, type BrowserWindow } from 'electron';
 import { PATHS } from './config/paths';
-import { THEME_BACKGROUNDS } from '../shared/types';
-import type { AppConfig, ThemeMode } from '../shared/types';
+import { DEFAULT_CONFIG, THEME_BACKGROUNDS, resolveTheme } from '../shared/types';
+import type { AppConfig, ThemeChoice } from '../shared/types';
 import type { PopOutKind } from '../shared/pop-out';
 import type { ConfigManager } from './config/config-manager';
 
-/** Resolve the background color from the config file's theme setting. */
+/**
+ * Resolve the launch background from the config file's theme choice, the same way the
+ * renderer resolves what it paints (`resolveTheme`): a follow-system config reads the
+ * OS appearance off `nativeTheme`. The global file only; no project is open yet.
+ */
 export function resolveBackgroundColor(): string {
   try {
     const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
-    const theme = (JSON.parse(raw) as { theme?: ThemeMode }).theme;
-    if (theme && theme in THEME_BACKGROUNDS) {
+    const saved = JSON.parse(raw) as Partial<ThemeChoice>;
+    const choice: ThemeChoice = {
+      theme: saved.theme ?? DEFAULT_CONFIG.theme,
+      themeFollowsSystem: saved.themeFollowsSystem ?? DEFAULT_CONFIG.themeFollowsSystem,
+      themeLight: saved.themeLight ?? DEFAULT_CONFIG.themeLight,
+      themeDark: saved.themeDark ?? DEFAULT_CONFIG.themeDark,
+    };
+    const theme = resolveTheme(choice, nativeTheme.shouldUseDarkColors);
+    if (theme in THEME_BACKGROUNDS) {
       return THEME_BACKGROUNDS[theme];
     }
   } catch {

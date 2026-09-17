@@ -30,8 +30,8 @@ export function selectDiffAlgorithmOptions(originalLength: number, modifiedLengt
 /**
  * Monaco's built-in theme id for a given app theme, driven by THEME_BASES (a
  * total `Record<ThemeMode, 'dark' | 'light'>`) rather than NAMED_THEMES (the
- * settings-dropdown metadata list, which omits 'dark' and 'light' since those
- * two are hardcoded dropdown options). Looking this up against NAMED_THEMES
+ * Theme tab's picker list, an array that only a test keeps total; at the time
+ * it omitted 'dark' and 'light' outright). Looking this up against NAMED_THEMES
  * used to fall through its `?? 'dark'` fallback for the Light theme, painting
  * a black diff pane inside an otherwise light app - see THEME_BASES' own
  * comment in src/shared/types.ts. The `?? 'dark'` here is a runtime-only

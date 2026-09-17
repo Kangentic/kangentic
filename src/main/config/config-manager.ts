@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { PATHS, ensureDirs } from './paths';
-import type { AppConfig, DeepPartial, PermissionMode } from '../../shared/types';
+import type { AppConfig, DeepPartial, PermissionMode, ThemeMode } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 import { safeWriteJson } from '../safe-write';
@@ -44,6 +44,27 @@ function pruneUndefined(obj: Record<string, unknown>): Record<string, unknown> |
 }
 
 /**
+ * The product pair's ids for the three days they existed on `main` before the pair
+ * was named. No release carried them, but a dogfooding config file or a project's
+ * `.kangentic/config.json` can, and a retired id paints as the classless dark palette.
+ */
+const RETIRED_THEME_IDS: Record<string, ThemeMode> = { 'kangentic-light': 'clay', 'kangentic-dark': 'rust' };
+const THEME_ID_KEYS = ['theme', 'themeLight', 'themeDark'] as const;
+
+/** Rewrite retired theme ids in place across the three theme keys; true when any changed. */
+function renameRetiredThemeIds(target: Record<string, unknown>): boolean {
+  let changed = false;
+  for (const key of THEME_ID_KEYS) {
+    const value = target[key];
+    if (typeof value === 'string' && value in RETIRED_THEME_IDS) {
+      target[key] = RETIRED_THEME_IDS[value];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
  * Pick only the project-overridable keys from a config-like object. This is the
  * single definition of "what counts as a project setting". Both the global
  * defaults snapshot (getProjectOverridableDefaults) and new-project seeding
@@ -60,6 +81,10 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
   const result: Record<string, unknown> = {};
 
   if (source.theme !== undefined) result.theme = source.theme;
+  // The follow-system trio travels with `theme`: all four are the Theme tab.
+  if (source.themeFollowsSystem !== undefined) result.themeFollowsSystem = source.themeFollowsSystem;
+  if (source.themeLight !== undefined) result.themeLight = source.themeLight;
+  if (source.themeDark !== undefined) result.themeDark = source.themeDark;
 
   // terminal.* (shell, fontSize, fontFamily, scrollbackLines, cursorStyle,
   // backspaceSendsCtrlH) used to be project-overridable but is now global-only
@@ -177,6 +202,11 @@ export class ConfigManager {
     };
     if (pm in migrationMap) {
       this.config.agent.permissionMode = migrationMap[pm] as PermissionMode;
+      this.save(this.config);
+    }
+
+    // One-time migration: the product pair's retired ids -> clay / rust.
+    if (parsed && renameRetiredThemeIds(this.config as unknown as Record<string, unknown>)) {
       this.save(this.config);
     }
 
@@ -316,6 +346,11 @@ export class ConfigManager {
         }
         this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
       }
+    }
+
+    // One-time migration: the product pair's retired ids -> clay / rust.
+    if (renameRetiredThemeIds(overrides)) {
+      this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
     }
 
     return overrides as Partial<AppConfig>;

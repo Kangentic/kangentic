@@ -5,7 +5,7 @@ import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye } from 'lucide-react';
 import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
-import { useConfigStore } from '../../../../stores/config-store';
+import { shownTheme, useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
@@ -106,7 +106,9 @@ export function DiffViewer({
   blameEligible = true,
   showEditorBootSpinner = true,
 }: DiffViewerProps) {
-  const theme = useConfigStore((state) => state.config.theme);
+  // The SHOWN theme, so a Theme tab hover preview re-skins the diff pane with the rest
+  // of the app instead of leaving it on the committed theme for the hover's duration.
+  const theme = useConfigStore(shownTheme);
   const monacoTheme = monacoThemeForTheme(theme);
   const statusConfig = STATUS_LABELS[status];
 

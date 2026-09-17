@@ -75,10 +75,12 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Theme tab with color scheme selector', async () => {
+  test('shows Theme tab with the swatch grid', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Theme', exact: true }).click();
-    await expect(page.locator('text=Color scheme for the interface')).toBeVisible();
+    // The row's testid, not its copy: the description is product text that changes.
+    await expect(page.getByTestId('setting-row-theme')).toBeVisible();
+    await expect(page.getByTestId('theme-grid')).toBeVisible();
     await closeSettings();
   });
 
@@ -940,7 +942,7 @@ test.describe('Settings Search', () => {
     await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
 
     // Should NOT show unrelated settings like Theme
-    await expect(page.getByText('Color scheme for the interface')).not.toBeVisible();
+    await expect(page.getByTestId('setting-row-theme')).not.toBeVisible();
 
     await closeSettings();
   });
@@ -963,9 +965,22 @@ test.describe('Settings Search', () => {
     const searchInput = page.getByTestId('settings-search');
     await searchInput.fill('theme');
 
-    await expect(page.getByText('Color scheme for the interface')).toBeVisible();
+    await expect(page.getByTestId('setting-row-theme')).toBeVisible();
 
     // Should NOT show terminal settings
+    await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching a theme name finds the Theme picker', async () => {
+    await openSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('peach');
+
+    // Every theme's name is a keyword on the Theme row, so the row is the one hit.
+    await expect(page.getByTestId('setting-row-theme')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Theme 1' })).toBeVisible();
     await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
 
     await closeSettings();
@@ -1029,8 +1044,9 @@ test.describe('Settings Search', () => {
     const searchInput = page.getByTestId('settings-search');
     await searchInput.fill('theme');
 
-    // Theme sidebar tab should have a match count badge (name includes count).
-    const themeTab = page.getByRole('button', { name: 'Theme 1' });
+    // Theme sidebar tab should have a match count badge (name includes count): the
+    // tab label is a searchable field, so every row on the tab matches "theme".
+    const themeTab = page.getByRole('button', { name: 'Theme 2' });
     await expect(themeTab).not.toHaveClass(/opacity-40/);
 
     // General sidebar tab should be dimmed (no matches for "theme" - it only

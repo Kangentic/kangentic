@@ -25,6 +25,9 @@ describe('pickOverridableSubset', () => {
     // shared/types.ts), so it must never be picked as an overridable setting.
     const source = {
       theme: 'forest',
+      themeFollowsSystem: true,
+      themeLight: 'sky',
+      themeDark: 'ember',
       terminal: { shell: 'pwsh.exe', fontSize: 14, cursorStyle: 'block' },
       agent: { permissionMode: 'acceptEdits' },
       git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
@@ -40,6 +43,10 @@ describe('pickOverridableSubset', () => {
     expect(result).not.toHaveProperty('browser');
     expect(result).not.toHaveProperty('terminal');
     expect(result.theme).toBe('forest');
+    // The follow-system trio is the Theme tab too, so it travels with `theme`.
+    expect(result.themeFollowsSystem).toBe(true);
+    expect(result.themeLight).toBe('sky');
+    expect(result.themeDark).toBe('ember');
     expect(result.agent).toEqual({ permissionMode: 'acceptEdits' });
     expect(result.git).toEqual({ worktreesEnabled: true, defaultBaseBranch: 'develop' });
   });

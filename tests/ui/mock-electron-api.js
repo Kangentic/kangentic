@@ -144,6 +144,9 @@
 
   let config = Object.assign({
     theme: 'dark',
+    themeFollowsSystem: false,
+    themeLight: 'light',
+    themeDark: 'dark',
     sidebarVisible: true,
     boardLayout: 'horizontal',
     cardDensity: 'default',
@@ -369,6 +372,9 @@
     var git = source.git || {};
     var result = {};
     if (source.theme !== undefined) result.theme = source.theme;
+    if (source.themeFollowsSystem !== undefined) result.themeFollowsSystem = source.themeFollowsSystem;
+    if (source.themeLight !== undefined) result.themeLight = source.themeLight;
+    if (source.themeDark !== undefined) result.themeDark = source.themeDark;
     // terminal.* (shell, fontSize, fontFamily, cursorStyle,
     // backspaceSendsCtrlH) is global-only now - see the comment on
     // pickOverridableSubset() in src/main/config/config-manager.ts.

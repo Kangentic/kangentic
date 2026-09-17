@@ -1,3 +1,4 @@
+import { NAMED_THEMES } from '../../../shared/types';
 import type { SettingScope } from './setting-scope';
 
 export interface SettingDefinition {
@@ -23,7 +24,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'project.location', tabId: 'general', label: 'Project Location', description: 'Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it.', scope: 'project', keywords: ['path', 'folder', 'directory', 'move', 'relocate', 'change directory', 'locate'] },
 
   // ── Theme ──
-  { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Color scheme for the interface', scope: 'project', keywords: ['color', 'dark', 'light', 'appearance'] },
+  { id: 'themeFollowsSystem', tabId: 'theme', label: 'Follow system appearance', description: 'Use one theme when the system is light and another when it is dark.', scope: 'project', keywords: ['os', 'auto', 'automatic', 'dark mode', 'light mode', 'match'] },
+  // Every theme's name is a keyword, so searching "peach" lands on the picker.
+  // `dark` and `light` stay as words because no label carries them any more (Graphite, Paper).
+  { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Hover a tile to try it on the whole app, click to keep it.', scope: 'project', keywords: ['color', 'scheme', 'appearance', 'swatch', 'dark', 'light', 'kangentic', ...NAMED_THEMES.map((theme) => theme.label.toLowerCase())] },
 
   // ── Board ──
   { id: 'columnWidth', tabId: 'board', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },

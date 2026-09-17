@@ -486,14 +486,29 @@ A search bar at the top of each panel filters settings by keyword. Type multiple
 
 ### Themes
 
-Choose from 12 themes in the Theme tab's dropdown (a per-project setting):
-- **Standard:** Dark, Light
-- **Kangentic:** Kangentic Dark, Kangentic Light. The product palette, built from
-  kangentic.com's own tokens, so the app and the site read as one surface. Colour only:
-  the site's typefaces do not come with the theme, and the terminal keeps its own colour
-  scheme (see Terminal Colors below).
-- **Dark palette:** Moon, Forest, Ocean, Ember
-- **Light palette:** Sand, Mint, Sky, Peach
+The Theme tab (a per-project setting) shows the 12 themes as a grid of tiles, each painted in
+its own colours, so you pick by eye. Rest the pointer on a tile to try that theme on the whole
+app without changing anything; move off the grid and it reverts. Click a tile to keep it, or
+with the grid focused use the arrow keys, Home and End, or type the first letter of a name; the
+app repaints as the selection moves. The tiles are grouped by whether the theme is dark or
+light underneath:
+- **Dark:** Graphite, Rust, Moon, Forest, Ocean, Ember
+- **Light:** Paper, Clay, Sand, Mint, Sky, Peach
+
+Graphite and Paper are the neutral defaults. Rust and Clay are the product palette, built from
+kangentic.com's own tokens, so the app and the site read as one surface; their tiles carry the
+brand mark. Colour only: the site's typefaces do not come with the theme, and the terminal keeps
+its own colour scheme (see Terminal Colors below). Searching Settings for a theme's name finds
+the picker. (In `config.json` Graphite and Paper keep their original ids, `dark` and `light`;
+the others are their lower-cased names.)
+
+**Follow system appearance**, the switch above the grid, keeps one theme for when the OS is
+light and another for when it is dark. With it on, each group in the grid has its own selected
+tile and the other tiles dim so the pair stands out (a dimmed tile still previews on hover and
+can be picked); the app paints the one that matches the OS right now and switches the moment
+the OS does, with no restart. Turning it on keeps the theme you had (it becomes that group's
+choice), and turning it off keeps whichever theme is showing. The launch background follows the
+same rule, so a follow-system install opens in the right colour.
 
 ### Terminal Colors
 
