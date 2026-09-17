@@ -222,7 +222,9 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
 // picker, the Mobile tab's connection test) is left out rather than described.
 const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string }> = {
   general: { ready: '[data-testid="setting-row-project.location"]', alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.' },
-  theme: { ready: '[data-testid="setting-row-theme"]', alt: 'Settings on the Theme tab: a single dropdown that picks the color scheme for the interface.' },
+  // `ready` stays on the Theme row rather than the switch that now leads the tab: the grid is the
+  // figure's subject, and both rows mount in the same commit.
+  theme: { ready: '[data-testid="setting-row-theme"]', alt: 'Settings on the Theme tab: a Follow system appearance switch, then twelve theme tiles in Dark and Light groups, each painted in its own colors, with the current theme outlined.' },
   agent: { ready: '[data-testid="setting-row-project.defaultAgent"]', alt: 'Settings on the Agent tab: the project\'s default agent, its model and effort, the permission mode, and the path to the agent\'s CLI.' },
   git: { ready: '[data-testid="setting-row-git.worktreesEnabled"]', alt: 'Settings on the Git tab: worktrees on or off, automatic cleanup, the default base branch, files and a script for each new worktree, and how often PRs and the remote are refreshed.' },
   browser: { ready: '[data-testid="setting-row-browser.enabled"]', alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.' },
