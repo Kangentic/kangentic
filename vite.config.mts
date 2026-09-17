@@ -5,7 +5,7 @@ import { sentryVitePlugin } from '@sentry/vite-plugin';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json';
+import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json' with { type: 'json' };
 
 // fileURLToPath(import.meta.url) rather than a __dirname shim: this config is
 // bundled/evaluated as ESM.
