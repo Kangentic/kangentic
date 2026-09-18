@@ -642,11 +642,13 @@ describe('autoSpawnForTask: split lock', () => {
   it('is cancelled mid-fetch by abortInFlightResume, quietly: no checkout, no spawn, no failure report, label cleared', async () => {
     // What SESSION_SUSPEND / SESSION_RESET / a newer SESSION_RESUME do while
     // this spawn is in its unlocked git phase.
+    let labelsAtAbort: Record<string, string> = {};
     mockEnsureTaskWorktree.mockImplementation(async (
       _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
       options?: { signal?: AbortSignal; onProgress?: (phase: string) => void },
     ) => {
       options?.onProgress?.('fetching');
+      labelsAtAbort = getInFlightSpawnProgress();
       abortInFlightResume(TASK_ID);
       options?.signal?.throwIfAborted();
     });
@@ -663,7 +665,9 @@ describe('autoSpawnForTask: split lock', () => {
     expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
     expect(mockTrackEvent).not.toHaveBeenCalled();
     expect(mockReportHandledError).not.toHaveBeenCalled();
-    // The finally still cleared the label the 'fetching' push landed.
+    // The label demonstrably landed before the abort, so the finally clearing
+    // it is a real clear rather than an empty map staying empty.
+    expect(Object.keys(labelsAtAbort)).toEqual([TASK_ID]);
     expect(getInFlightSpawnProgress()).toEqual({});
   });
 
@@ -682,7 +686,7 @@ describe('autoSpawnForTask: split lock', () => {
     expect(getInFlightSpawnProgress()).toEqual({});
   });
 
-  it('still counts a real git failure as a spawn failure (the abort branch is narrow)', async () => {
+  it('still routes a real git failure to the per-step blocked notice, not the abort branch', async () => {
     mockEnsureTaskWorktree.mockRejectedValue(new Error('fatal: could not read from remote'));
 
     await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
@@ -691,6 +695,28 @@ describe('autoSpawnForTask: split lock', () => {
     // reaches it and never the outer failure counter, as before.
     expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
     expect(mockExecuteTransition).not.toHaveBeenCalled();
+  });
+
+  it('still counts a real failure past the git phase as a spawn failure (the abort branch is narrow)', async () => {
+    // A Phase 3 read against a closed DB. It escapes the locked block and
+    // lands in the outer catch, which must still count and report it: the new
+    // isAbortError branch sits in front of that reporting, and an inverted
+    // condition there would silence every real spawn failure with nothing
+    // else noticing.
+    mockTaskGetById
+      .mockReturnValueOnce(makeTaskInLane())
+      .mockImplementationOnce(() => {
+        throw new Error('The database connection is not open');
+      });
+
+    await expect(
+      autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID),
+    ).resolves.toBeUndefined();
+
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', expect.objectContaining({ reason: 'auto_spawn' }));
+    expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    expect(getInFlightSpawnProgress()).toEqual({});
   });
 
   it('registers its controller without aborting one already in flight (a Start never cancels desktop work)', async () => {
@@ -750,8 +776,10 @@ describe('autoSpawnForTask: split lock', () => {
     });
 
     it('spawns with the RE-READ task row, not the Phase 1 snapshot', async () => {
-      // The git phase records the worktree on the task; the spawn has to see
-      // it. Phase 1's row is the pre-worktree one.
+      // Pins WHICH read the spawn uses: the second one, made under the Phase 3
+      // lock. (Against the real repository that is also how the worktree the
+      // git phase recorded reaches the spawn; the mock returns a fresh literal
+      // per read, so that propagation is not what this checks.)
       mockTaskGetById
         .mockReturnValueOnce(makeTaskInLane())
         .mockReturnValue(makeTaskInLane({ worktree_path: '/mock/project/.kangentic/worktrees/1' }));
