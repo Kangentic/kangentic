@@ -88,6 +88,7 @@ class MockTerminalSubmit {
   nextResult: SubmitKeystrokesResult = {
     outcome: 'unconfirmed',
     unconfirmedCommands: [],
+    deliveries: [],
     discardedDraft: null,
     interruptedTurn: false,
   };
@@ -539,8 +540,12 @@ describe('TerminalSubmitScheduler', () => {
       await tick();
       terminalSubmit.finishLatest({ outcome: 'failed', unconfirmedCommands: ['/code-review'] });
       await tick();
-      // Let the turn-completion quiet window elapse.
+      // Let the turn-completion quiet window elapse. The gate races the wait
+      // against the late-confirmation poll and takes one last look at the
+      // verifier before restarting, so the report is a few microtasks behind
+      // the handler call.
       vi.advanceTimersByTime(1600);
+      await tick();
       await tick();
 
       expect(escalate).toHaveBeenCalledWith(['/code-review']);
@@ -550,6 +555,252 @@ describe('TerminalSubmitScheduler', () => {
       // command land. Claiming confirmation here would be the same silent
       // success this rebuild exists to remove.
       expect(reports[0].outcome).not.toBe('confirmed');
+    });
+
+    /**
+     * #682: the burst reported the command unconfirmed, but it HAD gone in and
+     * the transcript proved it later (a late flush, or a submission the CLI
+     * queued behind a running turn and wrote at dequeue). The gate re-polls
+     * the verifier against the burst's original first-Enter watermark, and a
+     * confirmation cancels the restart that would run the command again.
+     */
+    describe('late confirmation at the escalation gate', () => {
+      const FIRST_ENTER_AT = 1_000_000;
+
+      it('does not restart when the verifier confirms during the turn-completion wait', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        // Mid-turn: the gate cannot complete, so only the poll can end it.
+        sessionManager.activity.s1 = 'thinking';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        let polls = 0;
+        const verifier = vi.fn(async (command: string, sentAt: number) => {
+          polls += 1;
+          // The scheduler must ask about the original watermark, never a
+          // newer stamp of its own.
+          expect(command).toBe('/merge-pull-request');
+          expect(sentAt).toBe(FIRST_ENTER_AT);
+          return polls >= 3;
+        });
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/merge-pull-request', verify: 'submitted' }], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/merge-pull-request'],
+          deliveries: [{ text: '/merge-pull-request', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        });
+        await tick();
+        expect(reports).toHaveLength(0);
+
+        // Two 1s polls miss, the third confirms.
+        vi.advanceTimersByTime(1000);
+        await tick();
+        vi.advanceTimersByTime(1000);
+        await tick();
+        await tick();
+
+        expect(polls).toBe(3);
+        expect(escalate).not.toHaveBeenCalled();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].outcome).toBe('confirmed');
+        expect(reports[0].escalated).toBe(false);
+        expect(reports[0].unconfirmedCommands).toEqual([]);
+      });
+
+      it('does not restart when the last check at turn completion confirms', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        sessionManager.activity.s1 = 'idle';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        // False on every poll, true only once the gate has opened: the entry
+        // was written in the turn's final flush.
+        let gateOpen = false;
+        const verifier = vi.fn(async () => gateOpen);
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/merge-pull-request', verify: 'submitted' }], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/merge-pull-request'],
+          deliveries: [{ text: '/merge-pull-request', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        });
+        await tick();
+        gateOpen = true;
+        // The quiet window elapses and the gate completes; the last check sees
+        // the entry.
+        vi.advanceTimersByTime(1600);
+        await tick();
+        await tick();
+
+        expect(escalate).not.toHaveBeenCalled();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].outcome).toBe('confirmed');
+        expect(reports[0].escalated).toBe(false);
+      });
+
+      it('still restarts when the verifier never confirms', async () => {
+        // The negative that keeps rung 3 real: a genuinely swallowed command
+        // must still be delivered by the restart.
+        sessionManager.registry.set('s1', { status: 'running' });
+        sessionManager.activity.s1 = 'idle';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        const verifier = vi.fn(async () => false);
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/merge-pull-request', verify: 'submitted' }], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/merge-pull-request'],
+          deliveries: [{ text: '/merge-pull-request', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        });
+        await tick();
+        vi.advanceTimersByTime(1600);
+        await tick();
+        await tick();
+
+        expect(escalate).toHaveBeenCalledWith(['/merge-pull-request']);
+        expect(reports).toHaveLength(1);
+        expect(reports[0].escalated).toBe(true);
+      });
+
+      it('stops polling when the burst is cancelled mid-wait', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        sessionManager.activity.s1 = 'thinking';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        const verifier = vi.fn(async () => false);
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/merge-pull-request', verify: 'submitted' }], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/merge-pull-request'],
+          deliveries: [{ text: '/merge-pull-request', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        });
+        await tick();
+        vi.advanceTimersByTime(1000);
+        await tick();
+        const pollsBeforeCancel = verifier.mock.calls.length;
+        expect(pollsBeforeCancel).toBeGreaterThan(0);
+
+        scheduler.cancel('task-1');
+        await tick();
+        await tick();
+        vi.advanceTimersByTime(5000);
+        await tick();
+
+        expect(verifier.mock.calls.length).toBe(pollsBeforeCancel);
+        expect(escalate).not.toHaveBeenCalled();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].outcome).toBe('failed');
+        expect(reports[0].reason).toContain('aborted');
+      });
+
+      /**
+       * #682 follow-up: a duplicate-text burst where only ONE delivery of two
+       * identical commands failed must consume exactly one unconfirmed entry,
+       * not match both commands against it. `unconfirmedCommands` holds one
+       * entry per failed delivery; a membership test (`.includes`) would let
+       * both commands claim that single entry, doubling `escalatable` and
+       * breaking the late-confirm gate's length check against `lateChecks`.
+       */
+      const SECOND_ENTER_AT = FIRST_ENTER_AT + 5_000;
+
+      it('polls the SECOND delivery watermark, not the first, for a duplicate-text burst', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        // Mid-turn: the gate cannot complete, so only the poll can end it.
+        sessionManager.activity.s1 = 'thinking';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        const verifier = vi.fn(async (command: string, sentAt: number) => {
+          expect(command).toBe('/hello');
+          expect(sentAt).toBe(SECOND_ENTER_AT);
+          return true;
+        });
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [
+          { text: '/hello', verify: 'submitted' },
+          { text: '/hello', verify: 'submitted' },
+        ], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          // Only the second delivery failed - one entry, not two.
+          unconfirmedCommands: ['/hello'],
+          deliveries: [
+            { text: '/hello', firstSentAt: FIRST_ENTER_AT, confirmed: true },
+            { text: '/hello', firstSentAt: SECOND_ENTER_AT, confirmed: false },
+          ],
+        });
+        await tick();
+
+        vi.advanceTimersByTime(1000);
+        await tick();
+        await tick();
+
+        expect(verifier).toHaveBeenCalledWith('/hello', SECOND_ENTER_AT, 'submitted');
+        expect(escalate).not.toHaveBeenCalled();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].outcome).toBe('confirmed');
+        expect(reports[0].escalated).toBe(false);
+        expect(reports[0].unconfirmedCommands).toEqual([]);
+      });
+
+      it('escalates exactly one command, not two, for a duplicate-text burst that never confirms', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        sessionManager.activity.s1 = 'idle';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        const verifier = vi.fn(async () => false);
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [
+          { text: '/hello', verify: 'submitted' },
+          { text: '/hello', verify: 'submitted' },
+        ], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/hello'],
+          deliveries: [
+            { text: '/hello', firstSentAt: FIRST_ENTER_AT, confirmed: true },
+            { text: '/hello', firstSentAt: SECOND_ENTER_AT, confirmed: false },
+          ],
+        });
+        await tick();
+        vi.advanceTimersByTime(1600);
+        await tick();
+        await tick();
+
+        expect(escalate).toHaveBeenCalledWith(['/hello']);
+        expect(reports).toHaveLength(1);
+        expect(reports[0].escalated).toBe(true);
+      });
     });
 
     it('escalates ONLY the user auto_command, never the settings prefix', async () => {

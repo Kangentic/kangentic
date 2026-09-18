@@ -57,6 +57,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `suspended` | `exited` | Replaced by a new session on resume (`retireRecord`) |
 | `orphaned` | `running` | Session recovery on project open |
 | `orphaned` | `exited` | Recovery dedup, or failed recovery (`retireRecord`) |
+| `exited` | `exited` | A resume replaces a record that had already ended on its own (`retireRecord`'s fallback CAS). Confirms the row is out of the way without restamping `exited_at`, so the CLI's real end time survives a later restart; only the `suspended` and `orphaned` rows above get a fresh stamp |
 | `orphaned` | `suspended` | Pause-on-restart setting upgrades a crashed session (`markRecordSuspended`) |
 | `exited` | `running` | OS-killed (abnormal `exit_code`) session resumed by recovery on project open (`getInterruptedExited`) |
 | `exited` | `suspended` | Interrupted-exited record CAS-upgraded by recovery (non-target / non-auto-spawn / auto-resume-off), or a PTY exit during app shutdown (onExit hardening) |
@@ -400,6 +401,19 @@ exited, queue slot freed, hooks stripped, transcript flushed, and `intentionalEx
 renderer's false "Session crashed" toast. Once the tab is gone the leftover shell is unreachable,
 so leaving it alive would only leak a process.
 
+**It first emits `agent-absent`, so a failure the CLI named is not lost with it.** The kill's
+`intentionalExit` also silences the exit listener's startup-failure read, and a CLI that ended at
+boot with its own account of why (Claude's "No conversation found with session ID" on a `--resume`
+whose transcript was cleaned up or whose project folder moved) reached the user as a card that
+went quiet: exit code 0, no toast, a dead row (#682 follow-up). The retirement therefore announces
+the absence before the kill, while the ring still holds the CLI's last words; `handlers/sessions.ts`
+asks the session's adapter to read them (`AgentAdapter.describeStartupFailure`, implemented by
+Claude) and raises `notifySpawnBlocked`'s "Agent did not start" notice when they name a failure. The
+rare direct PTY exit (the CLI was the root, or its shell ended with it) takes the same read from the
+exit listener when the exit is not intentional. A notice after the fact, deliberately not a
+pre-spawn guard: see the `isResumeConversationAbsent` section above for why a computed-path
+downgrade was reverted in #255.
+
 **It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
 with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept
 counting the agent and the bottom panel kept its tab - the exact two symptoms the sweep exists to
@@ -451,6 +465,15 @@ respawn left the card reading "Paused" and the detail offering a manual "Resume 
 whole unlocked worktree/branch-checkout window between the suspend and the eventual
 `starting-agent` label.
 
+The in-place restart, `restartSessionForSettingsChange` (`src/main/ipc/handlers/session-reconcile.ts`),
+follows the same contract with a required `phase`: the ContextBar model pick and a Board Profile
+propagation emit `switching-model` (or `applying-settings` for an effort-only restart), and the
+auto_command escalation emits `resending-command` ("Re-sending command..."). It emits before its
+suspend and clears the label in a `finally` once the resume has returned or failed, the ordering
+task-move's Phase 3 uses. The emit is what lets the mobile bridge tell this respawn from a park
+(see [Mobile Bridge](mobile-bridge.md)); until #682 this path emitted nothing, and the phone showed
+"Session ended" for the swap.
+
 That main-side emit alone is not sufficient: `SessionManager.suspend()` pushes the session's
 `suspended` row to the renderer almost immediately, well before its own graceful-shutdown wait
 completes, and the renderer's `upsertSession` (`src/renderer/stores/session-store.ts`) used to
@@ -497,9 +520,14 @@ When a suspended task moves to an active column:
   That restart is gated on the turn-completion predicate (activity idle AND a
   quiet PTY) so it can never kill live work, is attempted at most once, and
   carries only the user's `auto_command` - never an adapter-emitted settings
-  write, which would arrive as literal message text. Unlike the ordinary
-  settings-change restart it does NOT assert idle-authoritative afterwards,
-  because a resume with a prompt starts a real turn. See
+  write, which would arrive as literal message text. While the gate waits, the
+  scheduler re-polls the verifier against the burst's original first-Enter
+  watermark, and a late confirmation cancels the restart: a command that went
+  in but confirmed late (a late transcript flush, or a submission the CLI
+  queued behind a running turn) must not be run a second time, which is what
+  happened on every observed Tests-to-Ship-It move before #682. Unlike the
+  ordinary settings-change restart it does NOT assert idle-authoritative
+  afterwards, because a resume with a prompt starts a real turn. See
   [Command Injection](command-injection.md) for the full delivery ladder.
 - The **first move OUT of Done** (the recovery / restore move, whatever the
   destination column) resumes the session WITHOUT delivering the destination

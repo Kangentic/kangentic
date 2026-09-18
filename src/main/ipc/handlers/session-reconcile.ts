@@ -6,6 +6,7 @@ import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCoun
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { clearSpawnProgress, emitSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -86,6 +87,18 @@ export function applySuspendDbWrites(
  * Caller MUST hold `withTaskLock(taskId)` (this mutates per-task session state)
  * and pass a resolved `projectId` / `projectPath`. Returns `{ ok: false }` rather
  * than throwing so callers can surface a reason without unwinding a batch.
+ *
+ * `phase` is required, not optional, for the same reason it is on
+ * `suspendLiveSessionForRespawn` (task-move.ts): a respawn that promises a
+ * successor must name what the user is about to see instead of the suspended
+ * session's stale "Paused", and a caller must not be able to opt out by
+ * omission. The label is emitted BEFORE the suspend because the mobile bridge
+ * attaches whatever label is in flight to the suspend's `session-ended`
+ * (read-stream.ts); without one the phone reads an in-place restart as a
+ * genuine park and shows "Session ended" for the gap. It is cleared once the
+ * resume has returned (or failed), the same ordering task-move's Phase 3 uses:
+ * nothing downstream of this helper clears, and a leftover label would ride
+ * the next real park's `session-ended` until the 120s TTL swept it.
  */
 export async function restartSessionForSettingsChange(
   context: IpcContext,
@@ -93,6 +106,8 @@ export async function restartSessionForSettingsChange(
   projectPath: string,
   taskId: string,
   options: {
+    /** What the card and the phone show for the suspend-to-resume gap. */
+    phase: SpawnPhase;
     /**
      * Text to hand the CLI as its prompt argument on resume.
      *
@@ -103,7 +118,7 @@ export async function restartSessionForSettingsChange(
      * resumes idle by contract.
      */
     resumePrompt?: string;
-  } = {},
+  },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     const { tasks, swimlanes, automations, automationRuns, attachments } = getProjectRepos(context, projectId);
@@ -113,68 +128,73 @@ export async function restartSessionForSettingsChange(
     if (!task?.session_id) return { ok: true };
     const sessionId = task.session_id;
 
+    emitSpawnProgress(context.mainWindow, taskId, options.phase);
     try {
-      applySuspendDbWrites(context, projectId, taskId, 'system');
-      await context.sessionManager.suspend(sessionId);
-    } catch (suspendError) {
-      const message = suspendError instanceof Error ? suspendError.message : String(suspendError);
-      return { ok: false, reason: `suspend failed: ${message}` };
-    }
-
-    // Re-read after applySuspendDbWrites cleared session_id: executeSpawnAgent
-    // walks back to getLatestForTask to decide resume-vs-fresh, and a stale
-    // session_id would make it deduplicate against the just-suspended PTY. Re-read
-    // the lane too in case the task moved during the unlocked suspend.
-    const updatedTask = tasks.getById(taskId);
-    if (!updatedTask) return { ok: false, reason: 'task disappeared during restart' };
-    // Fold the task's Board Profile over the re-read lane. Without this, a
-    // profile edit correctly DETECTS the delta (propagateStrategyToLiveSessions
-    // compares profile-folded values) and then respawns the session on the
-    // column's BASE rung - actively demoting the task off the ladder the edit
-    // was meant to retune. Re-resolving the profile here (rather than reusing a
-    // value from before the unlocked suspend) is also correct for a task that
-    // moved columns during the gap.
-    const updatedLane = applyProfileToLane(
-      swimlanes.getById(updatedTask.swimlane_id),
-      loadTaskProfile(context, updatedTask, projectPath),
-    );
-    const project = context.projectRepo.getById(projectId);
-
-    const sessionRepo = new SessionRepository(getProjectDb(projectId));
-    const engine = createTransitionEngine(
-      context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath,
-    );
-
-    try {
-      await engine.resumeSuspendedSession(
-        updatedTask,
-        updatedLane?.permission_mode,
-        true, // skipPromptTemplate - resume idle, do not re-send the original prompt
-        options.resumePrompt, // set only by the auto_command escalation path
-        undefined, // signal
-        undefined, // targetAgent - resolved internally from the task/session
-        undefined, // handoffPromptPrefix
-        resolveSpawnOverrides(updatedTask, updatedLane, project),
-      );
-      // This restart resumes IDLE by contract (no prompt, no auto_command), but
-      // `--resume` still runs the CLI's resume-picker context reload: a turn
-      // that fires NO hooks while growing `total_output_tokens`. The status
-      // heartbeat force-thinks exactly that shape unless the idle is
-      // authoritative, which painted a fixed 30s spurious `thinking` on a
-      // parked agent after a ContextBar model switch. Assert what the contract
-      // above already guarantees. Not sticky: any real turn hook clears it.
-      //
-      // Skipped when a resumePrompt was supplied: that resume starts a REAL
-      // turn, so asserting idle would paint a working agent as parked.
-      const resumedSessionId = tasks.getById(taskId)?.session_id;
-      if (resumedSessionId && !options.resumePrompt) {
-        context.sessionManager.markIdleAuthoritative(resumedSessionId);
+      try {
+        applySuspendDbWrites(context, projectId, taskId, 'system');
+        await context.sessionManager.suspend(sessionId);
+      } catch (suspendError) {
+        const message = suspendError instanceof Error ? suspendError.message : String(suspendError);
+        return { ok: false, reason: `suspend failed: ${message}` };
       }
-      return { ok: true };
-    } catch (respawnError) {
-      if (isAbortError(respawnError)) return { ok: false, reason: 'respawn aborted' };
-      const message = respawnError instanceof Error ? respawnError.message : String(respawnError);
-      return { ok: false, reason: `respawn failed: ${message}` };
+
+      // Re-read after applySuspendDbWrites cleared session_id: executeSpawnAgent
+      // walks back to getLatestForTask to decide resume-vs-fresh, and a stale
+      // session_id would make it deduplicate against the just-suspended PTY. Re-read
+      // the lane too in case the task moved during the unlocked suspend.
+      const updatedTask = tasks.getById(taskId);
+      if (!updatedTask) return { ok: false, reason: 'task disappeared during restart' };
+      // Fold the task's Board Profile over the re-read lane. Without this, a
+      // profile edit correctly DETECTS the delta (propagateStrategyToLiveSessions
+      // compares profile-folded values) and then respawns the session on the
+      // column's BASE rung - actively demoting the task off the ladder the edit
+      // was meant to retune. Re-resolving the profile here (rather than reusing a
+      // value from before the unlocked suspend) is also correct for a task that
+      // moved columns during the gap.
+      const updatedLane = applyProfileToLane(
+        swimlanes.getById(updatedTask.swimlane_id),
+        loadTaskProfile(context, updatedTask, projectPath),
+      );
+      const project = context.projectRepo.getById(projectId);
+
+      const sessionRepo = new SessionRepository(getProjectDb(projectId));
+      const engine = createTransitionEngine(
+        context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath,
+      );
+
+      try {
+        await engine.resumeSuspendedSession(
+          updatedTask,
+          updatedLane?.permission_mode,
+          true, // skipPromptTemplate - resume idle, do not re-send the original prompt
+          options.resumePrompt, // set only by the auto_command escalation path
+          undefined, // signal
+          undefined, // targetAgent - resolved internally from the task/session
+          undefined, // handoffPromptPrefix
+          resolveSpawnOverrides(updatedTask, updatedLane, project),
+        );
+        // This restart resumes IDLE by contract (no prompt, no auto_command), but
+        // `--resume` still runs the CLI's resume-picker context reload: a turn
+        // that fires NO hooks while growing `total_output_tokens`. The status
+        // heartbeat force-thinks exactly that shape unless the idle is
+        // authoritative, which painted a fixed 30s spurious `thinking` on a
+        // parked agent after a ContextBar model switch. Assert what the contract
+        // above already guarantees. Not sticky: any real turn hook clears it.
+        //
+        // Skipped when a resumePrompt was supplied: that resume starts a REAL
+        // turn, so asserting idle would paint a working agent as parked.
+        const resumedSessionId = tasks.getById(taskId)?.session_id;
+        if (resumedSessionId && !options.resumePrompt) {
+          context.sessionManager.markIdleAuthoritative(resumedSessionId);
+        }
+        return { ok: true };
+      } catch (respawnError) {
+        if (isAbortError(respawnError)) return { ok: false, reason: 'respawn aborted' };
+        const message = respawnError instanceof Error ? respawnError.message : String(respawnError);
+        return { ok: false, reason: `respawn failed: ${message}` };
+      }
+    } finally {
+      clearSpawnProgress(context.mainWindow, taskId);
     }
   } catch (unexpectedError) {
     // Honor the documented no-throw contract: a DB error from the repo reads or
@@ -213,6 +233,14 @@ export async function restartSessionForSettingsChange(
  * detail dialog paints "Resume session" even though the agent is alive.
  * Reconciling here means a single recovery point defends every present and
  * future drift between the DB pointer and the live registry.
+ *
+ * Callers: `SESSION_RESUME` and `SESSION_RECONCILE` (the original two),
+ * `SESSION_SUSPEND`, `task:setRuntimeOverride`, and `handleTaskMove`'s Phase 1
+ * ahead of its Priority ladder. The last three were added together (#682):
+ * a natural CLI exit marks the record `exited` but leaves `task.session_id`,
+ * and each of them keyed a decision on the raw pointer, so a task whose agent
+ * had ended by itself was "kept alive" on a move, "suspended" on a pause, and
+ * restarted or typed into on a model or effort pick.
  */
 export function reconcileTaskSessionRef(
   context: IpcContext,

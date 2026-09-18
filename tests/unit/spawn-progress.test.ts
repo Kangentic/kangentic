@@ -68,6 +68,11 @@ describe('spawn-progress queryable map', () => {
     expect(phaseLabel('switching-agent')).toBe('Switching agent...');
     expect(phaseLabel('applying-settings')).toBe('Applying new settings...');
     expect(phaseLabel('new-session')).toBe('Starting new session...');
+    // The rung 3 in-place restart (restartSessionForSettingsChange with a
+    // resumePrompt) names itself rather than borrowing "Starting new
+    // session...": it is a resume, and the label is what the phone shows for
+    // the swap.
+    expect(phaseLabel('resending-command')).toBe('Re-sending command...');
   });
 
   it('createProgressCallback resolves known phases and passes unknown strings verbatim', () => {

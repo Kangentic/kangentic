@@ -69,6 +69,7 @@ class MockTerminalSubmit {
   nextResult: SubmitKeystrokesResult = {
     outcome: 'unconfirmed',
     unconfirmedCommands: [],
+    deliveries: [],
     discardedDraft: null,
     interruptedTurn: false,
   };
@@ -200,8 +201,11 @@ describe('TerminalSubmitScheduler.escalate() - turn-completion safety gate', () 
     await tick();
     terminalSubmit.finishLatest({ outcome: 'failed', unconfirmedCommands: ['/code-review'] });
     await tick();
-    // Let the turn-completion quiet window elapse.
+    // Let the turn-completion quiet window elapse. The gate takes one last
+    // look at the verifier before restarting, so the report trails the
+    // handler call by a few microtasks.
     vi.advanceTimersByTime(1600);
+    await tick();
     await tick();
 
     expect(escalate).toHaveBeenCalledWith(['/code-review']);
@@ -265,6 +269,7 @@ describe('TerminalSubmitScheduler.escalate() - turn-completion safety gate', () 
     await tick();
     // Let the turn-completion quiet window elapse, same as the existing positive control.
     vi.advanceTimersByTime(1600);
+    await tick();
     await tick();
 
     expect(escalate).toHaveBeenCalledWith(['/code-review']);

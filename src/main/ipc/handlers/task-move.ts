@@ -47,7 +47,7 @@ import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { deliverExitMessage } from '../helpers/exit-message-delivery';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
-import { restartSessionForSettingsChange } from './session-reconcile';
+import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 
 /**
@@ -345,8 +345,19 @@ export async function handleTaskMove(
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
       const { tasks, swimlanes, attachments } = getProjectRepos(context, resolvedProjectId);
-      const task = tasks.getById(input.taskId);
-      if (!task) throw new Error(`Task ${input.taskId} not found`);
+      // The pointer every Priority branch below keys on, reconciled against the
+      // registry FIRST. `task.session_id` outlives the session on a natural
+      // exit: the exit listener marks the record `exited` but leaves the
+      // pointer, so a CLI that ended on its own (an `/exit`, a crash, a
+      // `--resume` whose transcript it could not read) left the task reading
+      // as "has an active session". Priority 3 then kept that dead session
+      // "alive" on every move and never spawned, with nothing but a To Do move
+      // to recover (#682's rig hit it; any failed resume does). The same
+      // helper `SESSION_RESUME` self-heals with: a pointer at a non-live row is
+      // cleared, and a live PTY the pointer lost is re-linked, so a drifted
+      // task neither skips its spawn nor spawns a duplicate. Synchronous, and
+      // this lock is the one it asks its callers to hold.
+      const { task } = reconcileTaskSessionRef(context, resolvedProjectId, input.taskId);
 
       const fromSwimlaneId = task.swimlane_id;
       const originalPosition = task.position;
@@ -1106,7 +1117,7 @@ export async function handleTaskMove(
                     resolvedProjectId,
                     resolvedProjectPath,
                     task.id,
-                    { resumePrompt: commands.join('\n') },
+                    { phase: 'resending-command', resumePrompt: commands.join('\n') },
                   );
                   return restarted.ok;
                 });

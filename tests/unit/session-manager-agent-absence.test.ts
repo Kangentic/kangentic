@@ -300,5 +300,37 @@ describe('SessionManager agent-absence wiring', () => {
 
       expect(changed).toEqual([]);
     });
+
+    /**
+     * The kill below tags the exit intentional, and the exit listener rightly
+     * reads an intentional exit as carrying no failure. So an agent that ended
+     * at boot with its own account of why (Claude's "No conversation found
+     * with session ID" on a `--resume` whose transcript is gone) reached the
+     * user as a card that went quiet. The retirement announces the absence
+     * FIRST, while the session is still `running` and its ring still holds
+     * the CLI's last words, so the IPC layer can ask the adapter to read them.
+     */
+    it('emits agent-absent before the kill, so the CLI\'s last words can be read', () => {
+      seedSession();
+      const order: string[] = [];
+      manager.on('agent-absent', (id: string, payload: { id: string; status: string }) => {
+        order.push(`agent-absent:${id}:${payload.status}`);
+      });
+      manager.on('session-changed', (id: string) => { order.push(`session-changed:${id}`); });
+
+      retire();
+
+      expect(order).toEqual(['agent-absent:session-1:running', 'session-changed:session-1']);
+    });
+
+    it('does not announce an absence for a session it refused to retire', () => {
+      seedSession({ transient: true });
+      const absent: string[] = [];
+      manager.on('agent-absent', (id: string) => { absent.push(id); });
+
+      retire();
+
+      expect(absent).toEqual([]);
+    });
   });
 });

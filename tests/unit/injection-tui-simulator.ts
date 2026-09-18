@@ -467,6 +467,21 @@ export function createStubPasteEngine(): {
   return { pasteAndSubmit: (): Promise<void> => Promise.resolve() };
 }
 
+export interface SubmissionVerifierOptions {
+  /**
+   * How long after a submission lands in the TUI it becomes VISIBLE to the
+   * verifier, while its recorded `at` stays the submit time.
+   *
+   * This is the stamp-versus-flush split the real transcript has: Claude
+   * stamps a user turn when it is submitted and appends it to the JSONL on a
+   * later flush (measured ~780ms or ~1830ms). A verifier that only ever saw
+   * submissions the instant they happened could not model the failure where a
+   * retry's advanced watermark rejected the first attempt's entry as stale
+   * once it finally appeared. Zero (the default) is the old instant model.
+   */
+  flushDelayMs?: number;
+}
+
 /**
  * Build a verifier over the TUI's submission log with the same semantics the
  * real Claude verifier uses: an entry must have landed at or after `sentAt`
@@ -476,9 +491,15 @@ export function createStubPasteEngine(): {
  * `/pull-request`, so a substring check would confirm the precise bug this
  * work exists to fix as a successful delivery.
  */
-export function createSubmissionVerifier(tui: FakeTui): (command: string, sentAt: number) => Promise<boolean> {
+export function createSubmissionVerifier(
+  tui: FakeTui,
+  options: SubmissionVerifierOptions = {},
+): (command: string, sentAt: number) => Promise<boolean> {
+  const flushDelayMs = options.flushDelayMs ?? 0;
   return async function verify(command: string, sentAt: number): Promise<boolean> {
-    return tui.submissions.some((entry) => entry.at >= sentAt - 50 && entry.text === command);
+    const now = Date.now();
+    return tui.submissions.some((entry) =>
+      entry.at >= sentAt - 50 && entry.text === command && entry.at + flushDelayMs <= now);
   };
 }
 

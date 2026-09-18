@@ -1107,10 +1107,12 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     expect(sessionManager.spawnedSessions).toHaveLength(1);
 
     // The poisoned record is still retired even though the spawn goes fresh
-    // (forceFresh's retireRecordId carries the same match.id forward).
+    // (forceFresh's retireRecordId carries the same match.id forward). The
+    // stamping CAS covers the not-yet-exited statuses; an already-exited row
+    // is confirmed by a second, stamp-free CAS (see retireRecord).
     expect(sessionRepo.compareAndUpdateStatus).toHaveBeenCalledWith(
       RECORD_ID,
-      ['suspended', 'orphaned', 'exited'],
+      ['suspended', 'orphaned'],
       'exited',
       expect.objectContaining({ exited_at: expect.any(String) }),
     );

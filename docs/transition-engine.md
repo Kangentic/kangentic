@@ -20,6 +20,8 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 The SOURCE column's On exit group runs ahead of all five, in Phase 1. See [Triggers](#triggers).
 
+"Active session" is decided against the registry, not the raw `task.session_id`. Phase 1 runs `reconcileTaskSessionRef` (`session-reconcile.ts`, the same self-heal `SESSION_RESUME`, `SESSION_RECONCILE`, `SESSION_SUSPEND`, and `task:setRuntimeOverride` use) before the ladder: a pointer at a non-live registry row (an agent that exited on its own, a `--resume` that could not read its transcript) is cleared so the move takes Priority 4 and resumes the record, and a live PTY the pointer lost is re-linked so the move takes Priority 3 instead of spawning a second agent. Before #682 the raw pointer decided, and a task whose CLI had ended by itself was "kept alive" on every move with nothing running.
+
 ### Priority 3: Active Session Handling
 
 Priority 3 has five sub-cases, checked in order:

@@ -85,17 +85,26 @@ export function markRecordSuspended(
 /**
  * Retire an old session record (mark as exited) when spawning a new
  * session to replace it. Accepts suspended, orphaned, or exited source status.
+ *
+ * `exited_at` is stamped only when this call is what ends the record. A record
+ * that already exited keeps the time its own exit recorded: retiring it later
+ * (the next spawn of the task, a startup dedup) used to rewrite `exited_at` to
+ * whenever something next touched the row, so a CLI that ended at 14:36:24
+ * read as ended at 14:36:40 once the replacement spawned. The return value is
+ * unchanged: true whenever the row is exited afterwards.
  */
 export function retireRecord(
   sessionRepo: SessionRepository,
   recordId: string,
 ): boolean {
-  return sessionRepo.compareAndUpdateStatus(
+  const endedNow = sessionRepo.compareAndUpdateStatus(
     recordId,
-    ['suspended', 'orphaned', 'exited'],
+    ['suspended', 'orphaned'],
     'exited',
     { exited_at: new Date().toISOString() },
   );
+  if (endedNow) return true;
+  return sessionRepo.compareAndUpdateStatus(recordId, 'exited', 'exited');
 }
 
 /**

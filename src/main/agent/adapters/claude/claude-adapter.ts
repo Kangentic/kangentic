@@ -25,6 +25,7 @@ import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
+import { describeClaudeStartupFailure } from './startup-failure';
 import { configuredModelFromClaudeCommand, buildModelDisplayNames } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
@@ -341,9 +342,10 @@ export class ClaudeAdapter implements AgentAdapter {
         const filePath = locateClaudeTranscriptFile(context.agentSessionId, context.cwd);
         const verifier = createSlashCommandVerifier(filePath);
         if (!verifier) return false;
-        // sentAt comes from TerminalSubmit.submitKeystrokes's most-recent
-        // Enter timestamp, re-advanced on each retry attempt. Falling back to
-        // Date.now() preserves single-call use (e.g. ad-hoc verifier
+        // sentAt comes from TerminalSubmit.submitKeystrokes and is the FIRST
+        // Enter pressed for the command, held across its retries and the
+        // scheduler's late re-check (see `firstSentAt` on the result). Falling
+        // back to Date.now() preserves single-call use (e.g. ad-hoc verifier
         // invocation in tests) but the production path always supplies it.
         //
         // `mode` distinguishes an adapter-emitted settings command (must
@@ -355,6 +357,14 @@ export class ClaudeAdapter implements AgentAdapter {
       };
     }
     return null;
+  }
+
+  /**
+   * A `--resume` of a conversation the CLI can no longer find is the one
+   * startup failure Claude names in its output. See `startup-failure.ts`.
+   */
+  describeStartupFailure(finalOutput: string, exitCode: number): string | null {
+    return describeClaudeStartupFailure(finalOutput, exitCode);
   }
 
   /**

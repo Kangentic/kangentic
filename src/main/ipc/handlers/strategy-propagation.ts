@@ -126,7 +126,9 @@ export function propagateStrategyToLiveSessions(
       // via session-changed events); per-task locked so it cannot race a drag.
       const taskId = task.id;
       void withTaskLock(taskId, async () => {
-        const restart = await restartSessionForSettingsChange(context, projectId, projectPath, taskId);
+        const restart = await restartSessionForSettingsChange(
+          context, projectId, projectPath, taskId, { phase: 'switching-model' },
+        );
         if (!restart.ok) {
           console.warn(
             `[${label}] Could not restart session for task ${taskId.slice(0, 8)}`

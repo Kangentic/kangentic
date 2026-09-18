@@ -344,6 +344,7 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
       'proj-board-1',
       '/mock/board-project',
       'task-board-1',
+      { phase: 'switching-model' },
     );
 
     // Live-injection must NOT fire alongside a model-change restart.

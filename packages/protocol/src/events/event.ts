@@ -73,7 +73,10 @@ export type ActivityEventPayload =
    * `spawnProgressLabel`, when present, means the desktop had a respawn in
    * flight for this task when the session ended - a same-column respawn
    * (model switch, agent switch, effort change, isolated-session-track
-   * switch) rather than a genuine park. Read it as what the desktop
+   * switch) or an in-place restart (a model or effort pick on the running
+   * task, a board-profile change, or the auto_command escalation that
+   * re-sends a command as the resume prompt, "Re-sending command...") rather
+   * than a genuine park. Read it as what the desktop
    * believed, not as a fact about what happens next; the caveats below
    * bound it. `intentional` cannot carry this distinction on its own:
    * the desktop's SessionManager.suspend() sets `status = 'suspended'`

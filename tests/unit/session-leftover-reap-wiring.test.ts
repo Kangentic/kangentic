@@ -252,6 +252,8 @@ interface MockSessionManager {
   killByTaskId: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   suspend: ReturnType<typeof vi.fn>;
+  getSession: ReturnType<typeof vi.fn>;
+  findLiveSessionByTaskId: ReturnType<typeof vi.fn>;
   getCapturedSessionTree: ReturnType<typeof vi.fn>;
 }
 
@@ -264,6 +266,11 @@ function makeSessionManager(): MockSessionManager {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => { callOrder.push('suspend'); }),
+    // Phase 1 reconciles task.session_id against the registry before the
+    // Priority ladder; a live row for the pointed-at id keeps these fixtures
+    // on the branches they exercise.
+    getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+    findLiveSessionByTaskId: vi.fn(() => null),
     // Section 1 only (the real captureSessionLeftovers calls this directly).
     // Section 2 never reaches it - task-move.ts's captureSessionLeftovers is
     // the barrel mock above, which never touches context.sessionManager.

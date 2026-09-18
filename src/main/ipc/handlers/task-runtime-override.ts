@@ -8,7 +8,7 @@ import { getProjectRepos } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
-import { restartSessionForSettingsChange } from './session-reconcile';
+import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import type {
@@ -56,8 +56,16 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
 
       return withTaskLock(input.taskId, async () => {
         const { tasks, swimlanes } = getProjectRepos(context, projectId);
-        const task = tasks.getById(input.taskId);
-        if (!task) return { ok: false, reason: 'task not found' };
+        if (!tasks.getById(input.taskId)) return { ok: false, reason: 'task not found' };
+        // The pointer this handler acts on, reconciled against the registry
+        // as SESSION_RESUME and the task move are. On the raw pointer, a task
+        // whose CLI had ended by itself still read as live here: a model pick
+        // then suspended a dead session and respawned it, and an effort pick
+        // scheduled keystrokes into a PTY that was gone. With the pointer
+        // cleared both land on the `persisted` branch below, which is what a
+        // task with no live agent should get: the override is picked up at
+        // its next spawn.
+        const { task } = reconcileTaskSessionRef(context, projectId, input.taskId);
 
         // Validate adapter resolution BEFORE persisting. If the task has no
         // agent or the agent is unknown, the override would never be applied
@@ -202,6 +210,7 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
         // for the existing "Resume" UI to retry.
         const result = await restartSessionForSettingsChange(
           context, projectId, projectPath, input.taskId,
+          { phase: restartForModel ? 'switching-model' : 'applying-settings' },
         );
         return result.ok
           ? { ok: true, mode: 'restart' }

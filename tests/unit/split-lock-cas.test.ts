@@ -427,6 +427,13 @@ describe('TASK_MOVE Priority 3a - agent handoff', () => {
     });
 
     context = createMockContext();
+    // Phase 1 now reconciles task.session_id against the registry before the
+    // Priority ladder; the shared context's `getSession` answers null for
+    // every id (the SESSION_RESUME scenarios above want a stale pointer), so
+    // this session has to read as live for the handoff branch to see it.
+    context.sessionManager.getSession.mockImplementation((id: string) => (
+      id === 'sess-running' ? { id, taskId: 'task-3a', status: 'running' } : null
+    ));
     registerTaskMoveHandlers(context as never);
   });
 
@@ -982,5 +989,74 @@ describe('SESSION_RESUME Phase 1 self-heal (live session already exists)', () =>
       ([patch]) => patch.id === 'task-self-heal' && patch.session_id === null,
     );
     expect(sessionIdNullingCall).toBeUndefined();
+  });
+});
+
+/**
+ * SESSION_SUSPEND runs the same reconcile SESSION_RESUME does (#682
+ * follow-up). On the raw pointer, a pause on a task whose CLI had ended by
+ * itself marked its exited record `suspended` and suspended a registry row
+ * that was not live.
+ */
+describe('SESSION_SUSPEND reconciles task.session_id before suspending', () => {
+  let context: ReturnType<typeof createMockContext>;
+  let storedTask: MockTask;
+
+  function registryRow(status: 'running' | 'exited'): Session {
+    return {
+      id: 'sess-pointer',
+      taskId: 'task-pause',
+      projectId: 'proj-1',
+      pid: 54321,
+      status,
+      shell: '/bin/bash',
+      cwd: '/mock/project',
+      startedAt: new Date().toISOString(),
+      exitCode: status === 'exited' ? 0 : null,
+      resuming: false,
+      agentSessionId: null,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+
+    const doingLane = createMockSwimlane('lane-doing', { auto_spawn: true });
+    storedTask = createMockTask('task-pause', { swimlane_id: 'lane-doing', session_id: 'sess-pointer' });
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: vi.fn(() => storedTask),
+        update: vi.fn((patch: Partial<MockTask> & { id: string }) => {
+          storedTask = { ...storedTask, ...patch };
+        }),
+      },
+      swimlanes: { getById: vi.fn((id: string) => ({ 'lane-doing': doingLane }[id] ?? null)) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
+    context = createMockContext();
+    registerSessionHandlers(context as never);
+  });
+
+  it('does nothing for a pointer at an exited registry row, and clears the pointer', async () => {
+    context.sessionManager.getSession.mockImplementation(() => registryRow('exited'));
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+
+    await handler(null, 'task-pause');
+
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(storedTask.session_id).toBeNull();
+  });
+
+  it('suspends the live session the pointer names', async () => {
+    context.sessionManager.getSession.mockImplementation(() => registryRow('running'));
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+
+    await handler(null, 'task-pause');
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer');
   });
 });

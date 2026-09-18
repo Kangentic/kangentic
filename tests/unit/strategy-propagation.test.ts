@@ -432,7 +432,7 @@ describe('propagateStrategyToLiveSessions - model-restart project path resolutio
     }], 'proj-1');
 
     expect(restartSessionForSettingsChange).toHaveBeenCalledWith(
-      expect.anything(), 'proj-1', '/mock/from-project-row', 'task-1',
+      expect.anything(), 'proj-1', '/mock/from-project-row', 'task-1', { phase: 'switching-model' },
     );
   });
 });
