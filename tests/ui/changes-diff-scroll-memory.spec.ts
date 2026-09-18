@@ -84,7 +84,12 @@ interface ModifiedEditorHandle {
 }
 
 interface MonacoTestHandle {
-  editor: { getDiffEditors: () => { getModifiedEditor: () => ModifiedEditorHandle }[] };
+  editor: {
+    getDiffEditors: () => {
+      getModifiedEditor: () => ModifiedEditorHandle;
+      getLineChanges: () => unknown[] | null;
+    }[];
+  };
 }
 
 interface ModifiedScrollState {
@@ -109,6 +114,21 @@ async function readModifiedScrollState(target: Page): Promise<ModifiedScrollStat
       scrollHeight: modifiedEditor.getScrollHeight(),
       viewportHeight: modifiedEditor.getLayoutInfo().height,
     };
+  });
+}
+
+/**
+ * How many line changes the diff editor has computed for the open file, or -1
+ * with no editor mounted. Zero means the diff is still computing: Monaco
+ * recomputes asynchronously after a model swap, and `getLineChanges()` is
+ * empty until it lands.
+ */
+async function readModifiedLineChangeCount(target: Page): Promise<number> {
+  return target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return -1;
+    return diffEditors[0].getLineChanges()?.length ?? 0;
   });
 }
 
@@ -355,6 +375,18 @@ test.describe('Changes view: diff scroll memory', () => {
     await expect
       .poll(async () => (await readModifiedScrollState(page)).scrollHeight, { timeout: 10000 })
       .toBeGreaterThan(DELTA_TOTAL_LINES * 5);
+
+    // And wait for the diff itself: the scroll height above grows as soon as
+    // the model loads, but the first-visit reveal (DiffViewer's
+    // consumePendingReveal, centring delta.ts's change at line 5) fires from
+    // onDidUpdateDiff once the diff has computed. Scrolling before that lets
+    // the reveal land AFTER the scroll and put scrollTop back near 0, which is
+    // what the poll below then reads for its whole budget. Once getLineChanges
+    // is populated the reveal has already been consumed, since Monaco fires
+    // the update event synchronously with the result.
+    await expect
+      .poll(() => readModifiedLineChangeCount(page), { timeout: 10000 })
+      .toBeGreaterThan(0);
 
     await scrollModifiedToBottom(page);
     await expect(page.locator('.view-line', { hasText: DELTA_TAIL_TOKEN }).first()).toBeVisible({ timeout: 10000 });
