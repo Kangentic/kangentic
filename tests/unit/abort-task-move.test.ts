@@ -200,6 +200,11 @@ function makeContext(overrides: Record<string, unknown> = {}) {
       killByTaskId: vi.fn(),
       listSessions: vi.fn(() => []),
       suspend: vi.fn(async () => {}),
+      // Phase 1 reconciles task.session_id against the registry before the
+      // Priority ladder; a live row for the pointed-at id keeps these fixtures
+      // on the branches they exercise.
+      getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+      findLiveSessionByTaskId: vi.fn(() => null),
     },
     configManager: {
       getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })),
