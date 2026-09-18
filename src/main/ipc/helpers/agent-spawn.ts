@@ -780,9 +780,9 @@ export async function autoSpawnForTask(
     // desktop resume's. Registered WITHOUT `abortInFlightResume` first,
     // unlike SESSION_RESUME: a phone Start must never cancel desktop work
     // (see startTaskSession in handlers/session-start.ts). The registry holds
-    // one controller per task, so registering during an in-flight desktop
-    // resume displaces that resume's controller (its own release then
-    // no-ops); both then converge on one session through the Phase 3 gates.
+    // every in-flight controller per task, so registering alongside an
+    // in-flight desktop resume leaves that resume just as cancellable, and
+    // the two converge on one session through the Phase 3 gates.
     const controller = new AbortController();
     registerResumeController(task.id, controller);
     const { signal } = controller;
