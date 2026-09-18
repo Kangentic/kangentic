@@ -9,6 +9,16 @@ import {
   UnsupportedVerbError,
 } from '../../../packages/protocol/src/wire/framing';
 import type { BridgeMessage } from '../../../packages/protocol/src/wire/messages';
+// The rest of this file deliberately reaches into wire/framing directly so a
+// throw's concrete shape can be asserted without the package's public
+// barrel in the way. isUnsupportedVerbError and UNSUPPORTED_VERB_ERROR_CODE
+// are ALSO consumed through the '@kangentic/protocol' alias by production
+// code (bridge-session.ts) and so are already proven re-exported end to end
+// by bridge-session.test.ts - but UnsupportedVerbError (the class) has no
+// such consumer, so nothing catches it dropping out of
+// packages/protocol/src/index.ts's barrel re-export. Confirmed by removing
+// it from that export list: every other unit suite stayed green.
+import { UnsupportedVerbError as UnsupportedVerbErrorFromEntry } from '@kangentic/protocol';
 
 /** The thrown value of a decode that is expected to fail. */
 function decodeFailure(bytes: Uint8Array): unknown {
@@ -186,6 +196,19 @@ describe('wire message framing', () => {
     expect(isUnsupportedVerbError(foreignCopy)).toBe(true);
     expect(isUnsupportedVerbError(new Error('UnsupportedVerbError'))).toBe(false);
     expect(isUnsupportedVerbError(Object.assign(new Error('x'), { name: 'UnsupportedVerbError' }))).toBe(false);
+  });
+
+  it('re-exports UnsupportedVerbError through the public @kangentic/protocol entry point, not only wire/framing', () => {
+    // isUnsupportedVerbError and UNSUPPORTED_VERB_ERROR_CODE both have a real
+    // consumer that imports them through the '@kangentic/protocol' alias
+    // (bridge-session.ts), so a dropped re-export of either already fails
+    // bridge-session.test.ts. The class itself has no such consumer - nothing
+    // in src/ imports UnsupportedVerbError by name through the alias - so it
+    // is the one name in the barrel's `export { ... } from './wire/framing'`
+    // whose presence in packages/protocol/src/index.ts had no test at all.
+    // Red on that export dropped from index.ts: the entry-point import above
+    // resolves to undefined, and this identity check fails.
+    expect(UnsupportedVerbErrorFromEntry).toBe(UnsupportedVerbError);
   });
 
   it('round-trips a capability-response carrying an error code', () => {
