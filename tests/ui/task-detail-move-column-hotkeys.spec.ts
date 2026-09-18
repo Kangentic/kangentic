@@ -100,6 +100,23 @@ const CONFIRM_TASK_ID = 'task-move-column-confirm';
 const CONFIRM_SESSION_ID = 'sess-move-column-confirm';
 const CONFIRM_TASK_TITLE = 'Move Column Confirm Task';
 
+// Fixture 9: Executing lane, running session. Used for the kebab's "Move to"
+// item - the PRE-EXISTING default path (options.keepOpen unset) that this
+// diff restructured `handleMoveTo` around. Every other test in this file
+// drives the hotkey (keepOpen: true); nothing else in the suite exercises the
+// unmodified default: window closes on success, toast still fires.
+const KEBAB_TASK_ID = 'task-move-column-kebab';
+const KEBAB_SESSION_ID = 'sess-move-column-kebab';
+const KEBAB_TASK_TITLE = 'Move Column Kebab Task';
+
+// Fixture 10: archived, in the Done lane. Used for the `!isArchived` half of
+// columnStepEnabled: an archived task has no board card, so its window is
+// only reachable via setDetailTaskId (mirrors
+// tests/ui/task-detail-update-from-base.spec.ts's openDetailWindow).
+const ARCHIVED_TASK_ID = 'task-move-column-archived';
+const ARCHIVED_SESSION_ID = 'sess-move-column-archived';
+const ARCHIVED_TASK_TITLE = 'Move Column Archived Task';
+
 const preConfig = `
   window.__mockPreConfigure(function (state) {
     var ts = new Date().toISOString();
@@ -353,6 +370,64 @@ const preConfig = `
       updated_at: ts,
     });
 
+    state.sessions.push({
+      id: '${KEBAB_SESSION_ID}',
+      taskId: '${KEBAB_TASK_ID}',
+      projectId: '${PROJECT_ID}',
+      pid: 9009,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/move-column-hotkeys-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.tasks.push({
+      id: '${KEBAB_TASK_ID}',
+      title: '${KEBAB_TASK_TITLE}',
+      description: '',
+      swimlane_id: laneIds['Executing'],
+      position: 6,
+      agent: 'claude',
+      session_id: '${KEBAB_SESSION_ID}',
+      worktree_path: '/mock/worktrees/move-column-kebab',
+      branch_name: 'feature/move-column-kebab',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    state.sessions.push({
+      id: '${ARCHIVED_SESSION_ID}',
+      taskId: '${ARCHIVED_TASK_ID}',
+      projectId: '${PROJECT_ID}',
+      pid: 9010,
+      status: 'suspended',
+      shell: 'bash',
+      cwd: '/mock/move-column-hotkeys-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.archivedTasks.push({
+      id: '${ARCHIVED_TASK_ID}',
+      title: '${ARCHIVED_TASK_TITLE}',
+      description: '',
+      swimlane_id: laneIds['Done'],
+      position: 0,
+      agent: 'claude',
+      session_id: '${ARCHIVED_SESSION_ID}',
+      worktree_path: '/mock/worktrees/move-column-archived',
+      branch_name: 'feature/move-column-archived',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'main',
+      archived_at: ts,
+      created_at: ts,
+      updated_at: ts,
+    });
+
     return { currentProjectId: '${PROJECT_ID}' };
   });
 `;
@@ -380,6 +455,27 @@ function readMoveCount(currentPage: Page): Promise<number> {
   return currentPage.evaluate(
     () => ((window as unknown as Record<string, unknown>).__mockMoveProjectIds as unknown[] | undefined)?.length ?? 0,
   );
+}
+
+/** How many tasks.unarchive IPC calls the mock has seen in total (no reset
+ *  hook - callers diff against a captured baseline, as the counter is
+ *  cumulative for the page's whole lifetime). */
+function readUnarchiveCount(currentPage: Page): Promise<number> {
+  return currentPage.evaluate(
+    () => ((window as unknown as Record<string, unknown>).__mockUnarchiveCallIds as unknown[] | undefined)?.length ?? 0,
+  );
+}
+
+/** Open a task-detail window by driving the store directly - the only way to
+ *  reach an archived task's window, since it has no board card (mirrors
+ *  task-detail-update-from-base.spec.ts's openDetailWindow). */
+async function openArchivedDetailWindow(currentPage: Page, taskId: string): Promise<void> {
+  await currentPage.evaluate((detailTaskId) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { setDetailTaskId: (id: string) => void } } };
+    }).__zustandStores;
+    stores?.session?.getState().setDetailTaskId(detailTaskId);
+  }, taskId);
 }
 
 test.beforeAll(async () => {
@@ -567,6 +663,28 @@ test.describe('Task Detail move-column hotkeys', () => {
     await page.keyboard.press('Alt+Shift+ArrowRight');
 
     // The field kept the key: `when` denied the match, so stepColumn never ran.
+    expect(await readMoveCount(page)).toBe(0);
+    expect(await readSwimlaneId(page, TEXTFIELD_TASK_ID)).toBe('lane-executing');
+    await expect(dialog).toBeVisible();
+
+    // A contenteditable surface (a rich-text note/description editor) is a
+    // SEPARATE branch in isTextFieldTarget (target.isContentEditable, its own
+    // early return) from the tagName OR-chain the <input> probe above already
+    // proves - a plain <div> would not match that OR-chain at all, so without
+    // this branch a contenteditable field would lose its selection to the
+    // hotkey exactly like the <input> case above.
+    await dialog.evaluate((dialogEl) => {
+      const editable = document.createElement('div');
+      editable.contentEditable = 'true';
+      editable.setAttribute('data-testid', 'move-column-probe-contenteditable');
+      dialogEl.appendChild(editable);
+    });
+    const probeContentEditable = dialog.locator('[data-testid="move-column-probe-contenteditable"]');
+    await probeContentEditable.focus();
+
+    await resetMoveCount(page);
+    await page.keyboard.press('Alt+Shift+ArrowRight');
+
     expect(await readMoveCount(page)).toBe(0);
     expect(await readSwimlaneId(page, TEXTFIELD_TASK_ID)).toBe('lane-executing');
     await expect(dialog).toBeVisible();
@@ -801,5 +919,72 @@ test.describe('Task Detail move-column hotkeys', () => {
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test("the kebab's Move to (keepOpen unset) still closes the window and shows the toast", async () => {
+    // This diff restructured handleMoveTo around a keepOpen branch, but every
+    // other test in this file drives the hotkey path (keepOpen: true). This
+    // is the only coverage of the PRE-EXISTING default the kebab's "Move to"
+    // still calls: the else branch (input.onClose()) and the unconditional
+    // toast underneath it.
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator(`text=${KEBAB_TASK_TITLE}`)
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    await dialog.locator('[title="Actions"]').click();
+
+    const menu = page.locator('[role="menu"]');
+    const moveToTrigger = menu.locator('button', { hasText: 'Move to' });
+    await moveToTrigger.waitFor({ state: 'visible', timeout: 5000 });
+    await moveToTrigger.hover();
+
+    const moveTarget = menu.locator('button', { hasText: 'Code Review' });
+    await moveTarget.waitFor({ state: 'visible', timeout: 5000 });
+    await moveTarget.click();
+
+    // Unlike every hotkey-driven test above, the window closes on success
+    // here - options.keepOpen is unset, so handleMoveTo takes the `else`
+    // branch (input.onClose()) instead of returning early on `!result.ok`.
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+    await expect(
+      page.locator('[data-testid="toast"]').filter({ hasText: `Moved "${KEBAB_TASK_TITLE}" to Code Review` }),
+    ).toBeVisible({ timeout: 5000 });
+    await expect.poll(
+      () => readSwimlaneId(page, KEBAB_TASK_ID),
+      { timeout: 5000 },
+    ).toBe('lane-code-review');
+  });
+
+  test('the hotkey is inert for an archived task, which has no board card and would otherwise close on the archived branch', async () => {
+    // columnStepEnabled's `!isArchived` half: without it, the archived branch
+    // of handleMoveTo (input.onClose() followed by unarchiveTask) would run
+    // on the very first press, closing this window and unarchiving the task -
+    // the opposite of what the hotkey is for on a task that is not even on
+    // the board.
+    await openArchivedDetailWindow(page, ARCHIVED_TASK_ID);
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    await expect(dialog.locator('[data-testid="task-title-text"]')).toHaveText(ARCHIVED_TASK_TITLE);
+
+    await resetMoveCount(page);
+    const unarchiveCountBefore = await readUnarchiveCount(page);
+
+    await page.keyboard.press('Alt+Shift+ArrowRight');
+    await page.keyboard.press('Alt+Shift+ArrowLeft');
+
+    // columnStepEnabled is false, so useKeybinding never attached a listener
+    // for either combo: no move call, no unarchive call, window still open.
+    expect(await readMoveCount(page)).toBe(0);
+    expect(await readUnarchiveCount(page)).toBe(unarchiveCountBefore);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('[data-testid="task-title-text"]')).toHaveText(ARCHIVED_TASK_TITLE);
+
+    await dialog.locator('[data-testid="task-detail-close"]').click();
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
   });
 });

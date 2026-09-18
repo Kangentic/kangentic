@@ -1427,6 +1427,15 @@
         };
       },
       unarchive: async function (input) {
+        // Test hook: record every call (task id), mirroring tasks.move's
+        // __mockMoveProjectIds counter, so a test can assert this path was
+        // never reached (e.g. a gate that should keep a hotkey off an
+        // archived task's window).
+        if (typeof window !== 'undefined') {
+          if (!window.__mockUnarchiveCallIds) window.__mockUnarchiveCallIds = [];
+          window.__mockUnarchiveCallIds.push(input.id);
+        }
+
         // Test hook: simulate a main-process failure (e.g. worktree conflict).
         // Real main process leaves archivedTasks unchanged before throwing, so
         // the mock also leaves them unchanged and throws. The renderer's catch
