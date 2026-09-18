@@ -126,6 +126,41 @@ export async function pressResizeHandle(
 }
 
 /**
+ * Expand the task-detail Changes panel's History section and return only once
+ * it is provably open: the section's resize handle
+ * (`changes-history-resize`) renders ONLY while the section is open, so its
+ * presence is the signal, and a click that has not produced it within a short
+ * window is re-issued from a fresh `aria-expanded` read, bounded.
+ *
+ * Do not read the open state off `commit-graph-panel` being visible. The graph
+ * stays mounted while collapsed, clipped inside a `height: 0; overflow: hidden`
+ * body, and Playwright's visibility check reads the element's OWN box (which is
+ * not empty) rather than its ancestors' clipping, so that wait passes on a
+ * collapsed section too. That is how the History resize test in
+ * commit-graph-panel.spec.ts lost its expand click on UI shard 4 (the same
+ * starved-input shape `pressResizeHandle` re-presses for), sailed past the
+ * panel wait, and then spent the rest of its budget hovering a handle that was
+ * never going to render. The hard cap keeps a section that never opens a
+ * failure rather than a hang.
+ */
+export async function expandHistorySection(page: Page): Promise<void> {
+  const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+  const resizeHandle = page.locator('[data-testid="changes-history-resize"]');
+  await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
+  const EXPAND_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= EXPAND_ATTEMPTS; attempt += 1) {
+    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
+      await historyToggle.click();
+    }
+    const opened = await resizeHandle.waitFor({ state: 'attached', timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) return;
+  }
+  throw new Error(`changes-history-toggle did not expand the History section after ${EXPAND_ATTEMPTS} clicks`);
+}
+
+/**
  * Click a control right after a dnd-kit drop, retrying past a swallowed click.
  *
  * `@dnd-kit/core`'s `AbstractPointerSensor` arms a document-level, capture-phase
