@@ -39,6 +39,15 @@
  *      source-order guarantee a real HTTP round trip cannot assert without
  *      racing two independent socket completions against each other, so it is
  *      pinned as a static source check instead - see that test's own comment.
+ *   6. POST /drop-files - respondDropFiles' own request-shape guards
+ *      (missing-selector, missing-paths for both an empty array and an
+ *      empty-string entry, path-not-found for a relative path and for an
+ *      absolute path that does not exist on disk, naming the missing path in
+ *      the detail message), the 404 selector-not-found path (and that it
+ *      dispatches no `Input.dispatchDragEvent` at all when the selector
+ *      misses), and the 200 happy path: exactly three drag events in order
+ *      (dragEnter, dragOver, drop), each at the box model's content-quad
+ *      centroid, carrying the real file paths and `dragOperationsMask: 1`.
  *
  * Mocks `electron` because inspection-server.ts imports `app.getVersion()`
  * and (for POST /quit) `app.quit()`. The `attachDebugger` function in cdp.ts
@@ -48,6 +57,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 // electron mock must come before any devtools imports that transitively
@@ -686,6 +696,138 @@ describe('inspection-server handler behaviors', () => {
           getProjectId: () => null,
         });
         serverPort = restoredPort!;
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 6. POST /drop-files
+  // -------------------------------------------------------------------------
+
+  describe('POST /drop-files', () => {
+    const dropFilesTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-drop-'));
+
+    afterAll(() => {
+      fs.rmSync(dropFilesTempDir, { recursive: true, force: true });
+    });
+
+    it('returns 400 missing-selector when selector is absent', async () => {
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { paths: ['x'] },
+      });
+      expect(response.status).toBe(400);
+      const responseBody = response.body as { ok: boolean; error: { kind: string } };
+      expect(responseBody.ok).toBe(false);
+      expect(responseBody.error.kind).toBe('missing-selector');
+    });
+
+    it('returns 400 missing-paths when paths is an empty array', async () => {
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { selector: '.drop-target', paths: [] },
+      });
+      expect(response.status).toBe(400);
+      const responseBody = response.body as { ok: boolean; error: { kind: string } };
+      expect(responseBody.ok).toBe(false);
+      expect(responseBody.error.kind).toBe('missing-paths');
+    });
+
+    it('returns 400 missing-paths when paths contains an empty string', async () => {
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { selector: '.drop-target', paths: [''] },
+      });
+      expect(response.status).toBe(400);
+      const responseBody = response.body as { ok: boolean; error: { kind: string } };
+      expect(responseBody.ok).toBe(false);
+      expect(responseBody.error.kind).toBe('missing-paths');
+    });
+
+    it('returns 400 path-not-found for a relative path', async () => {
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { selector: '.drop-target', paths: ['relative/shot.png'] },
+      });
+      expect(response.status).toBe(400);
+      const responseBody = response.body as { ok: boolean; error: { kind: string; detail: string } };
+      expect(responseBody.ok).toBe(false);
+      expect(responseBody.error.kind).toBe('path-not-found');
+      expect(responseBody.error.detail).toContain('relative/shot.png');
+    });
+
+    it('returns 400 path-not-found for an absolute path that does not exist, naming it', async () => {
+      const missingPath = path.join(dropFilesTempDir, 'does-not-exist.png');
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { selector: '.drop-target', paths: [missingPath] },
+      });
+      expect(response.status).toBe(400);
+      const responseBody = response.body as { ok: boolean; error: { kind: string; detail: string } };
+      expect(responseBody.ok).toBe(false);
+      expect(responseBody.error.kind).toBe('path-not-found');
+      expect(responseBody.error.detail).toContain(missingPath);
+    });
+
+    it('returns 404 selector-not-found when the selector misses, and dispatches no drag event', async () => {
+      const realFilePath = path.join(dropFilesTempDir, 'shot.png');
+      fs.writeFileSync(realFilePath, 'fake-png-bytes');
+      stubDebugger.responses.set('DOM.getDocument', { root: { nodeId: 1 } });
+      stubDebugger.responses.set('DOM.querySelector', { nodeId: 0 });
+
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { selector: '.missing-target', paths: [realFilePath] },
+      });
+      expect(response.status).toBe(404);
+      const responseBody = response.body as { ok: boolean; error: { kind: string } };
+      expect(responseBody.ok).toBe(false);
+      expect(responseBody.error.kind).toBe('selector-not-found');
+      expect(stubDebugger.calls.some((call) => call.method === 'Input.dispatchDragEvent')).toBe(false);
+    });
+
+    it('returns 200 with { ok: true, dropped: 2 } and dispatches dragEnter, dragOver, drop in order at the centroid', async () => {
+      const firstFilePath = path.join(dropFilesTempDir, 'first.png');
+      const secondFilePath = path.join(dropFilesTempDir, 'second.png');
+      fs.writeFileSync(firstFilePath, 'fake-png-bytes-1');
+      fs.writeFileSync(secondFilePath, 'fake-png-bytes-2');
+      stubDebugger.responses.set('DOM.getDocument', { root: { nodeId: 1 } });
+      stubDebugger.responses.set('DOM.querySelector', { nodeId: 42 });
+      stubDebugger.responses.set('DOM.getBoxModel', {
+        model: { content: [10, 10, 110, 10, 110, 60, 10, 60] },
+      });
+
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/drop-files',
+        body: { selector: '.drop-target', paths: [firstFilePath, secondFilePath] },
+      });
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true, dropped: 2 });
+
+      const dragCalls = stubDebugger.calls.filter((call) => call.method === 'Input.dispatchDragEvent');
+      expect(dragCalls).toHaveLength(3);
+      expect(dragCalls.map((call) => (call.params as { type: string }).type)).toEqual([
+        'dragEnter',
+        'dragOver',
+        'drop',
+      ]);
+      for (const call of dragCalls) {
+        const params = call.params as {
+          x: number;
+          y: number;
+          data: { items: unknown[]; files: string[]; dragOperationsMask: number };
+        };
+        expect(params.x).toBe(60);
+        expect(params.y).toBe(35);
+        expect(params.data.files).toEqual([firstFilePath, secondFilePath]);
+        expect(params.data.dragOperationsMask).toBe(1);
       }
     });
   });
