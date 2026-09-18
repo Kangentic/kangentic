@@ -404,6 +404,9 @@ automations on the right.
 The column's message to its agent is no longer a field here. It is an automation, and it lives in
 the list on the right: see [Automations](#automations) below.
 
+**Remove column**, at the left of the dialog's footer, stages the removal until you save; Cancel
+keeps the column. A column that still has tasks cannot be removed.
+
 When a column's agent override differs from the current session's agent, moving a task into that column triggers a cross-agent handoff. The outgoing agent's context (transcript, git changes, metrics) is automatically packaged and delivered to the incoming agent.
 
 ### Automations
@@ -440,9 +443,9 @@ row. On enter, Kangentic starts the column's agent right before the first automa
 one, which today means a **Send message to agent** row. On exit there is no agent to start, so
 such a row is skipped with that reason recorded.
 
-**When something fails.** Every run is recorded, whatever happens, and the row shows its last run
-under its description. A failure raises one toast naming the automation and the column, with a
-**Run again** action that re-runs it against the task's current state. Nothing is retried
+**When something fails.** Every run is recorded, whatever happens. A failure raises one toast
+naming the automation and the column, with a **Run again** action that re-runs it against the
+task's current state. Nothing is retried
 automatically: a fired webhook and a half-run script are not safe to repeat blind. A run that was
 in flight when Kangentic quit is marked interrupted the next time the project opens.
 

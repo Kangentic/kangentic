@@ -187,11 +187,6 @@ export function registerBoardHandlers(context: IpcContext): void {
     return automationRuns.listForTask(taskId);
   });
 
-  ipcMain.handle(IPC.AUTOMATION_LATEST_RUNS, (_, projectId?: string | null) => {
-    const { automationRuns } = getProjectRepos(context, projectId);
-    return Object.fromEntries(automationRuns.latestByAutomation());
-  });
-
   // Re-runs ONE automation against the task's CURRENT state. Resolving the
   // project explicitly rather than through `getProjectRepos`' fallback: the
   // shared helper opens its own repositories and takes the task lock, and a

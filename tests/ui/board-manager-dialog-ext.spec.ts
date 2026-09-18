@@ -12,9 +12,10 @@
  *    counter and adds a second new-draft tab.
  * 7. Discard confirm bullet rendering (1 dirty = 1 li, 3 dirty = 3 li each
  *    with the column name; untitled new drafts render as "Untitled column").
- * 8. Delete control names its target - the delete button's aria-label/title
- *    is `Delete "<column name>"`, and the confirm dialog it opens reuses the
- *    same string as its title (was the static "Delete column").
+ * 8. The removal names its target - the footer's Remove column button carries
+ *    `Remove column "<column name>"` as its aria-label/title, and the confirm
+ *    it opens draws the column (icon, name, position) as its body under the
+ *    plain "Remove column" title.
  */
 import { test, expect } from '@playwright/test';
 import { launchPage, waitForBoard, createProject, clickPastDragSwallow } from './helpers';
@@ -421,24 +422,37 @@ test.describe('BoardManagerDialog extended', () => {
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
   });
 
-  // ── Gap 8: Delete control names its target ────────────────────────────────
+  // ── Gap 8: the removal names its target ───────────────────────────────────
   //
-  // DetailIdentityHeader's delete button carries an aria-label/title of
-  // `Delete "<column name>"`, and the ConfirmDialog it opens reuses that same
-  // string as its title (previously a static "Delete column").
+  // The footer's Remove column button reads "Remove column" with no name, so
+  // its aria-label/title carry `Remove column "<column name>"`, and the
+  // ConfirmDialog it opens draws the column itself as its body (icon, name,
+  // position), the way its rail row does. The confirm's title is the plain
+  // action; the body line is what says which column.
 
-  test('delete control aria-label/title name the column; confirm dialog title matches', async () => {
+  test('remove control aria-label/title name the column; confirm body shows the column', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
     const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
-    await expect(deleteButton).toHaveAttribute('aria-label', 'Delete "Code Review"');
-    await expect(deleteButton).toHaveAttribute('title', 'Delete "Code Review"');
+    await expect(deleteButton).toHaveAttribute('aria-label', 'Remove column "Code Review"');
+    await expect(deleteButton).toHaveAttribute('title', 'Remove column "Code Review"');
 
     await deleteButton.click();
-    await expect(page.locator('h3', { hasText: 'Delete "Code Review"' })).toBeVisible({ timeout: 1500 });
+    const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
+    await expect(confirmTitle).toBeVisible({ timeout: 1500 });
+    const target = page.locator('[data-testid="board-manager-remove-target"]');
+    await expect(target).toHaveText('Code Review');
+    // The position pill sits on the same line: "<n> of <total>" over the
+    // fixture's seven columns. The number is read from the rail rather than
+    // hardcoded so a fixture reorder does not fail this.
+    const railNames = await dialog.locator('[data-testid="board-manager-tab"]').evaluateAll(
+      (tabs) => tabs.map((tab) => tab.getAttribute('data-tab-name')),
+    );
+    const position = railNames.indexOf('Code Review') + 1;
+    await expect(target.locator('..')).toContainText(`${position} of ${railNames.length}`);
 
-    // Cancel out via Escape rather than a "Cancel" button click: the delete
+    // Cancel out via Escape rather than a "Cancel" button click: the remove
     // ConfirmDialog's own Cancel button shares its accessible name with the
     // manager dialog's own footer Cancel button (both render underneath the
     // confirm's z-[60] overlay), so a plain role/name locator would be
@@ -447,9 +461,9 @@ test.describe('BoardManagerDialog extended', () => {
     // set (see the `!confirmDeleteId` check in BoardManagerDialog.tsx), and
     // its own BaseDialog's Escape effect no-ops under preventBackdropClose,
     // so only the ConfirmDialog's Escape handler fires, closing just the
-    // confirm and leaving the manager open with nothing deleted.
+    // confirm and leaving the manager open with nothing removed.
     await page.keyboard.press('Escape');
-    await expect(page.locator('h3', { hasText: 'Delete "Code Review"' })).toBeHidden({ timeout: 1500 });
+    await expect(confirmTitle).toBeHidden({ timeout: 1500 });
     await expect(dialog).toBeVisible();
 
     const stillExists = await page.evaluate(async () => {
@@ -457,6 +471,37 @@ test.describe('BoardManagerDialog extended', () => {
       return lanes.some((lane) => lane.name === 'Code Review');
     });
     expect(stillExists).toBe(true);
+  });
+
+  // A column's name can be cleared to whitespace in the General card without
+  // saving (Save blocks an empty name, but nothing stops the user from
+  // opening Remove column while the field sits blank). The footer control's
+  // aria-label/title and the confirm's body both fall back to "Untitled",
+  // the same fallback the identity header already uses.
+
+  test('the removal control falls back to "Untitled" when the column name is blank', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    await page.locator('[data-testid="board-manager-name"]').fill('   ');
+
+    const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
+    await expect(deleteButton).toHaveAttribute('aria-label', 'Remove column "Untitled"');
+    await expect(deleteButton).toHaveAttribute('title', 'Remove column "Untitled"');
+
+    await deleteButton.click();
+    const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
+    await expect(confirmTitle).toBeVisible({ timeout: 1500 });
+    await expect(page.locator('[data-testid="board-manager-remove-target"]')).toHaveText('Untitled');
+
+    // Escape rather than a role/name locator, for the same reason as the
+    // sibling test above: the confirm's own Cancel shares an accessible name
+    // with the manager's footer Cancel underneath it.
+    await page.keyboard.press('Escape');
+    await expect(confirmTitle).toBeHidden({ timeout: 1500 });
+    await expect(dialog).toBeVisible();
+    // The blank name is still dirty and never saved; afterEach's Cancel ->
+    // Discard flow (already run for every test in this describe) reverts it.
   });
 
   // ── Session target + spawn strategy selects ──────────────────────────────
@@ -614,6 +659,25 @@ test.describe('BoardManagerDialog extended', () => {
     await rows.filter({ hasText: 'Reviewed' }).click();
     await expect(dialog.locator('[data-testid="board-manager-name"]')).toHaveValue('Reviewed');
     // Dirty edit is discarded by afterEach.
+  });
+
+  // The overview has no single column to remove, so the footer's Remove
+  // column control is gated on `!isOverview` the same way it is gated on
+  // To Do / Done and on an active profile. It must reappear the moment a
+  // real column is selected again.
+
+  test('Remove column is absent on the All columns overview, and returns when a column is selected', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    await expect(dialog.locator('[data-testid="board-manager-delete"]')).toBeVisible();
+
+    await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+    await expect(dialog.locator('[data-testid="board-manager-overview-row"]').first()).toBeVisible();
+    await expect(dialog.locator('[data-testid="board-manager-delete"]')).toHaveCount(0);
+
+    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Code Review"]').click();
+    await expect(dialog.locator('[data-testid="board-manager-delete"]')).toBeVisible();
   });
 
   // ── Save enables on the first change ─────────────────────────────────────

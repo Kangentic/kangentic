@@ -182,7 +182,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `swimlane:reorder` | invoke | Reorder swimlanes by ID array |
 | `swimlane:updatedByAgent` | on | Push event when an MCP agent changes a project's columns: a column create, update, or delete, or (reusing the same deliberately kind-agnostic signal) a same-column task reorder via `kangentic_reorder_tasks` / `kangentic_move_task`'s `position`, where no swimlane field itself changed |
 
-### Automations (7 channels)
+### Automations (6 channels)
 
 Replaced the `action:*` and `transition:*` channels, which had no renderer callers.
 
@@ -191,7 +191,6 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `automation:list` | invoke | Fetch every column's automations |
 | `automation:replaceForColumn` | invoke | Replace one column's whole list (the Column Manager's Save) |
 | `automation:runsForTask` | invoke | Run history for a task, newest first |
-| `automation:latestRuns` | invoke | The newest run per automation, for the row's last-run line |
 | `automation:runAgain` | invoke | Re-run ONE automation against the task's current state, writing a fresh run row |
 | `automation:runFailed` | on | Push event when a run failed or was interrupted, rationed per automation |
 | `automation:runsInterrupted` | on | Push event after the project-open sweep, one summary per open |
@@ -727,7 +726,7 @@ All stores in `src/renderer/stores/`. They call `window.electronAPI.*` for IPC a
 
 ### BoardStore (`board-store.ts`)
 
-State: `tasks`, `swimlanes`, `automations`, `automationsLoaded`, `automationRuns`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
+State: `tasks`, `swimlanes`, `automations`, `automationsLoaded`, `archivedTasks`, `loading`, `completingTask`, `completingTaskIds`, `completionGates`, `recentlyArchivedId`, `lanePins`, `pendingMoveConfirms` (with `pendingMoveConfirm` as its head)
 
 - **Optimistic updates** -- all mutations update UI immediately, then sync via IPC. Errors revert via full `loadBoard()`.
 - **Stale move protection** - per-task `moveGenerations` counters prevent older async reloads from clobbering newer moves of the same task.
@@ -735,7 +734,7 @@ State: `tasks`, `swimlanes`, `automations`, `automationsLoaded`, `automationRuns
 - **Move confirmations queue** - `pendingMoveConfirms` is FIFO. As a single slot, a second confirmation overwrote the first, and that move had already returned `ok` without calling the IPC, leaving an optimistic placement no write backed.
 - **Session cascade** -- after task move, reloads sessions to detect spawns/kills from transition engine. Auto-activates new sessions with toast notification.
 - **Completion animation** -- `setCompletingTask()` mounts the FlyingCard with the captured drop rect; a per-task completion gate joins the fly finishing (`markCompletionAnimationDone`) and the move being approved (`approveCompletion`, after a clean worktree probe or a confirmed dialog), and `persistCompletion` runs the actual move once both signals land.
-- **Automations** (`board-store/automations-slice.ts`) -- `loadAutomations()` fetches every column's list, `loadAutomationRuns()` fetches the newest run per automation for the row's last-run line, and `replaceAutomationsForColumn()` writes one column's whole list and re-reads. `selectAutomationCounts(swimlaneId)` derives the runnable enter/exit counts the rail, the board glyph and the overview all read, so the same number cannot mean three things.
+- **Automations** (`board-store/automations-slice.ts`) -- `loadAutomations()` fetches every column's list, `replaceAutomationsForColumn()` writes one column's whole list and re-reads, and `runAutomationAgain()` re-runs one row for the failure toast's Run again and returns the result. `selectAutomationCounts(swimlaneId)` derives the runnable enter/exit counts the rail, the board glyph and the overview all read, so the same number cannot mean three things.
 
 ### SessionStore (`session-store.ts`)
 

@@ -326,6 +326,7 @@ export function DialogFooterActions({
   confirmDisabled = false,
   cancelTestId,
   confirmTestId,
+  leading,
 }: {
   onCancel: () => void;
   onConfirm: () => void;
@@ -334,26 +335,35 @@ export function DialogFooterActions({
   confirmDisabled?: boolean;
   cancelTestId?: string;
   confirmTestId?: string;
+  /**
+   * Left-aligned slot for a destructive action (the Column Manager's Remove
+   * column), the same shape `dialogs/DialogFooterActions.tsx` gives the task
+   * window's Delete. Absent leaves the pair right-aligned.
+   */
+  leading?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-end gap-3">
-      <button
-        type="button"
-        onClick={onCancel}
-        data-testid={cancelTestId}
-        className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
-      >
-        {cancelLabel}
-      </button>
-      <button
-        type="button"
-        onClick={onConfirm}
-        disabled={confirmDisabled}
-        data-testid={confirmTestId}
-        className="px-6 py-1.5 min-w-[96px] text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
-      >
-        {confirmLabel}
-      </button>
+    <div className={`flex items-center ${leading ? 'justify-between' : 'justify-end'}`}>
+      {leading}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onCancel}
+          data-testid={cancelTestId}
+          className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+        >
+          {cancelLabel}
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={confirmDisabled}
+          data-testid={confirmTestId}
+          className="px-6 py-1.5 min-w-[96px] text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
+        >
+          {confirmLabel}
+        </button>
+      </div>
     </div>
   );
 }

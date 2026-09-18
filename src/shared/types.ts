@@ -5543,8 +5543,6 @@ export interface ElectronAPI {
       projectId?: string | null,
     ) => Promise<ColumnAutomation[]>;
     runsForTask: (taskId: string, projectId?: string | null) => Promise<AutomationRun[]>;
-    /** The newest run per automation id, for the last-run line in Board setup. */
-    latestRuns: (projectId?: string | null) => Promise<Record<string, AutomationRun>>;
     /**
      * Re-run ONE automation against the task's CURRENT state. Mutating, so it
      * carries the interaction-time projectId.

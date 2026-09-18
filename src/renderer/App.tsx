@@ -1000,7 +1000,6 @@ if (import.meta.hot) {
     useBoardStore.getState().loadBoard();
     useBoardStore.getState().loadBoardProfiles();
     useBoardStore.getState().loadAutomations();
-    useBoardStore.getState().loadAutomationRuns();
     useBacklogStore.getState().loadBacklog();
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();

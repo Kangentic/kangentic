@@ -90,7 +90,6 @@ export const IPC = {
   AUTOMATION_LIST: 'automation:list',
   AUTOMATION_REPLACE_FOR_COLUMN: 'automation:replaceForColumn',
   AUTOMATION_RUNS_FOR_TASK: 'automation:runsForTask',
-  AUTOMATION_LATEST_RUNS: 'automation:latestRuns',
   /**
    * Re-run ONE automation against the task's CURRENT state, writing a fresh run
    * row. Reached from the failure toast's Run again action and from MCP.

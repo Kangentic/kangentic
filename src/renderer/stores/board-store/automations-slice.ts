@@ -1,5 +1,5 @@
 import { type StateCreator } from 'zustand';
-import type { AutomationRun, AutomationRunAgainResult, AutomationWriteInput, ColumnAutomation } from '../../../shared/types';
+import type { AutomationRunAgainResult, AutomationWriteInput, ColumnAutomation } from '../../../shared/types';
 import { runnableAutomationCounts, toDraft } from '../../components/dialogs/board-manager/automation-drafts';
 import { useProjectStore } from '../project-store';
 import type { BoardStore } from './types';
@@ -15,14 +15,13 @@ import type { BoardStore } from './types';
 export interface AutomationsSlice {
   automations: ColumnAutomation[];
   automationsLoaded: boolean;
-  /** The newest run per automation id, for the last-run line under each row. */
-  automationRuns: Record<string, AutomationRun>;
   loadAutomations: () => Promise<void>;
-  loadAutomationRuns: () => Promise<void>;
   replaceAutomationsForColumn: (columnId: string, automations: AutomationWriteInput[]) => Promise<void>;
   /**
-   * Re-run ONE automation against the task's CURRENT state, then re-read the
-   * run history so the last-run line reflects it.
+   * Re-run ONE automation against the task's CURRENT state. The result is the
+   * whole answer: nothing in the renderer holds run history any more (the
+   * Column Manager row used to print its last run, and no longer does), so
+   * there is nothing to re-read afterwards.
    */
   runAutomationAgain: (automationId: string, taskId: string) => Promise<AutomationRunAgainResult>;
 }
@@ -30,7 +29,6 @@ export interface AutomationsSlice {
 export const createAutomationsSlice: StateCreator<BoardStore, [], [], AutomationsSlice> = (set, get) => ({
   automations: [],
   automationsLoaded: false,
-  automationRuns: {},
 
   loadAutomations: async () => {
     try {
@@ -40,14 +38,6 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
       // Keep the last known list rather than blanking the board's counts on a
       // transient failure, the same call the board profiles loader makes.
       console.warn('[automations] load failed; keeping the last known list', error);
-    }
-  },
-
-  loadAutomationRuns: async () => {
-    try {
-      set({ automationRuns: await window.electronAPI.automations.latestRuns() });
-    } catch (error) {
-      console.warn('[automations] run history load failed', error);
     }
   },
 
@@ -65,12 +55,7 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
 
   runAutomationAgain: async (automationId, taskId) => {
     const projectId = useProjectStore.getState().currentProject?.id ?? null;
-    const result = await window.electronAPI.automations.runAgain(automationId, taskId, projectId);
-    // Re-read whatever happened, including a failure: the run row exists either
-    // way and the last-run line has to show the NEW one, not the old failure
-    // the user clicked Run again on.
-    await get().loadAutomationRuns();
-    return result;
+    return window.electronAPI.automations.runAgain(automationId, taskId, projectId);
   },
 });
 

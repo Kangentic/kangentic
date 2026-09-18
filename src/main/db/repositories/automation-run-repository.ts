@@ -97,8 +97,7 @@ export class AutomationRunRepository {
    * there was nothing to tell the user because it ran. That is exactly backwards
    * for the most common automation anyone owns: the run log is where "did my
    * message fire" is answered, and the one row people actually have was the one
-   * row with no entry, so its last-run line stayed blank and
-   * `kangentic_get_automation_runs` returned nothing for it.
+   * row with no entry, so `kangentic_get_automation_runs` returned nothing for it.
    */
   recordDeliveredByCaller(input: StartRunInput, detail: string): void {
     this.start(input);
@@ -117,22 +116,6 @@ export class AutomationRunRepository {
       .prepare('SELECT * FROM automation_runs WHERE automation_id = ? ORDER BY started_at DESC LIMIT ?')
       .all(automationId, limit) as AutomationRunRow[];
     return rows.map(mapRow);
-  }
-
-  /** The newest run per automation, for the last-run line under each row in Board setup. */
-  latestByAutomation(): Map<string, AutomationRun> {
-    const rows = this.db
-      .prepare(`
-        SELECT * FROM automation_runs
-        WHERE id IN (SELECT id FROM automation_runs GROUP BY automation_id HAVING MAX(started_at))
-        ORDER BY started_at DESC
-      `)
-      .all() as AutomationRunRow[];
-    const latest = new Map<string, AutomationRun>();
-    for (const row of rows) {
-      if (!latest.has(row.automation_id)) latest.set(row.automation_id, mapRow(row));
-    }
-    return latest;
   }
 
   /**
