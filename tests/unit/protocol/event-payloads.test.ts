@@ -27,6 +27,7 @@ import {
   parseReadBoardResponsePayload,
   parseReadDiffResponsePayload,
   parseReadStreamResponsePayload,
+  parseStartSessionResponsePayload,
   parseTranscriptWindowResponsePayload,
 } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
@@ -545,6 +546,21 @@ describe('read-* response parsers', () => {
   it('parses a read-diff response by discriminating on "files"', () => {
     expect(parseReadDiffResponsePayload({ files: [], totalInsertions: 0, totalDeletions: 0 })).toEqual({ files: [], totalInsertions: 0, totalDeletions: 0 });
     expect(parseReadDiffResponsePayload({ original: 'a', modified: 'b', language: 'ts' })).toEqual({ original: 'a', modified: 'b', language: 'ts' });
+  });
+
+  it('parses a start-session response to exactly its two fields, on both outcomes', () => {
+    // The two accepted shapes ask different things of the phone: `starting`
+    // waits for the successor's board / stream event, `live` refreshes at once
+    // because nothing was spawned and no event is coming.
+    expect(parseStartSessionResponsePayload({ ok: true, outcome: 'starting', extra: 1 })).toEqual({ ok: true, outcome: 'starting' });
+    expect(parseStartSessionResponsePayload({ ok: true, outcome: 'live' })).toEqual({ ok: true, outcome: 'live' });
+  });
+
+  it('rejects a start-session response with a missing ok or an unknown outcome', () => {
+    expect(() => parseStartSessionResponsePayload({ outcome: 'starting' })).toThrow(/ok/);
+    expect(() => parseStartSessionResponsePayload({ ok: true })).toThrow(/outcome/);
+    expect(() => parseStartSessionResponsePayload({ ok: true, outcome: 'restarted' })).toThrow(/outcome/);
+    expect(() => parseStartSessionResponsePayload('ok' as unknown as JsonValue)).toThrow(/object/);
   });
 });
 

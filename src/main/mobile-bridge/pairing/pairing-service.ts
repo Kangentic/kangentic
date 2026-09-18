@@ -16,14 +16,15 @@ import type { BridgeIdentity } from '../identity';
 import { isPairingTokenValid, mintPairingToken, type PairingToken } from './pairing-token';
 
 /**
- * Default grant for a newly paired device: all ten protocol verbs. The
+ * Default grant for a newly paired device: every protocol verb. The
  * phone is an extension of the user's own desktop, not a third-party
  * integration - the QR scan plus SAS comparison already proves physical
  * possession of both devices, so pairing is the only approval the human
  * needs to give. Note what stays true regardless: the protocol defines no
  * shell, file, or arbitrary-command verb at all (see capabilities/verbs.ts),
- * so "full access" means these ten, never more, and unpair remains the
- * kill switch.
+ * so "full access" means that list, never more, and unpair remains the
+ * kill switch. A verb added to the list reaches every already-paired device
+ * on the next bridge start (`migrateDevicesToFullCapabilityGrant`).
  */
 export const DEFAULT_PAIRING_CAPABILITIES: CapabilityVerb[] = [...CAPABILITY_VERBS];
 

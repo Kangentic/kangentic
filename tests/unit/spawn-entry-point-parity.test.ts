@@ -356,3 +356,41 @@ describe('spawn entry-point parity: single lock call site', () => {
     ).toEqual([]);
   });
 });
+
+describe('spawn entry-point parity: explicitStart is a user-gesture option', () => {
+  /**
+   * `explicitStart` lifts spawnAgent's `auto_spawn` default and its
+   * manually-paused guard, both of which exist to stop an AUTOMATIC spawn from
+   * overriding a choice the user made. The option therefore belongs only to a
+   * path a user gesture drives. The declaration, the gates, and the forward
+   * live in agent-spawn.ts; the one caller is the phone's start-session verb
+   * body. A create, promote, unarchive, startup, or reconcile path growing
+   * `{ explicitStart: true }` would silently un-pause a task the user paused,
+   * and nothing but this scan would notice.
+   */
+  const EXPLICIT_START_FILES = new Set([
+    'src/main/ipc/helpers/agent-spawn.ts',
+    'src/main/ipc/handlers/session-start.ts',
+  ]);
+
+  it('explicitStart is referenced only by agent-spawn.ts and the start-session body', () => {
+    const outsideReferences = collectSinkCalls(/\bexplicitStart\b/)
+      .filter((reference) => !EXPLICIT_START_FILES.has(reference.relativePath))
+      .map((reference) => reference.location);
+    expect(
+      outsideReferences,
+      `explicitStart referenced outside its two classified files:\n`
+        + `${outsideReferences.join('\n')}\n\n`
+        + `The option bypasses the auto_spawn default and the manual-pause guard, so only a `
+        + `user-initiated path may pass it. If this is a new user gesture, add the file here `
+        + `with a reason; an automatic or reconcile caller never sets it. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
+  it('the one caller still passes it, so the scan is not vacuous', () => {
+    expect(fileHasNonCommentCall('src/main/ipc/handlers/session-start.ts', 'autoSpawnForTask')).toBe(true);
+    const callerReferences = collectSinkCalls(/explicitStart:\s*true/)
+      .filter((reference) => reference.relativePath === 'src/main/ipc/handlers/session-start.ts');
+    expect(callerReferences.length).toBeGreaterThan(0);
+  });
+});

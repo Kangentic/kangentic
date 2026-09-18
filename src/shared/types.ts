@@ -4015,6 +4015,7 @@ export const MOBILE_CAPABILITY_VERBS = [
   'board-tool-read',
   'board-tool-write',
   'register-push',
+  'start-session',
 ] as const;
 export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
 

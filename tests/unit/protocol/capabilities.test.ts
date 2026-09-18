@@ -18,6 +18,11 @@ describe('capability verbs', () => {
     expect(isCapabilityVerb('register-push')).toBe(true);
   });
 
+  it('includes start-session (the second lifecycle verb beside move-task)', () => {
+    expect(CAPABILITY_VERBS).toContain('start-session');
+    expect(isCapabilityVerb('start-session')).toBe(true);
+  });
+
   it('capabilitySetFromArray drops unrecognized entries (deny-by-default for unknown verbs)', () => {
     const set = capabilitySetFromArray(['read-board', 'delete-everything', 'move-task']);
     expect(capabilitySetToArray(set).sort()).toEqual(['move-task', 'read-board']);

@@ -183,6 +183,21 @@ export interface AgentSpawnOptions {
    * destination is the lane the user chose).
    */
   settingsSourceLane?: Swimlane | null;
+  /**
+   * An explicit user gesture asked for this agent: today the phone's
+   * `start-session` verb (`handlers/session-start.ts`), the bridge twin of the
+   * desktop's Resume button. It bypasses exactly two guards, the column's
+   * `auto_spawn` default and the manually-paused check, because both exist to
+   * stop an AUTOMATIC spawn from overriding a choice the user made, and an
+   * explicit Start is that user changing their mind. Nothing else changes:
+   * the To Do / Done role gate still refuses, and the column's enter
+   * automations still run.
+   *
+   * Passed only by a user-initiated path. A create, promote, unarchive,
+   * startup, or `reconcileAutoSpawnChange` caller never sets it, or a column
+   * flip would silently un-pause a task the user paused.
+   */
+  explicitStart?: boolean;
 }
 
 /**
@@ -249,8 +264,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     });
 
   const run = async (): Promise<void> => {
-  // Guard: if the target column doesn't want agents, no-op
-  if (!toLane.auto_spawn) return;
+  // Guard: if the target column doesn't want agents, no-op. An explicit user
+  // Start overrides the column's default, as the desktop's Resume button does.
+  if (!toLane.auto_spawn && !options.explicitStart) return;
 
   // Guard: a To Do or Done column never spawns, whatever its flag says. The
   // move path branches on role before it gets here (task-move.ts), and the
@@ -262,10 +278,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // agent there would be invisible.
   if (!laneMaySpawn(toLane)) return;
 
-  // Guard: if the user manually paused this task, don't auto-resume.
-  // The user must explicitly click Resume (SESSION_RESUME) to restart.
+  // Guard: if the user manually paused this task, don't auto-resume. Only an
+  // explicit user gesture restarts it: the desktop's Resume button
+  // (SESSION_RESUME) or a caller passing `explicitStart` (the phone's
+  // start-session verb).
   const latestSession = sessionRepo.getLatestForTask(task.id);
-  if (latestSession?.status === 'suspended' && latestSession.suspended_by === 'user') {
+  if (
+    latestSession?.status === 'suspended'
+    && latestSession.suspended_by === 'user'
+    && !options.explicitStart
+  ) {
     console.log(`[spawnAgent] Skipping auto-spawn for task ${task.id.slice(0, 8)} (manually paused by user)`);
     return;
   }
@@ -640,6 +662,11 @@ export function resolveInjectionVerifier(
   return buildCommandInjectionVerifier(adapter, sessionRepo, taskId);
 }
 
+export interface AutoSpawnForTaskOptions {
+  /** See `AgentSpawnOptions.explicitStart`. Forwarded, and also lifts this function's own `auto_spawn` gate. */
+  explicitStart?: boolean;
+}
+
 /**
  * Auto-spawn an agent session for a newly created task when the target
  * swimlane has `auto_spawn` enabled. Handles worktree setup, branch checkout,
@@ -647,13 +674,17 @@ export function resolveInjectionVerifier(
  * injection.
  *
  * Called from both the SessionManager `task-created` event (internal MCP
- * bridge) and the external CommandBridge `onTaskCreated` callback.
+ * bridge) and the external CommandBridge `onTaskCreated` callback, from the
+ * auto_spawn reconcile, and from the phone's start-session verb
+ * (`handlers/session-start.ts`), which is the one caller passing
+ * `explicitStart`.
  */
 export async function autoSpawnForTask(
   context: IpcContext,
   projectId: string,
   task: { id: string; title: string },
   swimlaneId: string,
+  options: AutoSpawnForTaskOptions = {},
 ): Promise<void> {
   // Serialize against any other task-lifecycle op (suspend/resume/move/kill)
   // so an MCP-created auto-spawn can't race a user drag of the same task.
@@ -690,6 +721,24 @@ export async function autoSpawnForTask(
         return;
       }
 
+      // A start that races itself. A second caller queued on this lock while
+      // the first was still spawning (two phone Starts a second apart on a slow
+      // worktree ensure) arrives to find the session already registered.
+      // spawnAgent's own startAgent would bail on the session_id, but the
+      // column's enter list would still run, and its message row would deliver
+      // to the LIVE session: the column message typed twice. task-move's Phase
+      // 3 makes an analogous check before its spawn, on `task.session_id`
+      // rather than the registry (a stale pointer reads as occupied there; the
+      // reconcile above has already cleared one here). The auto_spawn
+      // reconcile filters live tasks before calling here, so for it this is
+      // defense in depth.
+      if (context.sessionManager.findLiveSessionByTaskId(fullTask.id)) {
+        console.log(
+          `[auto-spawn] Task ${fullTask.id.slice(0, 8)} already has a live session - skipping`,
+        );
+        return;
+      }
+
       // Fold the task's Board Profile BEFORE the auto_spawn guard. `auto_spawn`
       // is profile-scoped (see the `auto_spawn` case in `applyProfileToLane`),
       // so a profile can turn it on for a column whose base has it off.
@@ -697,7 +746,7 @@ export async function autoSpawnForTask(
       // spawnAgent's own fold could ever see them. spawnAgent folds again
       // internally, which is idempotent.
       const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
-      if (!toLane.auto_spawn) return;
+      if (!toLane.auto_spawn && !options.explicitStart) return;
       // Same role gate as spawnAgent, and for the same reason: a profile fold
       // or an MCP update can leave the flag on for a To Do column.
       if (!laneMaySpawn(toLane)) return;
@@ -736,7 +785,10 @@ export async function autoSpawnForTask(
         const sessionRepo = new SessionRepository(db);
         const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
 
-        await spawnAgent({ context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments });
+        await spawnAgent({
+          context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments,
+          explicitStart: options.explicitStart,
+        });
 
         console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
       } finally {
