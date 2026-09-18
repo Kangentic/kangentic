@@ -87,7 +87,7 @@ interface MonacoTestHandle {
   editor: {
     getDiffEditors: () => {
       getModifiedEditor: () => ModifiedEditorHandle;
-      getLineChanges: () => unknown[] | null;
+      getLineChanges: () => { modifiedStartLineNumber: number }[] | null;
     }[];
   };
 }
@@ -118,17 +118,25 @@ async function readModifiedScrollState(target: Page): Promise<ModifiedScrollStat
 }
 
 /**
- * How many line changes the diff editor has computed for the open file, or -1
- * with no editor mounted. Zero means the diff is still computing: Monaco
- * recomputes asynchronously after a model swap, and `getLineChanges()` is
- * empty until it lands.
+ * The modified-side line of the diff editor's FIRST computed line change, or
+ * -1 with no editor mounted or no change computed.
+ *
+ * A wait on this must name the line it expects, never just "non-empty".
+ * Switching files swaps the model's content in place and Monaco recomputes
+ * the diff asynchronously, so between the swap and the result landing
+ * `getLineChanges()` still returns the PREVIOUS file's changes. Measured on
+ * this fixture: 1 ms after the delta.ts click the model was already delta's
+ * 3000 lines while the changes still read alpha's line 100, and delta's own
+ * result (line 5) landed 154 ms later. A "length > 0" poll passes inside
+ * that window. Every fixture file here has exactly one change at a distinct
+ * line (alpha 100, beta 2, delta 5), so the line identifies whose diff it is.
  */
-async function readModifiedLineChangeCount(target: Page): Promise<number> {
+async function readModifiedFirstChangeLine(target: Page): Promise<number> {
   return target.evaluate(() => {
     const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
     const diffEditors = monaco?.editor.getDiffEditors() ?? [];
     if (diffEditors.length === 0) return -1;
-    return diffEditors[0].getLineChanges()?.length ?? 0;
+    return diffEditors[0].getLineChanges()?.[0]?.modifiedStartLineNumber ?? -1;
   });
 }
 
@@ -376,17 +384,20 @@ test.describe('Changes view: diff scroll memory', () => {
       .poll(async () => (await readModifiedScrollState(page)).scrollHeight, { timeout: 10000 })
       .toBeGreaterThan(DELTA_TOTAL_LINES * 5);
 
-    // And wait for the diff itself: the scroll height above grows as soon as
-    // the model loads, but the first-visit reveal (DiffViewer's
+    // And wait for delta.ts's OWN diff: the scroll height above grows as soon
+    // as the model loads, but the first-visit reveal (DiffViewer's
     // consumePendingReveal, centring delta.ts's change at line 5) fires from
     // onDidUpdateDiff once the diff has computed. Scrolling before that lets
-    // the reveal land AFTER the scroll and put scrollTop back near 0, which is
-    // what the poll below then reads for its whole budget. Once getLineChanges
-    // is populated the reveal has already been consumed, since Monaco fires
-    // the update event synchronously with the result.
+    // the reveal land AFTER the scroll and put scrollTop back to 0, which is
+    // what the poll below then reads for its whole budget. Once delta's
+    // result is what getLineChanges reports, the reveal has already been
+    // consumed, since Monaco fires the update event synchronously with the
+    // result. "Any change" is not enough: until then the call still reports
+    // the previous file's diff (see readModifiedFirstChangeLine), and that
+    // stale read is how this test flaked on UI shard 3 after aae810ac.
     await expect
-      .poll(() => readModifiedLineChangeCount(page), { timeout: 10000 })
-      .toBeGreaterThan(0);
+      .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
+      .toBe(DELTA_CHANGE_LINE);
 
     await scrollModifiedToBottom(page);
     await expect(page.locator('.view-line', { hasText: DELTA_TAIL_TOKEN }).first()).toBeVisible({ timeout: 10000 });
