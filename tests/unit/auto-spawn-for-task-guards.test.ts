@@ -233,6 +233,29 @@ describe('autoSpawnForTask: a task that already has a live session is never spaw
 
     expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
   });
+
+  it('also returns before the worktree phase for a fully automatic caller, with no explicitStart at all', async () => {
+    // The guard in the source is unconditional - it is not scoped behind
+    // `options.explicitStart` - because the two automatic callers,
+    // mcp-project-context.ts's task-created hook and the auto_spawn
+    // reconcile (auto-spawn-reconcile.ts), both call autoSpawnForTask with no
+    // options object at all. The docstring on the guard even calls the
+    // reconcile's own pre-filtering "defense in depth" on top of THIS check,
+    // which only holds if the check still runs for that caller. The sibling
+    // test above only ever exercises the guard with explicitStart: true, so
+    // it would not catch a future edit that accidentally scoped the guard to
+    // the phone's explicit-start caller alone.
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role: null }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Created twice', swimlane_id: LANE_ID, profile_id: null, session_id: 'sess-live',
+    });
+    mockFindLiveSessionByTaskId.mockReturnValue({ id: 'sess-live', taskId: TASK_ID, status: 'running' });
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Created twice' }, LANE_ID);
+
+    expect(mockFindLiveSessionByTaskId).toHaveBeenCalledWith(TASK_ID);
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
 });
 
 describe('autoSpawnForTask: explicitStart lifts the auto_spawn default, not the role gate', () => {
