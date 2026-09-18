@@ -146,7 +146,7 @@ import { autoSpawnForTask } from '../../src/main/ipc/helpers/agent-spawn';
 import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
 // Deliberately the REAL registry: the cancellation tests abort through it,
 // exactly as SESSION_SUSPEND / SESSION_RESET / a newer SESSION_RESUME do.
-import { abortInFlightResume, registerResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
+import { abortInFlightResume, registerResumeController, releaseResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
 import type { BoardProfile, Swimlane } from '../../src/shared/types';
 
 const TASK_ID = 'task-1';
@@ -730,6 +730,14 @@ describe('autoSpawnForTask: split lock', () => {
     // chokepoint deliberately only registers. See startTaskSession's docblock.
     expect(abortSpy).not.toHaveBeenCalled();
     expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+
+    // And registering alongside the desktop resume did not displace it: the
+    // Pause that follows still reaches it. Red on the single-slot registry,
+    // where this chokepoint's registration overwrote the resume's entry and
+    // its own release then emptied the slot.
+    abortInFlightResume(TASK_ID);
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    releaseResumeController(TASK_ID, desktopResume);
   });
 
   describe('Phase 3 re-runs the gates as the CAS', () => {
