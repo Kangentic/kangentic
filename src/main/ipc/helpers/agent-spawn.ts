@@ -32,6 +32,7 @@ import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '.
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 
 /**
@@ -668,6 +669,79 @@ export interface AutoSpawnForTaskOptions {
 }
 
 /**
+ * The gates `autoSpawnForTask` runs under the task lock: once before its
+ * unlocked git phase, to decide whether there is anything to do, and once
+ * after it, as the compare-and-swap that decides the spawn. Every input is
+ * re-read from the DB and the registry on each call, because the column can
+ * be edited, the task moved, and a session spawned by another caller while
+ * the lock was released.
+ *
+ * Returns the task row and the profile-folded destination, or null when the
+ * spawn must not proceed. The two skips a user can cause mid-flight log; the
+ * rest are the quiet "this column does not want an agent" paths. The
+ * manually-paused check is NOT here: it lives in `spawnAgent`, which every
+ * caller of this function reaches, so it is inherited rather than repeated.
+ */
+function readAutoSpawnGates(
+  context: IpcContext,
+  projectId: string,
+  projectPath: string,
+  taskId: string,
+  swimlaneId: string,
+  options: AutoSpawnForTaskOptions,
+): { fullTask: Task; toLane: Swimlane } | null {
+  const rawLane = new SwimlaneRepository(getProjectDb(projectId)).getById(swimlaneId);
+  if (!rawLane) return null;
+
+  const fullTask = getProjectRepos(context, projectId).tasks.getById(taskId);
+  if (!fullTask) return null;
+
+  // The caller's `swimlaneId` is a snapshot. Callers that batch (the
+  // auto_spawn reconcile walks a whole column, awaiting a worktree and a
+  // branch checkout per task) can reach this many seconds later, by which
+  // time a drag may have moved the task elsewhere. Spawning would then
+  // apply the ORIGINAL column's agent, model, and permission mode to a task
+  // that has left it. Same re-check task-move makes before its own spawn.
+  if (fullTask.swimlane_id !== swimlaneId) {
+    console.log(
+      `[auto-spawn] Task ${fullTask.id.slice(0, 8)} left the column before its spawn - skipping`,
+    );
+    return null;
+  }
+
+  // A start that races itself. A second caller (two phone Starts a second
+  // apart on a slow worktree ensure) arrives to find the session already
+  // registered. spawnAgent's own startAgent would bail on the session_id, but
+  // the column's enter list would still run, and its message row would deliver
+  // to the LIVE session: the column message typed twice. task-move's Phase 3
+  // makes an analogous check before its spawn, on `task.session_id` rather
+  // than the registry (a stale pointer reads as occupied there; the
+  // start-session reconcile has already cleared one here). The auto_spawn
+  // reconcile filters live tasks before calling here, so for it this is
+  // defense in depth.
+  if (context.sessionManager.findLiveSessionByTaskId(fullTask.id)) {
+    console.log(
+      `[auto-spawn] Task ${fullTask.id.slice(0, 8)} already has a live session - skipping`,
+    );
+    return null;
+  }
+
+  // Fold the task's Board Profile BEFORE the auto_spawn guard. `auto_spawn`
+  // is profile-scoped (see the `auto_spawn` case in `applyProfileToLane`),
+  // so a profile can turn it on for a column whose base has it off.
+  // Guarding on the raw lane rejected exactly those tasks here, before
+  // spawnAgent's own fold could ever see them. spawnAgent folds again
+  // internally, which is idempotent.
+  const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
+  if (!toLane.auto_spawn && !options.explicitStart) return null;
+  // Same role gate as spawnAgent, and for the same reason: a profile fold
+  // or an MCP update can leave the flag on for a To Do column.
+  if (!laneMaySpawn(toLane)) return null;
+
+  return { fullTask, toLane };
+}
+
+/**
  * Auto-spawn an agent session for a newly created task when the target
  * swimlane has `auto_spawn` enabled. Handles worktree setup, branch checkout,
  * transition engine execution, session resume fallback, and auto-command
@@ -678,6 +752,15 @@ export interface AutoSpawnForTaskOptions {
  * auto_spawn reconcile, and from the phone's start-session verb
  * (`handlers/session-start.ts`), which is the one caller passing
  * `explicitStart`.
+ *
+ * Split-locked the way SESSION_RESUME and handleTaskMove are (see
+ * `withTaskLock`'s JSDoc): Phase 1 runs the gates under the task lock, Phase 2
+ * releases it for the worktree ensure and branch checkout (a fetch can take
+ * many seconds, and both are already serialized per project by
+ * `WorktreeManager.projectQueues`), and Phase 3 re-acquires it, re-runs the
+ * gates as the CAS, and spawns. Holding the lock across the git phase made a
+ * desktop Pause or move on the same task wait behind a phone Start stuck in
+ * a slow fetch.
  */
 export async function autoSpawnForTask(
   context: IpcContext,
@@ -686,79 +769,49 @@ export async function autoSpawnForTask(
   swimlaneId: string,
   options: AutoSpawnForTaskOptions = {},
 ): Promise<void> {
-  // Serialize against any other task-lifecycle op (suspend/resume/move/kill)
-  // so an MCP-created auto-spawn can't race a user drag of the same task.
-  return withTaskLock(task.id, async () => {
-    // Tag the worktree/checkout/spawn logs below with the project the new task
-    // belongs to. This is the entry point for MCP-created-task spawns, which
-    // have no enclosing move context to inherit a tag from.
-    const logProjectName = context.projectRepo.getById(projectId)?.name ?? null;
-    const run = async (): Promise<void> => {
+  // Tag the worktree/checkout/spawn logs below with the project the new task
+  // belongs to. This is the entry point for MCP-created-task spawns, which
+  // have no enclosing move context to inherit a tag from.
+  const logProjectName = context.projectRepo.getById(projectId)?.name ?? null;
+  const run = async (): Promise<void> => {
+    // Registered on the same per-task registry SESSION_RESUME uses, so
+    // SESSION_SUSPEND, SESSION_RESET, a newer SESSION_RESUME, and a project
+    // relocation cancel this spawn's git phase exactly as they cancel a
+    // desktop resume's. Registered WITHOUT `abortInFlightResume` first,
+    // unlike SESSION_RESUME: a phone Start must never cancel desktop work
+    // (see startTaskSession in handlers/session-start.ts). The registry holds
+    // one controller per task, so registering during an in-flight desktop
+    // resume displaces that resume's controller (its own release then
+    // no-ops); both then converge on one session through the Phase 3 gates.
+    const controller = new AbortController();
+    registerResumeController(task.id, controller);
+    const { signal } = controller;
     try {
-      const db = getProjectDb(projectId);
-      const swimlaneRepo = new SwimlaneRepository(db);
-      const rawLane = swimlaneRepo.getById(swimlaneId);
-      if (!rawLane) return;
-
-      const project = context.projectRepo.getById(projectId);
-      const projectPath = project?.path ?? null;
-      if (!projectPath) return;
-
+      // === Phase 1 (locked, short) ===
+      const plan = await withTaskLock(task.id, async () => {
+        const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+        if (!projectPath) return null;
+        const gates = readAutoSpawnGates(context, projectId, projectPath, task.id, swimlaneId, options);
+        return gates ? { ...gates, projectPath } : null;
+      });
+      if (!plan) return;
+      const { fullTask, projectPath } = plan;
       const { tasks, automations, automationRuns, attachments } = getProjectRepos(context, projectId);
-      const fullTask = tasks.getById(task.id);
-      if (!fullTask) return;
-
-      // The caller's `swimlaneId` is a snapshot. Callers that batch (the
-      // auto_spawn reconcile walks a whole column, awaiting a worktree and a
-      // branch checkout per task) can reach this many seconds later, by which
-      // time a drag may have moved the task elsewhere. Spawning would then
-      // apply the ORIGINAL column's agent, model, and permission mode to a task
-      // that has left it. Same re-check task-move makes before its own spawn.
-      if (fullTask.swimlane_id !== swimlaneId) {
-        console.log(
-          `[auto-spawn] Task ${fullTask.id.slice(0, 8)} left the column before its spawn - skipping`,
-        );
-        return;
-      }
-
-      // A start that races itself. A second caller queued on this lock while
-      // the first was still spawning (two phone Starts a second apart on a slow
-      // worktree ensure) arrives to find the session already registered.
-      // spawnAgent's own startAgent would bail on the session_id, but the
-      // column's enter list would still run, and its message row would deliver
-      // to the LIVE session: the column message typed twice. task-move's Phase
-      // 3 makes an analogous check before its spawn, on `task.session_id`
-      // rather than the registry (a stale pointer reads as occupied there; the
-      // reconcile above has already cleared one here). The auto_spawn
-      // reconcile filters live tasks before calling here, so for it this is
-      // defense in depth.
-      if (context.sessionManager.findLiveSessionByTaskId(fullTask.id)) {
-        console.log(
-          `[auto-spawn] Task ${fullTask.id.slice(0, 8)} already has a live session - skipping`,
-        );
-        return;
-      }
-
-      // Fold the task's Board Profile BEFORE the auto_spawn guard. `auto_spawn`
-      // is profile-scoped (see the `auto_spawn` case in `applyProfileToLane`),
-      // so a profile can turn it on for a column whose base has it off.
-      // Guarding on the raw lane rejected exactly those tasks here, before
-      // spawnAgent's own fold could ever see them. spawnAgent folds again
-      // internally, which is idempotent.
-      const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
-      if (!toLane.auto_spawn && !options.explicitStart) return;
-      // Same role gate as spawnAgent, and for the same reason: a profile fold
-      // or an MCP update can leave the flag on for a To Do column.
-      if (!laneMaySpawn(toLane)) return;
 
       // MCP auto-spawn used to be progress-silent end to end; the card now
       // shows the same fetch/branch/worktree phases the drag path does. The
-      // finally clears the label on every exit, including the blocked returns.
+      // finally clears the label on every exit: the blocked returns, a Phase 3
+      // gate that changed during the git phase, and an abort.
       const onProgress = createProgressCallback(context.mainWindow, fullTask.id);
       try {
+        // === Phase 2 (unlocked, slow) ===
+        // The signal cancels an in-flight fetch; an AbortError is rethrown
+        // past the per-step notice, since a cancelled spawn is not a blocked
+        // one, and lands in the outer catch's abort branch.
         try {
-          await ensureTaskWorktree(context, fullTask, tasks, projectPath, { onProgress, projectId });
+          await ensureTaskWorktree(context, fullTask, tasks, projectPath, { signal, onProgress, projectId });
         } catch (worktreeError) {
+          if (isAbortError(worktreeError)) throw worktreeError;
           console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
           notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
           return;
@@ -771,8 +824,9 @@ export async function autoSpawnForTask(
         // that cycle never existed from task-git.ts, and the copy had drifted from
         // the original in exactly the way that let a custom-branch task through.
         try {
-          await ensureTaskBranchCheckout(context, fullTask, projectPath, { onProgress, projectId });
+          await ensureTaskBranchCheckout(context, fullTask, projectPath, { signal, onProgress, projectId });
         } catch (checkoutError) {
+          if (isAbortError(checkoutError)) throw checkoutError;
           console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
           // The explicit projectId, never the ambient current one: MCP auto-spawn
           // targets whichever project the tool named, which is often not the
@@ -782,22 +836,56 @@ export async function autoSpawnForTask(
           return;
         }
 
-        const sessionRepo = new SessionRepository(db);
-        const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
+        // === Phase 3 (locked, short) ===
+        // Re-read everything: the task may have moved, another caller may have
+        // spawned, and the column may have been edited during Phase 2. The
+        // task row is re-read rather than reusing Phase 1's, so the worktree
+        // the git phase recorded on it is what the spawn sees.
+        await withTaskLock(task.id, async () => {
+          signal.throwIfAborted();
+          const current = readAutoSpawnGates(context, projectId, projectPath, task.id, swimlaneId, options);
+          if (!current) {
+            console.log(
+              `[auto-spawn] Task ${task.id.slice(0, 8)}: a spawn gate changed during the git phase - skipping`,
+            );
+            return;
+          }
 
-        await spawnAgent({
-          context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath, attachments,
-          explicitStart: options.explicitStart,
+          const sessionRepo = new SessionRepository(getProjectDb(projectId));
+          const engine = createTransitionEngine(context, automations, automationRuns, tasks, sessionRepo, attachments, projectId, projectPath);
+
+          await spawnAgent({
+            context, engine, tasks, sessionRepo, task: current.fullTask, fromSwimlaneId: '*', toLane: current.toLane,
+            projectId, projectPath, attachments, signal,
+            explicitStart: options.explicitStart,
+          });
+
+          console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${current.toLane.name}`);
         });
-
-        console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
       } finally {
         clearSpawnProgress(context.mainWindow, fullTask.id);
       }
     } catch (err) {
+      if (isAbortError(err)) {
+        // A suspend, reset, newer resume, or relocation took the task over.
+        // Not a spawn failure: no counter, no Sentry report, no notice. And
+        // no session cleanup, deliberately: executeSpawnAgent's last abort
+        // checkpoint sits before sessionManager.spawn, and the session_id
+        // write plus the session-record insert follow the spawn with no
+        // further checkpoint, so an abort never leaves a half-written
+        // session, and the aborter reconciles a live one under its own lock.
+        // (An enter-automation row that already ran stays run, as it does
+        // for an aborted drag.) SESSION_RESUME's removeByTaskId cleanup is
+        // defensive, and it would also drop the suspended placeholder the
+        // Pause that aborted us just wrote.
+        console.log(
+          `[auto-spawn] Aborted in-flight spawn for task ${task.id.slice(0, 8)} (a suspend, reset, or newer resume took over)`,
+        );
+        return;
+      }
       console.error('[MCP auto-spawn] Failed:', err);
-      // fullTask/toLane are declared inside the try, so re-read the row here;
-      // its override is the best approximation of the agent on this path.
+      // The task row is scoped to the try, so re-read it here; its override
+      // is the best approximation of the agent on this path.
       let failedAgent = 'default';
       try {
         failedAgent =
@@ -807,8 +895,9 @@ export async function autoSpawnForTask(
       }
       trackEvent('spawn_failed', { agent: failedAgent, reason: 'auto_spawn' });
       reportHandledError(err, { source: 'spawn', reason: 'auto_spawn', agent: failedAgent });
+    } finally {
+      releaseResumeController(task.id, controller);
     }
-    };
-    return logProjectName ? runWithProjectLogContext(logProjectName, run) : run();
-  });
+  };
+  return logProjectName ? runWithProjectLogContext(logProjectName, run) : run();
 }

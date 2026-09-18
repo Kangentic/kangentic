@@ -38,7 +38,10 @@ you cannot race.
   parallelism, error isolation, and bounded Map growth. Runs in CI via `npm run test:unit`.
 - **Contract:** the JSDoc on `withTaskLock` in `src/main/ipc/task-lifecycle-lock.ts` is the
   full reference, including the split-lock pattern for handlers that mix DB writes and slow git
-  I/O. Canonical usage: `SESSION_SUSPEND` / `SESSION_RESUME` in `handlers/sessions.ts`.
+  I/O. Canonical usage: `SESSION_SUSPEND` / `SESSION_RESUME` in `handlers/sessions.ts`;
+  `autoSpawnForTask` in `helpers/agent-spawn.ts` is the same split (locked gates, unlocked
+  worktree and checkout, locked re-check and spawn) for the board-driven spawn chokepoint, and
+  `tests/unit/auto-spawn-for-task-guards.test.ts` pins its lock-release ordering.
 
 ## Scope
 

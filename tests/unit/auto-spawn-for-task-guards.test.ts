@@ -45,18 +45,41 @@ const mockFindLiveSessionByTaskId = vi.fn((): unknown => undefined);
 const mockEnsureTaskWorktree = vi.fn();
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockNotifySpawnBlocked = vi.fn();
+const mockTrackEvent = vi.fn();
+const mockReportHandledError = vi.fn();
+
+/**
+ * The order in which the task lock and the two git helpers ran, for the
+ * split-lock tests below. The lock mock records its acquire and release
+ * around the callback; the git mocks record themselves. Hoisted because the
+ * vi.mock factories close over it.
+ */
+const sequence = vi.hoisted((): string[] => []);
+
+const mockExecuteTransition = vi.hoisted(() =>
+  vi.fn(async () => ({ outcomes: [], failures: [], startedAgent: false })),
+);
+const mockRunLegacySpawnAgent = vi.hoisted(() => vi.fn(async () => {}));
+const mockResumeSuspendedSession = vi.hoisted(() => vi.fn(async () => {}));
 
 // The two modules agent-spawn.ts imports that drag in the heaviest transitive
-// graph (SessionManager -> node-pty, every agent adapter). Neither is ever
-// reached here: autoSpawnForTask returns as soon as ensureTaskWorktree rejects,
-// well before `createTransitionEngine` or `spawnAgent`'s handoff-agent lookup
-// run. Stubbed so the module loads without pulling either in, mirroring the
-// same avoidance strategy strategy-propagation.test.ts documents for this file.
+// graph (SessionManager -> node-pty, every agent adapter). Stubbed so the
+// module loads without pulling either in, mirroring the same avoidance
+// strategy strategy-propagation.test.ts documents for this file. The guard
+// tests never reach them (autoSpawnForTask returns as soon as
+// ensureTaskWorktree rejects); the split-lock tests below drive through to
+// `spawnAgent`'s engine calls, so the engine carries jest-fn methods and the
+// registry a real adapter shape, as auto-spawn-for-task-explicit-start-
+// forward.test.ts does.
 vi.mock('../../src/main/transition-engine/transition-engine', () => ({
-  TransitionEngine: class {},
+  TransitionEngine: class {
+    executeTransition = mockExecuteTransition;
+    runLegacySpawnAgent = mockRunLegacySpawnAgent;
+    resumeSuspendedSession = mockResumeSuspendedSession;
+  },
 }));
 vi.mock('../../src/main/agent/agent-registry', () => ({
-  agentRegistry: { get: vi.fn(() => undefined) },
+  agentRegistry: { get: vi.fn(() => ({ sessionType: 'claude_agent' })) },
 }));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
@@ -65,27 +88,65 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
     getById = (...args: unknown[]) => mockSwimlaneGetById(...args);
   },
 }));
+vi.mock('../../src/main/db/repositories/session-repository', () => ({
+  SessionRepository: class {
+    getLatestForTask() {
+      return undefined;
+    }
+    getLatestForTaskByTypeAndIsolation() {
+      return undefined;
+    }
+  },
+}));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({
-    tasks: { getById: (...args: unknown[]) => mockTaskGetById(...args) },
+    tasks: { getById: (...args: unknown[]) => mockTaskGetById(...args), update: vi.fn() },
     actions: {},
+    automations: {},
+    automationRuns: {},
     attachments: {},
   })),
 }));
 vi.mock('../../src/main/ipc/helpers/task-git', () => ({
-  ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
-  ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
+  ensureTaskWorktree: (...args: unknown[]) => {
+    sequence.push('worktree');
+    return mockEnsureTaskWorktree(...args);
+  },
+  ensureTaskBranchCheckout: (...args: unknown[]) => {
+    sequence.push('checkout');
+    return mockEnsureTaskBranchCheckout(...args);
+  },
   notifySpawnBlocked: (...args: unknown[]) => mockNotifySpawnBlocked(...args),
 }));
+// A pass-through that records its edges, so a test can prove the git
+// helpers ran OUTSIDE the lock rather than inside it.
 vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
-  withTaskLock: vi.fn(async (_taskId: string, fn: () => Promise<void>) => fn()),
+  withTaskLock: vi.fn(async (_taskId: string, fn: () => Promise<unknown>) => {
+    sequence.push('lock:acquire');
+    try {
+      return await fn();
+    } finally {
+      sequence.push('lock:release');
+    }
+  }),
 }));
 vi.mock('../../src/main/diagnostics/project-log-context', () => ({
   runWithProjectLogContext: vi.fn((_name: string, fn: () => unknown) => fn()),
 }));
+// Real failure reporting would count an aborted spawn as a failed one; the
+// cancellation tests assert it does not.
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
+}));
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
+}));
 
 import { autoSpawnForTask } from '../../src/main/ipc/helpers/agent-spawn';
 import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
+// Deliberately the REAL registry: the cancellation tests abort through it,
+// exactly as SESSION_SUSPEND / SESSION_RESET / a newer SESSION_RESUME do.
+import { abortInFlightResume, registerResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
 import type { BoardProfile, Swimlane } from '../../src/shared/types';
 
 const TASK_ID = 'task-1';
@@ -111,19 +172,61 @@ function makeLane(overrides: Partial<Swimlane> = {}): Swimlane {
 
 function makeContext(boardProfiles: BoardProfile[] = []) {
   return {
-    projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Example', path: '/mock/project' })) },
+    projectRepo: {
+      getById: vi.fn(() => ({
+        id: 'proj-1', name: 'Example', path: '/mock/project', default_agent: 'claude', default_model: null, default_effort: null,
+      })),
+    },
     boardConfigManager: { getBoardProfiles: vi.fn(() => boardProfiles) },
     // The live-session re-check under the lock (see the "races itself" block).
     sessionManager: { findLiveSessionByTaskId: (...args: unknown[]) => mockFindLiveSessionByTaskId(...args) },
     // createProgressCallback / clearSpawnProgress (the real, unmocked
     // spawn-progress module) both read context.mainWindow.
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
+    // What spawnAgent's preamble and keystroke path read once the split-lock
+    // tests drive through to it.
+    terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
+    configManager: {
+      getEffectiveConfig: vi.fn(() => ({
+        agent: { permissionMode: 'default' },
+        git: {},
+        mcpServer: { enabled: true },
+      })),
+    },
   } as never;
+}
+
+/** A task row sitting in the planned column, for the split-lock tests. */
+function makeTaskInLane(overrides: Record<string, unknown> = {}) {
+  return {
+    id: TASK_ID,
+    title: 'Split-lock task',
+    swimlane_id: LANE_ID,
+    profile_id: null,
+    agent: null,
+    agent_override: null,
+    model_override: null,
+    effort_override: null,
+    permission_mode: null,
+    run_mode: 'column_settings',
+    auto_command: null,
+    session_id: null,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sequence.length = 0;
+  // mockReset, not only the clearAllMocks above: the split-lock CAS tests
+  // queue `mockReturnValueOnce` values that only a two-read implementation
+  // consumes, and clearAllMocks keeps an unconsumed queue, which then leaks
+  // into whichever test runs next (seen against the pre-split code).
+  mockTaskGetById.mockReset();
+  mockSwimlaneGetById.mockReset();
+  mockFindLiveSessionByTaskId.mockReset();
   mockFindLiveSessionByTaskId.mockReturnValue(undefined);
+  mockExecuteTransition.mockImplementation(async () => ({ outcomes: [], failures: [], startedAgent: false }));
   // Rejects so autoSpawnForTask's own catch returns immediately once the
   // guard clears - the boundary this test needs, without mocking anything
   // downstream of the worktree phase.
@@ -489,5 +592,175 @@ describe('autoSpawnForTask: threads onProgress + projectId, and clears the label
     // The finally cleared the label the 'fetching' push landed, so an HMR
     // reconcile after this blocked auto-spawn cannot strand the card.
     expect(getInFlightSpawnProgress()).toEqual({});
+  });
+});
+
+/**
+ * The split-lock tests. autoSpawnForTask used to hold the task lock for its
+ * whole run: gates, worktree ensure (a fetch), branch checkout, spawn. The
+ * phone's start-session verb reaches it on demand, so a Start stuck in a slow
+ * fetch made a desktop Pause or move on the same task wait behind it, and
+ * nothing could cancel the fetch. It now mirrors SESSION_RESUME: Phase 1
+ * locked (gates), Phase 2 unlocked (git), Phase 3 locked (gates again as the
+ * CAS, then the spawn), with an abort controller on the same per-task
+ * registry SESSION_SUSPEND / SESSION_RESET / a newer SESSION_RESUME abort.
+ *
+ * These drive through to spawnAgent's engine calls (the mocks above give the
+ * engine jest-fn methods), so `executeTransition` is the observable "the spawn
+ * happened" seam and the recorded `sequence` is the lock-ordering seam.
+ */
+describe('autoSpawnForTask: split lock', () => {
+  beforeEach(() => {
+    __resetSpawnProgressForTest();
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role: null }));
+    mockTaskGetById.mockReturnValue(makeTaskInLane());
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+  });
+
+  it('releases the task lock across the worktree ensure and branch checkout, and re-takes it for the spawn', async () => {
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+    // Red on the single-lock shape: ['lock:acquire', 'worktree', 'checkout',
+    // 'lock:release'], the git work INSIDE the lock.
+    expect(sequence).toEqual(['lock:acquire', 'lock:release', 'worktree', 'checkout', 'lock:acquire', 'lock:release']);
+    expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+  });
+
+  it('threads ONE abort signal into both git helpers and into spawnAgent', async () => {
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+    const worktreeOptions = mockEnsureTaskWorktree.mock.calls[0][4] as { signal?: unknown };
+    const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { signal?: unknown };
+    const transitionOptions = mockExecuteTransition.mock.calls[0][3] as { signal?: unknown };
+    expect(worktreeOptions.signal).toBeInstanceOf(AbortSignal);
+    expect(checkoutOptions.signal).toBe(worktreeOptions.signal);
+    // Red before: autoSpawnForTask passed no signal, and spawnAgent
+    // substituted a never-aborting controller of its own for the engine.
+    expect(transitionOptions.signal).toBe(worktreeOptions.signal);
+  });
+
+  it('is cancelled mid-fetch by abortInFlightResume, quietly: no checkout, no spawn, no failure report, label cleared', async () => {
+    // What SESSION_SUSPEND / SESSION_RESET / a newer SESSION_RESUME do while
+    // this spawn is in its unlocked git phase.
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { signal?: AbortSignal; onProgress?: (phase: string) => void },
+    ) => {
+      options?.onProgress?.('fetching');
+      abortInFlightResume(TASK_ID);
+      options?.signal?.throwIfAborted();
+    });
+
+    // Red before the controller existed: abortInFlightResume found nothing
+    // to abort, the checkout ran, and the spawn went ahead.
+    await expect(
+      autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID),
+    ).resolves.toBeUndefined();
+
+    expect(mockEnsureTaskBranchCheckout).not.toHaveBeenCalled();
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    // A cancelled spawn is not a blocked one and not a failed one.
+    expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+    // The finally still cleared the label the 'fetching' push landed.
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('is cancelled between the git phase and the spawn: Phase 3 checks the signal before its gates', async () => {
+    mockEnsureTaskBranchCheckout.mockImplementation(async () => {
+      abortInFlightResume(TASK_ID);
+    });
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+    // The checkout resolved normally after aborting, so the only thing that
+    // can stop the spawn is Phase 3's own throwIfAborted.
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('still counts a real git failure as a spawn failure (the abort branch is narrow)', async () => {
+    mockEnsureTaskWorktree.mockRejectedValue(new Error('fatal: could not read from remote'));
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+    // The blocked notice is the per-step path; an ordinary rejection still
+    // reaches it and never the outer failure counter, as before.
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+  });
+
+  it('registers its controller without aborting one already in flight (a Start never cancels desktop work)', async () => {
+    const desktopResume = new AbortController();
+    const abortSpy = vi.spyOn(desktopResume, 'abort');
+    registerResumeController(TASK_ID, desktopResume);
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+    // SESSION_RESUME's shape would be abortInFlightResume-then-register; this
+    // chokepoint deliberately only registers. See startTaskSession's docblock.
+    expect(abortSpy).not.toHaveBeenCalled();
+    expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Phase 3 re-runs the gates as the CAS', () => {
+    it('does not spawn a task that moved to another column during the git phase', async () => {
+      mockTaskGetById
+        .mockReturnValueOnce(makeTaskInLane())
+        .mockReturnValueOnce(makeTaskInLane({ swimlane_id: 'lane-elsewhere' }));
+
+      await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+      // Red on a single read: Phase 1's row would carry through to the spawn.
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(mockExecuteTransition).not.toHaveBeenCalled();
+      expect(getInFlightSpawnProgress()).toEqual({});
+    });
+
+    it('does not spawn when another caller registered a live session during the git phase', async () => {
+      // Two phone Starts a second apart: the second passes Phase 1 while the
+      // first is still fetching, then finds the first's session under the
+      // Phase 3 lock. Without this the column's enter list would run and its
+      // message row would type the column message at the live session again.
+      mockFindLiveSessionByTaskId
+        .mockReturnValueOnce(undefined)
+        .mockReturnValueOnce({ id: 'sess-live', taskId: TASK_ID, status: 'running' });
+
+      await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(mockExecuteTransition).not.toHaveBeenCalled();
+    });
+
+    it('does not spawn when the column turned auto_spawn off during the git phase', async () => {
+      // The one outcome the single lock did not have: the column is re-read
+      // in Phase 3, the same way the reconcile's suspend side re-reads before
+      // acting on a column it planned against.
+      mockSwimlaneGetById
+        .mockReturnValueOnce(makeLane({ auto_spawn: true, role: null }))
+        .mockReturnValueOnce(makeLane({ auto_spawn: false, role: null }));
+
+      await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(mockExecuteTransition).not.toHaveBeenCalled();
+    });
+
+    it('spawns with the RE-READ task row, not the Phase 1 snapshot', async () => {
+      // The git phase records the worktree on the task; the spawn has to see
+      // it. Phase 1's row is the pre-worktree one.
+      mockTaskGetById
+        .mockReturnValueOnce(makeTaskInLane())
+        .mockReturnValue(makeTaskInLane({ worktree_path: '/mock/project/.kangentic/worktrees/1' }));
+
+      await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID);
+
+      expect(mockExecuteTransition).toHaveBeenCalledTimes(1);
+      const [spawnedTask] = mockExecuteTransition.mock.calls[0] as unknown[];
+      expect(spawnedTask).toMatchObject({ worktree_path: '/mock/project/.kangentic/worktrees/1' });
+    });
   });
 });
