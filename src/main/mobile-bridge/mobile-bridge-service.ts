@@ -453,6 +453,12 @@ export class MobileBridgeService extends EventEmitter {
         }
       });
     });
+    // The session already answered the phone (see BridgeSession's
+    // refuseUnsupportedVerb); this is the desktop-side trace, so a log shows
+    // "the phone asked for a verb this build lacks" next to the update it needs.
+    session.on('unsupportedVerb', ({ verb }: { requestId: string; verb: string }) => {
+      console.warn(`[mobile-bridge] Device ${deviceId.slice(0, 8)} sent verb "${verb}", which this desktop does not support - refused`);
+    });
     session.on('remoteClosed', () => {
       // Synchronous half: stop pushing events into a dead channel now.
       this.subscriptionsByDevice.get(deviceId)?.dispose();

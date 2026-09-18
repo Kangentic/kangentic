@@ -420,6 +420,91 @@ describe('BridgeSession', () => {
     session.dispose();
   });
 
+  describe('a capability-request for a verb this build does not know', () => {
+    /**
+     * Seals a raw JSON object as an application frame on the device's send
+     * stream, bypassing encodeMessage's typing: the point is a verb that is
+     * NOT a CapabilityVerb, which the typed encoder cannot express. This is
+     * exactly what a newer phone does against an older desktop.
+     */
+    function sendRawRequest(responder: SimulatedDeviceResponder, transport: Transport, value: unknown): void {
+      if (!responder.streams) throw new Error('responder not established');
+      const frame = responder.streams.send.seal(new TextEncoder().encode(JSON.stringify(value)));
+      transport.send(wrapSessionFrame(SessionFrameKind.Application, frame));
+    }
+
+    async function establishedPair() {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const [desktopTransport, deviceTransport] = createLoopbackTransportPair();
+      const responder = new SimulatedDeviceResponder(deviceStatic, desktopIdentity.staticKeyPair.publicKey, deviceTransport);
+      const session = new BridgeSession({
+        identity: desktopIdentity,
+        deviceId: 'device-1',
+        remoteStaticPublicKey: deviceStatic.publicKey,
+        capabilities: new Set(),
+        transport: desktopTransport,
+      });
+      const established = new Promise<void>((resolve) => session.once('established', resolve));
+      session.start();
+      await established;
+      return { session, responder, deviceTransport };
+    }
+
+    it('is answered with an ok:false refusal carrying the unsupported-verb code, not dropped', async () => {
+      const { session, responder, deviceTransport } = await establishedPair();
+      const rejected = vi.fn();
+      const delivered = vi.fn();
+      const unsupported = vi.fn();
+      session.on('frameRejected', rejected);
+      session.on('message', delivered);
+      session.on('unsupportedVerb', unsupported);
+
+      sendRawRequest(responder, deviceTransport, {
+        type: 'capability-request', requestId: 'r-1', verb: 'time-travel', payload: {},
+      });
+      await Promise.resolve();
+
+      // Pre-fix this frame surfaced only as frameRejected and the phone heard
+      // nothing until its per-verb timeout. The refusal is what lets it tell
+      // an old desktop from an unreachable one.
+      expect(responder.receivedMessages).toEqual([{
+        type: 'capability-response',
+        requestId: 'r-1',
+        ok: false,
+        error: 'Unsupported verb: time-travel',
+        code: 'unsupported-verb',
+      }]);
+      expect(unsupported).toHaveBeenCalledWith({ requestId: 'r-1', verb: 'time-travel' });
+      // Answered, not dropped: the rejected edge stays for frames nobody can
+      // answer. And no 'message' is emitted, so the router never sees it and
+      // no handler can run for a verb outside the tuple.
+      expect(rejected).not.toHaveBeenCalled();
+      expect(delivered).not.toHaveBeenCalled();
+      session.dispose();
+    });
+
+    it('stays a silent frameRejected when the request is malformed, even with the same unknown verb', async () => {
+      const { session, responder, deviceTransport } = await establishedPair();
+      const rejected = vi.fn();
+      const unsupported = vi.fn();
+      session.on('frameRejected', rejected);
+      session.on('unsupportedVerb', unsupported);
+
+      // No requestId: there is nothing to answer, and answering unstructured
+      // input would hand the sender a probe.
+      sendRawRequest(responder, deviceTransport, {
+        type: 'capability-request', verb: 'time-travel', payload: {},
+      });
+      await Promise.resolve();
+
+      expect(rejected).toHaveBeenCalledTimes(1);
+      expect(unsupported).not.toHaveBeenCalled();
+      expect(responder.receivedMessages).toEqual([]);
+      session.dispose();
+    });
+  });
+
   it('sendMessage() throws before the session is established', () => {
     const desktopIdentity = testIdentity();
     const deviceStatic = generateX25519KeyPair();
