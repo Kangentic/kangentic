@@ -28,9 +28,12 @@ const DATASET = path.join(REPO_ROOT, 'tests', 'captures', 'helpers', 'demo-datas
  *
  * The rig has no recordings index, so no session clock ever runs and a peek timeline would be dead
  * weight in the seed. A capture also shoots one fixed moment, and a Monitor peek that moved on a
- * timer would make the PNGs differ every run. See the comment in marketing-fixture.ts.
+ * timer would make the PNGs differ every run. See the comment in marketing-fixture.ts. The tiled
+ * frames are the same case from the other side: the seed picks a session's tiled recording by the
+ * index entry's layouts, and with no index there is no layout to pick, so the rig paints every
+ * session from its single recording whatever width its window has.
  */
-const DEMO_ONLY_OPTIONS = new Set(['peekTimelines']);
+const DEMO_ONLY_OPTIONS = new Set(['peekTimelines', 'tiledFrames']);
 
 /** Options the captures pass and the web demo deliberately does not. None today. */
 const MARKETING_ONLY_OPTIONS = new Set<string>([]);

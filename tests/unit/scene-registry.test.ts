@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
 import { DEMO_SESSIONS, DEMO_TASKS } from '../../tests/captures/helpers/demo-dataset';
-import { DEFAULT_CONFIG } from '../../src/shared/types';
+import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
 
@@ -33,6 +33,24 @@ const scenes = entries.map(([, scene]) => scene);
 
 function stepsOf(scene: SceneDefinition): Array<DemoBootStep | RigStep> {
   return scene.steps ?? [];
+}
+
+/** The anchors a tile tree's leaves name, in order. */
+function tileLeaves(node: SerializedTileNode | null): string[] {
+  if (!node) return [];
+  if (node.kind === 'leaf') return [node.taskId];
+  return node.children.flatMap(tileLeaves);
+}
+
+/** Every workspace blob a scene restores: the board layer's per-project map and the Command Terminal's global one. */
+function workspacesOf(scene: SceneDefinition): Array<{ where: string; workspace: SerializedWorkspace }> {
+  const config = scene.config ?? {};
+  const restored: Array<{ where: string; workspace: SerializedWorkspace }> = [];
+  for (const [projectId, workspace] of Object.entries((config.workspaceByProject ?? {}) as Record<string, SerializedWorkspace>)) {
+    restored.push({ where: `workspaceByProject.${projectId}`, workspace });
+  }
+  if (config.commandTerminalWorkspace) restored.push({ where: 'commandTerminalWorkspace', workspace: config.commandTerminalWorkspace as SerializedWorkspace });
+  return restored;
 }
 
 describe('scene registry', () => {
@@ -94,6 +112,34 @@ describe('scene registry', () => {
         expect(sessionIds.has(sessionId), `${scene.name} patches unknown session ${sessionId}`).toBe(true);
       }
     }
+  });
+
+  it('restores windows only on rows the sample install seeds, and tiles only windows it restores', () => {
+    // deserializeWorkspace drops a window whose anchor is unknown and, if that window was tiled,
+    // the whole tile tree with it, silently: a tiled scene naming a stray id would boot to two
+    // floating windows or none, and its ready selector would time out rather than say why.
+    const taskIds = new Set(DEMO_TASKS.map((task) => task.id));
+    const sessionIds = new Set(DEMO_SESSIONS.map((session) => session.id));
+    let restoredWindows = 0;
+    for (const scene of scenes) {
+      for (const { where, workspace } of workspacesOf(scene)) {
+        const anchors = new Set<string>();
+        for (const window of workspace.windows) {
+          restoredWindows += 1;
+          const kind = window.kind ?? 'task-detail';
+          if (kind === 'task-detail') expect(taskIds.has(window.taskId), `${scene.name} ${where} restores a task window on unknown task ${window.taskId}`).toBe(true);
+          if (kind === 'conversation') expect(sessionIds.has(window.taskId), `${scene.name} ${where} restores a conversation window on unknown session ${window.taskId}`).toBe(true);
+          if (kind === 'command-terminal') expect(window.taskId, `${scene.name} ${where} anchors a Command Terminal on something other than a slot`).toMatch(/^slot-\d+$/);
+          anchors.add(window.taskId);
+        }
+        for (const leaf of tileLeaves(workspace.tileTree)) {
+          expect(anchors.has(leaf), `${scene.name} ${where} tiles a leaf with no window: ${leaf}`).toBe(true);
+        }
+        if (workspace.focusedTaskId) expect(anchors.has(workspace.focusedTaskId), `${scene.name} ${where} focuses a window it does not restore`).toBe(true);
+      }
+    }
+    // Vacuity guard: the task, changes, and tiled scenes all restore windows.
+    expect(restoredWindows).toBeGreaterThan(5);
   });
 
   it('overrides only real config keys', () => {

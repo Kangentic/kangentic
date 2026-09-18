@@ -24,7 +24,7 @@
  * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
  * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { PROJECT_CONTOSO, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET } from './helpers/demo-dataset';
+import { PROJECT_CONTOSO, SESSION_MIDDLEWARE, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET } from './helpers/demo-dataset';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -143,6 +143,77 @@ function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
     tileTree: null,
     tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
     focusedTaskId: TASK_MIDDLEWARE,
+  };
+}
+
+/**
+ * The footprint two task windows tile into: the floating window's height, and the width two
+ * panes at the engine's 750px minimum need (`enforceMinPaneSize` in CommandTerminalLayer.tsx,
+ * the floor a dock grows its target's footprint to). Docking one window onto another on the
+ * desktop lands on this rect, so a tiled figure is what a visitor's own dock would produce. Each
+ * pane is then the tiled width the matrix records at (manifest geometry `taskWindowTiled`), and
+ * the rows stay the floating window's 37, so a tiled recording differs from the single only in
+ * width. Both terminals are the SUBJECT of the figure, so both sessions carry a tiled recording.
+ */
+const TILED_PAIR_RECT = { x: 0.03, y: 0.15, w: 0.94, h: 0.7 };
+
+/** The middleware and api-client windows tiled side by side, restored on cold boot. */
+function tiledPairWorkspace() {
+  const halfWidth = TILED_PAIR_RECT.w / 2;
+  return {
+    version: 1,
+    windows: [
+      {
+        taskId: TASK_MIDDLEWARE,
+        kind: 'task-detail',
+        title: 'Extract auth middleware',
+        geometry: { x: TILED_PAIR_RECT.x, y: TILED_PAIR_RECT.y, w: halfWidth, h: TILED_PAIR_RECT.h },
+        restoreGeometry: MIDDLEWARE_FLOATING_GEOMETRY,
+        state: 'tiled',
+      },
+      {
+        taskId: TASK_API_CLIENT,
+        kind: 'task-detail',
+        title: 'Generate API client types',
+        geometry: { x: TILED_PAIR_RECT.x + halfWidth, y: TILED_PAIR_RECT.y, w: halfWidth, h: TILED_PAIR_RECT.h },
+        restoreGeometry: { ...MIDDLEWARE_FLOATING_GEOMETRY, x: MIDDLEWARE_FLOATING_GEOMETRY.x + 0.03, y: MIDDLEWARE_FLOATING_GEOMETRY.y + 0.03 },
+        state: 'tiled',
+      },
+    ],
+    tileTree: {
+      kind: 'split',
+      direction: 'horizontal',
+      children: [{ kind: 'leaf', taskId: TASK_MIDDLEWARE }, { kind: 'leaf', taskId: TASK_API_CLIENT }],
+      sizes: [0.5, 0.5],
+    },
+    tileTreeRect: TILED_PAIR_RECT,
+    focusedTaskId: TASK_MIDDLEWARE,
+  };
+}
+
+/**
+ * The conversation viewer on the middleware session, restored as a conversation window
+ * (anchored on the session id, which the workspace restore always treats as known) at the same
+ * rect as the task window, for the same reason: the board around it is the point. The transcript
+ * it shows is the one recorded beside the session (transcripts/contoso-web-claude-middleware.json,
+ * main's own parser over the agent's history file), fetched when the viewer mounts.
+ */
+function conversationWindowWorkspace() {
+  return {
+    version: 1,
+    windows: [
+      {
+        taskId: SESSION_MIDDLEWARE,
+        kind: 'conversation',
+        title: 'Conversation',
+        geometry: MIDDLEWARE_FLOATING_GEOMETRY,
+        restoreGeometry: null,
+        state: 'floating',
+      },
+    ],
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+    focusedTaskId: SESSION_MIDDLEWARE,
   };
 }
 
@@ -338,20 +409,22 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
     ready: '[data-testid="task-title-text"]',
   },
-  // No tiled-window scene, deliberately. Every task recording is 154 columns wide and a
-  // half-width pane fits about 110 at the rig's scale, so a tiled terminal is held at about
-  // two-thirds type (or, narrower, played as frames cut at the right edge); a desktop would reflow
-  // it. In a tiled figure the terminals ARE the subject, and a subject at another type size than
-  // every other figure is worse than no figure. The fix is a recording at the tiled width, the way
-  // the Command Terminal boots already carry one (`terminal-<project>-tiled.json`); the scene
-  // returns with those recordings.
-  //
+  'windows-tiled': {
+    name: 'windows-tiled',
+    reach: 'state',
+    description: 'The middleware and api-client task windows tiled side by side in the footprint a dock produces (TILED_PAIR_RECT). Both sessions carry a recording made at the tiled width (manifest geometry taskWindowTiled), so both terminals are at native type; the single recording would be held at two-thirds.',
+    alt: 'Two task windows tiled side by side over the board, Extract auth middleware on the left and Generate API client types on the right, each with Claude Code working in its terminal and a context bar below it showing the model, context use, and cost.',
+    config: { workspaceByProject: { [PROJECT_CONTOSO]: tiledPairWorkspace() } },
+    ready: '[data-testid^="tile-splitter-"]',
+  },
   // The Browser and Changes scenes below keep a held terminal on purpose. There the PANEL is the
-  // subject and the terminal beside it is context, and giving the terminal the 0.65 of the width
-  // its native type needs squeezes the subject instead (the address bar and the note field
-  // truncate, a split diff clips mid-line). The seed's floor (HOLD_MIN_SCALE in demo-dataset.ts)
-  // is what keeps that context legible: below 0.6 the terminal would play frames at native type,
-  // which in a narrow pane wraps the transcript mid-word and reads as broken.
+  // subject and the terminal beside it is context, and giving the terminal the width its native
+  // type needs squeezes the subject instead (the address bar and the note field truncate, a split
+  // diff clips mid-line). A pane narrower than the single recording takes the tiled one (the
+  // seed's layoutFor), so these terminals hold the middleware session's tiled recording at about
+  // 0.9 of the type size rather than the single at 0.67. The seed's floor (HOLD_MIN_SCALE in
+  // demo-dataset.ts) is what keeps that context legible: below 0.6 the terminal would play frames
+  // at native type, which in a narrow pane cuts every row at the edge.
   browser: {
     name: 'browser',
     reach: 'state',
@@ -376,6 +449,19 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="dictation-live-chip"]',
     focus: '[data-testid="dictation-live-chip"]',
     steps: [{ press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' }],
+  },
+
+  // ---------------------------------------------------------------- the conversation viewer
+  conversation: {
+    name: 'conversation',
+    reach: 'state',
+    description: 'The conversation viewer open on the middleware session, floating over the board at the task window\'s rect. The transcript is the one recorded beside the session (the manifest\'s transcript flag; main\'s own parser over the agent\'s history file), so the viewer shows what the desktop would for this run.',
+    alt: 'The conversation viewer floating over the board, open on Extract auth middleware and scrolled to Claude Code\'s closing message: what changed in the middleware and the routes, the choices it made, and a caveat on the test run, with a search field above.',
+    config: { workspaceByProject: { [PROJECT_CONTOSO]: conversationWindowWorkspace() } },
+    // An assistant row exists only once the transcript has been fetched and rendered, so the
+    // reveal waits for the conversation rather than for an empty window.
+    ready: '[data-testid="conversation-row-assistant"]',
+    focus: '[data-testid="conversation-window"]',
   },
 
   // ---------------------------------------------------------------- the Changes panel
@@ -463,8 +549,22 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="command-terminal-window"]',
     steps: [{ click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' }],
   },
-  // No tiled Command Terminal scene either, for the reason given above the Browser scene: the
-  // first window's 154-column session is held at two-thirds type beside the second.
+  'command-terminal-tiled': {
+    name: 'command-terminal-tiled',
+    reach: 'boot',
+    description: 'Two Command Terminals tiled in one footprint: the toggle reattaches the contoso terminal session, then New terminal docks a second beside it and boots the project default agent from the boot recorded at the tiled width. The first window switches to its own tiled recording as it narrows (the seed\'s layoutFor), so both are at native type. The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
+    alt: 'Two Command Terminal windows tiled side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
+    config: { commandTerminalWorkspace: COMMAND_TERMINAL_WORKSPACE },
+    // The second window's model pill, which the context bar shows only once the session's first
+    // usage lands, a beat after its terminal mounts (the seed pushes it 1.2 s after the boot's
+    // first output, as main's status-line push would): a still shot before that would show the
+    // "Starting agent" spinner in the bar rather than the pills.
+    ready: '[data-command-slot="slot-2"] [data-testid^="context-bar-model-"]',
+    steps: [
+      { click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' },
+      { click: '[data-testid="quick-session-new-terminal"]', waitFor: '[data-command-slot="slot-2"] [data-testid^="context-bar-model-"]' },
+    ],
+  },
 
   // ---------------------------------------------------------------- views and dialogs
   usage: {

@@ -100,7 +100,18 @@ three things staying in step, and each is enforced rather than remembered.
   working session here keeps its clock, its card and its Monitor peeks. Never conflate "cannot
   replay these bytes" with "the agent finished", never answer a grid mismatch with a second
   recording at that grid (the grid is not stable enough to record against), and never hand the
-  serialize addon's joined rows to a terminal of another width.
+  serialize addon's joined rows to a terminal of another width. A tiled LAYOUT is a surface, not
+  a mismatch: the matrix records a session at the tiled width too when the manifest names a
+  `tiled` sibling, at the grid `node demo/measure.mjs --geometry` measures for that surface at the
+  launch the manifest's `geometry` names, and the seed shows whichever of the two the window's
+  width asks for. The sibling is a second run of the prompt, so it supplies the terminal's bytes
+  only; the session's clock, trail, diff, and peeks stay the single recording's.
+- **The conversation viewer shows a recorded transcript, or the mock's empty answer, never a
+  written one.** A session the manifest marks `transcript` carries the agent's own transcript
+  beside its recording (`transcripts/<file>`, main's parsers over the history file the agent
+  wrote, sanitized whole, committed because the source lives on the recording machine), and the
+  seed serves it through `transcripts.get` when a viewer opens. Every other session falls through
+  to the mock's empty response, which is what the desktop shows once a history file is gone.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)
@@ -117,6 +128,11 @@ three things staying in step, and each is enforced rather than remembered.
   gone stale, when a line sits outside its recording's span, and when the applier or the loader
   stops reading them. It is the answer to the parity test passing on a mock that answers with
   nothing. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-transcript-seeded.test.ts` fails when the session
+  the `conversation` scene opens has no transcript file, when the file is not a whole conversation
+  in the parser's shape, when its entries are not the run the card's trail came from (the trail's
+  uuids are transcript uuids), when a marked manifest entry has no file or a file no mark, and when
+  the build or the seed stops reading them. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-frame-format.test.ts` fails when any recording's
   final frame, open frame, or timeline frame is not physical rows with a cursor suffix, or holds a
   row wider than the recording's columns (the "run the backfill" backstop);
@@ -155,11 +171,14 @@ three things staying in step, and each is enforced rather than remembered.
   fit), that a held terminal reporting its conformed grid back is read as the conform landing
   rather than a resize, so a session already at its recording's end receives nothing,
   that a board card and a Monitor card draw the agent message trail in place of the
-  description and the output peek while a session with no trail still draws its peek, and that a
+  description and the output peek while a session with no trail still draws its peek, that a
   drag into an
   auto-spawn column and a new Command Terminal each start a session whose bytes arrive through
-  the mock's data path. Runs as the `demo` job in `.github/workflows/ci.yml` and again inside
-  `.github/workflows/deploy-demo.yml` before the Pages deploy.
+  the mock's data path, that a still whose terminal is narrower than its recording and not held
+  paints its frame cut to the grid rather than raw, that the conversation scene renders the
+  recorded transcript from one `transcripts/` fetch and no recording, and that the tiled task
+  windows take each session's tiled recording. Runs as the `demo` job in `.github/workflows/ci.yml`
+  and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.
 

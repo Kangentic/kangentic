@@ -28,10 +28,14 @@
  *          --prompt ""              a Command Terminal: the agent started with no prompt
  *          --no-message-trail       write an empty trail: the session this records is transient,
  *                                   and MessageTrailTracker skips those
+ *          --transcript-out <path>  also write the agent's whole transcript there, sanitized, for
+ *                                   the conversation viewer (tests/captures/fixtures/demo/transcripts/)
  *
  * The agent's own transcript is read once at the end for the board card's message trail, which the
  * terminal bytes cannot supply. A failure there is reported but never loses the recording; CI
- * refuses an undocumented empty trail, and backfill-demo-message-trails.mjs re-derives one.
+ * refuses an undocumented empty trail, and backfill-demo-message-trails.mjs re-derives one. A
+ * transcript file that fails to derive is reported the same way, and the web build refuses to
+ * seed a session the manifest marks without one; backfill-demo-transcripts.mjs re-derives it.
  *
  * Trust is pre-seeded for claude, codex, gemini, qwen, copilot, and cursor using the files each CLI
  * reads, so the first frame is the task and not a trust dialog. Every CLI must already be logged in.
@@ -42,10 +46,10 @@ const os = require('node:os');
 const path = require('node:path');
 // Shared with scripts/backfill-demo-message-trails.mjs, which writes into recordings already on
 // disk and must rewrite identity exactly the way a record-time write does.
-const { buildSanitizer, forwardSlash } = require('./lib/demo-sanitizer');
+const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanitizer');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -69,6 +73,7 @@ function parseArgs(argv) {
       // A Command Terminal's session is transient, and MessageTrailTracker skips those, so its
       // recording must carry an empty trail however much prose the agent produced.
       case '--no-message-trail': options.messageTrail = false; break;
+      case '--transcript-out': options.transcriptOut = path.resolve(next()); break;
       default: throw new Error(`Unknown argument ${argument}`);
     }
   }
@@ -506,27 +511,47 @@ async function main() {
   const capturedAt = new Date().toISOString();
   const durationMs = Date.now() - startedAt;
   let messageTrail = [];
-  if (options.messageTrail && options.prompt.length > 0) {
+  // The run's transcript is matched once and serves both derivations: the card's trail, and
+  // the whole transcript the conversation viewer shows when --transcript-out asks for it.
+  let transcript = null;
+  let extract = null;
+  if ((options.messageTrail || options.transcriptOut) && options.prompt.length > 0) {
     try {
       const { importTsModule } = await import('./lib/bundle-ts-module.mjs');
-      const extract = await importTsModule(path.join(__dirname, '..', 'tests', 'captures', 'helpers', 'message-trail-extract.ts'));
-      const derived = await extract.extractMessageTrail(
+      extract = await importTsModule(path.join(__dirname, '..', 'tests', 'captures', 'helpers', 'message-trail-extract.ts'));
+      transcript = await extract.extractTranscript(
         { agent: options.agent, prompt: options.prompt, capturedAt, durationMs },
         options.cwd,
       );
-      // Validate into a local first, and adopt it only once every entry has passed. Assigning
-      // messageTrail before the check would leave a half-validated trail in place when
-      // assertClean throws, and the catch below would then write the leaking entry to disk while
-      // reporting an empty one. backfill-demo-message-trails.mjs validates in this same order.
-      const sanitized = (derived ?? []).map((entry) => ({ ...entry, text: sanitizer.apply(entry.text) }));
-      for (const entry of sanitized) sanitizer.assertClean(entry.text, `message trail at ${entry.t} ms`);
-      messageTrail = sanitized;
-      console.error(`[capture] message trail: ${messageTrail.length} line(s)`);
+      if (options.messageTrail) {
+        const derived = transcript ? extract.buildMessageTrail(transcript.entries, transcript.startMs, durationMs) : [];
+        // Validate into a local first, and adopt it only once every entry has passed. Assigning
+        // messageTrail before the check would leave a half-validated trail in place when
+        // assertClean throws, and the catch below would then write the leaking entry to disk while
+        // reporting an empty one. backfill-demo-message-trails.mjs validates in this same order.
+        const sanitized = derived.map((entry) => ({ ...entry, text: sanitizer.apply(entry.text) }));
+        for (const entry of sanitized) sanitizer.assertClean(entry.text, `message trail at ${entry.t} ms`);
+        messageTrail = sanitized;
+        console.error(`[capture] message trail: ${messageTrail.length} line(s)`);
+      }
     } catch (error) {
       // Never lose an expensive capture over this. The recording itself is intact, and
       // tests/unit/demo-message-trail-seeded.test.ts refuses an undocumented empty trail in CI, so
       // a silent gap cannot survive. Re-derive with scripts/backfill-demo-message-trails.mjs.
       console.error(`[capture] message trail: FAILED, writing an empty one. ${error.message}`);
+      transcript = null;
+    }
+  }
+  if (options.transcriptOut) {
+    if (transcript) {
+      // The viewer ends where the terminal does: the exit sequence above came after the last byte.
+      const streamEndMs = cleanStream.length > 0 ? cleanStream[cleanStream.length - 1].t : durationMs;
+      const entries = extract.transcriptWithinRecording(transcript.entries, transcript.startMs, streamEndMs);
+      writeTranscript(options.transcriptOut, { sessionOptions: options, capturedAt, durationMs, entries, sanitizer });
+    } else {
+      // The web build refuses to seed a session the manifest marks without its transcript file,
+      // so this cannot ship silently; scripts/backfill-demo-transcripts.mjs re-derives it.
+      console.error(`[capture] transcript: FAILED, nothing written to ${options.transcriptOut}`);
     }
   }
 
@@ -555,6 +580,22 @@ async function main() {
   fs.mkdirSync(path.dirname(options.out), { recursive: true });
   fs.writeFileSync(options.out, JSON.stringify(record, null, 2), 'utf-8');
   console.error(`[capture] wrote ${options.out} (raw ${raw.length} bytes recorded, serialized ${cleanSerialized.length} bytes kept, alt screen: ${altScreen})`);
+}
+
+/**
+ * The agent's transcript as the conversation viewer reads it, sanitized whole: main's own parser
+ * produced the entries, so the shape is the desktop's, and the identity rewrite runs over every
+ * string in them (tool inputs and results quote absolute paths). Shared with
+ * scripts/backfill-demo-transcripts.mjs, which writes the same file for a recording already on
+ * disk; keep the two in step.
+ */
+function writeTranscript(outPath, { sessionOptions, capturedAt, durationMs, entries, sanitizer }) {
+  const sanitized = sanitizeDeep(entries, sanitizer);
+  sanitizer.assertClean(JSON.stringify(sanitized), 'transcript');
+  const record = { agent: sessionOptions.agent, project: sessionOptions.project, prompt: sessionOptions.prompt, capturedAt, durationMs, entries: sanitized };
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, JSON.stringify(record, null, 2), 'utf-8');
+  console.error(`[capture] transcript: ${sanitized.length} entries written to ${outPath}`);
 }
 
 main().then(() => {

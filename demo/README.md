@@ -19,6 +19,8 @@ npm run build:demo                    # dist/demo/, base path /demo/
 npm run build:demo -- --base=/kangentic/   # what the GitHub Pages deploy runs
 npm run test:demo                     # the demo smoke tier against dist/demo/
 npm run demo:measure                  # bundle weight, boot timings, frames-per-page cost
+node demo/measure.mjs --geometry      # the grid each terminal surface fits, at device scale 1 and 2,
+                                      # against the capture matrix's manifest (--check fails on a drift)
 npm run demo:serve                    # serve dist/demo/ and stay up for a manual look
 npm run capture                       # build, then one still per scene and theme (and the marketing
                                       # video and walkthrough), into a gitignored captures/<timestamp>/
@@ -175,11 +177,14 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
 | `task`, `browser` | state | `workspaceByProject` (a floating window at 0.64 of the frame, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
+| `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
+| `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below) |
 | `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
 | `changes`, `changes-working`, `changes-staged`, `changes-history` | state | a maximized window plus `detail_view_state` (`changesScope`, `changesSelectedFile`, `changesViewedFiles`, `changesHistoryOpen`, `changesSelectedCommit`); the scopes, the graph, and the commit diff come from the seed (Git history below) |
 | `changes-blame` | boot | the View options menu, then Show blame (blame is per-file view state, never persisted) |
 | `monitor`, `monitor-table` | boot | one click; the layout is `config.monitor.layout`, which persists |
 | `command-terminal` | boot | the title-bar toggle; the window's rect is the global `commandTerminalWorkspace` blob the scene seeds (the same 0.64 as the task window, for the same reason) |
+| `command-terminal-tiled` | boot | the toggle, then New terminal, which docks a second window beside the first and boots the project's default agent from the boot recorded at the tiled width; the first switches to its own tiled recording as it narrows |
 | `usage`, `backlog`, `quick-find`, `new-task`, `edit-columns`, `completed-tasks` | boot | one click each; `usage` also sets `usageStatsScope` and `usageStatsPeriod` |
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
 | `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS` |
@@ -195,25 +200,36 @@ figure is at native type, and a terminal that is context beside a panel may be h
 recording is 154 columns, and at the rig's launch (a real 2x scale, where the renderer rounds
 the 12px Consolas cell to 6.5 CSS px) the window manager's default window (0.58 of the frame)
 fits 142, so the seed holds the recording's grid at 0.92 of the type size. The floating scenes
-(`task`, `dictation`, `window-dock`, `command-terminal`) therefore open their window at 0.64 of
-the frame instead: 157 columns fit, the hold lands at 154 with the native cell (a held grid never
-scales up), and the terminal reads at the size the board's bottom panel does. The Browser and
-Changes scenes keep their terminal held (0.71 at the Browser split, 0.67 at the Changes split)
-because the panel is the subject there, and the 0.65 of the width a native terminal needs
-truncates the address bar and the note field, or clips a split diff mid-line. Below the seed's
-0.6 floor the terminal would play frames at native type instead, which in a narrow pane wraps
-the transcript mid-word and reads as broken, so the context terminal is never narrowed past it.
+(`task`, `dictation`, `window-dock`, `command-terminal`, `conversation`) therefore open their
+window at 0.64 of the frame instead: 157 columns fit, the hold lands at 154 with the native cell
+(a held grid never scales up), and the terminal reads at the size the board's bottom panel does.
 
-Two scenes are deliberately absent by that same rule. In a tiled figure the terminals ARE the
-subject, and a half-width pane holds a 154-column recording at about two-thirds type, so
-`windows-tiled` and `command-terminal-tiled` wait for a recording at the tiled width, the way
-the Command Terminal boots already carry one (`terminal-<project>-tiled.json`); that is a
-capture-matrix change, not a scene change. Also absent, needing dataset work the sample install
-does not carry: the conversation viewer (no transcript is seeded). Two settings scenes render
-empty lists on purpose and say so in their alts rather than being deferred: `settings-shortcuts`
-(the sample install configures no project shortcuts, so the tab is its Add Shortcut and Presets
-controls) and `settings-mobile` (no device is paired). Seeding either is a dataset decision, not
-a bug in the scene.
+In a tiled figure the terminals ARE the subject, and a half-width pane holds a 154-column
+recording at about two-thirds type, so the two tiled scenes rest on a second recording of each
+session at the tiled width, the way the Command Terminal boots carry one
+(`terminal-<project>-tiled.json`): the manifest's `tiled` field names the sibling, the matrix
+records it at `geometry.taskWindowTiled` (or `commandTerminalTiled` for a Command Terminal
+session), and the seed shows whichever of the two the window's width asks for (Terminal
+recordings below). `windows-tiled` tiles the middleware and api-client windows in the footprint a
+dock produces (two panes at the engine's 750px minimum, at the floating window's height, so the
+rows stay 37 and only the width changes); `command-terminal-tiled` is the toggle and then New
+terminal, so its second window is the boot the frame starts for a visitor. Both terminals of each
+are at native type at the rig's launch.
+
+The same rule gives the Browser and Changes scenes their held terminal. The panel is the
+subject there, and the width a native terminal needs truncates the address bar and the note
+field, or clips a split diff mid-line. Because the middleware session now has a tiled recording,
+a pane narrower than the single width takes it (the seed's `layoutFor`), and those scenes hold
+the tiled recording at about 0.9 of the type size where they once held the single at 0.67 and
+0.71. Below the seed's 0.6 floor the terminal would play frames at native type instead, each row
+cut at the edge, so the context terminal is never narrowed past it.
+
+One scene needs dataset work the sample install does not carry for every session: the
+conversation viewer opens on the one session with a transcript (Transcripts below). Two settings
+scenes render empty lists on purpose and say so in their alts rather than being deferred:
+`settings-shortcuts` (the sample install configures no project shortcuts, so the tab is its Add
+Shortcut and Presets controls) and `settings-mobile` (no device is paired). Seeding either is a
+dataset decision, not a bug in the scene.
 
 ### Quick Find
 
@@ -320,12 +336,12 @@ consistent with each other:
   takes more of the width), so if the site uses it, it uses one value everywhere; the alts were
   written at the default.
 
-This is also why the catalog has no tiled-window scene and why the floating scenes open a wider
-window than the default (Scenes above): a terminal that is the subject of its figure is at the
-same type size as every other frame's, and a tiled terminal cannot be until it has a recording
-at the tiled width. A held terminal's exact scale also moves a little with the reader's device
-pixel ratio, because the renderer rounds the cell to device pixels; the column counts above are
-what the rig's launch measures.
+This is also why the floating scenes open a wider window than the default and why the tiled
+scenes have their own recordings (Scenes above): a terminal that is the subject of its figure is
+at the same type size as every other frame's. A held terminal's exact scale also moves a little
+with the reader's device pixel ratio, because the renderer rounds the cell to device pixels;
+`node demo/measure.mjs --geometry` prints the grid every surface fits at scale 1 and 2, and the
+manifest's `geometry` names the scale each of its numbers was measured at.
 
 ## The sample install
 
@@ -397,6 +413,25 @@ lines (`peek`, read from the rendered headless terminal at record time, with eac
 and status chrome skipped), never authored; the concurrency cap is set to the number of running
 sessions, so the one queued spawn is waiting on a genuinely full set of slots.
 
+A manifest entry with `tiled` is recorded a second time at the tiled surface's width, under the
+file it names: the same prompt run again, in a PTY the size of one pane of a tiled pair. The seed
+pairs the two the way it pairs a Command Terminal's two boots, and a window narrower than the
+single recording takes the tiled one (`layoutFor` in `demo-dataset.ts`), which it then holds or
+plays as frames like any other recording. It is a second run, so it says different things: the
+session's clock, its card's message trail, its Monitor peeks, and its working-tree diff stay the
+single recording's, and only the terminal's bytes are the tiled one's. A still frame paints the
+tiled recording's own opening frame, kept at the same tail (`tiledFrames` in the seed, inline
+like the open frames, since a still fetches nothing). Three sessions carry one, the two the
+`windows-tiled` scene tiles and the Command Terminal session `command-terminal-tiled` narrows.
+The three were made on Claude Code 2.1.275, which asks before a PowerShell command with an
+expandable string, so both task runs end at that permission prompt rather than at a summary (the
+2.1.270 singles ran to their own end). That is the ending a desktop user gets on that CLI: the
+rig seeds trust the way Kangentic does and no permission rule, and pre-allowing `npm *` to
+record a cleaner ending would show a session nobody has. The still opens well before the
+prompt. Live, a mounted terminal re-bases its session's end on the recording it plays
+(`liveScrollback`), so a tiled window's card flips to needs-you as its terminal reaches the
+prompt, and a frame with no terminal mounted runs the single recording's clock.
+
 The sample install is a Windows machine, because the recording machine is one and so is the
 mock's platform: the OS window controls, the Git Bash chip, the agents' PowerShell tool calls,
 their backslash paths, and the home directory all agree. Sanitization at record time changes
@@ -453,7 +488,27 @@ working session opens is the manifest's `liveTailMs` (90 seconds), or the sessio
 frame at that moment beside the recording's end (`openFrame`, with the Monitor peek of that
 moment), and a still frame and the marketing captures paint it for such a session, so every
 view of the sample install starts from the same moment. The stream files sit under `recordings/` and are fetched from the same origin when a
-terminal mounts, so a still frame and a first paint fetch nothing.
+terminal mounts, so a still frame and a first paint fetch nothing. The one exception is a still
+that STARTS a terminal: `command-terminal-tiled`'s second window is a spawn, whose boot has no
+inline frame, so that scene fetches the boot's final frame and paints it.
+
+### Transcripts
+
+The conversation viewer reads the agent's transcript, which main parses out of the agent's own
+history file. The sample install carries one for the middleware session
+(`tests/captures/fixtures/demo/transcripts/contoso-web-claude-middleware.json`): the manifest
+entry's `transcript` flag asks for it, `scripts/capture-agent-scrollback.js --transcript-out`
+writes it at record time from the same transcript match the message trail uses (main's own
+parser, so the shape is the desktop's), and `node scripts/backfill-demo-transcripts.mjs` is the
+one-time rescue for a recording made before that flag existed. Like the trail it is not
+reproducible from the recording: the source lives on the recording machine, so the derived
+entries are committed, sanitized whole (tool inputs and results quote absolute paths), and
+`tests/unit/demo-transcript-seeded.test.ts` asserts the file is a real conversation from the same
+run as the trail. The build emits it under `transcripts/`, its own directory beside
+`recordings/`, and the seed answers `transcripts.get` from it when a viewer opens (the viewer's
+live poll gets the unchanged short answer), so a still frame still fetches no recording and a
+figure of anything but the viewer fetches no transcript. A session without one falls through to
+the mock's empty answer, which is what the desktop shows once a history file is gone.
 
 ### The Monitor's output peek, and `loop=1`
 
@@ -570,11 +625,20 @@ and nothing typed into a terminal reaches an agent, since there is none. A repla
 renegotiate the PTY size the way a live PTY does: a full-screen TUI (OpenCode, Copilot) only
 reproduces at the size it was recorded at, and a row-based renderer (Claude Code's classic
 renderer, Codex, Gemini) wraps and pads at its recorded width and height. So every recording is
-made at the size of the surface it plays on, from the manifest's `geometry` (read from the mock's
-resize calls at the 1600x1000 site frame): a task session at the task window (154 wide), the
-Command Terminal session at its single window (154 wide), and a Command Terminal boot at both
-sizes its window can open at (154 wide alone, 124 wide tiled beside an existing terminal), the
-frame picking one at spawn time. The rows follow the agent, because the window's context bar
+made at the size of the surface it plays on, from the manifest's `geometry`, which
+`node demo/measure.mjs --geometry` measures at the 1600x1000 site frame from the seed's own
+resize bookkeeping: a task session at the task window (154 wide), the Command Terminal session at
+its single window (154 wide), a session with a `tiled` sibling once more at one pane of a tiled
+pair (115 wide), and a Command Terminal boot at both sizes its window can open at (154 wide alone,
+115 wide tiled beside an existing terminal), the frame picking one at spawn time. A grid moves with
+the device scale, since the renderer rounds the cell to device pixels, so each surface in the
+manifest names the scale it was measured at: the two single windows at scale 1 (the demo tier's
+launch; at the rig's 2x they fit 142, which the wider floating scenes absorb), the two tiled panes
+at scale 2 (the rig's launch, so a tiled figure is at native type there; at scale 1 the pane fits
+125 or 124 and holds the recording letterboxed). The spring-petclinic and online-boutique tiled
+boots are still at the earlier 124, recorded before the launch was pinned and not re-recordable
+until Codex credits return; a recording carries its own grid, so those hold at 0.93. The rows
+follow the agent, because the window's context bar
 does: a Claude session's bar carries the account's rate-limit pills and wraps to two rows,
 leaving 37, while every other agent's bar is one row, leaving 39 (`rowsByAgent` in the
 manifest). The Codex task sessions and spawn boots are still at 37 rows, recorded before that
@@ -602,8 +666,10 @@ answers a replayed session's resize the way main answers one it refuses: with th
 (`SessionResizeResult.held`, here the recording's), and the terminal conforms to it, resizing to
 that grid and scaling its font to fit the pane, letterboxed (`conformToHeldGrid` in
 `useTerminal`). The picture is then the recording's, exact, at whatever size the host gave the
-frame and on any display: the dialog at 1440 by 900 shows the 154-column session at about
-9 px type. Whether to hold is decided by the scale the pane would need (`HOLD_MIN_SCALE` in
+frame and on any display: the dialog at 1440 by 900 fits 131 by 26, narrower than the single
+recording, so the middleware window holds the session's tiled recording (115 by 37) at about
+8 px type, its rows rather than its width setting the scale. Whether to hold is decided by the
+scale the pane would need (`HOLD_MIN_SCALE` in
 the seed's resize wrapper, 0.6): below it the type would be unreadable, so the terminal keeps
 its own grid and plays frames instead. The bottom panel is that case, 15 rows against a
 recording's 37 or 39. The conform only ever scales DOWN (`CONFORM_MAX_SCALE` in `useTerminal`
@@ -659,7 +725,12 @@ disagree on overwrites the last column instead of wrapping. The cursor is recomp
 mounted row count: a 37-row frame in the 15-row panel scrolls 22 rows up, and the cursor's row
 moves with them. Prose keeps its recorded wrap points, because the CLI chose them at that width
 and wrote them into the bytes as line breaks; only the CLI could re-wrap that, which is why the
-task window is held at the recording's grid rather than fitted.
+task window is held at the recording's grid rather than fitted. A still frame goes through the
+same applier: the renderer resizes before it asks for the scrollback, so the mounted grid is
+known, and the frame a still paints (a working session's opening frame, an idle session's end)
+is fitted to it. Held, that is the frame itself; below the hold floor, each row is cut at the
+edge rather than wrapped, which is what a `state=` blob that narrows a Changes pane to a quarter
+of the window gets.
 
 One thing the frame path does not do is make text bigger on a display scaled to 200 percent.
 That report (kangentic.com #76) came from a capture at an emulated device pixel ratio of 2, and
@@ -678,15 +749,15 @@ static server on localhost, warm disk.
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1802 KB | 499 KB |
-| xterm | 452 KB | 116 KB |
-| demo-seed.js (the sample install: opening and final frames, diffs, peek timelines, message trails, the cell-width table) | 670 KB | 112 KB |
-| mock-electron-api.js (the bridge) | 210 KB | 47 KB |
-| react-vendor | 185 KB | 57 KB |
-| index.css + xterm.css | 113 KB | 19 KB |
-| Pill + datetime chunks | 87 KB | 29 KB |
-| demo-boot.js + demo-scenes.js | 24 KB | 8 KB |
-| **Eager total** | | **887 KB** |
+| index (the renderer) | 1935 KB | 536 KB |
+| xterm | 435 KB | 110 KB |
+| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 783 KB | 129 KB |
+| mock-electron-api.js (the bridge) | 217 KB | 49 KB |
+| react-vendor | 214 KB | 66 KB |
+| index.css + xterm.css | 115 KB | 19 KB |
+| Pill + datetime chunks | 90 KB | 29 KB |
+| demo-boot.js + demo-scenes.js + demo-webview.js | 76 KB | 20 KB |
+| **Eager total** | | **959 KB** |
 
 The whole `dist/demo/assets` is 16.7 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
@@ -697,21 +768,25 @@ last one, which is what lets a still and the captures show the moment the live r
 from. It grew 3 KB more when they gained their peek timelines, which is what makes the Monitor
 move without a terminal open. It grew 7 KB more for the agent message trails, which are what the
 board cards themselves say under the default Card Preview. It grew 4 KB more when the frames
-became physical rows and the seed took on the cell-width table the applier clips with.
-The 36 recordings under `recordings/` are 36.1 MB raw and 868 KB gzipped
-in total, fetched one at a time as terminals mount, so none of it is on the boot path. Each
-carries its timed stream and its frame timeline, and the frames are roughly half that weight: they
-are what keeps a terminal live where no grid can be held, which is the bottom panel. The largest
-single file is the Gemini owner-search session at 114 KB gzipped.
+became physical rows and the seed took on the cell-width table the applier clips with. It grew
+17 KB more for the tiled frames of the three sessions with a tiled recording (a final frame and
+a working session's opening frame each), which is what lets a still of a tiled window paint the
+right recording without a fetch.
+The 39 recordings under `recordings/` (three of them the tiled siblings) are 38.3 MB raw and
+832 KB gzipped in total, fetched one at a time as terminals mount, so none of it is on the boot
+path. Each carries its timed stream and its frame timeline, and the frames are roughly half that
+weight: they are what keeps a terminal live where no grid can be held, which is the bottom panel.
+The largest single file is the Gemini owner-search session at 101 KB gzipped. The one transcript
+under `transcripts/` is 31 KB raw and 8 KB gzipped, fetched only when a conversation viewer opens.
 
 ### Cold boot per scene
 
 | Scene | Requests | Off-origin | First contentful paint | Ready |
 |---|---|---|---|---|
-| board | 15 | 0 | 260 ms | 323 ms |
-| task | 13 | 0 | 236 ms | 356 ms |
-| changes | 17 | 0 | 268 ms | 410 ms |
-| monitor | 14 | 0 | (paint inside the veil) | 293 ms |
+| board | 14 | 0 | 256 ms | 330 ms |
+| task | 14 | 0 | 248 ms | 380 ms |
+| changes | 19 | 0 | 256 ms | 513 ms |
+| monitor | 17 | 0 | (paint inside the veil) | 430 ms |
 
 Zero off-origin requests on every scene: the renderer's Sentry SDK has no network path of its
 own and never initializes under the mock, analytics go through the bridge the mock stubs, and the
@@ -722,9 +797,9 @@ so the site's privacy page needs no line for the frame.
 
 | Frames | All ready | Script time | JS heap |
 |---|---|---|---|
-| 1 | 319 ms | 185 ms | 15 MB |
-| 4 | 767 ms | 395 ms | 33 MB |
-| 8 | 1271 ms | 665 ms | 65 MB |
+| 1 | 321 ms | 176 ms | 18 MB |
+| 4 | 707 ms | 368 ms | 36 MB |
+| 8 | 1296 ms | 668 ms | 70 MB |
 
 The bundle downloads once and caches; each frame parses and executes it again for roughly 70 ms of
 script and 5 to 10 MB of heap. Eight live frames on one docs page cost about 1.3 seconds on a
@@ -779,12 +854,13 @@ Two things stay out of reach of a live frame: the Browser pane's REAL guest (a p
 index.html                       the entry, five classic scripts then the module bundle
 stage.html                       the fixed-size host a direct visit lands on
 scenes.json                      the scene list the site reads at build time: name, reach, alt, version
-demo-scenes-<hash>.js            the registry, the app version, the recordings index, the guest pages
+demo-scenes-<hash>.js            the registry, the app version, the recordings and transcripts index, the guest pages
 demo-boot-<hash>.js              demo/boot.js verbatim
 demo-webview-<hash>.js           demo/webview-shim.js verbatim: the iframe standing in for <webview>
 mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim
 demo-seed-<hash>.js              the sample install, final frames, diffs, and history embedded
 recordings/<name>-<hash>.json    one timed stream per recording, fetched when a terminal mounts
+transcripts/<session>-<hash>.json  the agent transcript behind a session, fetched when a conversation viewer opens
 guest/<name>-<hash>.html         what a project renders at its dev URL, for the Browser pane
 assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```

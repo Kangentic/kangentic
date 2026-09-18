@@ -442,6 +442,12 @@ export function buildDemoPreConfig(options: {
   peeks?: Record<string, string[]>;
   ends?: Record<string, { durationMs: number; stopReason: string }>;
   openFrames?: Record<string, { serialized: string; peek: string[] }>;
+  /**
+   * What a still paints for a session whose window mounted at the tiled width (loadDemoTiledFrames):
+   * the tiled recording's final frame, and a working session's opening frame. Only the sessions
+   * the manifest gives a tiled sibling; the rest paint the single recording's frames above.
+   */
+  tiledFrames?: Record<string, { serialized: string; openFrame: { serialized: string; peek: string[] } | null }>;
   peekTimelines?: Record<string, Array<{ t: number; lines: string[] }>>;
   messageTrails?: Record<string, Array<{ t: number; uuid: string; ts: number; text: string }>>;
   /** How many trail lines main keeps per session (MESSAGE_TRAIL_MAX_ENTRIES), so a replay slices as it does. */
@@ -482,6 +488,7 @@ export function buildDemoPreConfig(options: {
   // The frame and Monitor peek at the moment the live frame opens each working session
   // (loadDemoOpenFrames): what a still and the captures show for it.
   const openFrames = options.openFrames ?? {};
+  const tiledFrames = options.tiledFrames ?? {};
   // How each working session's Monitor peek changes as its recording plays (loadDemoPeekTimelines):
   // the motion a Monitor card shows on the desktop, on the recording's own clock.
   const peekTimelines = options.peekTimelines ?? {};
@@ -513,6 +520,7 @@ export function buildDemoPreConfig(options: {
       var changes = ${JSON.stringify(changes)};
       var peeks = ${JSON.stringify(peeks)};
       var openFrames = ${JSON.stringify(openFrames)};
+      var tiledFrames = ${JSON.stringify(tiledFrames)};
       var peekTimelines = ${JSON.stringify(peekTimelines)};
       var messageTrails = ${JSON.stringify(messageTrails)};
       var messageTrailMaxEntries = ${JSON.stringify(messageTrailMaxEntries)};
@@ -789,10 +797,22 @@ export function buildDemoPreConfig(options: {
       // the grid rides on the replay entry so a terminal's first resize can be answered before
       // the file is fetched.
       function gridOf(indexed) { return { cols: indexed.cols, rows: indexed.rows }; }
+      function seededSession(sessionId) {
+        for (var index = 0; index < data.sessions.length; index++) if (data.sessions[index].id === sessionId) return data.sessions[index];
+        return null;
+      }
       data.sessions.forEach(function (session) {
         if (!recordings || !recordings.sessions[session.id]) return;
         var indexed = recordings.sessions[session.id];
-        replays[session.id] = { file: indexed.file, grid: gridOf(indexed), startedAt: null, tail: session.activity === 'thinking' ? (session.liveTailMs || LIVE_TAIL_MS) : 0, projectId: session.projectId };
+        // A session the manifest also recorded at the tiled width carries both layouts, the way
+        // a Command Terminal boot does (spawnTransient below); the width its window mounts at
+        // picks one (layoutFor).
+        replays[session.id] = {
+          file: indexed.file, grid: gridOf(indexed), startedAt: null,
+          tail: session.activity === 'thinking' ? (session.liveTailMs || LIVE_TAIL_MS) : 0,
+          projectId: session.projectId,
+          layouts: indexed.tiled ? { single: indexed, tiled: indexed.tiled } : null,
+        };
       });
       function fetchRecording(file) {
         if (!recordingCache[file]) {
@@ -1216,17 +1236,34 @@ export function buildDemoPreConfig(options: {
         if (!geometry || !recording.cols || !recording.rows) return true;
         return geometry.cols === recording.cols && geometry.rows === recording.rows;
       }
-      // A boot recorded for each layout its window can open in: the index entry for this width.
+      // A recording made for each layout its window can open in (a Command Terminal boot, or a
+      // session the manifest gives a tiled sibling): the one for this width. A pane narrower
+      // than the single recording takes the tiled one, which is the recording it shows at the
+      // larger scale whether it then holds it or plays its frames; a pane at least the single
+      // width takes the single, since a held grid never scales up.
       function layoutFor(entry, cols) {
-        var singleCols = recordings && recordings.geometry && recordings.geometry.commandTerminal ? recordings.geometry.commandTerminal.cols : null;
-        if (!entry.layouts || !singleCols) return null;
-        return cols < singleCols ? entry.layouts.tiled : entry.layouts.single;
+        if (!entry.layouts || !entry.layouts.single || !entry.layouts.tiled) return null;
+        return cols < entry.layouts.single.cols ? entry.layouts.tiled : entry.layouts.single;
       }
       function applyLayout(entry, cols) {
         var layout = layoutFor(entry, cols);
         if (!layout) return;
         entry.file = layout.file;
         entry.grid = gridOf(layout);
+      }
+      // What a still paints for a session: the single recording's frame (scrollback, which the
+      // seed set to a working session's opening frame above), or the tiled recording's when the
+      // window mounted at the tiled width and the manifest recorded one. The tiled recording is
+      // a second run of the same prompt, so its own opening frame is the moment its bytes
+      // would open at; the session's clock, trail and diff stay the single recording's.
+      function stillFrameFor(sessionId, entry) {
+        var tiled = tiledFrames[sessionId];
+        if (entry && entry.layouts && tiled && entry.file === entry.layouts.tiled.file) {
+          var seeded = seededSession(sessionId);
+          var working = !!seeded && seeded.activity === 'thinking' && !!data.ends[sessionId];
+          return working && tiled.openFrame ? tiled.openFrame.serialized : tiled.serialized;
+        }
+        return scrollback[sessionId] || '';
       }
       window.electronAPI.sessions.getScrollback = function (sessionId) {
         var entry = replays[sessionId];
@@ -1261,9 +1298,73 @@ export function buildDemoPreConfig(options: {
             return fitFrameToGrid(recording.serialized, grid, recording.rows);
           });
         }
-        if (scrollback[sessionId]) return Promise.resolve(scrollback[sessionId]);
+        // A still paints its frame through the same applier the live frame uses: the renderer
+        // resizes before it asks for the scrollback, so the mounted grid is known, and a frame
+        // handed over raw wraps at the grid's edge wherever the pane is narrower than the
+        // recording and not held (below HOLD_MIN_SCALE). Held, the fit is the frame itself.
+        var stillFrame = stillFrameFor(sessionId, entry);
+        if (stillFrame) {
+          var stillGrid = mountedGeometry[sessionId];
+          return Promise.resolve(stillGrid ? fitFrameToGrid(stillFrame, stillGrid, entry && entry.grid ? entry.grid.rows : undefined) : stillFrame);
+        }
         if (entry && recordings) return fetchRecording(entry.file).then(function (recording) { return recording.serialized; });
         return Promise.resolve('');
+      };
+
+      // ---- the conversation viewer -----------------------------------------------------
+      // The viewer reads the agent's transcript, which main parses out of the agent's own
+      // history file on the desktop. The sample install commits one per session the manifest
+      // marks (derived at record time by main's own parsers, never written by hand), and the
+      // build emits it beside the recordings; it is fetched when a viewer opens, since a docs
+      // figure of the viewer is the one thing that needs it. A session with no transcript falls
+      // through to the mock's empty answer, which is what the desktop shows for a session whose
+      // history file is gone.
+      var TRANSCRIPT_REVISION = 1;
+      var transcriptCache = {};
+      function fetchTranscript(file) {
+        if (!transcriptCache[file]) {
+          transcriptCache[file] = fetch(recordings.transcriptsBase + file).then(function (response) {
+            if (!response.ok) throw new Error('[demo] transcript ' + file + ' returned ' + response.status);
+            return response.json();
+          });
+        }
+        return transcriptCache[file];
+      }
+      function indexedTranscript(sessionId) {
+        return recordings && recordings.transcripts ? recordings.transcripts[sessionId] || null : null;
+      }
+      function agentOf(row) {
+        var seeded = seededSession(row.id);
+        if (seeded) return seeded.agent;
+        var task = row.taskId ? tasksById[row.taskId] : null;
+        var project = projectsById[row.projectId];
+        return (task && task.agent) || (project ? project.default_agent : 'claude');
+      }
+      function transcriptSessionMeta(row) {
+        return { sessionId: row.id, agentName: agentOf(row), startedAt: row.startedAt, exitedAt: row.exitedAt || null, isolatedSwimlaneId: null, status: row.status };
+      }
+      var originalTranscriptGet = window.electronAPI.transcripts.get;
+      window.electronAPI.transcripts.get = function (input) {
+        var row = sessionById(input.sessionId);
+        var indexed = row ? indexedTranscript(row.id) : null;
+        if (!row || !indexed) return originalTranscriptGet.apply(this, arguments);
+        // The viewer polls while the session runs; nothing here ever changes, so a caller that
+        // has this revision gets the short answer main gives on an idle tick.
+        if (input.knownRevision === TRANSCRIPT_REVISION) return Promise.resolve({ unchanged: true, revision: TRANSCRIPT_REVISION });
+        return fetchTranscript(indexed.file).then(function (transcript) {
+          var task = row.taskId ? mockState.tasks.find(function (candidate) { return candidate.id === row.taskId; }) : null;
+          return {
+            sessionId: row.id, taskId: row.taskId, taskTitle: task ? task.title : '', agentName: agentOf(row),
+            startedAt: row.startedAt, sessionStatus: row.status, source: 'live', sourcePath: null,
+            entries: transcript.entries, degraded: false, sessions: [transcriptSessionMeta(row)], revision: TRANSCRIPT_REVISION,
+          };
+        });
+      };
+      var originalTranscriptList = window.electronAPI.transcripts.listSessions;
+      window.electronAPI.transcripts.listSessions = function (taskId) {
+        var rows = mockState ? mockState.sessions.filter(function (row) { return row.taskId === taskId && !!indexedTranscript(row.id); }) : [];
+        if (rows.length === 0) return originalTranscriptList.apply(this, arguments);
+        return Promise.resolve(rows.map(transcriptSessionMeta));
       };
 
       // ---- what a drag or a click starts -----------------------------------------------
@@ -1465,6 +1566,10 @@ export function buildDemoPreConfig(options: {
       // than folded into mountedGeometry because the frame fitter and geometryFits both need the
       // grid the terminal actually has, which is the held one.
       var naturalGeometry = {};
+      // Read by demo/measure.mjs --geometry: the grid each surface fits at the frame, which is
+      // what the capture matrix records at. __resizeCalls cannot serve, since it also logs the
+      // held grid a conformed terminal echoes back.
+      window.__demoNaturalGeometry = naturalGeometry;
       // The grid each session was last ANSWERED with a hold at. A held terminal resizes its own
       // xterm to that grid and reports it back, so the seed sees two kinds of resize for one
       // session: the window's natural grid, and the terminal echoing the grid it was just held

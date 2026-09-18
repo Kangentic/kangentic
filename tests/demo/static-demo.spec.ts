@@ -507,6 +507,9 @@ function sentGrids(page: Page, sessionId: string): Promise<Grid[]> {
 /** The grid the middleware session was recorded at (tests/captures/fixtures/demo/manifest.json, a Claude task window). */
 const MIDDLEWARE_RECORDED_GRID: Grid = { cols: 154, rows: 37 };
 
+/** The same session's tiled recording (manifest geometry taskWindowTiled, measured at the rig's 2x launch). */
+const MIDDLEWARE_TILED_GRID: Grid = { cols: 115, rows: 37 };
+
 /**
  * The same, for the Copilot rate-limit session. Claude's context bar wraps to two rows and every
  * other agent's does not, so a non-Claude session records two rows taller (manifest geometry,
@@ -576,6 +579,82 @@ test('still=1 paints every terminal from the seed and fetches no recording', asy
   await gotoScene(page, { view: 'task', embed: '1', still: '1' });
   await SCENE_MARKERS.task(page);
   expect(getRecordingRequests()).toEqual([]);
+});
+
+/** Each row of a painted frame in cells: the text between the autowrap brackets, plus its cursor-forward gaps. */
+function frameRowWidths(frame: string): number[] {
+  const start = frame.indexOf('\x1b[?7l');
+  const end = frame.lastIndexOf('\x1b[?7h');
+  if (start === -1 || end === -1 || end < start) return [];
+  return frame.slice(start + 5, end).split('\r\n').map((row) => {
+    const text = row.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+    const gaps = (row.match(/\x1b\[(\d*)C/g) ?? []).reduce((sum, move) => sum + Number(move.replace(/\D/g, '') || '1'), 0);
+    return Array.from(text).length + gaps;
+  });
+}
+
+test('a still terminal narrower than its recording and not held paints the open frame cut to its grid', async ({ page }) => {
+  // The probe that found the gap: the changes scene with the divider at a quarter of the width
+  // leaves the terminal well below the hold floor, so the still paints its recording's opening
+  // frame into a grid the frame's rows are wider than. Raw, every row wrapped mid-word; fitted,
+  // each is cut at the edge the way the live frame's applier cuts it.
+  const getRecordingRequests = recordingRequests(page);
+  const narrow = { tasks: [{ id: 'task-cw-middleware', detail_view_state: JSON.stringify({ changesOpen: true, changesViewMode: 'split', changesSelectedFile: 'server/routes.ts', changesScope: 'branch', dividerRatio: 0.25 }) }] };
+  await gotoScene(page, { view: 'changes', embed: '1', still: '1', state: encodeState(narrow) });
+  await SCENE_MARKERS.changes(page);
+  const grid = await mountedGrid(page, 'sess-cw-middleware');
+  expect(grid).not.toBeNull();
+  // Narrower than either layout's recording and past the hold floor, so the terminal kept its own grid.
+  expect((grid as Grid).cols).toBeLessThan(MIDDLEWARE_TILED_GRID.cols * 0.6);
+  const painted = await page.evaluate(() => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback('sess-cw-middleware'));
+  const widths = frameRowWidths(painted);
+  expect(widths.length, 'the still was handed over without the autowrap bracket').toBeGreaterThan(0);
+  expect(Math.max(...widths)).toBe((grid as Grid).cols);
+  expect(getRecordingRequests()).toEqual([]);
+});
+
+test('the conversation scene shows the transcript recorded beside the middleware session', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
+  const transcriptRequests: string[] = [];
+  page.on('request', (request) => { if (request.url().includes('/transcripts/')) transcriptRequests.push(request.url()); });
+  await gotoScene(page, { view: 'conversation', embed: '1', still: '1' });
+  await expect(page.locator('[data-testid="conversation-window"]')).toBeVisible();
+  await expect(page.locator('[data-testid="conversation-title"]')).toContainText('Extract auth middleware');
+  // Rendered from the transcript, not the mock's empty default. The viewer follows a running
+  // session to its newest turn, so what is on screen is the agent's closing message: the same
+  // line the recording's trail ends on (tests/unit/demo-transcript-seeded.test.ts ties the two).
+  await expect(page.locator('[data-testid="conversation-row-assistant"]').first()).toBeVisible();
+  await expect(page.locator('[data-testid="conversation-view"]')).toContainText('Typecheck is clean and the suite passes');
+  await expect(page.locator('[data-testid="conversation-empty"]')).toHaveCount(0);
+  // The transcript is its own lazy asset: one fetch for the viewer, none of the recordings.
+  expect(transcriptRequests).toHaveLength(1);
+  const transcript = await (await page.request.get(transcriptRequests[0])).json() as { entries?: unknown[] };
+  expect(Array.isArray(transcript.entries) && transcript.entries.length > 10).toBe(true);
+  expect(getRecordingRequests()).toEqual([]);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('the tiled task windows take each session\'s tiled recording, held at its grid, and stream it', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
+  await gotoScene(page, { view: 'windows-tiled', embed: '1' });
+  for (const [sessionId, fileStem] of [['sess-cw-middleware', 'contoso-web-claude-middleware'], ['sess-cw-api-client', 'contoso-web-claude-api-client']] as const) {
+    await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).not.toHaveLength(0);
+    // The pane's natural width decides the layout (a pane narrower than the single recording
+    // takes the tiled one); the font metrics decide the natural width, and they differ between
+    // Windows and CI's Linux, so the expectation follows the width the page measured.
+    const natural = (await sentGrids(page, sessionId))[0];
+    const tiled = natural.cols < MIDDLEWARE_RECORDED_GRID.cols;
+    const expectedGrid = tiled ? MIDDLEWARE_TILED_GRID : MIDDLEWARE_RECORDED_GRID;
+    if (natural.cols !== expectedGrid.cols || natural.rows !== expectedGrid.rows) {
+      await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).toContainEqual(expectedGrid);
+    }
+    const expectedFile = tiled ? `${fileStem}-tiled-` : `${fileStem}-`;
+    await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/${expectedFile}`)), { timeout: 15_000 }).toBe(true);
+    if (tiled) expect(getRecordingRequests().some((url) => url.includes(`/recordings/${fileStem}-`) && !url.includes('-tiled-'))).toBe(false);
+  }
+  expect(getUnexpectedErrors()).toEqual([]);
 });
 
 test('a still paints a working session at the moment the live frame opens it', async ({ page }) => {
@@ -954,18 +1033,23 @@ test('opened directly, the page hosts the frame at the site size and scales it t
 
 test('the site\'s take-control dialog at a 1440 by 900 display holds the task window at the recording\'s grid', async ({ browser }) => {
   // kangentic.com gives the dialog's frame a 1233 by 771 box there, where the task window fits
-  // 118 by 26 at the configured font: a fifth of the recording's columns short, and the case in
-  // which every wrapped row used to spill (task #673). The pane can show 154 by 37 at about 77
-  // percent of the type, above the hold's floor, so the terminal conforms and the bytes replay.
+  // well under the recording's columns and 26 rows: the case in which every wrapped row used to
+  // spill (task #673). The pane can show the recording's grid at about 70 percent of the type,
+  // above the hold's floor, so the terminal conforms and the bytes replay. Which recording that
+  // is follows the width the page measured: a pane narrower than the single recording takes the
+  // session's tiled one (the seed's layoutFor), and the font metrics that decide the width differ
+  // between Windows and CI's Linux.
   const context = await browser.newContext({ viewport: { width: 1233, height: 771 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await page.goto(demoUrl({ view: 'task', embed: '1' }));
   await waitForDemoReady(page);
   await SCENE_MARKERS.task(page);
-  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(MIDDLEWARE_RECORDED_GRID);
+  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toHaveLength(0);
   const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
-  expect(natural.cols).toBeLessThan(MIDDLEWARE_RECORDED_GRID.cols);
+  const heldGrid = natural.cols < MIDDLEWARE_RECORDED_GRID.cols ? MIDDLEWARE_TILED_GRID : MIDDLEWARE_RECORDED_GRID;
+  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(heldGrid);
+  expect(natural.rows).toBeLessThan(heldGrid.rows);
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   expect(getUnexpectedErrors()).toEqual([]);
   await context.close();
