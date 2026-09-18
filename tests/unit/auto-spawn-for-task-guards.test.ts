@@ -769,7 +769,7 @@ describe('autoSpawnForTask: split lock', () => {
     expect(mockExecuteTransition).not.toHaveBeenCalled();
   });
 
-  it('still counts a real failure past the git phase as a spawn failure (the abort branch is narrow)', async () => {
+  it('still counts a real failure past the git phase as a spawn failure (the abort branch is narrow), and still releases its controller', async () => {
     // A Phase 3 read against a closed DB. It escapes the locked block and
     // lands in the outer catch, which must still count and report it: the new
     // isAbortError branch sits in front of that reporting, and an inverted
@@ -780,6 +780,8 @@ describe('autoSpawnForTask: split lock', () => {
       .mockImplementationOnce(() => {
         throw new Error('The database connection is not open');
       });
+    const registerResumeControllerSpy = vi.mocked(registerResumeController);
+    const releaseResumeControllerSpy = vi.mocked(releaseResumeController);
 
     await expect(
       autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID),
@@ -789,6 +791,16 @@ describe('autoSpawnForTask: split lock', () => {
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', expect.objectContaining({ reason: 'auto_spawn' }));
     expect(mockReportHandledError).toHaveBeenCalledTimes(1);
     expect(getInFlightSpawnProgress()).toEqual({});
+
+    // The release lives in the function-level finally, not inside the
+    // isAbortError branch alone (the mid-fetch abort test above pins that
+    // branch specifically, and only that branch). Red if a future edit moved
+    // the release call into just the abort branch: a real, non-abort failure
+    // would then leak this controller in the registry forever, ready for a
+    // LATER abort to find and cancel an already-settled spawn.
+    expect(registerResumeControllerSpy).toHaveBeenCalledTimes(1);
+    const [, registeredController] = registerResumeControllerSpy.mock.calls[0];
+    expect(releaseResumeControllerSpy).toHaveBeenCalledWith(TASK_ID, registeredController);
   });
 
   it('registers its controller without aborting one already in flight (a Start never cancels desktop work)', async () => {
