@@ -232,6 +232,58 @@ test.describe('BoardManagerDialog', () => {
     }
   });
 
+  // The click-path guard above only proves the refusal that happens BEFORE the
+  // confirm opens. `handleDeletePersisted` re-runs the same check when Remove
+  // is actually clicked, because the store's task list can change while the
+  // confirm sits open - a task can land in the column from another window, an
+  // automation, or MCP while the user is still looking at the confirm. Drive
+  // that directly: open the confirm on an empty column, seed a task into it
+  // WHILE the confirm is still on screen, then click Remove.
+  test('Remove column on a column with tasks refuses on confirm too, when the task arrives after the confirm opens', async () => {
+    await openManagerByHeader('Executing');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    await dialog.locator('[data-testid="board-manager-delete"]').click();
+    const confirmTitle = page.locator('h3', { hasText: 'Remove column' });
+    await expect(confirmTitle).toBeVisible({ timeout: 1500 });
+
+    const taskId = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((candidate) => candidate.name === 'Executing');
+      if (!lane) throw new Error('Executing lane not found');
+      const created = await window.electronAPI.tasks.create({
+        title: 'Landed mid-confirm',
+        description: '',
+        swimlane_id: lane.id,
+        agent: 'claude',
+        labels: [],
+        priority: 0,
+      });
+      const stores = (window as unknown as {
+        __zustandStores?: { board: { getState: () => { loadBoard: () => Promise<void> } } };
+      }).__zustandStores;
+      await stores?.board.getState().loadBoard();
+      return created.id;
+    });
+
+    try {
+      await page.getByRole('button', { name: 'Remove', exact: true }).click();
+
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'Cannot remove "Executing"' });
+      await expect(toast).toBeVisible({ timeout: 3000 });
+      await expect(toast).toContainText('Move or delete all 1 task first.');
+      // The confirm always closes on Remove (it is not the authority, the
+      // refusal is), and nothing was staged.
+      await expect(confirmTitle).toBeHidden({ timeout: 1500 });
+      await expect(page.locator('[data-testid="board-manager-save"]')).toBeDisabled();
+      await expect(dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Executing"]')).toBeVisible();
+    } finally {
+      await page.evaluate(async (id) => {
+        await window.electronAPI.tasks.delete(id);
+      }, taskId);
+    }
+  });
+
   // The windowed height is sized to the TALLEST column page, so on a display
   // with room nothing scrolls by default; the 88vh cap keeps the scroll on a
   // display that cannot fit it. Planning is the tallest page: its plan
