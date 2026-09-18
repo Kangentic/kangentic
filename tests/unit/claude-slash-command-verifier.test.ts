@@ -642,4 +642,36 @@ describe('logScanMiss rate limiting', () => {
     expect(await verifier('/model claude-opus-4-7', sentAt)).toBe(false);
     expect(missLogLines().length).toBe(2);
   });
+
+  /**
+   * Past `MISS_LOG_TIGHT_LINES` (10) logged lines for one key, the interval
+   * widens from 500ms to `MISS_LOG_SLOW_INTERVAL_MS` (5000ms): the burst's own
+   * ~4s of polling is over and the escalation gate's much longer poll has
+   * taken over. Uses its own command string so the module-global
+   * `missLogState` a sibling test in this describe already advanced for
+   * `/model claude-opus-4-7` cannot push this key past the tight tier early.
+   */
+  it('widens to the slow 5s interval once a key has logged 10 tight-tier lines', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+
+    // Ten tight-tier misses, each exactly on the 500ms boundary.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect(await verifier('/slow-tier-probe', sentAt)).toBe(false);
+      vi.advanceTimersByTime(500);
+    }
+    expect(missLogLines().length).toBe(10);
+
+    // Only 500ms since the 10th line: inside the old tight interval's window,
+    // but the key is now past the tight-tier line count, so the wider 5000ms
+    // interval applies and this one is suppressed.
+    expect(await verifier('/slow-tier-probe', sentAt)).toBe(false);
+    expect(missLogLines().length).toBe(10);
+
+    // The remaining 4500ms of the slow interval elapses.
+    vi.advanceTimersByTime(4500);
+
+    expect(await verifier('/slow-tier-probe', sentAt)).toBe(false);
+    expect(missLogLines().length).toBe(11);
+  });
 });

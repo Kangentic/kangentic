@@ -714,6 +714,109 @@ describe('TerminalSubmitScheduler', () => {
         expect(reports[0].reason).toContain('aborted');
       });
 
+      it('treats a verifier throw during the wait as a miss and keeps polling, then confirms once it stops throwing', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        // Mid-turn: the gate cannot complete, so only the poll can end it.
+        sessionManager.activity.s1 = 'thinking';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        let polls = 0;
+        const verifier = vi.fn(async (command: string, sentAt: number) => {
+          polls += 1;
+          expect(command).toBe('/merge-pull-request');
+          expect(sentAt).toBe(FIRST_ENTER_AT);
+          if (polls === 1) throw new Error('transcript read exploded');
+          return true;
+        });
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/merge-pull-request', verify: 'submitted' }], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/merge-pull-request'],
+          deliveries: [{ text: '/merge-pull-request', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        });
+        // The poll's first tick fires synchronously in the escalate cascade
+        // (same accounting as the "does not restart..." tests above) and
+        // throws. The throw must be swallowed here, not left to crash the
+        // scheduler or stall the gate.
+        await tick();
+        expect(polls).toBe(1);
+        expect(reports).toHaveLength(0);
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        expect(consoleErrorSpy.mock.calls[0][0]).toContain('late confirmation check threw');
+
+        // The next 1s poll succeeds.
+        vi.advanceTimersByTime(1000);
+        await tick();
+        await tick();
+
+        expect(polls).toBe(2);
+        expect(escalate).not.toHaveBeenCalled();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].outcome).toBe('confirmed');
+        expect(reports[0].escalated).toBe(false);
+        expect(reports[0].unconfirmedCommands).toEqual([]);
+
+        consoleErrorSpy.mockRestore();
+      });
+
+      /**
+       * The ONE LAST check taken at turn completion (`if (await lateConfirm())`
+       * in `escalate` itself) reads a verifier throw the same way the poll
+       * does: a miss, not a verdict. Before that guard a throw there escaped
+       * `escalate`, `runBurst`'s outer catch reported a generic failure, and
+       * the restart handler was never called, so a command that was in fact
+       * swallowed was never re-sent by the one path that authorizes it.
+       */
+      it('restarts when the verifier throws on the final check at turn completion, since a throw is no evidence either way', async () => {
+        sessionManager.registry.set('s1', { status: 'running' });
+        sessionManager.activity.s1 = 'idle';
+        const reports: InjectionReport[] = [];
+        const escalate = vi.fn(async () => true);
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const verifier = vi.fn(async () => { throw new Error('transcript unreadable at the final check'); });
+
+        scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/merge-pull-request', verify: 'submitted' }], {
+          verifier,
+          escalate,
+          onOutcome: (report) => reports.push(report),
+        });
+        await tick();
+        terminalSubmit.finishLatest({
+          outcome: 'failed',
+          unconfirmedCommands: ['/merge-pull-request'],
+          deliveries: [{ text: '/merge-pull-request', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        });
+        await tick();
+        // The turn-completion quiet window elapses; the poll has been missing
+        // (throwing) the whole time and never wins the race.
+        vi.advanceTimersByTime(1600);
+        await tick();
+        await tick();
+
+        expect(escalate).toHaveBeenCalledWith(['/merge-pull-request']);
+        expect(reports).toHaveLength(1);
+        expect(reports[0].outcome).toBe('failed');
+        expect(reports[0].escalated).toBe(true);
+        // No generic burst failure carrying the throw's message: the escalated
+        // report is the same one a clean miss produces.
+        expect(reports[0].reason ?? '').not.toContain('transcript unreadable at the final check');
+        // Every throw was logged, none was let out: the poll's ticks and the
+        // final check all went through the same catch.
+        expect(consoleErrorSpy).toHaveBeenCalled();
+        for (const call of consoleErrorSpy.mock.calls) {
+          expect(call[0]).toContain('late confirmation check threw');
+        }
+
+        consoleErrorSpy.mockRestore();
+      });
+
       /**
        * #682 follow-up: a duplicate-text burst where only ONE delivery of two
        * identical commands failed must consume exactly one unconfirmed entry,

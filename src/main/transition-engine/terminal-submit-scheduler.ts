@@ -539,12 +539,21 @@ export class TerminalSubmitScheduler {
       if (delivery.firstSentAt !== null) lateChecks.push({ text: delivery.text, firstSentAt: delivery.firstSentAt });
     }
     const canLateConfirm = verifier !== null && lateChecks.length === escalatable.length;
+    // A throw from the verifier is a miss, never a verdict: the poll below
+    // logs one and keeps going, and the final check at turn completion must
+    // read it the same way, or the one path that authorizes the restart would
+    // abandon it and a genuinely swallowed command would never be re-sent.
     const lateConfirm = async (): Promise<boolean> => {
       if (!canLateConfirm || verifier === null) return false;
-      for (const check of lateChecks) {
-        if (!(await verifier(check.text, check.firstSentAt, 'submitted'))) return false;
+      try {
+        for (const check of lateChecks) {
+          if (!(await verifier(check.text, check.firstSentAt, 'submitted'))) return false;
+        }
+        return true;
+      } catch (caughtError) {
+        console.error('[TerminalSubmitScheduler] late confirmation check threw:', caughtError);
+        return false;
       }
-      return true;
     };
 
     // One gate signal for both waits: the burst's own abort ends them, and
