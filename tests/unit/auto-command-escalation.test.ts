@@ -73,6 +73,10 @@ vi.mock('../../src/main/pty/session-registry', () => ({
 }));
 
 import { restartSessionForSettingsChange } from '../../src/main/ipc/handlers/session-reconcile';
+import {
+  __resetSpawnProgressForTest,
+  getInFlightSpawnProgress,
+} from '../../src/main/transition-engine/spawn-progress';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const TASK_ID = 'task-1';
@@ -123,6 +127,7 @@ function resumePromptArg(): unknown {
 describe('auto_command escalation (rung 3): restart with the command as the prompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetSpawnProgressForTest();
     hoisted.applyProfileToLane.mockImplementation((lane: unknown) => lane);
     hoisted.loadTaskProfile.mockReturnValue(null);
     hoisted.resolveSpawnOverrides.mockReturnValue({});
@@ -138,7 +143,7 @@ describe('auto_command escalation (rung 3): restart with the command as the prom
       'proj-1',
       '/mock/project',
       TASK_ID,
-      { resumePrompt: AUTO_COMMAND },
+      { phase: 'resending-command', resumePrompt: AUTO_COMMAND },
     );
 
     expect(result).toEqual({ ok: true });
@@ -152,7 +157,7 @@ describe('auto_command escalation (rung 3): restart with the command as the prom
     // The pre-existing contract: no prompt, no auto_command, resume parked.
     const { context } = makeHarness();
 
-    await restartSessionForSettingsChange(context, 'proj-1', '/mock/project', TASK_ID);
+    await restartSessionForSettingsChange(context, 'proj-1', '/mock/project', TASK_ID, { phase: 'switching-model' });
 
     expect(resumePromptArg()).toBeUndefined();
   });
@@ -172,7 +177,7 @@ describe('auto_command escalation (rung 3): restart with the command as the prom
       'proj-1',
       '/mock/project',
       TASK_ID,
-      { resumePrompt: AUTO_COMMAND },
+      { phase: 'resending-command', resumePrompt: AUTO_COMMAND },
     );
 
     expect(markIdleAuthoritative).not.toHaveBeenCalled();
@@ -190,10 +195,111 @@ describe('auto_command escalation (rung 3): restart with the command as the prom
       'proj-1',
       '/mock/project',
       TASK_ID,
-      { resumePrompt: AUTO_COMMAND },
+      { phase: 'resending-command', resumePrompt: AUTO_COMMAND },
     );
 
     expect(result.ok).toBe(false);
     expect(hoisted.resumeSuspendedSession).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The phone half of #682. `SessionManager.suspend()` produces the same
+   * `intentional: true` exit for a respawn as for a genuine park, and the
+   * mobile bridge tells them apart only by the spawn-progress label in flight
+   * at that moment (read-stream.ts). The rung 3 restart emitted none, so the
+   * phone showed "Session ended" for a session that was guaranteed a
+   * successor.
+   */
+  describe('spawn-progress label around the restart', () => {
+    it('has "Re-sending command..." in flight when the suspend runs, and clears it once the resume returns', async () => {
+      const { context, suspend } = makeHarness();
+      let labelAtSuspend: string | undefined;
+      suspend.mockImplementation(async () => {
+        labelAtSuspend = getInFlightSpawnProgress()[TASK_ID];
+      });
+      let labelAtResume: string | undefined;
+      hoisted.resumeSuspendedSession.mockImplementation(async () => {
+        labelAtResume = getInFlightSpawnProgress()[TASK_ID];
+      });
+
+      const result = await restartSessionForSettingsChange(
+        context,
+        'proj-1',
+        '/mock/project',
+        TASK_ID,
+        { phase: 'resending-command', resumePrompt: AUTO_COMMAND },
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect(labelAtSuspend).toBe('Re-sending command...');
+      // Still in flight across the suspend-to-resume gap the card would
+      // otherwise show as "Paused".
+      expect(labelAtResume).toBe('Re-sending command...');
+      // Retired once the new session owns the display, so it cannot ride the
+      // next real park's session-ended.
+      expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+    });
+
+    it('names the settings change for an ordinary restart', async () => {
+      const { context, suspend } = makeHarness();
+      let labelAtSuspend: string | undefined;
+      suspend.mockImplementation(async () => {
+        labelAtSuspend = getInFlightSpawnProgress()[TASK_ID];
+      });
+
+      await restartSessionForSettingsChange(context, 'proj-1', '/mock/project', TASK_ID, { phase: 'switching-model' });
+
+      expect(labelAtSuspend).toBe('Switching model...');
+      expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+    });
+
+    it('clears the label when the suspend fails', async () => {
+      const { context } = makeHarness();
+      (context.sessionManager as unknown as { suspend: ReturnType<typeof vi.fn> }).suspend
+        .mockRejectedValue(new Error('pty is gone'));
+
+      const result = await restartSessionForSettingsChange(
+        context,
+        'proj-1',
+        '/mock/project',
+        TASK_ID,
+        { phase: 'resending-command', resumePrompt: AUTO_COMMAND },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+    });
+
+    it('clears the label when the respawn fails', async () => {
+      const { context } = makeHarness();
+      hoisted.resumeSuspendedSession.mockRejectedValue(new Error('spawn blew up'));
+
+      const result = await restartSessionForSettingsChange(
+        context,
+        'proj-1',
+        '/mock/project',
+        TASK_ID,
+        { phase: 'resending-command', resumePrompt: AUTO_COMMAND },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+    });
+
+    it('emits nothing when there is no live session to restart', async () => {
+      const { context } = makeHarness();
+      hoisted.getProjectRepos.mockReturnValue({
+        tasks: { getById: vi.fn(() => ({ id: TASK_ID, session_id: null, swimlane_id: 'lane-1' })), update: vi.fn() },
+        swimlanes: { getById: vi.fn(() => null) },
+        actions: {},
+        attachments: {},
+      });
+      const send = (context.mainWindow as unknown as { webContents: { send: ReturnType<typeof vi.fn> } }).webContents.send;
+
+      const result = await restartSessionForSettingsChange(context, 'proj-1', '/mock/project', TASK_ID, { phase: 'switching-model' });
+
+      expect(result).toEqual({ ok: true });
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 });

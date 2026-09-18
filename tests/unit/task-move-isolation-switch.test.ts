@@ -176,6 +176,11 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    // Phase 1 reconciles task.session_id against the registry before the
+    // Priority ladder; a live row for the pointed-at id keeps these fixtures
+    // on the live-session branches they exercise.
+    getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+    findLiveSessionByTaskId: vi.fn(() => null),
     // Read by resolveLiveEffort; empty means the agent reports no effort.
     getUsageCache: vi.fn((): Record<string, unknown> => ({})),
   };
@@ -298,6 +303,103 @@ describe('handleTaskMove session switch', () => {
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { toLane: Swimlane };
     expect(spawnArg.toLane.id).toBe(EXEC_LANE_ID);
     expect(spawnArg.toLane.session_target).toBe('main');
+  });
+
+  /**
+   * #682 follow-up. `task.session_id` outlives the session on a natural exit
+   * (the exit listener marks the record `exited` and leaves the pointer), so a
+   * CLI that ended on its own left the task reading as "has an active
+   * session": Priority 3 kept the dead session alive on every move and never
+   * spawned. Phase 1 now reconciles the pointer against the registry the way
+   * SESSION_RESUME does, in both directions.
+   */
+  it('a pointer at an EXITED registry row is cleared and the move spawns instead of keeping it alive', async () => {
+    const execLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main' });
+    const otherLane = makeSwimlane('lane-other', { session_target: 'main' });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === EXEC_LANE_ID ? execLane : id === 'lane-other' ? otherLane : null)),
+      list: vi.fn(() => [execLane, otherLane]),
+    };
+
+    // The record the exit listener left behind: exited, resumable.
+    hoisted.activeRecord = {
+      id: 'rec-main', task_id: 'task-aaa00001', isolated_swimlane_id: null,
+      agent_session_id: 'agent-A', status: 'exited',
+      started_at: '2026-01-01T00:00:00Z', session_type: 'claude_agent',
+    };
+
+    const taskRepo = {
+      getById: vi.fn()
+        // The reconcile's first read: the stale pointer.
+        .mockReturnValueOnce(makeTask({ swimlane_id: EXEC_LANE_ID, session_id: 'dead-session-1' }))
+        // Its re-read after clearing the pointer, still on the source lane.
+        .mockReturnValueOnce(makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null }))
+        // Phase 3's re-read: moved, no session.
+        .mockReturnValue(makeTask({ swimlane_id: 'lane-other', session_id: null })),
+      move: vi.fn(),
+      update: vi.fn(),
+      list: vi.fn(() => [makeTask()]),
+      archive: vi.fn(),
+    };
+
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.sessionManager.getSession.mockImplementation((id: string) => (
+      id === 'dead-session-1' ? { id, status: 'exited' } : { id, status: 'running' }
+    ));
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001', targetSwimlaneId: 'lane-other', targetPosition: 0,
+    }, 'renderer');
+
+    // The stale pointer was cleared, nothing was "kept alive" or suspended,
+    // and Phase 3 spawned (which resumes the exited record's agent session).
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-aaa00001', session_id: null });
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    const spawnArg = mockSpawnAgent.mock.calls[0][0] as { toLane: Swimlane };
+    expect(spawnArg.toLane.id).toBe('lane-other');
+  });
+
+  it('a LIVE registry row the pointer lost is re-linked, so the move keeps it alive instead of spawning a duplicate', async () => {
+    const execLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main' });
+    const otherLane = makeSwimlane('lane-other', { session_target: 'main' });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === EXEC_LANE_ID ? execLane : id === 'lane-other' ? otherLane : null)),
+      list: vi.fn(() => [execLane, otherLane]),
+    };
+
+    hoisted.activeRecord = {
+      id: 'rec-main', task_id: 'task-aaa00001', isolated_swimlane_id: null,
+      agent_session_id: 'agent-A', status: 'running',
+      started_at: '2026-01-01T00:00:00Z', session_type: 'claude_agent',
+    };
+
+    const taskRepo = {
+      getById: vi.fn()
+        // The reconcile's first read: no pointer.
+        .mockReturnValueOnce(makeTask({ swimlane_id: EXEC_LANE_ID, session_id: null }))
+        // Its re-read after re-linking the live PTY.
+        .mockReturnValue(makeTask({ swimlane_id: EXEC_LANE_ID, session_id: 'live-session-1' })),
+      move: vi.fn(),
+      update: vi.fn(),
+      list: vi.fn(() => [makeTask()]),
+      archive: vi.fn(),
+    };
+
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.sessionManager.findLiveSessionByTaskId.mockReturnValue({
+      id: 'live-session-1', taskId: 'task-aaa00001', status: 'running',
+    });
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001', targetSwimlaneId: 'lane-other', targetPosition: 0,
+    }, 'renderer');
+
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-aaa00001', session_id: 'live-session-1' });
+    // Normal -> normal with a live main session: kept alive, no second spawn.
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
   it('regression: normal -> normal move of a main session does NOT line-switch', async () => {

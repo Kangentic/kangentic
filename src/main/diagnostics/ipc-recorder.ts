@@ -69,6 +69,10 @@ const SAFE_PUSH_CHANNELS = new Set<string>([
   'swimlane:updatedByAgent',
   'backlog:changedByAgent',
   'backlog:labelColorsChanged',
+  // A task id and a display label ("Switching model...", "Removing worktree
+  // (waiting 45s)"); nothing sensitive, and the label is the evidence a
+  // respawn-vs-park question turns on.
+  'task:spawnProgress',
 ]);
 
 const REDACTED = (channel: string) => ({ redacted: true as const, channel });

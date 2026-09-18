@@ -1575,7 +1575,10 @@ export class SessionManager extends EventEmitter {
    * (record marked exited, panel tab dropped, phantom count corrected, queue
    * slot freed, hooks stripped, transcript flushed) and its `intentionalExit`
    * flag suppresses the renderer's "Session crashed" toast - the agent's own
-   * exit was the event, and Kangentic is only noticing it late.
+   * exit was the event, and Kangentic is only noticing it late. Because that
+   * flag also silences the exit listener's startup-failure read, the
+   * retirement first emits `agent-absent` so the IPC layer can read the CLI's
+   * last words and raise a notice when they name a failure.
    *
    * The reported exit code is forced to 0 because this WAS a normal end. A
    * force-kill reports an abnormal code on every platform, and
@@ -1590,6 +1593,16 @@ export class SessionManager extends EventEmitter {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
+    // Say WHY the agent is gone while its last words are still readable. The
+    // kill below arrives at the exit listener as INTENTIONAL (the CLI's own
+    // end was the event; the sweep only noticed it late), and that listener
+    // rightly treats an intentional exit as carrying no failure, so an agent
+    // that ended at boot with its own account of why (a `--resume` whose
+    // conversation the CLI could not find) reached the user as a card that
+    // went quiet. The IPC layer asks the adapter to read the raw ring and
+    // raises the notice; the ring survives the kill, so ordering here is for
+    // clarity rather than correctness.
+    this.emit('agent-absent', sessionId, toSession(session));
     session.overrideExitCode = 0;
     // Immediate: the agent is already gone, so the exit-sequence grace would
     // only type `/exit` into a bare shell, and the `exited` stamp below would
@@ -1883,7 +1896,10 @@ export class SessionManager extends EventEmitter {
    * separates the two.
    *
    * No settle and no slicing: a diagnostic wants the bytes as they are, not a
-   * replay-shaped view of them.
+   * replay-shaped view of them. The exit listener reads it for the same reason
+   * when it asks an adapter whether the CLI's last words name a startup
+   * failure: at exit there is no process left to repaint, and what matters is
+   * what the CLI wrote.
    */
   getRawScrollback(sessionId: string): string {
     return this.bufferManager.getRawScrollback(sessionId);

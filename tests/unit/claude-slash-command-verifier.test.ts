@@ -395,3 +395,251 @@ describe('transcript scanning cost', () => {
     expect(await verifier('/merge-pull-request', sentAt, 'submitted')).toBe(true);
   });
 });
+
+/**
+ * The two shapes behind #682, read out of the real transcripts of the four
+ * observed double runs. A `/merge-pull-request` injected into a LIVE session
+ * ran, was reported `unconfirmed after 5 attempts`, and the escalation restart
+ * then ran it a second time.
+ *
+ *  - MID-TURN: the CLI queues text typed during a turn. It writes a
+ *    `queue-operation` `enqueue` entry with the exact text at once, and the
+ *    `<command-name>` user turn only when the queue drains at the end of the
+ *    running turn (9.5s after the burst gave up, in the #678 incident). The
+ *    enqueue is the only evidence available inside the retry budget.
+ *  - IDLE: the user turn is stamped at submit but flushed later, and the
+ *    stamp's siblings (an attachment at the same instant, a `pr-link` 264ms
+ *    later) sit between it and the tail. A watermark advanced past the stamp
+ *    returns false on the first sibling it meets and never reaches the entry.
+ */
+describe('#682: queued submissions and same-instant siblings', () => {
+  beforeEach(() => {
+    clearTranscriptTailCache();
+  });
+
+  const queueEntry = (operation: string, content: string, offsetMs: number): Record<string, unknown> => ({
+    type: 'queue-operation',
+    operation,
+    timestamp: nowIso(offsetMs),
+    sessionId: 'dfa14b21-d575-449c-a456-d043f36433ac',
+    content,
+  });
+
+  it('confirms a submitted command from its enqueue entry alone (mid-turn, no user turn yet)', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry(queueEntry('enqueue', '/merge-pull-request', 10));
+
+    expect(await verifier('/merge-pull-request', sentAt, 'submitted')).toBe(true);
+  });
+
+  it('does not confirm from an enqueue whose content is not exactly the command', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    // The concatenation bug shape, and an args variant: both are DIFFERENT
+    // submissions, and accepting either would confirm the failure the
+    // verifier exists to catch.
+    appendEntry(queueEntry('enqueue', 'instead can we/merge-pull-request', 10));
+    appendEntry(queueEntry('enqueue', '/merge-pull-request --draft', 12));
+
+    expect(await verifier('/merge-pull-request', sentAt, 'submitted')).toBe(false);
+  });
+
+  it('does not confirm from a dequeue or remove entry (only an enqueue carries the text the CLI accepted)', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry({ ...queueEntry('remove', '/merge-pull-request', 10), reason: 'absorbed_mid_turn' });
+    appendEntry({ type: 'queue-operation', operation: 'dequeue', timestamp: nowIso(12), sessionId: 'x' });
+
+    expect(await verifier('/merge-pull-request', sentAt, 'submitted')).toBe(false);
+  });
+
+  it('ignores an enqueue that predates the watermark', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    appendEntry(queueEntry('enqueue', '/merge-pull-request', -1000));
+    const sentAt = Date.now();
+
+    expect(await verifier('/merge-pull-request', sentAt, 'submitted')).toBe(false);
+  });
+
+  it('keeps command-match strict: an enqueue never stands in for a discrete invocation record', async () => {
+    // The adapter's own settings writes must prove they PARSED as the
+    // invocation requested; "the CLI took the text" says nothing about that.
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry(queueEntry('enqueue', '/effort xhigh', 10));
+
+    expect(await verifier('/effort xhigh', sentAt, 'command-match')).toBe(false);
+  });
+
+  /**
+   * Lines 5008 to 5018 of the mobile #7 transcript, with the offsets they
+   * carried: the command entry and two siblings at one instant, a snapshot
+   * whose only timestamp is nested (so it carries no top-level one), six
+   * untimestamped bookkeeping rows, and a `pr-link` 264ms later.
+   */
+  function appendSkillInvocationBurst(stampOffsetMs: number): void {
+    const stamp = nowIso(stampOffsetMs);
+    appendEntry({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<command-message>merge-pull-request</command-message>\n<command-name>/merge-pull-request</command-name>',
+      },
+      timestamp: stamp,
+    });
+    appendEntry({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Base directory for this skill: /mock/.claude/skills/merge-pull-request\n\n# Merge Pull Request\n\n...' }],
+      },
+      timestamp: stamp,
+    });
+    appendEntry({
+      type: 'attachment',
+      attachment: { type: 'command_permissions', allowedTools: ['Read', 'Bash(gh:*)'] },
+      timestamp: stamp,
+    });
+    appendEntry({
+      type: 'file-history-snapshot',
+      messageId: 'f21eb983',
+      snapshot: { messageId: 'f21eb983', trackedFileBackups: {}, timestamp: nowIso(stampOffsetMs + 165) },
+    });
+    for (const type of ['last-prompt', 'ai-title', 'agent-name', 'mode', 'permission-mode', 'atis-latch']) {
+      appendEntry({ type, sessionId: '9fe72b87' });
+    }
+    appendEntry({ type: 'pr-link', prNumber: 86, timestamp: nowIso(stampOffsetMs + 264) });
+  }
+
+  it('finds the command entry behind its same-instant and later siblings at the first-Enter watermark', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const firstEnterAt = Date.now();
+    // Stamped 300ms after the first Enter, as a skill invocation is (the
+    // expansion runs before the turn is written).
+    appendSkillInvocationBurst(300);
+
+    expect(await verifier('/merge-pull-request', firstEnterAt, 'submitted')).toBe(true);
+  });
+
+  it('cannot find that same entry from a watermark advanced past its stamp - why retries must keep the first Enter', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const firstEnterAt = Date.now();
+    appendSkillInvocationBurst(300);
+    // A retry-Enter 410ms after the first: its watermark (minus tolerance)
+    // is past the 300ms stamp, so the walk stops on the first timestamped
+    // sibling it meets (the pr-link, 264ms after the stamp) before it can
+    // reach the command entry. This is the blindness that turned a delivered
+    // command into `failed` on every observed move.
+    const retryEnterAt = firstEnterAt + 410;
+
+    expect(await verifier('/merge-pull-request', retryEnterAt, 'submitted')).toBe(false);
+  });
+});
+
+/**
+ * `scanTail` computes `watermark = sentAt - WATERMARK_TOLERANCE_MS` (50) and
+ * stops the backward walk on the first entry whose `ts < watermark`. That
+ * means an entry stamped exactly AT the watermark is not below it and still
+ * matches; only an entry one millisecond further back is rejected. Pinned
+ * here so a drift in either the constant or the comparison operator (a `<=`
+ * where the code reads `<`) breaks a specific boundary case instead of
+ * hiding inside the wider tolerance the other tests exercise.
+ */
+describe('watermark tolerance boundary (WATERMARK_TOLERANCE_MS = 50)', () => {
+  function isoAt(epochMs: number): string {
+    return new Date(epochMs).toISOString();
+  }
+
+  it('confirms a submission entry stamped 49ms before sentAt, inside the tolerance', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry({
+      type: 'user',
+      message: { role: 'user', content: '/pull-request' },
+      timestamp: isoAt(sentAt - 49),
+    });
+
+    expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(true);
+  });
+
+  it('confirms a submission entry stamped exactly 50ms before sentAt, the watermark itself', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry({
+      type: 'user',
+      message: { role: 'user', content: '/pull-request' },
+      timestamp: isoAt(sentAt - 50),
+    });
+
+    expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(true);
+  });
+
+  it('does not confirm a submission entry stamped 51ms before sentAt, one millisecond past the watermark', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+    appendEntry({
+      type: 'user',
+      message: { role: 'user', content: '/pull-request' },
+      timestamp: isoAt(sentAt - 51),
+    });
+
+    expect(await verifier('/pull-request', sentAt, 'submitted')).toBe(false);
+  });
+});
+
+/**
+ * `logScanMiss` rate-limits its console line per `(jsonlPath, command)` key:
+ * one line, then nothing more for `MISS_LOG_INTERVAL_MS` (500ms). Every
+ * verifier miss calls it, so an unthrottled implementation would print once
+ * per 25ms poll. Fake timers control `Date.now()`, which is all
+ * `logScanMiss` reads; the transcript read path is real `fs.promises` I/O and
+ * does not depend on any timer, so it keeps resolving normally underneath.
+ */
+describe('logScanMiss rate limiting', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    clearTranscriptTailCache();
+    // An empty transcript: every scan is a genuine miss (no entry to find),
+    // so every call reaches logScanMiss.
+    fs.writeFileSync(jsonlPath, '');
+    vi.useFakeTimers();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  function missLogLines(): unknown[][] {
+    return consoleLogSpy.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].startsWith('[slash-verifier]'),
+    );
+  }
+
+  it('logs one miss line, then suppresses a second miss for the same command inside the 500ms interval', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+
+    expect(await verifier('/model claude-opus-4-7', sentAt)).toBe(false);
+    expect(missLogLines().length).toBe(1);
+
+    expect(await verifier('/model claude-opus-4-7', sentAt)).toBe(false);
+    expect(missLogLines().length).toBe(1);
+  });
+
+  it('logs a second miss line once the 500ms interval has elapsed', async () => {
+    const verifier = createSlashCommandVerifier(jsonlPath)!;
+    const sentAt = Date.now();
+
+    expect(await verifier('/model claude-opus-4-7', sentAt)).toBe(false);
+    expect(missLogLines().length).toBe(1);
+
+    vi.advanceTimersByTime(500);
+
+    expect(await verifier('/model claude-opus-4-7', sentAt)).toBe(false);
+    expect(missLogLines().length).toBe(2);
+  });
+});

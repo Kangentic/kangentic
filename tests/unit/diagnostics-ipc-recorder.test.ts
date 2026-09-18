@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { BrowserWindow } from 'electron';
 
 let registeredHandler: ((event: unknown, ...args: unknown[]) => Promise<unknown>) | null = null;
 
@@ -295,8 +296,39 @@ describe('ipc-recorder - outbound push recording', () => {
     // linker's raw send used to have.
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:sessionResync')).toBe(true);
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:prLinkChanged')).toBe(true);
+    // The spawn-progress label is what a card and a paired phone use to tell
+    // a respawn from a park (#682), so its push is recorded with its args.
+    expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('task:spawnProgress')).toBe(true);
     // A mutating inbound channel is not a safe push channel.
     expect(__INTERNAL.SAFE_PUSH_CHANNELS.has('config:set')).toBe(false);
+  });
+
+  it('records a spawn-progress emit and its clear as pushes', async () => {
+    // `pushSpawnProgress` used to call `webContents.send` directly, which left
+    // every spawn-progress push out of the IPC log even with recording on. The
+    // label is the evidence a respawn-versus-park question turns on, so this
+    // pins that the emit and the clear both go through the recorded chokepoint.
+    const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { emitSpawnProgress, clearSpawnProgress, __resetSpawnProgressForTest } = await import(
+      '../../src/main/transition-engine/spawn-progress'
+    );
+    __resetSpawnProgressForTest();
+    installIpcRecorder({
+      getProjectRoot: () => tempDirectory,
+      enabled: () => true,
+    });
+    const send = vi.fn();
+    const window = { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow;
+
+    emitSpawnProgress(window, 'task-1', 'resending-command');
+    clearSpawnProgress(window, 'task-1');
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const entries = (await readJsonlEntries('task:spawnProgress')) as Array<{ direction: string; args: unknown }>;
+    expect(entries).toHaveLength(2);
+    expect(entries[0].direction).toBe('out');
+    expect(entries[0].args).toEqual(['task-1', 'Re-sending command...']);
+    expect(entries[1].args).toEqual(['task-1', null]);
   });
 
   it('records a push with direction "out", full args, and zero duration when enabled', async () => {

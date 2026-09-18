@@ -577,6 +577,33 @@ export interface AgentAdapter {
   getSubmissionVerifier?(contextType: SubmissionContextType): SubmissionVerifier | null;
 
   /**
+   * Optional: read a STARTUP failure out of the CLI's own final output.
+   *
+   * Called by the PTY exit listener when a task session ends on its own
+   * (never for a kill or a suspend), with the raw output the CLI wrote and its
+   * exit code. Return a user-facing sentence when that output says the CLI
+   * never became a working agent; `null` for a normal end, a crash the
+   * adapter cannot name, or anything it is unsure about. A sentence surfaces
+   * through the same "Agent did not start" notice a failed worktree or
+   * checkout raises, so the failure is seen instead of reading as an agent
+   * that went quiet.
+   *
+   * The case this exists for is Claude's `--resume <id>` of a conversation it
+   * can no longer find (its transcript cleaned up, or the project folder
+   * moved): the CLI prints "No conversation found with session ID" and exits
+   * about a second in, the card goes quiet, and nothing said why. This is
+   * deliberately NOT a pre-spawn guard that downgrades the resume: that was
+   * built and reverted in #255, because a path Kangentic computes can be wrong
+   * while the conversation is fine, and a silent downgrade loses it. Here the
+   * evidence is the CLI's own verdict after it looked, and the response is a
+   * notice, not a decision.
+   *
+   * An agent-specific string in an adapter, surfaced through this generic
+   * shape, per `agent-adapters-boundary`.
+   */
+  describeStartupFailure?(finalOutput: string, exitCode: number): string | null;
+
+  /**
    * Optional: whether a SLASH-prefixed `auto_command` can be verified in this
    * agent's session history. Omitted or `true` means yes.
    *

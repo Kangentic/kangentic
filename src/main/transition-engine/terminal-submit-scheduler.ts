@@ -1,5 +1,6 @@
 import type { SessionManager } from '../pty/session-manager';
 import type {
+  CommandDelivery,
   CommandVerifier,
   InjectionCommand,
   InjectionOutcome,
@@ -7,7 +8,7 @@ import type {
   TerminalSubmit,
 } from '../pty/terminal-submit';
 import type { AutoCommandMode } from '../../shared/types';
-import { waitForTurnCompletion } from './turn-completion';
+import { waitForTurnCompletion, type TurnCompletionResult } from './turn-completion';
 
 /**
  * Re-export so callers in injection-plan and slash-command-verifier can keep
@@ -96,6 +97,46 @@ export interface ScheduleKeystrokesOptions {
   onOutcome?: (report: InjectionReport) => void;
 }
 
+/**
+ * Cadence of the verifier re-check while the escalation gate waits for the
+ * turn to complete. Each poll is a `stat` against the shared transcript tail
+ * cache unless the file grew, and the wait is bounded by the gate's own
+ * timeout, so this stays cheap over a long turn. It only needs to be shorter
+ * than the time a turn takes to write a full tail window past the entry.
+ */
+const LATE_CONFIRM_POLL_MS = 1_000;
+
+/**
+ * Resolve once `check` returns true. Never resolves on abort: the caller
+ * races this against the turn-completion wait, which resolves `aborted` on the
+ * same signal, so a rejection or a false here would only add a second way to
+ * report the same abort. A stopped poll holds no timer.
+ */
+function pollUntilConfirmed(check: () => Promise<boolean>, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    signal.addEventListener('abort', () => {
+      if (timer) clearTimeout(timer);
+    }, { once: true });
+    const tick = async (): Promise<void> => {
+      if (signal.aborted) return;
+      let confirmed = false;
+      try {
+        confirmed = await check();
+      } catch (caughtError) {
+        console.error('[TerminalSubmitScheduler] late confirmation check threw:', caughtError);
+      }
+      if (signal.aborted) return;
+      if (confirmed) {
+        resolve();
+        return;
+      }
+      timer = setTimeout(() => { void tick(); }, LATE_CONFIRM_POLL_MS);
+    };
+    void tick();
+  });
+}
+
 /** A burst waiting its turn behind the one in flight. */
 interface QueuedBurst {
   sessionId: string;
@@ -155,7 +196,9 @@ interface PendingDeferred {
  * `opts.escalate` (restart + deliver as the CLI prompt argument), which is
  * guaranteed by the spawn rather than by TUI timing. Escalation happens at
  * most once per injection and only once the turn-completion predicate is
- * satisfied, so it can never kill live work.
+ * satisfied, so it can never kill live work - and while that predicate is
+ * awaited the verifier is re-polled against the burst's original watermark,
+ * so a command that merely confirmed late is never run a second time.
  */
 export class TerminalSubmitScheduler {
   private deferred = new Map<string, PendingDeferred>();
@@ -302,7 +345,7 @@ export class TerminalSubmitScheduler {
       };
 
       if (result.outcome === 'failed') {
-        report = await this.escalate(taskId, burst, entry, report);
+        report = await this.escalate(taskId, burst, entry, report, result.deliveries);
       }
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
@@ -423,6 +466,20 @@ export class TerminalSubmitScheduler {
    * bare idle check: restarting during a 529 retry backoff or a Monitor wait
    * would destroy live work, and both of those read as idle.
    *
+   * The gate is also the last chance to notice the command already landed.
+   * A restart re-runs it, and that shipped: every observed live injection of
+   * a skill command was reported `failed` by the burst and then run a second
+   * time by the restart (#682). So while the gate waits, the verifier is
+   * re-polled against each command's ORIGINAL first-Enter watermark (its
+   * delivery record's `firstSentAt`), and a confirmation anywhere in that wait, or on one last
+   * check when the turn completes, cancels the restart. The poll runs DURING
+   * the wait rather than only after it because the verifier reads a bounded
+   * tail: a turn that writes more than the tail between the entry landing and
+   * the turn ending would push the evidence out of reach of a single check at
+   * the end. Turn completion on its own is never taken as evidence - the turn
+   * that completes may be the one that was already running when the command
+   * was typed, which says nothing about whether the command went in.
+   *
    * Attempted at most once. If the restart itself does not deliver, the
    * outcome stays `failed` and the user is told.
    */
@@ -431,6 +488,7 @@ export class TerminalSubmitScheduler {
     burst: QueuedBurst,
     entry: ActiveBurst,
     report: InjectionReport,
+    deliveries: ReadonlyArray<CommandDelivery>,
   ): Promise<InjectionReport> {
     const escalateHandler = burst.opts.escalate;
     if (!escalateHandler) {
@@ -449,25 +507,82 @@ export class TerminalSubmitScheduler {
     // pure upside, but a false negative there would be a guess - and acting on
     // a guess here restarts a session and destroys live work. Those adapters
     // confirm and retry; they never authorize the restart.
+    //
+    // `unconfirmedCommands` holds one entry per unconfirmed DELIVERY, so each
+    // entry is consumed by at most one command. A membership test would let
+    // two identical commands both match a single unconfirmed entry when only
+    // one of them failed: the confirmed twin would be re-sent by the restart,
+    // and the count mismatch against the positional late checks below would
+    // disable late confirmation for the whole burst.
+    const unconsumedUnconfirmed = [...report.unconfirmedCommands];
     const escalatable = burst.commands
-      .filter((command) => (
-        command.verify === 'submitted'
-        && command.escalatable !== false
-        && report.unconfirmedCommands.includes(command.text)
-      ))
+      .filter((command) => {
+        if (command.verify !== 'submitted' || command.escalatable === false) return false;
+        const unconfirmedIndex = unconsumedUnconfirmed.indexOf(command.text);
+        if (unconfirmedIndex === -1) return false;
+        unconsumedUnconfirmed.splice(unconfirmedIndex, 1);
+        return true;
+      })
       .map((command) => command.text);
     if (escalatable.length === 0) {
       return { ...report, reason: 'The command could not be confirmed in the agent transcript.' };
     }
 
-    const completion = await waitForTurnCompletion(this.sessionManager, burst.sessionId, {
-      signal: entry.controller.signal,
-    });
+    // Late confirmation needs the verifier and a first-Enter watermark for
+    // EVERY escalatable command: a command with no watermark cannot be checked
+    // and would still need the restart, so a partial check proves nothing.
+    // Records are positional, so two identical commands each keep their own.
+    const verifier = burst.opts.verifier ?? null;
+    const lateChecks: Array<{ text: string; firstSentAt: number }> = [];
+    for (const delivery of deliveries) {
+      if (delivery.confirmed || !escalatable.includes(delivery.text)) continue;
+      if (delivery.firstSentAt !== null) lateChecks.push({ text: delivery.text, firstSentAt: delivery.firstSentAt });
+    }
+    const canLateConfirm = verifier !== null && lateChecks.length === escalatable.length;
+    const lateConfirm = async (): Promise<boolean> => {
+      if (!canLateConfirm || verifier === null) return false;
+      for (const check of lateChecks) {
+        if (!(await verifier(check.text, check.firstSentAt, 'submitted'))) return false;
+      }
+      return true;
+    };
+
+    // One gate signal for both waits: the burst's own abort ends them, and
+    // whichever wait settles first aborts the other.
+    const gate = new AbortController();
+    const abortGate = (): void => gate.abort();
+    if (entry.controller.signal.aborted) abortGate();
+    else entry.controller.signal.addEventListener('abort', abortGate, { once: true });
+
+    type GateOutcome =
+      | { kind: 'completion'; completion: TurnCompletionResult }
+      | { kind: 'late-confirm' };
+    const waits: Promise<GateOutcome>[] = [
+      waitForTurnCompletion(this.sessionManager, burst.sessionId, { signal: gate.signal })
+        .then((completion): GateOutcome => ({ kind: 'completion', completion })),
+    ];
+    if (canLateConfirm) {
+      waits.push(pollUntilConfirmed(lateConfirm, gate.signal).then((): GateOutcome => ({ kind: 'late-confirm' })));
+    }
+    const gateOutcome = await Promise.race(waits);
+    abortGate();
+    entry.controller.signal.removeEventListener('abort', abortGate);
+
+    if (gateOutcome.kind === 'late-confirm') {
+      return this.confirmedLate(taskId, report, lateChecks);
+    }
+    const completion = gateOutcome.completion;
     if (completion !== 'completed') {
       return {
         ...report,
         reason: `The command could not be confirmed, and the session was not safe to restart (${completion}).`,
       };
+    }
+    // The turn is over and the PTY is quiet: whatever the CLI was going to
+    // write about the command is on disk now. One last look before a restart
+    // that would run it again.
+    if (await lateConfirm()) {
+      return this.confirmedLate(taskId, report, lateChecks);
     }
 
     try {
@@ -488,6 +603,31 @@ export class TerminalSubmitScheduler {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
       return { ...report, reason: `The command could not be confirmed, and the retry failed: ${message}` };
     }
+  }
+
+  /**
+   * The burst reported a command unconfirmed, but the transcript has since
+   * proven it went in. No restart: the report becomes `confirmed` when nothing
+   * else is outstanding, else it stays `failed` for the commands that are.
+   */
+  private confirmedLate(
+    taskId: string,
+    report: InjectionReport,
+    confirmed: ReadonlyArray<{ text: string; firstSentAt: number }>,
+  ): InjectionReport {
+    const now = Date.now();
+    for (const check of confirmed) {
+      console.log(
+        `[TerminalSubmitScheduler] Confirmed task ${taskId.slice(0, 8)} late: "${check.text}" landed `
+          + `${now - check.firstSentAt}ms after the first Enter; no restart`,
+      );
+    }
+    const confirmedTexts = confirmed.map((check) => check.text);
+    const unconfirmedCommands = report.unconfirmedCommands.filter((text) => !confirmedTexts.includes(text));
+    if (unconfirmedCommands.length === 0) {
+      return { ...report, outcome: 'confirmed', unconfirmedCommands: [], escalated: false };
+    }
+    return { ...report, unconfirmedCommands, reason: 'The command could not be confirmed in the agent transcript.' };
   }
 
   /**

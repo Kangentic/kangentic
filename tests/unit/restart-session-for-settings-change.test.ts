@@ -226,7 +226,7 @@ describe('restartSessionForSettingsChange', () => {
     });
     const context = makeContext();
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
 
     expect(result).toEqual({ ok: true });
     // No suspend and no respawn when there is no live session to act on.
@@ -266,7 +266,7 @@ describe('restartSessionForSettingsChange', () => {
     });
     const context = makeContext();
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
 
     expect(result).toEqual({ ok: true });
 
@@ -343,7 +343,7 @@ describe('restartSessionForSettingsChange', () => {
     });
     const context = makeContext();
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
 
     expect(result).toEqual({ ok: true });
     expect(context.sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
@@ -435,7 +435,7 @@ describe('restartSessionForSettingsChange', () => {
     const context = makeContext();
     context.boardConfigManager.getBoardProfiles.mockReturnValue([heavyProfile]);
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
     const callArgs = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
     return { result, callArgs };
   }
@@ -493,7 +493,7 @@ describe('restartSessionForSettingsChange', () => {
     });
     const context = makeContext(suspendMock);
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -528,7 +528,7 @@ describe('restartSessionForSettingsChange', () => {
     mockCreateTransitionEngine.mockReturnValue(engine);
     const context = makeContext();
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -559,7 +559,7 @@ describe('restartSessionForSettingsChange', () => {
     mockCreateTransitionEngine.mockReturnValue(engine);
     const context = makeContext();
 
-    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID);
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

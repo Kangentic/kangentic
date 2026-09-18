@@ -78,6 +78,19 @@ export type SubmitContentOptions = PasteOptions;
 /** Terminal state of one `submitKeystrokes` call. */
 export type InjectionOutcome = 'confirmed' | 'unconfirmed' | 'failed' | 'aborted';
 
+/** What happened to one command of a burst. */
+export interface CommandDelivery {
+  text: string;
+  /**
+   * Epoch ms of the FIRST Enter pressed for this command: the watermark every
+   * verification of it used, and the one a later check must keep using. Null
+   * when the burst was aborted before its first Enter.
+   */
+  firstSentAt: number | null;
+  /** Whether a verifier confirmed it. Always false for an unverifiable command. */
+  confirmed: boolean;
+}
+
 export interface SubmitKeystrokesResult {
   /**
    * `confirmed`   every verifiable command was seen in the transcript.
@@ -91,6 +104,15 @@ export interface SubmitKeystrokesResult {
   outcome: InjectionOutcome;
   /** Commands that were verifiable but never confirmed. */
   unconfirmedCommands: string[];
+  /**
+   * One record per command the burst reached, in delivery order. Positional
+   * rather than keyed by text so two identical commands in one burst keep
+   * separate records. The scheduler re-checks an unconfirmed command against
+   * its `firstSentAt` before authorizing a restart, because a transcript that
+   * flushes late (or a submission the CLI queued behind a running turn) can
+   * prove delivery well after the burst gave up.
+   */
+  deliveries: CommandDelivery[];
   /** User draft cleared off the prompt, if the caller told us about one. */
   discardedDraft: string | null;
   /**
@@ -161,6 +183,23 @@ const UNVERIFIED_SETTLE_CAP_MS = 800;
 const VERIFY_POLL_MS = 25;
 const VERIFY_WINDOW_MS = 400;
 const MAX_SUBMIT_ATTEMPTS = 5;
+/**
+ * Poll-only window after the last retry, with NO further Enter.
+ *
+ * The retry cadence answers one question (did a picker eat the Enter?) and
+ * the evidence horizon answers another (has the transcript caught up?), and
+ * tying the second to the first is what made a delivered command read as
+ * `failed`. Claude stamps a user turn at submit but flushes the JSONL later,
+ * measured bimodal at ~780ms or ~1830ms after Enter in 2026-08 and ~330ms
+ * typical on 2.1.276 (docs/command-injection.md, "Measured flush latency");
+ * a skill invocation adds its expansion before the stamp.
+ * Five 400ms windows total 2000ms, which the slow mode alone exceeds once
+ * expansion is added. Pressing Enter a sixth time would buy nothing (the
+ * prompt is empty if the command went in) and risks answering whatever the
+ * started turn has since put on screen, so the horizon is extended by waiting,
+ * not by pressing.
+ */
+const LATE_FLUSH_GRACE_MS = 2000;
 /**
  * Cap on the wait between Esc and the Enter that follows it.
  *
@@ -270,13 +309,14 @@ export class TerminalSubmit {
     const pendingDraft = opts.pendingDraft && opts.pendingDraft.length > 0 ? opts.pendingDraft : null;
 
     if (sanitized.length === 0) {
-      return { outcome: 'unconfirmed', unconfirmedCommands: [], discardedDraft: null, interruptedTurn: false };
+      return { outcome: 'unconfirmed', unconfirmedCommands: [], deliveries: [], discardedDraft: null, interruptedTurn: false };
     }
 
     const verifier = opts.verifier ?? null;
     const signal = opts.signal ?? new AbortController().signal;
     const shouldClear = shouldClearPrompt(opts, pendingDraft);
     const unconfirmedCommands: string[] = [];
+    const deliveries: CommandDelivery[] = [];
     let sawVerifiable = false;
     let sawFailure = false;
 
@@ -320,6 +360,19 @@ export class TerminalSubmit {
         );
 
         let confirmed = false;
+        // The watermark for EVERY verification of this command, fixed at the
+        // first Enter. It used to be re-stamped on each retry, which made every
+        // later attempt blind to the first one's success: the backward scan
+        // stops at the first entry older than its watermark, and a submission
+        // stamped between two Enters has newer siblings (an attachment written
+        // in the same instant, a pr-link a moment later) sitting between it
+        // and the tail. Four of four observed live injections of a skill
+        // command failed that way and were then re-run by the restart (#682).
+        let commandFirstSentAt: number | null = null;
+        // Pushed before the first Enter so an abort mid-command still leaves a
+        // record (with a null watermark) for this position.
+        const delivery: CommandDelivery = { text: command.text, firstSentAt: null, confirmed: false };
+        deliveries.push(delivery);
         for (let attempt = 0; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
           // Esc dismisses the slash picker, but it is NOT a picker-scoped key -
           // Claude Code documents it as "stop Claude while it is generating
@@ -351,21 +404,35 @@ export class TerminalSubmit {
           }
 
           const sentAt = Date.now();
+          if (commandFirstSentAt === null) {
+            commandFirstSentAt = sentAt;
+            delivery.firstSentAt = sentAt;
+          }
           this.sessionManager.write(sessionId, '\r');
           await this.sessionManager.drain(sessionId);
 
           if (!canVerify || !verifier) break;
 
-          confirmed = await this.pollForConfirmation(verifier, command, sentAt, signal);
+          confirmed = await this.pollForConfirmation(verifier, command, commandFirstSentAt, signal, VERIFY_WINDOW_MS);
           if (confirmed) break;
         }
 
+        if (canVerify && verifier && !confirmed && commandFirstSentAt !== null) {
+          // Retries exhausted; keep looking without pressing. See
+          // LATE_FLUSH_GRACE_MS for why the horizon and the Enter count are
+          // separate budgets.
+          confirmed = await this.pollForConfirmation(verifier, command, commandFirstSentAt, signal, LATE_FLUSH_GRACE_MS);
+        }
+
+        delivery.confirmed = canVerify && confirmed;
         if (canVerify) {
           if (!confirmed) {
             unconfirmedCommands.push(command.text);
             sawFailure = true;
+            const firstEnterIso = commandFirstSentAt === null ? 'none' : new Date(commandFirstSentAt).toISOString();
             console.warn(
-              `[terminal-submit] ${source}: "${command.text}" unconfirmed after ${MAX_SUBMIT_ATTEMPTS} attempts`,
+              `[terminal-submit] ${source}: "${command.text}" unconfirmed after ${MAX_SUBMIT_ATTEMPTS} attempts `
+                + `plus a ${LATE_FLUSH_GRACE_MS}ms grace (first Enter at ${firstEnterIso})`,
             );
           }
         } else {
@@ -383,6 +450,7 @@ export class TerminalSubmit {
       return {
         outcome,
         unconfirmedCommands,
+        deliveries,
         discardedDraft: shouldClear ? pendingDraft : null,
         // Always false now: the clear is Ctrl+U (line editing), which leaves a
         // running turn alone, and Esc is suppressed while a turn is live. The
@@ -396,6 +464,7 @@ export class TerminalSubmit {
         return {
           outcome: 'aborted',
           unconfirmedCommands,
+          deliveries,
           discardedDraft: shouldClear ? pendingDraft : null,
           // See `SubmitKeystrokesResult.interruptedTurn`: always false while the
           // clear is Ctrl+U and Esc is suppressed during a live turn.
@@ -437,8 +506,14 @@ export class TerminalSubmit {
   }
 
   /**
-   * Poll the verifier for one retry window. This does NOT re-fire Enter
-   * itself; the caller's attempt loop re-presses Enter ALONE.
+   * Poll the verifier for `windowMs`. This does NOT re-fire Enter itself; the
+   * caller's attempt loop re-presses Enter ALONE, and the trailing grace call
+   * presses nothing.
+   *
+   * `sentAt` is the command's FIRST Enter on every call, including retries and
+   * the grace: the verifier bounds its scan to entries at or after it, and a
+   * submission the first Enter produced is exactly what a later poll must be
+   * able to confirm.
    *
    * Esc is sent at most once, on the first attempt only (`attempt === 0`, and
    * never while interrupting a live turn): a second Esc would clear the command
@@ -449,8 +524,9 @@ export class TerminalSubmit {
     command: InjectionCommand,
     sentAt: number,
     signal: AbortSignal,
+    windowMs: number,
   ): Promise<boolean> {
-    const deadline = Date.now() + VERIFY_WINDOW_MS;
+    const deadline = Date.now() + windowMs;
     while (Date.now() < deadline) {
       if (signal.aborted) throw new Error('aborted');
       if (await verifier(command.text, sentAt, command.verify)) return true;

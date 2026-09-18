@@ -107,7 +107,7 @@ Claude Code writes every successful slash invocation to its session JSONL transc
 
 A combined-args entry like `claude-opus-4-7\n/effort xhigh` is **not** a match by design -- that is the failure mode we want to detect and retry.
 
-The scan is bounded by a 50ms tolerance window around the send time (`Date.now()` at the moment of the Enter), so the polling cadence (~25ms) lands on the expected entry within ~50-100ms in the happy path.
+The scan is bounded by a 50ms tolerance window around the send time (`Date.now()` at the moment of the FIRST Enter for the command), so the polling cadence (~25ms) lands on the expected entry within ~50-100ms in the happy path. That watermark is held fixed across the command's retry-Enters and the scheduler's late re-check; see [Retry, and what happens on exhaustion](#retry-and-what-happens-on-exhaustion) for why it must not advance.
 
 ## The delivery ladder
 
@@ -125,8 +125,10 @@ Rung 1 is the most reliable path and must not be regressed into keystrokes (see 
 Rung 3 is what makes the guarantee falsifiable rather than aspirational. It routes through `restartSessionForSettingsChange`, which is already allowlisted as a non-first-spawn direct engine call, so escalation adds no new spawn entry point. Three constraints hold:
 
 - It is gated on the same turn-completion predicate deferred mode uses, never a bare `idle` check. A bare idle would fire during an API retry backoff or a `Monitor` wait and kill live work.
+- While that gate waits, the verifier is re-polled every second against each command's original first-Enter watermark (its `CommandDelivery.firstSentAt` on the burst result), and once more when the turn completes. A confirmation anywhere in that wait cancels the restart and the outcome becomes `confirmed`. A restart re-runs the command, and it did: every observed live injection of a skill command (`/merge-pull-request`, four of four moves) was reported `failed` by the burst and then run a second time by the restart (#682). The poll runs during the wait rather than only after it because the verifier reads a bounded tail; a long turn can push the entry out of reach of a single check at the end. Turn completion on its own is never taken as delivery evidence: the turn that completes may be the one that was already running when the command was typed.
 - It is attempted at most once. If the restart's argv prompt still does not confirm, the outcome is `failed`.
 - It carries **only** the user's message. An adapter-emitted settings write joined into an argv prompt stops being a slash invocation and becomes literal message text, and `--resume` preserves already-applied settings anyway.
+- It emits the `resending-command` spawn-progress phase ("Re-sending command...") before the suspend, through `restartSessionForSettingsChange`'s required `phase`, so the card names the swap and the mobile bridge can attach the label to the suspend's `session-ended` (see [Mobile Bridge](mobile-bridge.md)).
 
 ### The exit path is rung 2 only, and it is AWAITED
 
@@ -181,7 +183,11 @@ Three details are load-bearing:
 
 For a verifiable command, each attempt polls the verifier for 400ms; up to 5 attempts. **Retries re-press Enter alone.** Esc is sent at most once, on the first attempt only, because it is not a picker-scoped key: Claude Code documents it as "stop Claude while it is generating output", and on a non-empty prompt with no picker the first press prints "Esc again to clear", so a second press would delete the very command being submitted.
 
-On exhaustion the code does **not** write `Ctrl+C`. If the command actually did submit and verification merely lagged, that Ctrl+C would kill the turn it just started, and it was the only path that could produce two consecutive Ctrl+C presses and exit the CLI. Exhaustion reports a failure, and the scheduler escalates.
+**The watermark is the first Enter, for every poll of that command.** It used to be re-stamped on each retry, and that made every later attempt blind to the first one's success. The backward scan stops at the first entry older than its watermark, and a submission stamped between two Enters has newer siblings between it and the tail (Claude writes a `command_permissions` attachment in the same instant as a skill invocation's user turn, and a `pr-link` a moment later), so a retry's scan returned false on a sibling before it could reach the entry. Claude also stamps the user turn at submit but flushes it ~780ms or ~1830ms later (see [Measured flush latency](#measured-flush-latency)), which is why attempt 1's 400ms window rarely saw it in the first place. The two together turned a delivered `/merge-pull-request` into `failed` on every observed move (#682).
+
+**After the last retry the burst keeps polling for a 2000ms grace without pressing Enter** (`LATE_FLUSH_GRACE_MS`). The retry cadence answers "did a picker eat the Enter?" and the evidence horizon answers "has the transcript caught up?"; tying the second to the first is what made the budget 2000ms when the slow flush mode plus a skill's expansion exceeds it. A sixth Enter would buy nothing (the prompt is empty if the command went in) and risks answering whatever the started turn has since put on screen. The horizon is now ~4s.
+
+On exhaustion the code does **not** write `Ctrl+C`. If the command actually did submit and verification merely lagged, that Ctrl+C would kill the turn it just started, and it was the only path that could produce two consecutive Ctrl+C presses and exit the CLI. Exhaustion reports a failure alongside one `CommandDelivery` record per command (its text, its first-Enter `firstSentAt`, whether it confirmed; positional, so two identical commands in a burst keep separate records), and the scheduler escalates.
 
 ### Prompt-state policy
 
@@ -219,6 +225,8 @@ This replaced a single `verifiedPrefixLength` count. That shape could express on
 
 `submitted` is strictly weaker than `command-match`, and therefore always available: a user's command may be plain prose or an unregistered `/foo`, and Claude only treats a *leading* slash as a command anyway. The match must be **exact** - `instead can we/pull-request` *contains* `/pull-request`, so a substring test would confirm the precise bug this exists to catch.
 
+On Claude, `submitted` accepts a third record shape besides the raw user text and the `<command-name>` rewrite: a `queue-operation` `enqueue` whose `content` equals the command. Text typed during a running turn is queued by the CLI, which writes the enqueue entry at once and the user turn only when the queue drains at the end of the turn, minutes later in a `/pull-request` pass. From the enqueue on the CLI owns the text (it is dequeued as the next turn or absorbed mid-turn), so keystroke delivery is complete and further Enters are no-ops. Without it a mid-turn injection could never confirm inside the retry budget, and the escalation restart ran it a second time (#682, two of the four incidents). `command-match` does NOT accept it: an adapter-emitted settings write must prove it parsed as the discrete invocation with these args, and "the CLI took the text" says nothing about that. Diagnostic: every `false` from Claude's scan logs one rate-limited `[slash-verifier] "..." not yet in <file>: stop=..., watermark=..., newest=..., scanned=N` line (at most one per 500ms per command for the first ten lines, then one per 5s, so a two-minute escalation gate on an unreadable transcript does not write 240 copies of the same fact); `newest` older than the watermark means nothing has flushed yet, `stop=watermark` on a newer sibling means the scan stopped before reaching the entry.
+
 ## Outcomes
 
 Every scheduled injection ends in exactly one recorded outcome, persisted on the task (`auto_command_state`, `auto_command_text`, `auto_command_error`, `auto_command_at`):
@@ -240,14 +248,14 @@ Every scheduled injection ends in exactly one recorded outcome, persisted on the
 | Context | Caller | What gets verified | Latency |
 |---------|--------|-------------------|---------|
 | `'paste'` | `TerminalSubmit.submitContent` (browser captures, single auto-command paste) | "the agent acknowledged this prompt" | 100-500ms |
-| `'command-injection'` | `TerminalSubmit.submitKeystrokes` (chained slash commands) | "this exact command was processed as a discrete invocation" | 50-150ms typical, ~2s worst case |
+| `'command-injection'` | `TerminalSubmit.submitKeystrokes` (chained slash commands) | "this exact command was processed as a discrete invocation" | 50-150ms typical, ~4s worst case (five 400ms windows plus the 2000ms grace) |
 
 The two contexts solve different problems: `'paste'` confirms one-shot paste submissions of arbitrary user prompts, while `'command-injection'` confirms each link in a multi-command chain landed cleanly. They share an interface (`getSubmissionVerifier`) so adapters declare what they support per context, and the renderer/IPC layer never has to branch on agent name.
 
 **OR-combine vs poll-and-retry.** The two contexts also differ in how the engine consumes the verifier:
 
 - `'paste'` runs the verifier **in parallel** with the activity-event listener and post-`\r` data path. The first signal to resolve wins. A verifier resolving `false` does not short-circuit the fallbacks - they remain active for the rest of the wait window. This matches the "best-effort confirmation" model: a verifier strengthens evidence but cannot weaken the existing fallback path.
-- `'command-injection'` runs the verifier in a **tight poll loop** inside `TerminalSubmit.pollWithRetries`. On each iteration the verifier is invoked with the current `sentAt`; if it returns `false`, the loop sleeps `pollMs` and retries. Past the retry interval (with no confirmation), Enter is re-fired and `sentAt` advances. This matches the "deterministic chain" model: each command must be confirmed before the next.
+- `'command-injection'` runs the verifier in a **tight poll loop** inside `TerminalSubmit.pollForConfirmation`. On each iteration the verifier is invoked with the command's first-Enter `sentAt`; if it returns `false`, the loop sleeps `pollMs` and retries. Past the retry interval (with no confirmation), Enter is re-fired and the watermark stays where it was. This matches the "deterministic chain" model: each command must be confirmed before the next.
 
 ## Why a verifier must be measured before it is written
 
@@ -278,6 +286,7 @@ Live runs, 2026-08-08, Windows. "Worst" is the slowest observation across trials
 | OpenCode | 64ms, 64ms | 95ms, 64ms (5.0s, 7.3s) | **95ms** | no | **implement** |
 | Qwen | 443ms, 519ms | 696ms, 479ms (13.5s, 14.1s) | **696ms** | yes (306ms, 355ms) | **implement** |
 | Claude (control) | 775ms, 1876ms | 791ms, 1828ms (11.4s, 6.3s) | **1876ms** | yes | **implement** |
+| Claude (control, 2026-09-18, 2.1.276, haiku) | 895ms, 888ms | 871ms, 1032ms (9.4s, 9.3s) | **1032ms** | yes (930ms, 914ms) | **implement** |
 | Droid | 3202ms, 941ms | 661ms, 636ms (4.5s, 9.9s) | **3202ms** | yes (580ms, 564ms) | **stop** |
 | Cursor | login-gated | 5766ms, 5446ms (5.8s, 5.4s) | **5766ms** | yes (2614ms) | **stop** |
 | Gemini | 5504ms, never (>25s) | never (>25s), 6302ms (16.9s) | **>25s** | not reached | **stop** |
@@ -291,11 +300,13 @@ and far below the turn end, which is the flush-on-submit signature; the formal p
 short/long trial has not been run, which (together with the missing in-app proof and the
 records carrying no timestamps) is why its verifier ships confirm-only rather than verified.
 
-**The bar is the delivery BUDGET, not a margin.** `submitKeystrokes` retries up to 5 times polling 400ms each, so a submission has ~2000ms to become visible before the outcome is `failed`, and `sentAt` advances on every retry. Two earlier attempts to hold reserve (1000ms, then 1500ms) both failed the CLAUDE CONTROL - the reference implementation whose verifier ships and works. Any bar that rejects the known-good adapter is measuring the wrong thing.
+**The bar is the delivery BUDGET, not a margin.** `submitKeystrokes` retries up to 5 times polling 400ms each and then polls a further 2000ms without pressing, so a submission has ~4000ms to become visible before the outcome is `failed`, all of it measured from the FIRST Enter. Two earlier attempts to hold reserve (1000ms, then 1500ms) both failed the CLAUDE CONTROL - the reference implementation whose verifier ships and works. Any bar that rejects the known-good adapter is measuring the wrong thing. (The budget was 2000ms until #682, and the watermark advanced on every retry, which meant the second half of that budget could never confirm an entry stamped in the first half; the control's slow mode alone consumed 1876ms of it.)
 
-**Run the control after touching the harness.** Claude's numbers are bimodal (775/791/779ms or 1812/1828/1876ms, nothing between - a periodic flush caught either side of its interval), which is also why "typical" latency is meaningless here and only the upper mode matters. If `--agent claude` does not pass, the instrument is broken and no other verdict from it can be trusted.
+**Run the control after touching the harness.** Claude's 2026-08-08 numbers were bimodal (775/791/779ms or 1812/1828/1876ms, nothing between - a periodic flush caught either side of its interval), which is also why "typical" latency is meaningless here and only the upper mode matters. The 2026-09-18 re-run on 2.1.276 (haiku, a trusted scratch directory no session was using) read 871 to 1032ms on all six trials, one mode this time and uncorrelated with turn length. A same-day run from inside the live checkout read 323 to 373ms with a 1401ms outlier and is discarded: its probes shared this session's `~/.claude/projects/<slug>/` directory, and a run whose numbers a neighbour can move in either direction measures nothing. The 4000ms delivery budget covers the clean worst about four times over, and with the fixed first-Enter watermark a 900 to 1000ms flush confirms on attempt 3 (Enter at 800ms, window to 1200ms). If `--agent claude` does not pass, the instrument is broken and no other verdict from it can be trusted.
 
-**Cursor is the clearest turn-end flush after Gemini.** Its appends landed 40ms and 42ms either side of the turn ENDING - not correlated with turn length, essentially identical to it. Its first two probes were also login-gated (the harness's auth-gate detector did not recognise Cursor's wording, since phrase matching lags vendors), but that contamination changes nothing: the trials that DID land are disqualifying on their own at nearly 3x the budget.
+**The harness needs a trusted workspace on current Claude Code.** A fresh temp directory raises the workspace trust dialog, and since 2.1.x the dialog parks its cursor on "No, exit"; `maybeAnswerPrompt` now reads the selected row off the frame and moves it before confirming, and answering restarts the ready-quiet window so the probe is never typed into the dialog. Accepting trust for a brand-new directory was still observed to redraw the dialog and end the CLI when the harness ran inside another Claude Code session, so `--workspace <dir>` runs every probe in a directory the CLI already trusts. Do not point it at a directory a live agent session is running in: the probe's transcripts then share that session's `~/.claude/projects/<slug>/` directory, which is how the 1401ms outlier above was produced. Trust a scratch directory once from an interactive `claude` and reuse it. Model the run with `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` to keep the control cheap.
+
+**Cursor is the clearest turn-end flush after Gemini.** Its appends landed 40ms and 42ms either side of the turn ENDING - not correlated with turn length, essentially identical to it. Its first two probes were also login-gated (the harness's auth-gate detector did not recognise Cursor's wording, since phrase matching lags vendors), but that contamination changes nothing: the trials that DID land are disqualifying on their own, 5.4 to 5.8 seconds against a 4000ms budget.
 
 OpenCode is measured through a read-only SQL query rather than a file scan, because a SQLite page is not observable as text. Getting that number took three runs and exposed a harness bug worth recording: some TUIs drop the first characters of typed input while they finish becoming interactive (OpenCode ate between 6 and 40 of them), which destroyed a front-anchored nonce and read as "never landed". The probe marker now sits at the END of the prompt and the harness settles before typing. Production does not hit this - `submitKeystrokes` runs its own Ctrl+U handshake and settle first - but any future probe must keep the marker trailing.
 
@@ -307,9 +318,9 @@ Gemini is the case the gate exists for. It writes on message completion (its own
 
 A note for anyone re-running this: Droid's numbers below are exactly as measured, but the verdict was corrected by hand afterwards. The saved report from that run records `implement`, because the gate itself had the bug described below and was fixed after the run. The measurement did not change; only the rule applied to it did. A fresh run on the current harness reports `stop`.
 
-Droid fails for a different and more instructive reason: it is not turn-end flushed at all (its LONG turns appended fastest, at ~640ms), it is simply **unreliable** - 564ms at best and 3202ms at worst, with no relation to turn length. 3202ms exceeds the entire ~2s retry budget, so those submissions would have been reported `failed` while the agent was working normally. This is why the bar is the WORST observation rather than the mean, and why the harness gates on every trial rather than only the long-turn ones: an earlier revision checked only the long runs and returned "implement" for Droid while printing a 3202ms worst case.
+Droid fails for a different and more instructive reason: it is not turn-end flushed at all (its LONG turns appended fastest, at ~640ms), it is simply **unreliable** - 564ms at best and 3202ms at worst, with no relation to turn length. 3202ms exceeded the whole 2000ms budget that applied when it was measured, so those submissions were reported `failed` while the agent was working normally. The budget has been 4000ms since the fixed watermark and the grace landed, which would put that one trial inside it with under 800ms to spare; two trials on a 2026-08 build are not a re-measurement, so the verdict stands until the harness is re-run against a current Droid. This is why the bar is the WORST observation rather than the mean, and why the harness gates on every trial rather than only the long-turn ones: an earlier revision checked only the long runs and returned "implement" for Droid while printing a 3202ms worst case.
 
-Qwen passes but with far less margin than Codex, and lands ABOVE the 400ms single-attempt window, so it typically confirms on the second Enter attempt. That is well inside the ~2s budget, but it means any future tightening of `VERIFY_WINDOW_MS` puts Qwen at risk first.
+Qwen passes but with far less margin than Codex, and lands ABOVE the 400ms single-attempt window, so it typically confirms on the second Enter attempt. That is well inside the 4000ms budget, but it means any future tightening of `VERIFY_WINDOW_MS` puts Qwen at risk first.
 
 ## Per-adapter support matrix
 
@@ -359,7 +370,7 @@ Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjec
 
 This is written for someone who already uses the agent in question - the numbers below could not be taken here for exactly the agents you may have installed. Do the steps in order; step 2 is the one that has actually caught bugs.
 
-**1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the latency table above. The bar is the ~2000ms delivery budget, applied to the WORST observation.
+**1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the latency table above. The bar is the 4000ms delivery budget (five 400ms windows plus the 2000ms grace, from the first Enter), applied to the WORST observation.
 
 **2. Prove the adapter's own verifier in the app.** Create a task with `agent_override` set to that agent, move it into a column carrying an `auto_command`, and read the task's `auto_command_state` back out of the project DB. Expect `confirmed`. With the real CLI installed that is the whole of it, and it costs one ordinary turn.
 
@@ -469,8 +480,8 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 
 - `tests/unit/injection-load-rig.test.ts` - the delivery-rate rig and its recorded before/after.
 - `tests/unit/injection-tui-simulator.ts` - the shared TUI model (not a test file).
-- `tests/unit/terminal-submit.test.ts` - byte contract, prompt-state policy, verification modes, retry recovery, and that exhaustion never writes Ctrl+C.
-- `tests/unit/terminal-submit-scheduler.test.ts` - scheduling, the FIFO queue (no silent drop), deferred mode, escalation, outcome reporting.
+- `tests/unit/terminal-submit.test.ts` - byte contract, prompt-state policy, verification modes, retry recovery, that exhaustion never writes Ctrl+C, and the late-flush cases (a submission visible only 900ms or 2300ms after the Enter confirms on a later attempt or in the grace; five swallowed Enters still fail).
+- `tests/unit/terminal-submit-scheduler.test.ts` - scheduling, the FIFO queue (no silent drop), deferred mode, escalation, outcome reporting, and the late confirmation at the escalation gate (a verifier that confirms during the wait or on the final check cancels the restart; one that never confirms still restarts; a cancelled burst stops polling).
 - `tests/unit/turn-completion.test.ts` - the two-signal predicate, including the sustained false-idle cases.
 - `tests/unit/prompt-draft-ledger.test.ts` - draft accounting.
 - `tests/unit/auto-command-outcome.test.ts` - what is persisted vs what notifies.
@@ -483,9 +494,9 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 - `tests/unit/confirm-only-command-injection-verifiers.test.ts` - the Kimi / Aider / OpenCode record shapes and the guards standing in for their missing measurements.
 - `tests/unit/opencode-command-injection-query-bound.test.ts` - that OpenCode's `part` query stays bounded to the message ids already fetched, and is skipped entirely when there are none. Unbounded, it scanned and JSON-parsed every part row in the session on every 25ms poll, synchronously, on the thread that services IPC.
 - `tests/unit/cursor-grok-binary-collision.test.ts` - that `cursor-agent` is preferred over the `agent` shim Grok also publishes.
-- `tests/unit/auto-command-escalation-gate.test.ts` and `tests/unit/auto-command-escalation.test.ts` - when escalation may fire at all.
+- `tests/unit/auto-command-escalation-gate.test.ts` and `tests/unit/auto-command-escalation.test.ts` - when escalation may fire at all, and that the rung 3 restart holds its `resending-command` label across the suspend and clears it on every exit.
 - `tests/unit/gemini-session-file-format.test.ts` - the `.json` / `.jsonl` generations for locate, capture, and telemetry parse.
-- `tests/unit/claude-slash-command-verifier.test.ts` - Claude's matcher, plus the LRU-vs-clear-all burst guarantee.
+- `tests/unit/claude-slash-command-verifier.test.ts` - Claude's matcher, the LRU-vs-clear-all burst guarantee, the queued-submission (`queue-operation` enqueue) evidence and its exactness, and the real skill-invocation record shape from the #682 transcript at both a first-Enter and an advanced watermark.
 
 ## Files
 

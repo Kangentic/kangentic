@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
+import { sendToRenderer } from '../ipc/send-to-renderer';
 
 // ---------------------------------------------------------------------------
 // Spawn progress: typed phases emitted to the renderer during task move
@@ -18,6 +19,8 @@ import { IPC } from '../../shared/ipc-channels';
 //   Model change:       switching-model → (whichever of the above the task needs)
 //   Effort respawn:     applying-settings → (whichever of the above the task needs)
 //   Session switch:     new-session → (whichever of the above the task needs)
+//   In-place restart:   switching-model | applying-settings | resending-command
+//                       (restartSessionForSettingsChange: no git work follows)
 //
 // 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE before any git
 // work, so the card is never silent while the lane resolves and the git op
@@ -25,8 +28,12 @@ import { IPC } from '../../shared/ipc-channels';
 // 'new-session' are emitted the same way by task-move.ts's Phase 1
 // suspend-for-respawn branches, before the suspend that would otherwise leave
 // the card reading a stale "Paused" for the whole unlocked Phase 2 window (see
-// suspendLiveSessionForRespawn). Every other phase is emitted by the git
-// helpers themselves.
+// suspendLiveSessionForRespawn). The in-place restart in session-reconcile.ts
+// (a ContextBar model pick, a Board Profile propagation, or the auto_command
+// escalation) emits its phase before its suspend for the same reason, and
+// because the mobile bridge attaches whatever label is in flight to the
+// suspend's `session-ended` so the phone can tell a respawn from a park.
+// Every other phase is emitted by the git helpers themselves.
 //
 // QUERYABLE STATE (not just fire-once IPC): the latest in-flight label per
 // task is also retained in a module-level map so the renderer can re-derive
@@ -186,8 +193,11 @@ function pushSpawnProgress(mainWindow: BrowserWindow, taskId: string, label: str
   if (wasTracked !== isTracked) {
     for (const listener of spawnProgressTransitionListeners) listener(taskId, isTracked);
   }
-  if (mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC.TASK_SPAWN_PROGRESS, taskId, label === null ? null : decorateLabel(taskId, label));
+  // Through the recorded chokepoint, not a raw `webContents.send`: a label is
+  // what tells a card and a paired phone that a suspend is a respawn rather
+  // than a park, so when that goes wrong the IPC log is where the answer is
+  // looked for, and a raw send left every spawn-progress push out of it.
+  sendToRenderer(mainWindow, IPC.TASK_SPAWN_PROGRESS, taskId, label === null ? null : decorateLabel(taskId, label));
 }
 
 /**
@@ -280,7 +290,8 @@ export type SpawnPhase =
   | 'switching-model'
   | 'switching-agent'
   | 'applying-settings'
-  | 'new-session';
+  | 'new-session'
+  | 'resending-command';
 
 /** Phase → user-facing label (single source of truth for display text). */
 const PHASE_LABELS: Record<SpawnPhase, string> = {
@@ -307,6 +318,13 @@ const PHASE_LABELS: Record<SpawnPhase, string> = {
   'switching-agent': 'Switching agent...',
   'applying-settings': 'Applying new settings...',
   'new-session': 'Starting new session...',
+  // The in-place restarts that go through restartSessionForSettingsChange
+  // (session-reconcile.ts) emit their phase the same way, before the suspend.
+  // This one is rung 3 of the auto_command delivery ladder: keystrokes could
+  // not be confirmed, so the session is resumed with the command as its
+  // prompt. Named for what it is rather than "Starting new session..." (it is
+  // a resume) so the card and the phone say why the terminal churned.
+  'resending-command': 'Re-sending command...',
 };
 
 /** Get the user-facing label for a spawn phase. */
