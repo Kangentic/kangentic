@@ -2,6 +2,54 @@
 
 <!-- releases -->
 
+## [protocol-v0.15.0] - 2026-09-18
+
+Adds the `start-session` capability verb, so a phone can start a task's session
+again in the column the task is already in, and makes a verb the receiver does
+not know answerable instead of a silent drop. Both additive; `PROTOCOL_VERSION`
+stays '3'.
+
+`start-session` is appended to `CAPABILITY_VERBS` (append only: the desktop
+mirrors the tuple index for index), with `StartSessionRequestPayload` (`taskId`
+plus `projectId`), `StartSessionResponsePayload` (`{ ok, outcome: 'starting' |
+'live' }`), `StartSessionOutcome`, and the guard `parseStartSessionResponsePayload`.
+The verb answers when the start is ACCEPTED, not when the agent is up: on
+`starting` the successor's arrival reaches the phone as the board and stream
+events a column move already produces; on `live` a session was already running,
+nothing was spawned, and no event is coming, so a phone that tapped Start from a
+stale screen refreshes its board and stream itself. `live` also covers a session
+queued at the desktop's concurrency limit, so read it as "coming", not "running".
+A post-accept failure is reported on the desktop only, so the waiting screen
+needs its own timeout and a retry.
+
+`decodeMessage` now validates a capability-request's envelope (a string
+`requestId`, a string `verb`, a JSON `payload`) before verb membership, and when
+only the membership check fails it throws a typed `UnsupportedVerbError` carrying
+the `requestId` and `verb`, so a receiver can answer the request instead of
+dropping the frame. A malformed frame still throws a plain `Error` and stays a
+silent rejection. `isUnsupportedVerbError` keys on the error's name and fields
+rather than `instanceof`, because a consumer of the published dist and a
+workspace-source consumer can hold two copies of the class.
+`CapabilityResponseMessage` gains an optional `code?: CapabilityErrorCode` (one
+member today, `UNSUPPORTED_VERB_ERROR_CODE = 'unsupported-verb'`), validated by
+shape only, so a code an older peer does not know cannot cost it the `error` text
+it can still show. A desktop from this version on answers an unknown verb with
+`{ ok: false, error: 'Unsupported verb: <name>', code: 'unsupported-verb' }`
+without running any handler. A desktop older than this version still drops the
+frame and the phone times out, so the refusal helps for every verb added after
+`start-session`; a client should key its "update your desktop" copy on `code`,
+never on the `error` text.
+
+### Features
+- Add a start-session verb so the phone can start a task's session again (c910d20e)
+- Answer an unknown capability verb with a refusal instead of dropping the frame (6afe2e06)
+
+### Fixes
+- The `spawnProgressLabel` doc comment on the session-ended payload also names an in-place restart, such as a re-sent command (38f5b44d)
+
+### Other
+- `isUnsupportedVerbError` binds its field cast once (0fdfc4b6)
+
 ## [protocol-v0.14.0] - 2026-09-13
 
 Adds an optional `spawnProgressLabel` to the `session-ended` activity payload,
