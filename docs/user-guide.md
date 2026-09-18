@@ -896,6 +896,7 @@ Task detail (whichever panel is open):
 - **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
 - **Mod+Shift+K** - Toggle the description panel inside the task detail dialog
+- **Alt+Shift+Left** / **Alt+Shift+Right** - Move the open task one column left / right without closing its window. Stops at the first and last board columns; Done is never a target. Column automations and move confirmations apply exactly as they do for the kebab's "Move to"
 - **Middle-click the window header** - Close a modeless task-detail window (default `Mouse:Middle`; routes through the same unsaved-edits guard as the close button)
 
 Description editor (mounts in task detail and in the New Task / New Backlog Task dialogs). All four are fixed, not rebindable:

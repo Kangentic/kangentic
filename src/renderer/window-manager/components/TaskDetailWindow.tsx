@@ -43,7 +43,9 @@ import {
   useTaskActions,
   taskHasDescriptionContent,
   useTaskDetailHost,
+  adjacentSwimlane,
 } from '../../components/dialogs/task-detail';
+import type { ColumnStepDirection } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
 import { taskDetailSurfaceFor } from '../../utils/task-progress';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
@@ -104,6 +106,24 @@ const INTERACTIVE_SELECTOR =
 function isInteractiveTarget(event: React.PointerEvent | React.MouseEvent): boolean {
   const interactive = (event.target as HTMLElement).closest(INTERACTIVE_SELECTOR);
   return !!interactive && (event.currentTarget as HTMLElement).contains(interactive);
+}
+
+// `taskDetail.moveColumnLeft/Right`'s `when` guard: a text field must keep the
+// key (on macOS Option+Shift+Arrow is word selection in the Browser URL bar,
+// the Changes search box, the note input, ...), so this is checked BEFORE the
+// match rather than inside the handler - `useKeybinding` skips
+// preventDefault/stopPropagation whenever `when` returns false, letting the
+// keystroke reach the field. xterm's helper textarea is a real <textarea> but
+// is deliberately exempt: it is the one text field this hotkey is FOR.
+// Not `utils/text-target.ts`'s `isTextTarget`: that answers "may this field
+// receive dictated text" and so excludes password, read-only, and non-prose
+// inputs, all of which still select text on Option+Shift+Arrow and must keep it.
+function isTextFieldTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.classList.contains('xterm-helper-textarea')) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName;
+  return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
 }
 
 export function TaskDetailWindow({
@@ -563,6 +583,32 @@ export function TaskDetailWindow({
     hadSessionContext.current = hasSessionContext;
   }, [hasSessionContext, task.id, updateTask]);
 
+  // Move the open task one column left/right, keeping the window (and its
+  // terminal) open. Runs the SAME move `handleMoveTo` runs for the kebab's
+  // "Move to" (keepOpen: true), so a target column's automation and the
+  // existing move confirmations (the To Do "Reset task?" dialog, the Done
+  // confirm) fire exactly as they do for a drag or the kebab - see the
+  // registry comment on taskDetail.moveColumnLeft/Right in keybindings.ts for
+  // the policy. A second press while a step is in flight is dropped, not
+  // queued.
+  const columnStepInFlightRef = useRef(false);
+  const stepColumn = async (event: KeyboardEvent | PointerEvent, direction: ColumnStepDirection) => {
+    // Checked in the HANDLER, not `when`: useKeybinding has already
+    // preventDefault/stopPropagation'd the match by the time this runs, so a
+    // held key's repeats are swallowed here rather than leaking through to
+    // the focused xterm as Alt+Shift+Arrow escape sequences.
+    if ('repeat' in event && event.repeat) return;
+    if (columnStepInFlightRef.current) return;
+    const target = adjacentSwimlane(swimlanes, task.swimlane_id, direction);
+    if (!target) return; // at an edge: no wraparound, no feedback
+    columnStepInFlightRef.current = true;
+    try {
+      await actions.handleMoveTo(target.id, { keepOpen: true });
+    } finally {
+      columnStepInFlightRef.current = false;
+    }
+  };
+
   // Task-detail hotkeys (capture phase so they intercept before the embedded
   // xterm consumes the Ctrl-letter control chars). Gated on `isFocused` so only
   // the focused window reacts when several are open.
@@ -591,6 +637,15 @@ export function TaskDetailWindow({
   useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser && !isEditing });
   useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges && !isEditing });
   useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription && !isEditing });
+  // Gated on `!isArchived`: `handleMoveTo`'s archived branch closes the window
+  // before unarchiving, which fights keeping it open, and an archived task is
+  // off the board anyway. `when` refuses a text field OTHER than xterm's
+  // helper textarea, so the field keeps the key (macOS Option+Shift+Arrow is
+  // word selection in the Browser URL bar / Changes search / note input).
+  const columnStepEnabled = isFocused && !shortcutsSuppressed && !isEditing && !isArchived;
+  const columnStepAllowed = (event: KeyboardEvent | PointerEvent) => !isTextFieldTarget(event.target);
+  useKeybinding('taskDetail.moveColumnLeft', (event) => void stepColumn(event, 'left'), { capture: true, enabled: columnStepEnabled, when: columnStepAllowed });
+  useKeybinding('taskDetail.moveColumnRight', (event) => void stepColumn(event, 'right'), { capture: true, enabled: columnStepEnabled, when: columnStepAllowed });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
