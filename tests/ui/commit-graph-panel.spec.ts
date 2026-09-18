@@ -19,7 +19,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
-import { pressResizeHandle, waitForViteReady } from './helpers';
+import { expandHistorySection, pressResizeHandle, waitForViteReady } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -128,18 +128,17 @@ test.afterAll(async () => {
 });
 
 /** Open the task dialog, the Changes panel, and EXPAND the History section
- *  (collapsed by default) so the commit browser is visible. */
-async function openDialogWithChangesPanel(taskLocatorText: string, swimlaneName: string): Promise<Page> {
+ *  (collapsed by default) so the commit browser is visible. The expand is
+ *  verified, not trusted: `expandHistorySection` waits for the open-only
+ *  resize handle and re-clicks a toggle whose click was lost, because the
+ *  graph panel is mounted (and reads as visible) while collapsed too. */
+async function openDialogWithChangesPanel(taskLocatorText: string, swimlaneName: string): Promise<Locator> {
   const card = page.locator(`[data-swimlane-name="${swimlaneName}"]`).locator(`text=${taskLocatorText}`).first();
   await card.click();
   const dialog = page.locator('[data-testid="task-detail-dialog"]');
   await dialog.waitFor({ state: 'visible', timeout: 5000 });
   await page.locator('[data-testid="changes-toggle"]').click();
-  const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
-  await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
-  if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
-    await historyToggle.click();
-  }
+  await expandHistorySection(page);
   await page.locator('[data-testid="commit-graph-panel"]').waitFor({ state: 'visible', timeout: 10000 });
   return dialog;
 }
@@ -215,8 +214,10 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
     //
     // `pressResizeHandle` hovers (so Playwright waits for the History height
     // transition to finish moving the handle), presses, and re-presses when
-    // the drag has not armed: both shapes of the CI flake this test has had on
-    // UI shard 4. See the helper's docblock for the history.
+    // the drag has not armed: two of the three shapes of the CI flake this
+    // test has had on UI shard 4. The third was the EXPAND click being lost,
+    // which `openDialogWithChangesPanel` now verifies through
+    // `expandHistorySection`. See both helpers' docblocks for the history.
     const handle = page.locator('[data-testid="changes-history-resize"]');
     const beforeHeight = (await historyPanel.boundingBox())!.height;
     const handleBox = await pressResizeHandle(page, '[data-testid="changes-history-resize"]');
@@ -444,9 +445,7 @@ test.describe('Commit graph PR-head ref badge', () => {
 
     await prBadgePage.locator('[data-testid="changes-toggle"]').click();
     // Expand the (default-collapsed) History section to reveal the graph.
-    const historyToggle = prBadgePage.locator('[data-testid="changes-history-toggle"]');
-    await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
-    await historyToggle.click();
+    await expandHistorySection(prBadgePage);
     await prBadgePage.locator('[data-testid="commit-graph-svg"]').waitFor({ state: 'visible', timeout: 10000 });
 
     // Compact (rail) rendering: the PR ref is a tone dot with its label in the
