@@ -419,18 +419,23 @@ pairs the two the way it pairs a Command Terminal's two boots, and a window narr
 single recording takes the tiled one (`layoutFor` in `demo-dataset.ts`), which it then holds or
 plays as frames like any other recording. It is a second run, so it says different things: the
 session's clock, its card's message trail, its Monitor peeks, and its working-tree diff stay the
-single recording's, and only the terminal's bytes are the tiled one's. A still frame paints the
-tiled recording's own opening frame, kept at the same tail (`tiledFrames` in the seed, inline
-like the open frames, since a still fetches nothing). Three sessions carry one, the two the
+single recording's, and only the terminal's bytes are the tiled one's, played from the moment
+that clock began; a variant that has already ended by the time its window opens shows its final
+frame and stays there. A still frame paints the same: the tiled
+recording's frame at the moment the single's clock opens at, derived from its frame timeline
+(`tiledFrames` in the seed, inline like the open frames, since a still fetches nothing). Three sessions carry one, the two the
 `windows-tiled` scene tiles and the Command Terminal session `command-terminal-tiled` narrows.
 The three were made on Claude Code 2.1.275, which asks before a PowerShell command with an
 expandable string, so both task runs end at that permission prompt rather than at a summary (the
 2.1.270 singles ran to their own end). That is the ending a desktop user gets on that CLI: the
 rig seeds trust the way Kangentic does and no permission rule, and pre-allowing `npm *` to
 record a cleaner ending would show a session nobody has. The still opens well before the
-prompt. Live, a mounted terminal re-bases its session's end on the recording it plays
-(`liveScrollback`), so a tiled window's card flips to needs-you as its terminal reaches the
-prompt, and a frame with no terminal mounted runs the single recording's clock.
+prompt. Live, the variant plays from the moment the session's clock began, and the clock stays
+the single recording's (`sessionDurationMs` in the seed): the middleware variant is 64 seconds
+against a session that has already run 38 when the page opens, so a tiled window opens 38
+seconds into the variant, plays its last 26 to the prompt, and then holds there while the card
+keeps working until the single recording's clock runs out at 128, the way a still of the same
+window paints the frame at 38.
 
 The sample install is a Windows machine, because the recording machine is one and so is the
 mock's platform: the OS window controls, the Git Bash chip, the agents' PowerShell tool calls,
