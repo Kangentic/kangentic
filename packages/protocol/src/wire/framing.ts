@@ -75,10 +75,9 @@ export class UnsupportedVerbError extends Error {
  * would tell apart.
  */
 export function isUnsupportedVerbError(error: unknown): error is UnsupportedVerbError {
-  return error instanceof Error
-    && error.name === UNSUPPORTED_VERB_ERROR_NAME
-    && typeof (error as Partial<UnsupportedVerbError>).requestId === 'string'
-    && typeof (error as Partial<UnsupportedVerbError>).verb === 'string';
+  if (!(error instanceof Error) || error.name !== UNSUPPORTED_VERB_ERROR_NAME) return false;
+  const candidate = error as Partial<UnsupportedVerbError>;
+  return typeof candidate.requestId === 'string' && typeof candidate.verb === 'string';
 }
 
 export function encodeMessage(message: BridgeMessage): Uint8Array {

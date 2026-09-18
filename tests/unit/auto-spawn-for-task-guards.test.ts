@@ -141,6 +141,18 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
 }));
+// A partial mock: wraps the REAL registerResumeController / releaseResumeController
+// in vi.fn so the "releases its own controller" test below can assert on their
+// call args, while every other test in this file still gets the real
+// register/abort/release behavior through the wrappers.
+vi.mock('../../src/main/ipc/handlers/session-resume-controllers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/ipc/handlers/session-resume-controllers')>();
+  return {
+    ...actual,
+    registerResumeController: vi.fn(actual.registerResumeController),
+    releaseResumeController: vi.fn(actual.releaseResumeController),
+  };
+});
 
 import { autoSpawnForTask } from '../../src/main/ipc/helpers/agent-spawn';
 import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
@@ -671,6 +683,38 @@ describe('autoSpawnForTask: split lock', () => {
     expect(getInFlightSpawnProgress()).toEqual({});
   });
 
+  it('releases its own controller in the finally and logs the cancellation, mid-fetch', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { signal?: AbortSignal },
+    ) => {
+      abortInFlightResume(TASK_ID);
+      options?.signal?.throwIfAborted();
+    });
+    const registerResumeControllerSpy = vi.mocked(registerResumeController);
+    const releaseResumeControllerSpy = vi.mocked(releaseResumeController);
+
+    await expect(
+      autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID),
+    ).resolves.toBeUndefined();
+
+    expect(registerResumeControllerSpy).toHaveBeenCalledTimes(1);
+    const [, registeredController] = registerResumeControllerSpy.mock.calls[0];
+    // Red on the finally's release removed: this chokepoint's own controller
+    // would never leave the registry, so it would still sit there ready for a
+    // LATER abort to find and abort an already-settled spawn.
+    expect(releaseResumeControllerSpy).toHaveBeenCalledWith(TASK_ID, registeredController);
+    // Red on the outer catch's isAbortError branch removed or its console.log
+    // deleted: a cancelled spawn would either fall through to the generic
+    // failure logging or log nothing at all.
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[auto-spawn] Aborted in-flight spawn for task'),
+    );
+
+    consoleLogSpy.mockRestore();
+  });
+
   it('is cancelled between the git phase and the spawn: Phase 3 checks the signal before its gates', async () => {
     mockEnsureTaskBranchCheckout.mockImplementation(async () => {
       abortInFlightResume(TASK_ID);
@@ -681,6 +725,34 @@ describe('autoSpawnForTask: split lock', () => {
     // The checkout resolved normally after aborting, so the only thing that
     // can stop the spawn is Phase 3's own throwIfAborted.
     expect(mockExecuteTransition).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('is cancelled mid-checkout by abortInFlightResume, quietly: no blocked notice, no spawn, no failure report', async () => {
+    // Unlike the "between the git phase and the spawn" test above, the
+    // checkout call itself never resolves here: it observes the abort and
+    // rethrows, the same shape ensureTaskWorktree's mid-fetch abort test uses
+    // for the worktree phase.
+    mockEnsureTaskBranchCheckout.mockImplementation(async (
+      _context: unknown, _task: unknown, _path: unknown,
+      options?: { signal?: AbortSignal },
+    ) => {
+      abortInFlightResume(TASK_ID);
+      options?.signal?.throwIfAborted();
+    });
+
+    // Red before the isAbortError check at the checkout catch: the rethrown
+    // AbortError would be treated as an ordinary checkout failure, and
+    // notifySpawnBlocked would be called with 'checkout'.
+    await expect(
+      autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Split-lock task' }, LANE_ID),
+    ).resolves.toBeUndefined();
+
+    expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    // A cancelled spawn is not a blocked one and not a failed one.
     expect(mockTrackEvent).not.toHaveBeenCalled();
     expect(mockReportHandledError).not.toHaveBeenCalled();
     expect(getInFlightSpawnProgress()).toEqual({});

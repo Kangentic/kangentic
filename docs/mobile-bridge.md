@@ -323,7 +323,7 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 
 - `interactive-terminal`, `board-tool-read`, `board-tool-write` added to `CAPABILITY_VERBS`; per-verb request/response payload types (`packages/protocol/src/wire/payloads.ts`); `terminal`/`diff` event kinds and a reshaped project-keyed `BoardEvent` (`packages/protocol/src/events/event.ts`); a per-kind `framing.ts` event validator; `deriveSessionSlotId` for the ongoing-session relay slot.
 - `MobileBridgeService.attachContext()` + `syncSessions()`: opens one live `BridgeSession` per roster device, routes decoded `capability-request` messages through `CapabilityRouter.dispatch()`.
-- All 9 capability-verb handlers (`src/main/mobile-bridge/handlers/`), each described under [Data Feeds](#data-feeds) and [Board Tool Surface](#board-tool-surface) above.
+- The nine Phase 2 capability-verb handlers (`src/main/mobile-bridge/handlers/`; `register-push` and `start-session` came later), each described under [Data Feeds](#data-feeds) and [Board Tool Surface](#board-tool-surface) above.
 - `SessionManager`'s unfiltered `data-tap` event and `ActivityStatsSnapshot.permissionAwaitedToolId`.
 - The consolidated `BoardEventBus` (`IpcContext.boardEvents`).
 - ~~Per-device capability-granting UI in the Mobile Devices settings tab (one toggle per verb, driven by `MOBILE_CAPABILITY_VERBS`).~~ Superseded: pairing now grants every verb (see [Full access on pair](#full-access-on-pair)) and the per-verb toggle UI was removed; the capability CHECK and `setDeviceCapabilities()` surface it depended on stay as the seam for a future narrower preset.

@@ -102,6 +102,10 @@ describe('handleStartSession', () => {
     const context = { currentProjectId: null, currentProjectPath: null } as unknown as IpcContext;
     const response = await handleStartSession(fakeRequest({ taskId: 't-1', projectId: '' }), context);
     expect(response.ok).toBe(false);
+    // Red on the message dropped or genericized: the phone shows this text
+    // verbatim, and a blank or mismatched string would leave the user unable
+    // to tell "no such project" from any other refusal reason.
+    expect(response.error).toContain('No such project:');
     expect(startTaskSessionMock).not.toHaveBeenCalled();
   });
 
