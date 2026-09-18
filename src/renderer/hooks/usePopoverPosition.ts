@@ -34,6 +34,26 @@ interface PopoverOptions {
    *   ancestor (e.g. a window frame's `overflow-hidden`). Flyout mode is unaffected.
    */
   strategy?: 'absolute' | 'fixed';
+  /**
+   * Dropdown mode: size the popover to the trigger's width BEFORE the placement
+   * is measured, by writing `popover.style.width` from the trigger rect. This is
+   * the fixed-strategy replacement for an in-flow `left-0 right-0` stretch.
+   *
+   * It has to happen inside this hook's own effect, ahead of the `offsetWidth` /
+   * `offsetHeight` reads. A consumer that measures the trigger in a later layout
+   * effect of its own and passes `width` through `style` lands one commit late:
+   * layout effects run in declaration order, so on the mount commit the hook
+   * measures a width-less menu. Its shrink-to-fit width is a run of inline-block
+   * `w-full` option buttons laid on ONE line (about 1300px for 15 agents), which
+   * flips the overflow check and right-aligns the menu hundreds of pixels left of
+   * its trigger, on the first open per mount only (the width state survived the
+   * close, so the second open measured a menu that already had its width).
+   *
+   * In dropdown mode the hook owns the inline `width` either way: it clears it
+   * when this is false. A menu with its own width takes a class (`w-64`,
+   * `min-w-[160px]`), never `style.width`.
+   */
+  matchTriggerWidth?: boolean;
 }
 
 export interface PopoverPlacement {
@@ -55,7 +75,14 @@ export function usePopoverPosition(
   isOpen: boolean,
   options: PopoverOptions,
 ): PopoverPosition {
-  const { mode, viewportPadding = 8, preferRight = 'auto', preferVertical = 'below', strategy = 'absolute' } = options;
+  const {
+    mode,
+    viewportPadding = 8,
+    preferRight = 'auto',
+    preferVertical = 'below',
+    strategy = 'absolute',
+    matchTriggerWidth = false,
+  } = options;
   const [placement, setPlacement] = useState<PopoverPlacement>({ vertical: 'below', horizontal: 'right' });
 
   useLayoutEffect(() => {
@@ -65,6 +92,15 @@ export function usePopoverPosition(
     if (!trigger || !popover) return;
 
     const triggerRect = trigger.getBoundingClientRect();
+    // Size before measuring. Both reads below depend on it: at the shrink-to-fit
+    // width the option buttons sit on one line, so the height read would be one
+    // row tall too and the fits-below decision would be made against the wrong
+    // height. See the option's doc comment for the horizontal failure. Cleared
+    // on the negative, like every other property this effect owns, so an
+    // instance whose option flips off does not keep a stale width.
+    if (mode === 'dropdown') {
+      popover.style.width = matchTriggerWidth ? `${triggerRect.width}px` : '';
+    }
     // `offsetWidth`/`offsetHeight`, NOT `getBoundingClientRect()`, for the
     // popover's own size. `OverlayPopover` plays a grow-in animation that starts
     // at `transform: scale(0.96)`, and this effect runs on the commit that mounts
@@ -190,7 +226,7 @@ export function usePopoverPosition(
 
     popover.style.visibility = 'visible';
     setPlacement({ vertical: resolvedVertical, horizontal: resolvedHorizontal });
-  }, [isOpen, mode, viewportPadding, preferRight, preferVertical, strategy, triggerRef, popoverRef]);
+  }, [isOpen, mode, viewportPadding, preferRight, preferVertical, strategy, matchTriggerWidth, triggerRef, popoverRef]);
 
   return {
     style: isOpen ? EMPTY : HIDDEN,

@@ -22,6 +22,7 @@ A popover that presents a list of choices (a menu, listbox, or picker) renders t
 ```tsx
 const { style, placement } = usePopoverPosition(triggerRef, menuRef, open, {
   mode: 'dropdown', strategy: 'fixed',
+  matchTriggerWidth: true, // only for a menu that stretches to its trigger (a combobox)
 });
 
 <OverlayPopover open={open} popoverRef={menuRef} style={style} portal
@@ -39,10 +40,19 @@ Four things that are easy to get wrong, each of which fails silently:
   and every subsequent key is dead.
 - **`z-50` is wrong for a portaled element.** `BaseDialog` is itself `z-50`, and a body portal
   is its sibling. Use `z-[2147483646]`, as `LabelInput` and `KebabMenu` do.
-- **Width and height caps do not survive.** `usePopoverPosition` writes only `top`/`left`, so
-  `left-0 right-0` width matching is lost: measure the trigger in a `useLayoutEffect` and pass
-  an explicit `width`. Keep the `max-h-*` cap on the portaled element, or a tall list fits
-  neither below nor above, `openAbove` fires unconditionally, and `top` goes negative.
+- **Width and height caps do not survive.** `usePopoverPosition` writes `top`/`left`, so
+  `left-0 right-0` width matching is lost: pass `matchTriggerWidth: true` and the hook writes the
+  trigger's width onto the menu BEFORE it measures. Do not measure the trigger in a second
+  `useLayoutEffect` and pass `width` through `style`. Layout effects run in declaration order, so
+  the hook's effect fires first and measures a width-less menu on the mount commit. Its
+  shrink-to-fit width is a run of inline-block `w-full` option buttons laid on ONE line (about
+  1300px for 15 agents), which flips the overflow check and right-aligns the menu at
+  `trigger.right - 1300`: 823px left of the Settings > Agent field, correct width, correct top.
+  The width state survived the close, so only the first open per mount failed, and Settings
+  remounts its comboboxes on every panel open. The same one-line measurement also reads the
+  height one row tall, so the fits-below decision was made against the wrong height. Keep the
+  `max-h-*` cap on the portaled element, or a tall list fits neither below nor above,
+  `openAbove` fires unconditionally, and `top` goes negative.
 
 Two properties of the pattern to know before you reach for it, both shared with the existing
 portaled sites (`LabelInput`, `KebabMenu`) rather than new:
@@ -88,7 +98,18 @@ A popover with no clipping ancestor at any mount site may stay in flow with a
 
   Neither check can tell whether a mount site actually clips, which is why they are the
   tripwire and the UI specs are the guard.
-- **Review:** `/code-review` flags a new in-flow menu on renderer changes.
+- **Test (first-open width, behavior):** `tests/ui/popover-first-open-alignment.spec.ts` opens
+  the Settings > Agent comboboxes on a fresh page at 1920x1080 and asserts the menu's left edge
+  and width match the field on the FIRST open (then again after a close). Each test owns its
+  page on purpose: a page where an earlier test already opened the same combobox carries the
+  surviving width state and passes against the broken code. It read 823px red before the fix.
+- **Test (first-open width, tripwire):** the same unit file fails any file that calls
+  `usePopoverPosition` AND reads `getBoundingClientRect().width` itself, unless the line carries
+  `popover-width-ok: <reason>`, and pins that the hook's `popover.style.width` write precedes
+  both `offset*` reads. The scan is what closes the read-trigger gap for a brand-new combobox
+  file, which does not pre-load this rule; the unit tier has no DOM, so it cannot render the hook.
+- **Review:** `/code-review` flags a new in-flow menu on renderer changes, and a consumer that
+  measures its trigger width in its own effect instead of passing `matchTriggerWidth`.
 
 ## Scope
 
