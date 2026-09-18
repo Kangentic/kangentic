@@ -101,6 +101,48 @@ test.describe('BranchPicker', () => {
 
     await closeDialog();
   });
+
+  /**
+   * The chip variant keeps its `w-64` class and gets no inline width: the hook
+   * call passes `matchTriggerWidth: variant === 'input'`, so for the chip
+   * (whose own trigger is much narrower than 256px, just the branch name plus
+   * an icon) the hook writes `popover.style.width = ''` rather than sizing the
+   * dropdown to the chip. Only the `variant="input"` mount (Settings > Git,
+   * see combobox-portal-clipping.spec.ts) stretches to its trigger. A
+   * conditional that regressed to `matchTriggerWidth: true` unconditionally
+   * would shrink this dropdown to the chip's own width and cut off every
+   * branch name.
+   */
+  test('chip dropdown keeps its fixed w-64 width and no inline width is applied', async () => {
+    await openNewTaskDialog();
+
+    const chip = page.locator('[data-testid="branch-picker-chip"]');
+    const chipBox = await chip.boundingBox();
+    expect(chipBox).not.toBeNull();
+
+    await chip.click();
+    const dropdown = page.locator('[data-testid="branch-picker-dropdown"]');
+    await expect(dropdown).toBeVisible();
+
+    // The discriminating assertion: no inline width, which is exactly what the
+    // hook's `matchTriggerWidth ? ... : ''` branch leaves on the negative side.
+    // This fails on a flip to `matchTriggerWidth: true` regardless of what the
+    // chip's measured width happens to be on a given platform.
+    const inlineWidth = await dropdown.evaluate((element) => (element as HTMLElement).style.width);
+    expect(inlineWidth).toBe('');
+
+    // User-visible consequence: the dropdown is the fixed 256px (`w-64`), not
+    // scaled down to the chip's own width. `offsetWidth`, not `boundingBox()`,
+    // since OverlayPopover plays a scale-from-trigger entrance transform and a
+    // rect read right after `toBeVisible()` can land mid-animation.
+    await expect
+      .poll(async () => dropdown.evaluate((element) => (element as HTMLElement).offsetWidth), { timeout: 3000 })
+      .toBeGreaterThan(chipBox!.width + 50);
+
+    await page.keyboard.press('Escape');
+    await expect(dropdown).not.toBeVisible();
+    await closeDialog();
+  });
 });
 
 // The Branch row's trailing segment is a two-option radio group, Worktree or
