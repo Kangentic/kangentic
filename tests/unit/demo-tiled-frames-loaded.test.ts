@@ -150,4 +150,125 @@ describe('loadDemoTiledFrames', () => {
       );
     });
   });
+
+  describe('a thinking session whose tiled recording ended before the single recording opens it', () => {
+    let temporaryFixturesDir: string | null = null;
+
+    afterEach(() => {
+      if (temporaryFixturesDir) {
+        fs.rmSync(temporaryFixturesDir, { recursive: true, force: true });
+        temporaryFixturesDir = null;
+      }
+    });
+
+    /**
+     * None of the committed fixtures reach this branch: both real thinking sessions with a tiled
+     * sibling open inside their tiled recording's own timeline (the "Not vacuous" assertion two
+     * tests up pins that). A synthetic fixture is the only way to drive opensAtMs past the tiled
+     * timeline's own end.
+     */
+    it("paints the tiled recording's own final frame, not a frame walked off the end of its timeline", () => {
+      temporaryFixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-tiled-frames-shorter-variant-'));
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'manifest.json'),
+        JSON.stringify({
+          liveTailMs: 1000,
+          captures: [{ file: 'base.json', sessionId: SESSION_MIDDLEWARE, tiled: 'tiled.json', agent: 'claude', project: 'test-project' }],
+        }),
+      );
+      // singleDurationMs = 10000, liveTailMs = 1000 -> opensAtMs = 9000.
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'base.json'),
+        JSON.stringify({ agent: 'claude', serialized: 'BASE_FRAME', rawBytes: 10, stream: [{ t: 0, data: 'x' }, { t: 10000, data: 'y' }] }),
+      );
+      // tiledDurationMs = 2000, well before opensAtMs (9000): the variant had already ended by
+      // the moment the live frame would open it, so its still is the recording's own final
+      // frame, not a frame from a walk that ran past the timeline's last entry.
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'tiled.json'),
+        JSON.stringify({
+          agent: 'claude',
+          serialized: 'TILED_FINAL_SERIALIZED',
+          rawBytes: 10,
+          frameTimeline: [{ t: 0, frame: 'TILED_TIMELINE_FRAME_EARLY' }, { t: 2000, frame: 'TILED_TIMELINE_FRAME_LAST' }],
+        }),
+      );
+
+      const tiledFrames = loadDemoTiledFrames(temporaryFixturesDir as string);
+      const sessionFrames = tiledFrames[SESSION_MIDDLEWARE];
+      expect(sessionFrames.openFrame).not.toBeNull();
+      expect(sessionFrames.openFrame?.serialized).toBe('TILED_FINAL_SERIALIZED');
+      // Distinguishes the fallback from a walk that just happened to stop on the last timeline
+      // step: if the loader still walked the timeline here, it would return this instead.
+      expect(sessionFrames.openFrame?.serialized).not.toBe('TILED_TIMELINE_FRAME_LAST');
+    });
+  });
+
+  describe('a thinking session whose tiled recording carries no frame timeline', () => {
+    let temporaryFixturesDir: string | null = null;
+
+    afterEach(() => {
+      if (temporaryFixturesDir) {
+        fs.rmSync(temporaryFixturesDir, { recursive: true, force: true });
+        temporaryFixturesDir = null;
+      }
+    });
+
+    it('is refused rather than silently skipping the opening frame', () => {
+      temporaryFixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-tiled-frames-no-timeline-'));
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'manifest.json'),
+        JSON.stringify({
+          liveTailMs: 1000,
+          captures: [{ file: 'base.json', sessionId: SESSION_MIDDLEWARE, tiled: 'tiled.json', agent: 'claude', project: 'test-project' }],
+        }),
+      );
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'base.json'),
+        JSON.stringify({ agent: 'claude', serialized: 'BASE_FRAME', rawBytes: 10, stream: [{ t: 0, data: 'x' }, { t: 10000, data: 'y' }] }),
+      );
+      // A tiled sibling with a final frame but no frameTimeline: the "no serialized frame"
+      // refusal above does not catch this, since serialized is present here.
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'tiled.json'),
+        JSON.stringify({ agent: 'claude', serialized: 'TILED_FINAL_SERIALIZED', rawBytes: 10 }),
+      );
+
+      expect(() => loadDemoTiledFrames(temporaryFixturesDir as string)).toThrow(
+        /carries no frame timeline.*backfill-demo-timelines\.mjs/,
+      );
+    });
+  });
+
+  describe('a tiled sibling the manifest names but that is not on disk', () => {
+    let temporaryFixturesDir: string | null = null;
+
+    afterEach(() => {
+      if (temporaryFixturesDir) {
+        fs.rmSync(temporaryFixturesDir, { recursive: true, force: true });
+        temporaryFixturesDir = null;
+      }
+    });
+
+    it('is refused with the session id, the tiled file, and the re-run command, rather than falling back to the single recording', () => {
+      temporaryFixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-tiled-frames-missing-sibling-'));
+      const sessionId = 'sess-test-missing-tiled-sibling';
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'manifest.json'),
+        JSON.stringify({
+          liveTailMs: 1000,
+          captures: [{ file: 'base.json', sessionId, tiled: 'missing-tiled.json', agent: 'claude', project: 'test-project' }],
+        }),
+      );
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'base.json'),
+        JSON.stringify({ agent: 'claude', serialized: 'BASE_FRAME', rawBytes: 10, stream: [{ t: 0, data: 'x' }] }),
+      );
+      // missing-tiled.json is deliberately never written.
+
+      expect(() => loadDemoTiledFrames(temporaryFixturesDir as string)).toThrow(
+        /sess-test-missing-tiled-sibling.*missing-tiled\.json.*capture-demo-sessions\.mjs --only missing-tiled/,
+      );
+    });
+  });
 });

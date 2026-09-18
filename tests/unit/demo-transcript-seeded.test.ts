@@ -9,8 +9,9 @@
  * trail, and is read by the build and opened by the scene.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '../../src/shared/types';
 import { loadDemoMessageTrails, loadDemoTranscripts } from '../captures/helpers/demo-scrollback';
 import { SESSION_MIDDLEWARE } from '../captures/helpers/demo-dataset';
@@ -78,5 +79,36 @@ describe('demo transcripts behind the conversation viewer', () => {
     const dataset = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'captures', 'helpers', 'demo-dataset.ts'), 'utf-8');
     expect(dataset).toContain('window.electronAPI.transcripts.get = function');
     expect(dataset).toContain('window.electronAPI.transcripts.listSessions = function');
+  });
+
+  describe('a manifest entry marked transcript but not on disk', () => {
+    let temporaryFixturesDir: string | null = null;
+
+    afterEach(() => {
+      if (temporaryFixturesDir) {
+        fs.rmSync(temporaryFixturesDir, { recursive: true, force: true });
+        temporaryFixturesDir = null;
+      }
+    });
+
+    it('is refused rather than silently opening the conversation viewer on nothing', () => {
+      temporaryFixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-transcript-missing-'));
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'manifest.json'),
+        JSON.stringify({
+          liveTailMs: 1000,
+          captures: [{ file: 'base.json', sessionId: 'sess-test-missing-transcript', transcript: true, agent: 'claude', project: 'test-project' }],
+        }),
+      );
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'base.json'),
+        JSON.stringify({ agent: 'claude', serialized: 'BASE_FRAME', rawBytes: 10 }),
+      );
+      // transcripts/base.json is deliberately never written.
+
+      expect(() => loadDemoTranscripts(temporaryFixturesDir as string)).toThrow(
+        /sess-test-missing-transcript.*not on disk.*backfill-demo-transcripts\.mjs/,
+      );
+    });
   });
 });
