@@ -601,6 +601,42 @@ test.describe('Column automations', () => {
     await expect(dialog().locator('[data-testid="board-manager-save"]')).toBeDisabled();
   });
 
+  // 11b ─ Escape while editing does not fall through to the Column Manager ───
+  //
+  // The editor and the Column Manager both listen for Escape on `document`
+  // (EditAutomationDialog's own BaseDialog, and the manager's hand-rolled
+  // listener gated by `nestedModalOpen`). Before `editing` was added to that
+  // set, an Escape aimed at the editor also reached the manager underneath
+  // and closed the WHOLE Column Manager - with no discard confirm, since
+  // merely opening the editor for an existing row leaves nothing dirty. The
+  // same set gates the column-cycle keybinding, so it must stay inert too.
+
+  test('Escape while editing an existing automation closes only the editor', async () => {
+    await seedColumn('Executing', [
+      { name: 'Existing row', type: 'run_script', trigger: 'enter', config: { script: 'echo hi' } },
+    ]);
+    await openColumn('Executing');
+
+    await row('Existing row').locator('[data-testid="column-automation-edit"]').click();
+    await expect(editDialog()).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(editDialog()).toBeHidden();
+    await expect(dialog()).toBeVisible();
+    await expect(page.locator('h3', { hasText: 'Discard unsaved changes?' })).toHaveCount(0);
+
+    // Reopen and confirm the column-cycle keybinding is also suppressed while
+    // the editor is open: the active rail tab must not move.
+    await row('Existing row').locator('[data-testid="column-automation-edit"]').click();
+    await expect(editDialog()).toBeVisible();
+    const executingTab = dialog().locator('[data-testid="board-manager-tab"][data-tab-name="Executing"]');
+    await expect(executingTab).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('ControlOrMeta+PageDown');
+    await expect(executingTab).toHaveAttribute('aria-selected', 'true');
+
+    await editDialog().locator('[data-testid="edit-automation-cancel"]').click();
+  });
+
   // 12 ─ Changing Type keeps what was typed ──────────────────────────────────
 
   test('switching Type away and back keeps the fields, and Done saves only the chosen type', async () => {
@@ -695,18 +731,30 @@ test.describe('Column automations', () => {
       .toHaveAttribute('aria-selected', 'true');
   });
 
-  test('the rail count, the overview count and the board glyph report the same number', async () => {
+  test('the rail glyph, the overview count and the board glyph share one predicate', async () => {
     await seedColumn('Merge', [
       { name: 'Runs', type: 'run_script', trigger: 'enter', config: { script: 'echo runs' } },
       { name: 'Off', type: 'run_script', trigger: 'enter', enabled: false, config: { script: 'echo off' } },
+    ]);
+    // A column whose ONLY row is switched off. This is what separates
+    // presence-from-runnable (nothing shown) from presence-from-existence (a
+    // glyph for a row that will never fire).
+    await seedColumn('Testing', [
+      { name: 'Dormant', type: 'run_script', trigger: 'enter', enabled: false, config: { script: 'echo off' } },
     ]);
     await refreshAutomationStore('Merge');
 
     await expect(page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]')).toHaveText('1');
 
     await openColumn('Merge');
-    const railCount = dialog().locator('[data-testid="board-manager-tab"][data-tab-name="Merge"] [data-testid="board-manager-tab-automation-count"]');
-    await expect(railCount).toHaveText('1');
+    // The rail shows PRESENCE only: a glyph, no digit. The number the two other
+    // surfaces print still reaches the rail as the glyph's tooltip.
+    const railRow = (name: string) => dialog().locator(`[data-testid="board-manager-tab"][data-tab-name="${name}"]`);
+    const mergeGlyph = railRow('Merge').locator('[data-testid="board-manager-tab-automation"]');
+    await expect(mergeGlyph).toBeVisible();
+    await expect(mergeGlyph).toHaveText('');
+    await expect(mergeGlyph).toHaveAttribute('title', '1 automation runs here');
+    await expect(railRow('Testing').locator('[data-testid="board-manager-tab-automation"]')).toHaveCount(0);
 
     await openOverview();
     const mergeRow = dialog().locator('[data-testid="board-manager-overview-row"]', { hasText: 'Merge' });

@@ -20,8 +20,6 @@ import { describeAutomation } from '../../../../shared/automation-describe';
 import { TEMPLATE_VARIABLE_PATTERN } from '../../../../shared/task-template-vars';
 import type {
   AutomationConfig,
-  AutomationRun,
-  AutomationRunStatus,
   AutomationTrigger,
   AutomationType,
   AutomationWriteInput,
@@ -103,38 +101,6 @@ function sortDrafts(drafts: AutomationDraft[]): AutomationDraft[] {
 
 export function describeDraft(draft: AutomationDraft): string {
   return describeAutomation(draft.type, draft.config);
-}
-
-/** How each terminal run status reads on the row. */
-const RUN_STATUS_WORDS: Record<AutomationRunStatus, string> = {
-  running: 'Running now',
-  succeeded: 'Ran',
-  failed: 'Failed',
-  skipped: 'Skipped',
-  interrupted: 'Interrupted',
-};
-
-/**
- * The row's last-run line: what happened, when, and the one-line detail.
- *
- * This is what answers "did my automation work" where the automation lives,
- * rather than only in a toast the user may have missed. Returns null for a row
- * that has never run, so the caller renders nothing rather than a dash that
- * would read as an outcome.
- *
- * Takes the formatted time rather than formatting it, so this stays React-free
- * AND locale-free and can be unit tested without a clock: `formatRelativeTime`
- * reads `Date.now()` and an `Intl` locale, neither of which belongs in a pure
- * helper the parity tests run over.
- */
-export function describeLastRun(run: AutomationRun | undefined, relativeTime: string): string | null {
-  if (!run) return null;
-  const word = RUN_STATUS_WORDS[run.status];
-  const when = relativeTime ? ` ${relativeTime}` : '';
-  // The detail carries the failure reason, the skip reason, or a one-line
-  // success ("HTTP 204", "exit 0"), which is the half that says WHY.
-  const detail = run.detail ? `. ${run.detail}` : '';
-  return `${word}${when}${detail}`;
 }
 
 export function rowsFor(drafts: AutomationDraft[], trigger: AutomationTrigger): AutomationDraft[] {

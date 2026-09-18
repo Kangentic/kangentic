@@ -206,7 +206,6 @@ const api: ElectronAPI = {
     replaceForColumn: (swimlaneId, rows, projectId) =>
       ipcRenderer.invoke(IPC.AUTOMATION_REPLACE_FOR_COLUMN, swimlaneId, rows, projectId),
     runsForTask: (taskId, projectId) => ipcRenderer.invoke(IPC.AUTOMATION_RUNS_FOR_TASK, taskId, projectId),
-    latestRuns: (projectId) => ipcRenderer.invoke(IPC.AUTOMATION_LATEST_RUNS, projectId),
     // Mutating, so it carries the interaction-time projectId too: the toast
     // outlives a project switch, and Run again must not fire against the board
     // the user has since moved to.

@@ -313,7 +313,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         useBoardStore.setState({
           archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false,
           lanePins: EMPTY_LANE_PINS,
-          automations: [], automationsLoaded: false, automationRuns: {},
+          automations: [], automationsLoaded: false,
         });
         const coldLoads = Promise.all([
           useBoardStore.getState().loadBoard(),

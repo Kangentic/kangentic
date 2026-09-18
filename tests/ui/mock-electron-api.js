@@ -15,8 +15,8 @@
   // what the app now does too (the seeded actions that used to become them were
   // each a no-op or a duplicate of the fallback spawn).
   let automations = [];
-  // Run records. Seedable through `__mockPreConfigure` so a spec can drive the
-  // last-run line without executing anything; `runAgain` appends to it.
+  // Run records. Seedable through `__mockPreConfigure` so a spec can read run
+  // history (`runsForTask`) without executing anything; `runAgain` appends to it.
   let automationRuns = [];
   let automationFailureListeners = [];
   let automationInterruptedListeners = [];
@@ -1797,18 +1797,6 @@
           .slice()
           .sort(function (left, right) { return left.started_at < right.started_at ? 1 : -1; })
           .map(function (run) { return Object.assign({}, run); });
-      },
-      latestRuns: async function () {
-        // Newest per automation id, mirroring `latestByAutomation()`.
-        var newest = {};
-        automationRuns.forEach(function (run) {
-          var current = newest[run.automation_id];
-          if (!current || current.started_at < run.started_at) newest[run.automation_id] = run;
-        });
-        return Object.keys(newest).reduce(function (out, key) {
-          out[key] = Object.assign({}, newest[key]);
-          return out;
-        }, {});
       },
       runAgain: async function (automationId, taskId) {
         var automation = automations.find(function (row) { return row.id === automationId; });

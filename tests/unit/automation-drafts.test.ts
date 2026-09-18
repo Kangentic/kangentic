@@ -15,7 +15,6 @@ import {
   countAutomationChanges,
   describeAutomationChanges,
   describeDraft,
-  describeLastRun,
   dirtyColumnIds,
   draftsByColumn,
   findEmptyName,
@@ -43,7 +42,7 @@ import {
   toWriteInput,
   type AutomationDraft,
 } from '../../src/renderer/components/dialogs/board-manager/automation-drafts';
-import type { AutomationRun, ColumnAutomation, Swimlane } from '../../src/shared/types';
+import type { ColumnAutomation, Swimlane } from '../../src/shared/types';
 
 const AGENT_COLUMN = { auto_spawn: true, role: null } as Pick<Swimlane, 'auto_spawn' | 'role'>;
 const NO_AGENT_COLUMN = { auto_spawn: false, role: null } as Pick<Swimlane, 'auto_spawn' | 'role'>;
@@ -525,53 +524,5 @@ describe('serializeAutomation', () => {
       draft({ type: 'run_script', config: { script: 'npm ci', workingDir: 'project' } }),
     );
     expect(JSON.parse(serialized).config).toEqual({ script: 'npm ci' });
-  });
-});
-
-describe('describeLastRun', () => {
-  function run(overrides: Partial<AutomationRun> = {}): AutomationRun {
-    return {
-      id: 'run-1',
-      automation_id: 'row-1',
-      automation_name: 'Ping',
-      type: 'webhook',
-      task_id: 'task-1',
-      swimlane_id: 'lane-1',
-      trigger: 'enter',
-      status: 'succeeded',
-      detail: 'HTTP 204',
-      attempts: 1,
-      started_at: '2026-09-13T12:00:00.000Z',
-      finished_at: '2026-09-13T12:00:01.000Z',
-      ...overrides,
-    };
-  }
-
-  // Null rather than a dash: a row that has never run has no outcome, and a
-  // dash in the outcome slot reads as one.
-  it('returns null for a row that has never run', () => {
-    expect(describeLastRun(undefined, '2 minutes ago')).toBeNull();
-  });
-
-  it('names the outcome, when it happened, and the one-line detail', () => {
-    expect(describeLastRun(run(), '2 minutes ago')).toBe('Ran 2 minutes ago. HTTP 204');
-  });
-
-  it('has a word for every status', () => {
-    expect(describeLastRun(run({ status: 'failed', detail: 'HTTP 500' }), 'now')).toBe('Failed now. HTTP 500');
-    expect(describeLastRun(run({ status: 'skipped', detail: 'Start an agent here is off.' }), 'now'))
-      .toBe('Skipped now. Start an agent here is off.');
-    expect(describeLastRun(run({ status: 'interrupted', detail: null }), 'now')).toBe('Interrupted now');
-    expect(describeLastRun(run({ status: 'running', detail: null }), 'now')).toBe('Running now now');
-  });
-
-  it('drops the detail clause when there is none', () => {
-    expect(describeLastRun(run({ detail: null }), '5 minutes ago')).toBe('Ran 5 minutes ago');
-  });
-
-  // The caller formats the time, so this stays clock-free and locale-free. An
-  // empty string is what an unparseable timestamp yields upstream.
-  it('drops the time clause when the caller could not format one', () => {
-    expect(describeLastRun(run(), '')).toBe('Ran. HTTP 204');
   });
 });

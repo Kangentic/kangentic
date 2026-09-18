@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layers, Sliders, Bot, MessageSquare, Plus,
-  RotateCcw, Palette, ChevronRight, X,
+  RotateCcw, Palette, ChevronRight, Trash2, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
@@ -19,7 +19,6 @@ import {
   appendRow,
   copyAutomation,
   describeAutomationChanges,
-  describeLastRun,
   dirtyColumnIds,
   draftsByColumn,
   findEmptyName,
@@ -39,7 +38,6 @@ import {
   type AutomationDraftsByColumn,
 } from './board-manager/automation-drafts';
 import type { AutomationTrigger, AutomationType } from '../../../shared/types';
-import { formatRelativeTime } from '../../lib/datetime';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
@@ -610,8 +608,8 @@ function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => 
 }
 
 /**
- * Pinned identity header for the detail pane: large tinted column icon, name,
- * role badge, board position, and the Delete control (named to its target).
+ * Pinned identity header for the detail pane: tinted column icon, name, role
+ * badge, board position, and the active profile.
  */
 function DetailIdentityHeader({ draft, position, total, profileName }: {
   draft: Swimlane;
@@ -627,8 +625,8 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
 }) {
   const iconName = getSwimlaneIconName(draft);
   // Identity only: small tinted icon + name + role badge + position + the
-  // active profile. Delete moved to the rail's COLUMNS group, where it sits
-  // with the other structure actions (add, reorder) instead of alone here.
+  // active profile. Removal is the dialog footer's leading control, so the
+  // header carries no action and stays a plain statement of what is open.
   return (
     <div className="flex items-center gap-2.5 px-7 py-2.5 border-b border-edge/60 flex-shrink-0">
       {iconName ? (
@@ -653,6 +651,31 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
         </Pill>
       )}
       <div className="flex-1" />
+    </div>
+  );
+}
+
+/**
+ * The one line in the Remove column confirmation: the column drawn the way its
+ * rail row and the identity header draw it (tinted icon, name, position), so
+ * what is about to be removed needs no cross-referencing.
+ */
+function RemoveColumnTarget({ column, position, total }: {
+  column: Swimlane;
+  position: number;
+  total: number;
+}) {
+  const iconName = getSwimlaneIconName(column);
+  const name = column.name.trim() || 'Untitled';
+  return (
+    <div className="flex items-center gap-2.5 rounded bg-surface px-3 py-2 text-sm font-medium text-fg">
+      {iconName ? (
+        <RegistryIcon name={iconName} size={16} strokeWidth={1.75} style={{ color: column.color }} className="flex-shrink-0" />
+      ) : (
+        <span className="block w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: column.color }} />
+      )}
+      <span className="min-w-0 truncate" title={name} data-testid="board-manager-remove-target">{name}</span>
+      <Pill size="sm" className="ml-auto bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
     </div>
   );
 }
@@ -962,32 +985,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     if (!automationsTouched) setAutomationDrafts(next);
   }
   const loadAutomations = useBoardStore((s) => s.loadAutomations);
-  const automationRuns = useBoardStore((s) => s.automationRuns);
-  const loadAutomationRuns = useBoardStore((s) => s.loadAutomationRuns);
   const replaceAutomationsForColumn = useBoardStore((s) => s.replaceAutomationsForColumn);
 
+  // The list only. Run history is not fetched here: the row used to print its
+  // last run under the description, which made rows in one list differ in
+  // height by history, and a failure already reaches the user as the toast
+  // with Run again.
   useEffect(() => {
     void loadAutomations();
-    // The run history is fetched HERE, on the dialog's mount, because this
-    // dialog is its only consumer. It was previously registered for the HMR
-    // re-sync and never called on a cold boot, so `automationRuns` sat empty
-    // for the whole session and every last-run line was blank.
-    void loadAutomationRuns();
-  }, [loadAutomations, loadAutomationRuns]);
-
-  /**
-   * The last-run line for one row, or null when it has never run.
-   *
-   * Keyed on the SAVED id, so an unsaved `new:` row correctly has no history:
-   * it has never existed as far as the runner is concerned.
-   */
-  const lastRunLabel = useCallback(
-    (draftId: string): string | null => {
-      const run = automationRuns[draftId];
-      return describeLastRun(run, run ? formatRelativeTime(run.finished_at ?? run.started_at) : '');
-    },
-    [automationRuns],
-  );
+  }, [loadAutomations]);
 
   const rowsForColumn = useCallback(
     (columnId: string): AutomationDraft[] => automationDrafts[columnId] ?? [],
@@ -1568,28 +1574,42 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   }, [laneOrder]);
 
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true });
-  // Suppress column cycling while a nested modal (delete confirm, icon picker, or
-  // the discard-changes confirm) is open, mirroring the Escape guard below.
-  // Otherwise a cycle changes activeId behind the modal, and since the delete
-  // confirm names drafts[confirmDeleteId] while handleDeletePersisted deletes
-  // activeId, the confirmation can name one column and delete another.
-  const columnCycleEnabled = !confirmDeleteId && !showIconPicker && !showCancelConfirm;
+  // Every modal this dialog layers over itself. Each is a BaseDialog with its
+  // own bubble-phase Escape listener on `document`, and this dialog's Escape
+  // listener below is on `document` too, so one Escape aimed at the modal on
+  // top would ALSO reach this one and cancel the whole Column Manager. The
+  // Add automation picker is absent deliberately: it stops Escape at the
+  // capture phase itself, so nothing here ever sees that press.
+  //
+  // The same set gates column cycling: a cycle behind a modal changes activeId
+  // under it, and since the remove confirm names drafts[confirmDeleteId] while
+  // handleDeletePersisted deletes activeId, the confirmation could name one
+  // column and delete another.
+  //
+  // The remove confirm's term matches its render gate exactly: the store sync
+  // above drops a draft whose lane vanished from the store, and the confirm
+  // stops rendering with it, so counting `confirmDeleteId` alone would leave
+  // Escape and cycling suppressed with no modal on screen.
+  const removeConfirmOpen = confirmDeleteId !== null && drafts[confirmDeleteId] !== undefined;
+  const nestedModalOpen = showCancelConfirm || removeConfirmOpen || showIconPicker
+    || profileNameDialog !== null || editing !== null;
+  const columnCycleEnabled = !nestedModalOpen;
   useKeybinding('boardManager.nextColumn', () => cycleColumn(1), { target: 'document', stopPropagation: false, enabled: columnCycleEnabled });
   useKeybinding('boardManager.prevColumn', () => cycleColumn(-1), { target: 'document', stopPropagation: false, enabled: columnCycleEnabled });
 
   // Escape-to-cancel stays a hand-written listener: it is a structural dialog
-  // key with conditional dismissal (suppressed while a nested confirm or picker
-  // is open) and is not rebindable. See .claude/rules/keybindings-registry.md.
+  // key with conditional dismissal (suppressed while a nested modal is open)
+  // and is not rebindable. See .claude/rules/keybindings-registry.md.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !showCancelConfirm && !confirmDeleteId && !showIconPicker) {
+      if (event.key === 'Escape' && !nestedModalOpen) {
         event.preventDefault();
         requestCancel();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [requestCancel, showCancelConfirm, confirmDeleteId, showIconPicker]);
+  }, [requestCancel, nestedModalOpen]);
 
   const removeDraftLocally = useCallback((id: string) => {
     setDrafts((previous) => {
@@ -1606,9 +1626,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     setLaneOrder((previous) => previous.filter((entry) => entry !== id));
     setActiveId((previous) => {
       if (previous !== id) return previous;
+      // Land on the neighbour: the column that takes the removed one's place,
+      // or the one before it when the last column goes. Selection used to fall
+      // to the first remaining column, which is To Do, so removing the fifth
+      // of seven columns jumped the user to the top of the rail. Falls back to
+      // the overview so an emptied selection degrades gracefully.
+      const removedIndex = laneOrder.indexOf(id);
       const remaining = laneOrder.filter((entry) => entry !== id);
-      // Fall back to the overview so an emptied selection degrades gracefully.
-      return remaining[0] ?? ALL_COLUMNS_ID;
+      const neighbourIndex = Math.min(Math.max(removedIndex, 0), remaining.length - 1);
+      return remaining[neighbourIndex] ?? ALL_COLUMNS_ID;
     });
   }, [laneOrder]);
 
@@ -1617,32 +1643,56 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     removeDraftLocally(activeId);
   }, [isNewDraft, activeId, removeDraftLocally]);
 
+  // A column that still has tasks cannot be removed. Answered from the store's
+  // task list so the refusal is immediate; the repository re-checks at save
+  // time, so this is feedback, not the authority. Returns the refusal toast's
+  // text, or null when the removal can go ahead.
+  const removalRefusal = useCallback((id: string): string | null => {
+    const name = drafts[id]?.name.trim() || 'Untitled';
+    const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
+    if (taskCount === 0) return null;
+    return `Cannot remove "${name}". Move or delete all ${taskCount} task${taskCount > 1 ? 's' : ''} first.`;
+  }, [drafts, tasks]);
+
+  // The footer's Remove column. An unsaved draft is simply discarded: it has
+  // never existed. A persisted column is checked for tasks BEFORE the confirm
+  // opens, so a column that cannot be removed refuses on the click rather than
+  // making the user confirm first and refusing after.
+  const requestRemoveColumn = useCallback(() => {
+    if (isNewDraft) {
+      handleDiscardNewDraft();
+      return;
+    }
+    const refusal = removalRefusal(activeId);
+    if (refusal) {
+      useToastStore.getState().addToast({ message: refusal, variant: 'error' });
+      return;
+    }
+    setConfirmDeleteId(activeId);
+  }, [isNewDraft, handleDiscardNewDraft, removalRefusal, activeId]);
+
   // Stages the removal; the IPC runs in handleSave alongside the creates and
-  // updates. The task-count guard stays here so the refusal is immediate rather
-  // than surfacing minutes later at save time; the repository re-checks it, so
-  // this is feedback, not the authority. `originals[id]` is deliberately left in
+  // updates. The task check runs again here because the store's task list can
+  // change while the confirm is open. `originals[id]` is deliberately left in
   // place - the save path reads the name from it, and Cancel restores the column
   // by simply dropping the staged id.
   const handleDeletePersisted = useCallback(() => {
     setConfirmDeleteId(null);
     const id = activeId;
     if (!id || newDraftIds.has(id)) return;
-    const name = drafts[id]?.name ?? 'column';
-    const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
-    if (taskCount > 0) {
-      useToastStore.getState().addToast({
-        message: `Cannot delete "${name}". Move or delete all ${taskCount} task${taskCount > 1 ? 's' : ''} first.`,
-        variant: 'error',
-      });
+    const refusal = removalRefusal(id);
+    if (refusal) {
+      useToastStore.getState().addToast({ message: refusal, variant: 'error' });
       return;
     }
+    const name = drafts[id]?.name.trim() || 'Untitled';
     removeDraftLocally(id);
     setPendingDeleteIds((previous) => new Set(previous).add(id));
     useToastStore.getState().addToast({
       message: `"${name}" will be removed when you save.`,
       variant: 'info',
     });
-  }, [activeId, newDraftIds, tasks, drafts, removeDraftLocally]);
+  }, [activeId, newDraftIds, drafts, removalRefusal, removeDraftLocally]);
 
   // ── Rendering ─────────────────────────────────────────────────────
   if (!isOverview && !draft) {
@@ -1670,23 +1720,33 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // Height is sized to the TALLEST column page so nothing scrolls by default,
   // and so the space above the first card matches the space below the last.
   //
-  // Measured on a non-role column, which is the worst case (To Do and Done
-  // replace Agent and Conversation with one-line notices): 802px of settings
-  // content, plus the body's own 28px top and bottom, needs an 858px scroll
-  // area; everything outside it - the title bar, the identity header, the
-  // footer - is 147px. Hence 1005, and 1010 for a few pixels of headroom
-  // against a theme with taller type. Leftover slack lands BELOW the cards, so
-  // any excess shows up as a bottom gap wider than the top one: at 1000px that
-  // was 19px of slack reading as 28 above against 47 below.
+  // The tallest page is a PLAN-permission column with Start an agent on: its
+  // Agent card carries the After Plan Mode row, which is the one the previous
+  // measurement (a non-role column, 802px) did not include, so the dialog
+  // pinned at 2000 x 1010 on a display with room and still scrolled. Measured
+  // on Planning at the 2000px width, where the px cap is the only one that can
+  // bind: General 260 + Agent 348 + Conversation 236, plus the two 24px gaps,
+  // is 892px of settings content, which with the body's own 28px top and bottom
+  // needs a 948px scroll area; everything outside it - the title bar, the
+  // identity header, the footer - is 147px. Hence 1095, and 1120 for headroom:
+  // a theme with taller type, or a font whose metrics wrap the Session
+  // description one line further (16px at text-xs; Linux CI's fonts are wider
+  // than Segoe UI at the same width). Leftover slack lands BELOW the cards, so
+  // any excess shows up as a bottom gap wider than the top one.
   //
-  // Re-measure this when a settings card gains a field. `88vh` still wins on a
-  // short display, where a modal taller than the viewport is the wrong answer
-  // whatever the content wants.
+  // Re-measure this when a settings card gains a field, and measure a
+  // plan-permission column, not the first one to hand. The Session description
+  // wraps by width, but the px cap only binds at viewports over 1272px tall,
+  // and every such viewport is wide enough for the 2000px cap, so the width it
+  // was measured at is the width it runs at. `88vh` still wins on a short
+  // display, where a modal taller than the viewport is the wrong answer
+  // whatever the content wants. `tests/ui/board-manager-dialog.spec.ts` pins
+  // both halves: no overflow on a tall display, overflow on a short one.
   //
   // FIXED rather than `h-auto` + `max-h`, which is the original decision and
   // still holds: a height that tracks content makes the modal resize and
   // re-centre every time the rail moves between columns of different length.
-  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1010px,88vh)]';
+  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1120px,88vh)]';
   const { dialogClassName, backdropPositionClass, backdropClassName, contentRadiusClass } =
     maximizedDialogLayout(isMaximized, windowedClass);
 
@@ -1749,12 +1809,35 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         //
         // Save disables rather than relabels while saving, like every other
         // dialog footer: a control must not change shape when pressed.
+        //
+        // Remove column leads the footer, where the task window keeps its
+        // Delete. It was a trash glyph on the selected rail row, too small to
+        // read as a button; and the end of the settings column, the other
+        // candidate, is out of sight for anyone whose display makes the form
+        // scroll. The footer is on screen whatever the form does. Gated the
+        // way the rail's structure actions are: never for To Do / Done, never
+        // under a profile (structure is singular across profiles), and never
+        // on the All columns page, which has no column to remove. `py-1.5`
+        // matches Cancel and Save so the footer keeps its height.
         <DialogFooterActions
           onCancel={requestCancel}
           onConfirm={() => void handleSave()}
           confirmLabel="Save"
           confirmDisabled={saving || !hasDirty}
           confirmTestId="board-manager-save"
+          leading={!isOverview && draft && !isTodoOrDone && !activeProfileId ? (
+            <button
+              type="button"
+              onClick={requestRemoveColumn}
+              data-testid="board-manager-delete"
+              aria-label={`Remove column "${draft.name.trim() || 'Untitled'}"`}
+              title={`Remove column "${draft.name.trim() || 'Untitled'}"`}
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60 transition-colors"
+            >
+              <Trash2 size={14} />
+              Remove column
+            </button>
+          ) : undefined}
         />
       }
     >
@@ -1767,7 +1850,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           onReorder={handleRailReorder}
           onAddColumn={addNewDraft}
           structureLocked={activeProfileId !== null}
-          onDeleteColumn={isNewDraft ? handleDiscardNewDraft : () => setConfirmDeleteId(activeId)}
           profileBar={(
             <ProfileBar
               profiles={profileDrafts}
@@ -2259,7 +2341,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 column={draft}
                 drafts={rowsForColumn(draft.id)}
                 readOnly={activeProfileId !== null}
-                lastRunLabel={lastRunLabel}
                 isDirty={(row) => {
                   const before = (automationOriginals[draft.id] ?? []).find((candidate) => candidate.id === row.id);
                   return !before || isColumnDirty([before], [row]);
@@ -2389,16 +2470,26 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         />
       )}
 
-      {confirmDeleteId && (
+      {confirmDeleteId && drafts[confirmDeleteId] && (
         <ConfirmDialog
-          title={`Delete "${drafts[confirmDeleteId]?.name?.trim() || 'column'}"`}
-          message={<>
-            <p>Are you sure you want to delete this column?</p>
-            <p className="text-fg-secondary bg-surface rounded px-3 py-2 truncate" title={drafts[confirmDeleteId]?.name}>
-              {drafts[confirmDeleteId]?.name}
-            </p>
-          </>}
-          confirmLabel="Delete"
+          title="Remove column"
+          // The body is the column and nothing else. The footer button that
+          // opened this says "Remove column" with no name, so this is where the
+          // target is spelled out, and it is drawn the way its rail row is so
+          // there is nothing to cross-reference. No lead-in, no "are you sure",
+          // no consequences: the automations leaving with the column is a
+          // kangentic.json change that gets committed and reviewed, and the
+          // toast right after says the removal waits for Save. Read from
+          // `confirmDeleteId`, never `activeId`, so the modal always names what
+          // it deletes (the same concern that gates `columnCycleEnabled`).
+          message={(
+            <RemoveColumnTarget
+              column={drafts[confirmDeleteId]}
+              position={laneOrder.indexOf(confirmDeleteId) + 1}
+              total={laneOrder.length}
+            />
+          )}
+          confirmLabel="Remove"
           variant="danger"
           onConfirm={handleDeletePersisted}
           onCancel={() => setConfirmDeleteId(null)}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, GripVertical, LayoutGrid, Bot, Split, Trash2, Zap } from 'lucide-react';
+import { Plus, GripVertical, LayoutGrid, Bot, Split, Zap } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -39,11 +39,12 @@ export interface RailRow {
   isolated: boolean;
   /**
    * How many of the column's automations would actually RUN, enter and exit
-   * together. Hidden at zero, which is why a column whose only row is switched
-   * off or blocked shows nothing rather than a dimmed count.
+   * together. The rail shows only PRESENCE (a glyph at one or more, nothing at
+   * zero), so a column whose only row is switched off or blocked shows nothing
+   * rather than a dimmed glyph; the number itself only reaches the tooltip.
    *
-   * The same number the board header glyph and the All columns cells report,
-   * deliberately: a column cannot read 5 here and 3 there.
+   * The same predicate the board header glyph and the All columns cells use,
+   * deliberately: a column cannot show a glyph here and count zero there.
    */
   automationCount: number;
 }
@@ -70,23 +71,13 @@ interface ColumnRailProps {
    * not just the ones on this profile.
    */
   structureLocked?: boolean;
-  /** Delete the selected column. Surfaced as a trash control on the selected row. */
-  onDeleteColumn?: () => void;
 }
 
-function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, onDelete }: {
+function ColumnRailRow({ row, active, sortable, onSelect }: {
   row: RailRow;
   active: boolean;
   sortable: boolean;
   onSelect: (id: string) => void;
-  /**
-   * Show the delete control on this row. Gated on the row being SELECTED rather
-   * than hovered: a hover-only control gets overlooked and excludes keyboard and
-   * touch users, while a trash on all seven rows is noise. Selection means
-   * exactly one is ever on screen, and it is the column you are already editing.
-   */
-  showDelete?: boolean;
-  onDelete?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: row.id,
@@ -102,7 +93,11 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
   // Single-line row of uniform height: variable-height rows break @dnd-kit's
   // verticalListSortingStrategy (drag displacement looks amplified/jumpy). At-a-
   // glance config lives in the "All columns" overview; the rail keeps only tiny
-  // icon hints for the genuinely distinguishing overrides (agent, isolated).
+  // icon hints for the genuinely distinguishing overrides (agent, isolated,
+  // automations). Glyphs only, no digits: the automation count used to print
+  // beside its glyph at 11px and read as noise, and the overview carries the
+  // numbers. Removal is not here either: it is the dialog footer's leading
+  // control, since a trash on the selected row was too small to read as one.
   return (
     <div ref={setNodeRef} style={style} className="flex items-stretch gap-0.5 relative">
       {sortable ? (
@@ -131,8 +126,6 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
         data-tab-id={row.id}
         onClick={() => onSelect(row.id)}
         className={`flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded text-left transition-colors ${
-          showDelete ? 'pr-8' : ''
-        } ${
           active
             ? 'bg-surface-hover text-fg'
             : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
@@ -144,24 +137,25 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
           <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
         )}
         <span className="flex-1 min-w-0 truncate text-sm">{row.name || 'Untitled'}</span>
+        {/* `text-fg-muted`, one step up from the faint the hints used to share:
+            at 12px on the row's own fill, faint was reported as hard to see. */}
         {row.agentOverrideLabel && (
-          <span title={`Agent: ${row.agentOverrideLabel}`} className="flex-shrink-0 text-fg-faint">
+          <span title={`Agent: ${row.agentOverrideLabel}`} className="flex-shrink-0 text-fg-muted">
             <Bot size={12} strokeWidth={2} />
           </span>
         )}
         {row.isolated && (
-          <span title="Isolated session" className="flex-shrink-0 text-fg-faint">
+          <span title="Isolated session" className="flex-shrink-0 text-fg-muted">
             <Split size={12} strokeWidth={2} />
           </span>
         )}
         {row.automationCount > 0 && (
           <span
-            data-testid="board-manager-tab-automation-count"
-            title={`${row.automationCount} automation${row.automationCount === 1 ? '' : 's'} run here`}
-            className="flex flex-shrink-0 items-center gap-0.5 text-[11px] tabular-nums text-fg-faint"
+            data-testid="board-manager-tab-automation"
+            title={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}
+            className="flex-shrink-0 text-fg-muted"
           >
-            <Zap size={11} strokeWidth={2} />
-            {row.automationCount}
+            <Zap size={12} strokeWidth={2} />
           </span>
         )}
         {row.dirty && (
@@ -172,22 +166,6 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
           />
         )}
       </button>
-      {/* Sibling of the row button, not a child: a button inside a button is
-          invalid HTML and breaks click handling. Absolutely positioned so it
-          still reads as sitting inside the row's highlighted area. */}
-      {showDelete && (
-        <button
-          type="button"
-          onClick={onDelete}
-          data-testid="board-manager-delete"
-          aria-label={`Delete "${row.name || 'column'}"`}
-          title={`Delete "${row.name || 'column'}"`}
-          className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded text-fg-faint
-            hover:text-red-400 hover:bg-red-500/10 transition-colors"
-        >
-          <Trash2 size={13} strokeWidth={1.75} />
-        </button>
-      )}
     </div>
   );
 }
@@ -204,7 +182,7 @@ function ColumnRailRow({ row, active, sortable, onSelect, showDelete = false, on
  */
 export function ColumnRail({
   rows, activeId, onSelect, onSelectOverview, onReorder, onAddColumn, profileBar,
-  structureLocked = false, onDeleteColumn,
+  structureLocked = false,
 }: ColumnRailProps) {
   // Re-key DndContext on HMR; see src/renderer/utils/hmr-generation.ts (Pattern C).
   const hmrGeneration = useHmrGeneration();
@@ -287,7 +265,7 @@ export function ColumnRail({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-        {/* To Do is role-pinned: it can never be deleted, so no delete control. */}
+        {/* To Do is role-pinned: no drag handle, and it is outside the sortable set. */}
         {todoRow && (
           <ColumnRailRow row={todoRow} active={todoRow.id === activeId} sortable={false} onSelect={onSelect} />
         )}
@@ -306,8 +284,6 @@ export function ColumnRail({
                   active={row.id === activeId}
                   sortable={!structureLocked}
                   onSelect={onSelect}
-                  showDelete={row.id === activeId && !structureLocked && row.role !== 'done'}
-                  onDelete={onDeleteColumn}
                 />
               ))}
             </div>

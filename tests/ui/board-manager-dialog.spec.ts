@@ -189,6 +189,80 @@ test.describe('BoardManagerDialog', () => {
     await expect(page.locator('[data-testid="board-manager-delete"]')).toBeHidden();
   });
 
+  // The task guard used to run AFTER the confirm: a column with tasks made the
+  // user confirm and then refused. It now runs on the click, so the confirm
+  // never opens for a column that cannot be removed.
+  test('Remove column on a column with tasks refuses on the click, without a confirm', async () => {
+    const taskId = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((candidate) => candidate.name === 'Merge');
+      if (!lane) throw new Error('Merge lane not found');
+      // Named so `openManagerByHeader`'s `text=Merge` header locator does not
+      // also match the card.
+      const created = await window.electronAPI.tasks.create({
+        title: 'Column occupant',
+        description: '',
+        swimlane_id: lane.id,
+        agent: 'claude',
+        labels: [],
+        priority: 0,
+      });
+      const stores = (window as unknown as {
+        __zustandStores?: { board: { getState: () => { loadBoard: () => Promise<void> } } };
+      }).__zustandStores;
+      await stores?.board.getState().loadBoard();
+      return created.id;
+    });
+
+    try {
+      await openManagerByHeader('Merge');
+      await page.locator('[data-testid="board-manager-delete"]').click();
+
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'Cannot remove "Merge"' });
+      await expect(toast).toBeVisible({ timeout: 3000 });
+      await expect(toast).toContainText('Move or delete all 1 task first.');
+      await expect(page.locator('h3', { hasText: 'Remove column' })).toHaveCount(0);
+      // Nothing was staged: Save stays disabled and the column stays in the rail.
+      await expect(page.locator('[data-testid="board-manager-save"]')).toBeDisabled();
+      await expect(page.locator('[data-testid="board-manager-tab"][data-tab-name="Merge"]')).toBeVisible();
+    } finally {
+      await page.evaluate(async (id) => {
+        await window.electronAPI.tasks.delete(id);
+      }, taskId);
+    }
+  });
+
+  // The windowed height is sized to the TALLEST column page, so on a display
+  // with room nothing scrolls by default; the 88vh cap keeps the scroll on a
+  // display that cannot fit it. Planning is the tallest page: its plan
+  // permission adds the After Plan Mode row. Both halves are asserted, so a
+  // cap that merely grew past every viewport would still fail the second.
+  test('the settings column does not scroll at the default size on a tall display, and does on a short one', async () => {
+    const viewport = page.viewportSize();
+    const overflowOfSettingsColumn = () => page.evaluate(() => {
+      const general = document.querySelector('[data-testid="board-manager-section-general"]');
+      let node = general?.parentElement ?? null;
+      while (node && getComputedStyle(node).overflowY !== 'auto') node = node.parentElement;
+      if (!node) throw new Error('No scroller above the General card');
+      return node.scrollHeight - node.clientHeight;
+    });
+
+    try {
+      await page.setViewportSize({ width: 2200, height: 1400 });
+      await openManagerByHeader('Planning');
+      await expect(page.locator('[data-testid="plan-exit-target"]')).toBeVisible();
+      expect(await overflowOfSettingsColumn()).toBe(0);
+      await closeManager();
+
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await openManagerByHeader('Planning');
+      await expect(page.locator('[data-testid="plan-exit-target"]')).toBeVisible();
+      expect(await overflowOfSettingsColumn()).toBeGreaterThan(0);
+    } finally {
+      if (viewport) await page.setViewportSize(viewport);
+    }
+  });
+
   test('Cancel and dirty-enabled Save render pointer cursor; disabled Save does not', async () => {
     // Regression guard for the Tailwind v4 Preflight fix (src/renderer/index.css
     // @layer base). Complements tests/unit/button-cursor-base-rule.test.ts (which
@@ -268,7 +342,7 @@ test.describe('BoardManagerDialog', () => {
 
   async function confirmDeleteActiveColumn() {
     await page.locator('[data-testid="board-manager-delete"]').click();
-    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove', exact: true }).click();
   }
 
   async function columnExists(name: string): Promise<boolean> {
@@ -285,7 +359,7 @@ test.describe('BoardManagerDialog', () => {
   // it here rather than at the end of each test body means it runs whether the
   // body finished or not. Scoped to these three fixture names, and to the two
   // profiles the third spec creates, so it cannot disturb the other specs.
-  const STAGED_REMOVAL_FIXTURES = ['Retire Me', 'Keep Me', 'Profiled Column'];
+  const STAGED_REMOVAL_FIXTURES = ['Retire Me', 'Keep Me', 'Profiled Column', 'Last Sortable'];
   const STAGED_REMOVAL_PROFILES = ['Heavy', 'Extra'];
 
   test.afterEach(async () => {
@@ -320,6 +394,16 @@ test.describe('BoardManagerDialog', () => {
     await expect(saveBtn).toBeEnabled();
     // ...and the row leaves the rail immediately, so the pending state is visible.
     await expect(page.locator('[data-testid="board-manager-tab"][data-tab-name="Retire Me"]')).toHaveCount(0);
+    // The confirm says nothing about Save, so this toast is what tells the user
+    // the removal is staged. Asserted before the DB check, since the toast
+    // lives only a few seconds.
+    await expect(page.locator('[data-testid="toast"]', { hasText: '"Retire Me" will be removed when you save.' }))
+      .toBeVisible({ timeout: 3000 });
+    // Selection lands on the neighbour that took the removed column's place
+    // (Add column inserts just before Done, so that is Done), not on the first
+    // column in the rail.
+    await expect(page.locator('[data-testid="board-manager-tab"][aria-selected="true"]'))
+      .toHaveAttribute('data-tab-name', 'Done');
     // The load-bearing assertion: nothing is persisted yet. Before staging, the
     // column was already gone from the DB at this point.
     expect(await columnExists('Retire Me')).toBe(true);
@@ -328,6 +412,63 @@ test.describe('BoardManagerDialog', () => {
     await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 3000 });
 
     await expect.poll(() => columnExists('Retire Me'), { timeout: 3000 }).toBe(false);
+  });
+
+  // The test above removes a column with something AFTER it in `laneOrder`
+  // (Done), so the neighbour it lands on is the column that slides into the
+  // removed one's slot. `removeDraftLocally` clamps the other way too, for
+  // the column that IS the last slot: the neighbour there is the one BEFORE
+  // it, not `remaining[0]`. Only To Do is pinned outside the rail's sortable
+  // set, so Done can be dragged above another column to reach that slot -
+  // done here through the store's own `reorderSwimlanes` action (the same
+  // one a real drag ends in) rather than a raw IPC call, so the store and the
+  // persisted order move together and the dialog's mount-time snapshot sees it.
+  test('removing the last sortable column selects the new last column, not the first', async () => {
+    await addColumnAndSave('Last Sortable');
+
+    await page.evaluate(async () => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          board: {
+            getState: () => {
+              swimlanes: { id: string; position: number }[];
+              reorderSwimlanes: (ids: string[]) => Promise<void>;
+            };
+          };
+        };
+      }).__zustandStores;
+      const state = stores?.board.getState();
+      if (!state) throw new Error('No board store');
+      const sortedIds = [...state.swimlanes]
+        .sort((left, right) => left.position - right.position)
+        .map((lane) => lane.id);
+      const lastIndex = sortedIds.length - 1;
+      // Swap the last two: "Last Sortable" (just inserted right before Done)
+      // and Done itself, so "Last Sortable" becomes the true last entry.
+      [sortedIds[lastIndex - 1], sortedIds[lastIndex]] = [sortedIds[lastIndex], sortedIds[lastIndex - 1]];
+      await state.reorderSwimlanes(sortedIds);
+    });
+
+    await openManagerByHeader('Last Sortable');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    const railNamesBefore = await dialog.locator('[data-testid="board-manager-tab"]').evaluateAll(
+      (tabs) => tabs.map((tab) => tab.getAttribute('data-tab-name')),
+    );
+    expect(railNamesBefore[railNamesBefore.length - 1]).toBe('Last Sortable');
+    const expectedNeighbour = railNamesBefore[railNamesBefore.length - 2];
+
+    await confirmDeleteActiveColumn();
+
+    // Lands on the column that is now last, not on the first remaining tab
+    // (the pre-fix `remaining[0]` behavior would have selected "To Do").
+    const selectedTab = dialog.locator('[data-testid="board-manager-tab"][aria-selected="true"]');
+    await expect(selectedTab).toHaveAttribute('data-tab-name', expectedNeighbour);
+    await expect(selectedTab).not.toHaveAttribute('data-tab-name', 'To Do');
+
+    await dialog.locator('[data-testid="board-manager-save"]').click();
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+    await expect.poll(() => columnExists('Last Sortable'), { timeout: 3000 }).toBe(false);
   });
 
   test('discarding after removing a column keeps the column', async () => {

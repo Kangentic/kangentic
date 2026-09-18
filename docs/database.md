@@ -380,7 +380,7 @@ Two indices, one per question the log is asked:
 | Index | Columns | Serves |
 |-------|---------|--------|
 | `idx_automation_runs_task` | (task_id, started_at DESC) | A task's own run history, newest first (`automation:runsForTask`) |
-| `idx_automation_runs_automation` | (automation_id, started_at DESC) | The newest run per automation, for the Column Manager row's last-run line (`automation:latestRuns`) |
+| `idx_automation_runs_automation` | (automation_id, started_at DESC) | Runs by automation, newest first, for the MCP run history tool's per-automation listing (`listForAutomation`) |
 
 **Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
 `markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
@@ -967,9 +967,9 @@ Operates on a per-project DB.
 | `start(run)` | Write the `running` row before the attempt |
 | `finish(id, status, detail, attempts)` | Close it on every exit path |
 | `recordSkipped(run, reason)` | Write a row that opens and closes at once. A skip never ran, so it has no window to be interrupted in. |
+| `recordDeliveredByCaller(run, detail)` | Write a `succeeded` row for a message the move delivered itself, in the same keystroke burst as its `/model` or `/effort` change, so the run log shows it like every other run. |
 | `listForTask(taskId, limit)` | Everything that ran for one card, newest first |
-| `listForAutomation(automationId, limit)` | Every run of one automation, newest first |
-| `latestByAutomation()` | Newest run per automation, which is what the Column Manager's last-run line reads. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
+| `listForAutomation(automationId, limit)` | Every run of one automation, newest first. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
 | `pruneTo(limit)` | Keep the newest N rows. Nothing else bounds the table. |
 
