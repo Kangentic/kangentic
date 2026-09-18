@@ -84,8 +84,11 @@ diagnostics (`/logs`, `/crashes`, `/process-metrics`, `/ipc-log`),
 expose live engine + renderer state (`/engine-state`, `/renderer-state`,
 `/store-state`), serve screenshots + DOM (`/screenshot`, `/dom`,
 `/query-all`, `/bounding-box`, `/bounding-box-all`, etc.), and accept
-interaction commands (`/click`, `/type`, `/keypress`, `/drag`, `/wait`,
-`/script`, `/eval`). `POST /quit` runs Electron's real quit path; it is what
+interaction commands (`/click`, `/type`, `/keypress`, `/drag`, `/drop-files`,
+`/wait`, `/script`, `/eval`). `/drop-files` is the one OS-level input: it
+dispatches a real file drop (`Input.dispatchDragEvent` with `files`) so the
+page's `dataTransfer.files` carry path-backed `File` objects, which is what a
+file-drop feature needs and no in-page `new File()` can fake. `POST /quit` runs Electron's real quit path; it is what
 `scripts/dev.js` calls when a stop file asks it to shut a preview down, so a
 `worktree-preview.js --stop` no longer force-kills the app past its
 synchronous cleanup.
@@ -96,7 +99,8 @@ Calls `webContents.debugger.attach('1.3')` on the main window and
 exposes typed wrappers around the DevTools-Protocol calls used by the
 HTTP bridge: `Page.captureScreenshot`, `DOM.querySelector` /
 `getOuterHTML` / `getBoxModel`, `Input.dispatchMouseEvent` /
-`dispatchKeyEvent`, `Runtime.evaluate`, `Console.messageAdded`.
+`dispatchKeyEvent` / `dispatchDragEvent`, `Runtime.evaluate`,
+`Console.messageAdded`.
 
 ### Renderer mirror (`renderer/state-mirror.ts`, `renderer/store-state.ts`)
 

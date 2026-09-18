@@ -734,18 +734,33 @@ export interface AgentAdapter {
   readonly reportsRateLimits?: boolean;
 
   /**
-   * Set by adapters whose CLI does not reliably auto-attach an image from a
-   * bare file path (i.e. most CLIs - a typed/pasted path is read as plain
-   * text, never auto-recognized as an image attachment). Kangentic saves a
-   * pasted-clipboard or dropped image to a temp PNG (this capture is reliable
-   * even where the CLI's own native clipboard reader silently fails, e.g.
-   * Claude Code on Windows with Snipping Tool images) and injects this
-   * template instead of the bare path, so the agent reliably reads the file
-   * as an image rather than treating the path as inert text.
+   * Image file extensions (lowercase, no dot) the CLI attaches natively when
+   * their path arrives as a bracketed paste. Kangentic saves a pasted-clipboard
+   * or dropped image to a file (this capture is reliable even where the CLI's
+   * own clipboard reader silently fails, e.g. Claude Code on Windows with
+   * Snipping Tool images) and delivers the shell-quoted path through xterm's
+   * `terminal.paste()`, the way a native terminal delivers a drop. A CLI that
+   * scans a paste for image paths (Claude Code: `[Image #N]`) then attaches the
+   * file inline in the user turn, with no `Read` tool call and no extra model
+   * round trip. An extension outside this set falls back to
+   * `pastedImageReferenceTemplate`. Omit when the CLI attaches nothing from a
+   * pasted path.
+   *
+   * A plain string array on purpose: this value crosses IPC in
+   * `AgentDetectionInfo`, and structured clone turns a RegExp into `{}`.
+   */
+  readonly pastedImageNativeExtensions?: readonly string[];
+
+  /**
+   * Fallback text for an image the CLI cannot attach from a bare path: an
+   * extension outside `pastedImageNativeExtensions`, or every image when that
+   * set is not declared (a typed path is plain text to most CLIs). The text is
+   * still delivered through `terminal.paste()`, so the agent reads an explicit
+   * instruction instead of an inert path.
    *
    * `{path}` is replaced with the shell-quoted absolute path to the saved
-   * PNG. A template without `{path}` has the quoted path appended after a
-   * space. Omit (falsy) to inject the bare quoted path (legacy behavior).
+   * file. A template without `{path}` has the quoted path appended after a
+   * space. Omit (falsy) to paste the bare quoted path.
    */
   readonly pastedImageReferenceTemplate?: string;
 

@@ -10,6 +10,7 @@ import {
   dispatchKeypress,
   dispatchMouseEvent,
   dragFromTo,
+  dropFilesOnSelector,
   getAccessibilityTree,
   getBoundingBox,
   getBoundingBoxByNodeId,
@@ -341,6 +342,10 @@ async function handlePostRequest(
 
   if (route === 'POST /drag') {
     return respondDrag(window, body, response);
+  }
+
+  if (route === 'POST /drop-files') {
+    return respondDropFiles(window, body, response);
   }
 
   if (route === 'POST /wait') {
@@ -1457,6 +1462,46 @@ async function respondDrag(
     return respondError(response, 404, 'selector-not-found', 'Drag source or target selector did not match.');
   }
   respondJson(response, 200, { ok: true });
+}
+
+interface DropFilesBody {
+  selector: string;
+  paths: string[];
+}
+
+async function respondDropFiles(
+  window: BrowserWindow,
+  body: unknown,
+  response: http.ServerResponse,
+): Promise<void> {
+  const params = body as DropFilesBody;
+  if (typeof params.selector !== 'string') {
+    return respondError(response, 400, 'missing-selector', '`selector` is required.');
+  }
+  if (!Array.isArray(params.paths) || params.paths.length === 0
+    || params.paths.some((entry) => typeof entry !== 'string' || entry.length === 0)) {
+    return respondError(response, 400, 'missing-paths', '`paths` must be a non-empty list of file paths.');
+  }
+  // Absolute and existing, checked here rather than left to the page: Chromium
+  // silently drops a `files` entry it cannot stat, and the page would then see
+  // a drop with fewer files than asked for, reported as success. Both halves
+  // are needed: on Windows `path.isAbsolute` accepts a bare `/mnt/c/shot.png`
+  // (a leading separator is drive-relative there), so `existsSync` is what
+  // rejects a WSL-shaped path on a Windows host.
+  const missing = params.paths.filter((entry) => !path.isAbsolute(entry) || !fs.existsSync(entry));
+  if (missing.length > 0) {
+    return respondError(
+      response,
+      400,
+      'path-not-found',
+      `Every path must be absolute and exist on disk. Not found: ${missing.join(', ')}`,
+    );
+  }
+  const ok = await dropFilesOnSelector(window, params.selector, params.paths);
+  if (!ok) {
+    return respondError(response, 404, 'selector-not-found', 'Drop target selector did not match.');
+  }
+  respondJson(response, 200, { ok: true, dropped: params.paths.length });
 }
 
 interface WaitBody {

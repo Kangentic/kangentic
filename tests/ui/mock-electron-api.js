@@ -2704,8 +2704,12 @@
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
-            // KEEP IN SYNC with ClaudeAdapter.pastedImageReferenceTemplate: the text
-            // injected for a pasted/dropped image instead of a bare file path.
+            // KEEP IN SYNC with ClaudeAdapter.pastedImageNativeExtensions: the image
+            // extensions Claude attaches natively from a bracketed-paste path, so the
+            // renderer pastes the bare quoted path for these.
+            pastedImageNativeExtensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            // KEEP IN SYNC with ClaudeAdapter.pastedImageReferenceTemplate: the fallback
+            // text pasted for an image outside the native set (bmp, svg).
             pastedImageReferenceTemplate: 'Read this image: {path} ',
             // Capabilities mirror what discoverClaudeCapabilities() would return
             // for a real Claude install: parsed from `claude --help` plus the
@@ -4158,6 +4162,15 @@
 
     clipboard: {
       readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
+      // Call log for test assertions (each entry is the PNG byte length the drop
+      // path handed over). Reset with window.electronAPI.clipboard.__saveImageCalls.length = 0.
+      // Answers with a fixed path, the way main answers a decodable image; a spec
+      // that needs the "not an image" null overrides this per page.
+      __saveImageCalls: [],
+      saveImage: function (pngBytes) {
+        window.electronAPI.clipboard.__saveImageCalls.push(pngBytes ? pngBytes.byteLength : 0);
+        return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-normalized.png');
+      },
       // Call log for test assertions. Reset with window.electronAPI.clipboard.__writeTextCalls.length = 0.
       __writeTextCalls: [],
       writeText: function (text) {

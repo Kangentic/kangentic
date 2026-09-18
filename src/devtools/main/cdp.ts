@@ -40,6 +40,7 @@ export const dispatchKeypress = viaWindow(driver.dispatchKeypress);
 export const dispatchMouseEvent = viaWindow(driver.dispatchMouseEvent);
 export const clickAtCenterOfSelector = viaWindow(driver.clickAtCenterOfSelector);
 export const dragFromTo = viaWindow(driver.dragFromTo);
+export const dropFilesOnSelector = viaWindow(driver.dropFilesOnSelector);
 
 /**
  * `detachDebugger` keeps the original destroyed-window guard: `before-quit`

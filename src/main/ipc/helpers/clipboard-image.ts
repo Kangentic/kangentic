@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { NativeImage } from 'electron';
 import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../../shared/image-fidelity';
 
 /**
- * Clipboard-image handling for the terminal Ctrl+V paste path.
+ * Pasted-image handling for the terminal: the Ctrl+V clipboard capture and the
+ * renderer-decoded copy of a dropped image the agent cannot take as-is. Both
+ * land in the same temp directory under the same cap and prune.
  *
  * Kept out of `handlers/system.ts` so the sizing and pruning rules can be tested
  * directly rather than through `ipcMain`.
@@ -23,6 +26,39 @@ export const CLIPBOARD_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const CLIPBOARD_TEMP_MAX_FILES = 40;
 
 const CLIPBOARD_TEMP_PREFIX = 'pasted-image-';
+
+/** The one directory every pasted image is written to, so one prune covers
+ *  the clipboard captures and the normalized drop copies alike. Resolved per
+ *  call rather than at module load so a test can redirect `os.tmpdir()`. */
+export function pastedImageTempDir(): string {
+  return path.join(os.tmpdir(), 'kangentic-clipboard');
+}
+
+/**
+ * Write a pasted image to the temp directory as a capped PNG and return its
+ * path, or null when it could not be written.
+ *
+ * Null rather than a throw, deliberately: the disk can be full, a Windows
+ * antivirus scanner can hold a just-created temp file, and on a shared Linux
+ * /tmp the directory can already belong to another user. None of those should
+ * turn a Ctrl+V or a drop into an unhandled rejection in the renderer, which
+ * treats null exactly as it treats an empty clipboard.
+ */
+export function writePastedImage(image: NativeImage): string | null {
+  const tempDir = pastedImageTempDir();
+  try {
+    fs.mkdirSync(tempDir, { recursive: true });
+    // Nothing used to delete these, so the directory grew for the life of the
+    // install. Disk hygiene only - it does not change what an agent is billed.
+    pruneClipboardTempDir(tempDir);
+    const filePath = path.join(tempDir, `${CLIPBOARD_TEMP_PREFIX}${Date.now()}.png`);
+    fs.writeFileSync(filePath, capClipboardImage(image).toPNG());
+    return filePath;
+  } catch (error) {
+    console.error('[clipboard] Failed to save pasted image:', error);
+    return null;
+  }
+}
 
 /**
  * Cap the long edge of a clipboard image before it is written to disk.

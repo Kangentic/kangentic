@@ -857,6 +857,43 @@ export async function dragFromTo(
   return true;
 }
 
+/**
+ * Drop OS files on an element, the way a drag out of the file manager lands.
+ *
+ * `Input.dispatchDragEvent` carries a `DragData` whose `files` are absolute
+ * paths; Chromium turns them into the real `File` objects a page's `drop`
+ * handler reads from `dataTransfer.files`, each backed by its path, which is
+ * what Electron's `webUtils.getPathForFile` resolves. That is the one hop no
+ * in-page simulation can reach: a `new File()` dispatched from script has no
+ * path, and the bridge object is frozen, so it could never be faked.
+ *
+ * The three events mirror a real drag. `dragEnter` is what lets a page arm a
+ * drop target at all (Kangentic's terminal overlay switches its
+ * `pointer-events` on the document's `dragenter`), `dragOver` is what sets
+ * the drop effect, and `drop` delivers the files. Each is dispatched at the
+ * element's viewport centroid, after the scroll-into-view every other input
+ * helper here performs, for the same below-the-fold reason.
+ */
+export async function dropFilesOnSelector(
+  webContents: WebContents,
+  selector: string,
+  filePaths: readonly string[],
+): Promise<boolean> {
+  const point = await resolveClickPoint(webContents, selector);
+  if (!point) return false;
+  // dragOperationsMask 1 = copy, the operation a file-manager drag offers.
+  const data = { items: [], files: [...filePaths], dragOperationsMask: 1 };
+  for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+    await webContents.debugger.sendCommand('Input.dispatchDragEvent', {
+      type,
+      x: point.x,
+      y: point.y,
+      data,
+    });
+  }
+  return true;
+}
+
 export interface KeyEventOptions {
   type: 'keyDown' | 'keyUp' | 'char' | 'rawKeyDown';
   text?: string;
@@ -1011,12 +1048,19 @@ export async function dispatchKeypress(
     // Scoped to ASCII letters deliberately. `Shift+1` is `!` on a US layout and
     // something else on most others, and this has no keyboard-layout map, so
     // guessing would be a lie. Use `kangentic_browser_type` for symbols.
-    const isShiftedLetter = modifierFlags === MODIFIER_FLAGS.Shift
-      && /^[a-zA-Z]$/.test(target);
+    const isLetter = /^[a-zA-Z]$/.test(target);
+    const isShiftedLetter = modifierFlags === MODIFIER_FLAGS.Shift && isLetter;
     const shiftedText = isShiftedLetter ? upper : null;
+    // `key` follows the physical keyboard, not the spelling of the chord: a real
+    // Ctrl+V press reports `key: 'v'`, and Ctrl+Shift+V reports `key: 'V'`.
+    // Handlers compare on it (xterm's paste chord is `key === 'v'`, its
+    // Ctrl+Shift+V form is `shiftKey && key === 'V'`), so `Ctrl+V` spelled with
+    // a capital used to arrive as an unknown chord and do nothing, silently.
+    const shiftHeld = (modifierFlags & MODIFIER_FLAGS.Shift) !== 0;
+    const key = isLetter ? (shiftHeld ? upper : target.toLowerCase()) : target;
     await dispatchKeyEvent(webContents, {
       type: 'keyDown',
-      key: shiftedText ?? target,
+      key,
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,
@@ -1027,7 +1071,7 @@ export async function dispatchKeypress(
     }
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
-      key: shiftedText ?? target,
+      key,
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,

@@ -120,6 +120,12 @@ export class OpenCodeAdapter implements AgentAdapter {
     { mode: 'acceptEdits', label: 'Build' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
+  // OpenCode's TUI scans a bracketed paste for image paths and attaches a
+  // match as an `[Image N]` chip, quoted or not, spaces in the path included.
+  // Verified against 1.18.30 with png, jpg and gif; a bmp arrives as
+  // `[Pasted ~1 lines]` text instead, which the drop path's PNG normalization
+  // covers (webp was not probed and takes the same normalization).
+  readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif'];
 
   private readonly detector = new OpenCodeDetector();
   private readonly commandBuilder = new OpenCodeCommandBuilder();

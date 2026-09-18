@@ -66,10 +66,18 @@ export class ClaudeAdapter implements AgentAdapter {
   // global snapshot - even a freshly spawned one that has not reported its own yet.
   readonly reportsRateLimits = true;
   // Claude's own clipboard image paste fails silently on Windows Snipping Tool
-  // images (claude-code #26679), and a bare typed path is never auto-recognized
-  // as an image (no @file support for images). Kangentic's own clipboard/drop
-  // capture is reliable, so inject an explicit Read instruction pointing at the
-  // saved temp PNG instead of a bare path.
+  // images (claude-code #26679), so Kangentic captures the image itself and
+  // hands Claude the saved file's path. Claude's prompt input scans a bracketed
+  // paste for tokens ending in these extensions (`/\.(png|jpe?g|gif|webp)$/i`,
+  // one surrounding quote pair stripped first), reads the file, and attaches it
+  // as an `[Image #N]` chip in the user turn: no `Read` tool call, no extra
+  // model round trip. A typed path never reaches that scan, which is why the
+  // renderer delivers it through xterm's paste() rather than a raw write.
+  readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+  // bmp and svg are outside Claude's native set, so they keep the explicit
+  // Read instruction; the scan leaves the text alone and the agent reads it.
+  // That reaches an svg (Read returns the markup) but not a bmp: Read refuses
+  // a bmp as binary, on every delivery form. Verified against 2.1.276.
   readonly pastedImageReferenceTemplate = 'Read this image: {path} ';
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },

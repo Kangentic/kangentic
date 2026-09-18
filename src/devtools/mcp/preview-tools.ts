@@ -957,6 +957,29 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'kangentic_devtools_drop_files',
+    {
+      description:
+        'Drop OS files on an element, the way a drag out of the file manager lands: dispatches dragEnter, dragOver and drop at the centroid of `selector` with the given absolute paths as the drag data. The page receives real File objects backed by those paths (webUtils.getPathForFile resolves them), which no in-page simulation can produce. Use it to verify a file-drop feature end-to-end, e.g. dropping an image onto a terminal. Paths must exist. Selector accepts CSS, `text="..."`, or `aria="..."`. Dev-only.',
+      inputSchema: z.object({
+        selector: z.string().describe('CSS selector of the drop target.'),
+        paths: z.array(z.string()).min(1).describe('Absolute paths of the files to drop, in order.'),
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ selector, paths, instanceId }) =>
+      toolResult(
+        await callBridge({
+          method: 'POST',
+          path: '/drop-files',
+          body: { selector, paths },
+          instanceId,
+        }),
+      ),
+  );
+
+  server.registerTool(
     'kangentic_devtools_wait',
     {
       description:

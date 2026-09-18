@@ -67,11 +67,13 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     ),
   );
   const sessionAgent = useBoardStore((s) => s.tasks.find((t) => t.id === sessionTaskId)?.agent ?? null);
-  // Adapter-declared: this agent needs an explicit reference (not a bare path)
-  // to reliably read a pasted/dropped image. Never branch on agent name here -
-  // see .claude/rules/agent-adapters-boundary.md.
-  const pasteImageTemplate = useConfigStore(
-    (s) => s.agentList.find((a) => a.name === sessionAgent)?.pastedImageReferenceTemplate,
+  // Adapter-declared image-paste capability (which extensions this agent
+  // attaches natively from a pasted path, and the fallback text for the rest).
+  // The agent's list entry is selected whole: it is a stable reference until
+  // the list reloads, where a fresh object literal would churn every render.
+  // Never branch on agent name here - see .claude/rules/agent-adapters-boundary.md.
+  const pasteImageCapability = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === sessionAgent),
   );
 
   const { overlayLabel } = useTerminalOverlay(taskId, sessionId);
@@ -112,7 +114,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     [sessionId],
   );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, paste, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -120,7 +122,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     colors: config.terminal.colors,
     shellName: sessionShell,
     releaseEscapeWhenPointerOutside,
-    pasteImageTemplate,
+    pasteImageCapability,
     backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     onScrollbackSettled: handleScrollbackSettled,
     mayTakeArrivalFocus: mayFocusOnArrival,
@@ -239,7 +241,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     onDeferredResizeSettled: handleDeferredResizeSettled,
   });
 
-  const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell, pasteImageTemplate);
+  const fileDrop = useTerminalFileDrop(sessionId, focus, paste, sessionShell, pasteImageCapability);
   const terminalBackground = resolveTerminalBackground(config.terminal.colors);
 
   return (

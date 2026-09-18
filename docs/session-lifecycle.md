@@ -1299,13 +1299,15 @@ The board-driven spawn chokepoint `autoSpawnForTask` (`src/main/ipc/helpers/agen
 
 ## Terminal Paste Strategy
 
-Terminal paste operations use xterm.js's built-in `terminal.paste()` method, which handles bracketed paste mode for the PTY. The paste path is unified:
+Terminal paste operations use xterm.js's built-in `terminal.paste()` method, which brackets the text (`ESC[200~ ... ESC[201~`) exactly when the foreground app enabled mode 2004 and leaves it plain otherwise. The paste path is unified:
 
 - **Ctrl+V / Cmd+V** - intercepted by a custom key handler, reads clipboard, calls `terminal.paste()`
+- **Ctrl+V with a clipboard image** - the image is saved to a temp PNG by the main process (`clipboard:readImage`) and its shell-quoted path goes through the same `terminal.paste()`; what is pasted (the bare path, or the adapter's fallback template) comes from the agent's `PastedImageCapability` (`resolveImagePasteText` in `terminal-clipboard.ts`)
+- **File drop** - `useTerminalFileDrop` delivers every dropped path through `useTerminal`'s `paste` handle, one `terminal.paste()` per file so each path is its own packet under bracketed-paste mode; never a raw `sessions.write`. An image in a format the agent cannot attach from a path (`needsImageNormalization`) is first re-encoded as PNG in the renderer (`encodeImageFileAsPng`, Chromium's decoder) and saved by main through `clipboard:saveImage`, and the copy's path is what gets pasted
 - **Context menu paste** - follows the same clipboard-read-then-paste path
 - **Built-in xterm paste suppressed** - a `paste` event listener on the xterm helper textarea prevents the browser's native paste from double-sending text through xterm's `onData` handler
 
-This ensures consistent behavior across keyboard shortcuts and context menu paste.
+The bracketing is load-bearing for images: Claude Code scans a paste packet for tokens ending in png/jpg/jpeg/gif/webp and attaches the file as an `[Image #N]` chip in the user turn, so a pasted or dropped image reaches the model with no `Read` tool call. Typed bytes never reach that scan, which is why the image paths do not use a raw write. Main's write queue (`src/main/pty/write-queue.ts`) keeps a packet whole across chunk boundaries, and the PTY buffer manager re-asserts mode 2004 on replay, so a reattached session brackets the next paste correctly.
 
 ## Terminal Copy Strategy
 
