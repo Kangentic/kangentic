@@ -955,10 +955,38 @@ export function buildDemoPreConfig(options: {
         }
         scheduleSessionClock(sessionId, entry, clock);
       }
-      /** Queue the chunks still ahead of the session's clock, and return the ones already behind it. */
+      // A session's clock is its SINGLE recording's: the seed starts it at page open from
+      // data.ends, and the card, the sidebar count, and the Monitor all end on it. A terminal that
+      // mounted at the tiled width plays the session's tiled recording, a second run of the same
+      // prompt with its own length, so that recording's bytes and frames are laid on the session
+      // clock shifted to START where the session's clock does: the variant plays from its first
+      // byte at the moment the session's clock began, the terminal shows however far that run has
+      // got, and a variant shorter than the stretch already elapsed has finished, so the terminal
+      // opens on its final frame and stays there while the session's clock runs on, exactly as
+      // the still paints it (loadDemoTiledFrames). Without the shift the variant re-based the
+      // clock on its own length, and a session the board showed as working flipped to needs-you
+      // the moment a narrow window opened on it. A session the seed did not clock (a spawn, a
+      // Command Terminal boot) has no data.ends entry and plays its own recording unshifted.
+      function sessionDurationMs(sessionId, recording) {
+        var end = data.ends[sessionId];
+        if (end && typeof end.durationMs === 'number') return end.durationMs;
+        var last = recording.stream[recording.stream.length - 1];
+        return last ? last.t : 0;
+      }
+      function recordingEndMs(recording) {
+        var last = recording.stream[recording.stream.length - 1];
+        return last ? last.t : 0;
+      }
+      /**
+       * Queue the chunks still ahead of the session's clock, and return the ones already behind
+       * it. A recording that has ENDED behind the clock (its last chunk is behind it, which is
+       * where a tiled variant shorter than the session's elapsed stretch sits) returns its final
+       * frame rather than the whole stream: the frame is the same picture, at a tenth of the bytes.
+       */
       function scheduleStreamBytes(sessionId, entry, recording) {
         if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
         var elapsed = Date.now() - entry.startedAt;
+        if (recordingEndMs(recording) <= elapsed && typeof recording.serialized === 'string') return recording.serialized;
         var head = '';
         recording.stream.forEach(function (chunk) {
           if (chunk.t <= elapsed) { head += chunk.data; return; }
@@ -989,8 +1017,7 @@ export function buildDemoPreConfig(options: {
       }
       function liveScrollback(sessionId, entry) {
         return fetchRecording(entry.file).then(function (recording) {
-          var last = recording.stream[recording.stream.length - 1];
-          var duration = last ? last.t : 0;
+          var duration = sessionDurationMs(sessionId, recording);
           if (entry.startedAt === null) {
             // A pre-seeded working session has been running for a while: everything but its
             // last stretch is already scrollback, and that stretch streams from here.
@@ -1284,10 +1311,9 @@ export function buildDemoPreConfig(options: {
             var grid = mountedGeometry[sessionId];
             if (entry.tail > 0) {
               clearReplayTimers(sessionId);
-              var last = recording.stream[recording.stream.length - 1];
               var openFrame = openFrames[sessionId];
               var current = scheduleFrameTimeline(sessionId, entry, recording, grid);
-              scheduleSessionClock(sessionId, entry, { durationMs: last ? last.t : 0, endPeek: recording.peek, endedOnItsOwn: endedOnItsOwn(recording) });
+              scheduleSessionClock(sessionId, entry, { durationMs: sessionDurationMs(sessionId, recording), endPeek: recording.peek, endedOnItsOwn: endedOnItsOwn(recording) });
               return fitFrameToGrid(current || (openFrame ? openFrame.serialized : recording.serialized), grid, recording.rows);
             }
             // A session already at its end: the frame is the recording's end, so the row's peek

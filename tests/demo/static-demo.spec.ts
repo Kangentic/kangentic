@@ -635,7 +635,7 @@ test('the conversation scene shows the transcript recorded beside the middleware
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('the tiled task windows take each session\'s tiled recording, held at its grid, and stream it', async ({ page }) => {
+test('the tiled task windows take each session\'s tiled recording, held at its grid, on the session\'s own clock', async ({ page }) => {
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   const getRecordingRequests = recordingRequests(page);
   await gotoScene(page, { view: 'windows-tiled', embed: '1' });
@@ -653,6 +653,15 @@ test('the tiled task windows take each session\'s tiled recording, held at its g
     const expectedFile = tiled ? `${fileStem}-tiled-` : `${fileStem}-`;
     await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/${expectedFile}`)), { timeout: 15_000 }).toBe(true);
     if (tiled) expect(getRecordingRequests().some((url) => url.includes(`/recordings/${fileStem}-`) && !url.includes('-tiled-'))).toBe(false);
+  }
+  // A variant is a second run with its own length, played from the moment the SESSION's clock
+  // began, and the clock stays the single recording's. A tiled window therefore opens partway
+  // into the variant and the session goes on working for the stretch its single recording has
+  // left, whether or not the variant has more to stream. Re-basing the clock on the variant used
+  // to finish the session the moment its window opened, which CI's Linux runner caught (its
+  // fonts put the 125 percent display on the tiled layout too).
+  for (const sessionId of ['sess-cw-middleware', 'sess-cw-api-client']) {
+    expect((await monitorRow(page, sessionId))?.activity, `${sessionId} finished when its tiled window opened`).toBe('thinking');
   }
   expect(getUnexpectedErrors()).toEqual([]);
 });
@@ -841,8 +850,10 @@ test('a display that fits another grid holds the task window at the recording\'s
   // holds and the terminal conforms: it takes that grid and scales its font to fit the pane, so
   // the bytes replay exactly here too. Which recording is held follows the width the page
   // measured: a pane narrower than the single recording takes the session's tiled one (the seed's
-  // layoutFor). The session goes on working through it, as an agent does on the desktop when its
-  // window is resized.
+  // layoutFor), played from the moment the session's clock began. Either recording has a stretch
+  // left when the page opens (the single 38 s, the variant 26 s), so its bytes stream on either
+  // layout, and the session goes on working through it on its own clock, as an agent does on the
+  // desktop when its window is resized.
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
   const page = await context.newPage();
@@ -1044,8 +1055,9 @@ test('the site\'s take-control dialog at a 1440 by 900 display holds the task wi
   // spill (task #673). The pane can show the recording's grid at about 70 percent of the type,
   // above the hold's floor, so the terminal conforms and the bytes replay. Which recording that
   // is follows the width the page measured: a pane narrower than the single recording takes the
-  // session's tiled one (the seed's layoutFor), and the font metrics that decide the width differ
-  // between Windows and CI's Linux.
+  // session's tiled one (the seed's layoutFor), played from the moment the session's clock
+  // began; either has a stretch left when the page opens, so its bytes stream, and the session's
+  // own clock keeps it working.
   const context = await browser.newContext({ viewport: { width: 1233, height: 771 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
@@ -1058,6 +1070,7 @@ test('the site\'s take-control dialog at a 1440 by 900 display holds the task wi
   await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(heldGrid);
   expect(natural.rows).toBeLessThan(heldGrid.rows);
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
+  expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
   await context.close();
 });
