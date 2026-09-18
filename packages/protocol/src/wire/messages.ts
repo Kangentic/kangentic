@@ -32,6 +32,16 @@ export interface CapabilityRequestMessage {
   payload: JsonValue;
 }
 
+/**
+ * A stable key a client can branch on, beside the human-readable `error`.
+ * Today the one member is the refusal a desktop sends for a verb its build
+ * does not know (see `UnsupportedVerbError` in framing.ts), so a newer phone
+ * can tell "desktop is old" from "desktop is unreachable" and show the right
+ * copy. A union rather than a bare string so a second code is a deliberate
+ * addition here, not a typo at a call site.
+ */
+export type CapabilityErrorCode = 'unsupported-verb';
+
 export interface CapabilityResponseMessage {
   type: 'capability-response';
   requestId: string;
@@ -39,6 +49,12 @@ export interface CapabilityResponseMessage {
   payload?: JsonValue;
   /** Present only when ok is false. */
   error?: string;
+  /**
+   * Present only when ok is false AND the refusal has a stable key. Additive
+   * on the wire: a peer whose decoder predates the field rebuilds the message
+   * from the keys it knows and keeps `error`, so the text still shows.
+   */
+  code?: CapabilityErrorCode;
 }
 
 export interface EventMessage {

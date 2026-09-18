@@ -5,7 +5,9 @@ import {
   deriveSecretstreamPair,
   encodeMessage,
   FrameTag,
+  isUnsupportedVerbError,
   SessionFrameKind,
+  UNSUPPORTED_VERB_ERROR_CODE,
   unwrapSessionFrame,
   wrapSessionFrame,
   type BridgeMessage,
@@ -529,10 +531,44 @@ export class BridgeSession extends EventEmitter {
     try {
       message = decodeMessage(opened.plaintext);
     } catch (error) {
+      if (isUnsupportedVerbError(error)) {
+        this.refuseUnsupportedVerb(error.requestId, error.verb);
+        return;
+      }
       this.emit('frameRejected', error);
       return;
     }
     this.emit('message', message);
+  }
+
+  /**
+   * A well-formed capability-request for a verb this build's protocol does
+   * not carry: a NEWER phone talking to an older desktop. Answered here, at
+   * the session, rather than dropped as a rejected frame: the router never
+   * sees it (the verb is not a `CapabilityVerb`, so there is no capability
+   * check to pass and no handler to run - deny-by-default holds because the
+   * reply is a fixed refusal keyed on nothing but the verb's name), and a
+   * silent drop left the phone timing out, unable to tell an old desktop
+   * from an unreachable one. The peer is post-Noise-authenticated and the
+   * router already answers an unauthorized verb with a response, so a reply
+   * per unknown verb is no new exposure. 'unsupportedVerb' is the
+   * observability edge (the service logs it); 'frameRejected' is deliberately
+   * NOT emitted, because the frame was answered, not dropped.
+   */
+  private refuseUnsupportedVerb(requestId: string, verb: string): void {
+    try {
+      this.sendMessage({
+        type: 'capability-response',
+        requestId,
+        ok: false,
+        error: `Unsupported verb: ${verb}`,
+        code: UNSUPPORTED_VERB_ERROR_CODE,
+      });
+    } catch {
+      // The transport dropped between the open and the send; the phone's own
+      // per-verb timeout covers a refusal that never left.
+    }
+    this.emit('unsupportedVerb', { requestId, verb });
   }
 
   sendMessage(message: BridgeMessage): void {

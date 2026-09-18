@@ -193,6 +193,27 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     service.dispose();
   });
 
+  it('logs a session\'s unsupportedVerb edge without routing it', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    const dispatchSpy = vi.spyOn(service.capabilityRouter, 'dispatch');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    // The refusal itself is sent by the real BridgeSession before it emits
+    // this edge (pinned in bridge-session.test.ts); this fake never reaches
+    // that path, so the only thing to assert on the service is that the router
+    // stays out of it and the desktop log gets its trace.
+    session.emit('unsupportedVerb', { requestId: 'r-1', verb: 'time-travel' });
+    await flushMicrotasks();
+
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toMatch(/"time-travel"/);
+
+    warnSpy.mockRestore();
+    service.dispose();
+  });
+
   it('an inbound Final drops the device outright - roster, session, subscriptions - with no goodbye echo', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const session = await openSession(service);

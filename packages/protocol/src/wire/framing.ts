@@ -23,7 +23,7 @@
 import { deflateSync, inflateSync } from 'fflate';
 import { isCapabilityVerb } from '../capabilities/verbs';
 import type { BridgeEvent } from '../events/event';
-import type { BridgeMessage, JsonValue } from './messages';
+import type { BridgeMessage, CapabilityErrorCode, JsonValue } from './messages';
 import { isJsonValue, isRecord } from './json-value';
 
 export const MAX_FRAME_LENGTH = 1024 * 1024;
@@ -35,6 +35,51 @@ export const COMPRESSION_THRESHOLD = 4 * 1024;
 const FRAME_FORMAT_DEFLATE = 0x01;
 const JSON_OPEN_BRACE = 0x7b;
 const DEFLATE_HEADER_LENGTH = 5;
+
+/** The `code` a desktop puts on its refusal of a verb its build does not know. */
+export const UNSUPPORTED_VERB_ERROR_CODE: CapabilityErrorCode = 'unsupported-verb';
+
+const UNSUPPORTED_VERB_ERROR_NAME = 'UnsupportedVerbError';
+
+/**
+ * Thrown by `decodeMessage` for a capability-request whose envelope is
+ * well-formed (a string `requestId`, a string `verb`, a JSON `payload`) but
+ * whose verb this build's `CAPABILITY_VERBS` does not carry. It is the one
+ * decode failure that names its request, so the receiver can ANSWER it
+ * (`{ ok: false, code: 'unsupported-verb' }`) instead of dropping the frame.
+ *
+ * Without this a desktop that predates a verb sent nothing back at all, and
+ * the phone that sent it timed out, unable to tell an old desktop from an
+ * unreachable one. Every verb added to the protocol has that failure mode on
+ * a mixed-version pair. A frame that is NOT a well-formed request (a missing
+ * `requestId`, a non-string `verb`, a non-JSON `payload`) still throws a
+ * plain `Error` and stays a silent rejection: there is nothing to answer, and
+ * answering unstructured input would hand a probe to whoever sent it.
+ */
+export class UnsupportedVerbError extends Error {
+  readonly requestId: string;
+  readonly verb: string;
+
+  constructor(requestId: string, verb: string) {
+    super(`capability-request has an unsupported "verb": ${verb}`);
+    this.name = UNSUPPORTED_VERB_ERROR_NAME;
+    this.requestId = requestId;
+    this.verb = verb;
+  }
+}
+
+/**
+ * Keyed on `name`, not `instanceof`: the desktop consumes this package from
+ * source through a workspace alias while the mobile app resolves the published
+ * `dist`, and a bundler can hold two copies of the class, which `instanceof`
+ * would tell apart.
+ */
+export function isUnsupportedVerbError(error: unknown): error is UnsupportedVerbError {
+  return error instanceof Error
+    && error.name === UNSUPPORTED_VERB_ERROR_NAME
+    && typeof (error as Partial<UnsupportedVerbError>).requestId === 'string'
+    && typeof (error as Partial<UnsupportedVerbError>).verb === 'string';
+}
 
 export function encodeMessage(message: BridgeMessage): Uint8Array {
   const json = new TextEncoder().encode(JSON.stringify(message));
@@ -130,9 +175,12 @@ function validateBridgeMessage(value: unknown): BridgeMessage {
       return { type: 'heartbeat' };
 
     case 'capability-request': {
+      // The whole envelope is validated BEFORE verb membership, so an unknown
+      // verb is only ever reported for a request the receiver could answer.
       if (typeof value.requestId !== 'string') throw new Error('capability-request missing "requestId"');
-      if (typeof value.verb !== 'string' || !isCapabilityVerb(value.verb)) throw new Error('capability-request has an invalid "verb"');
+      if (typeof value.verb !== 'string') throw new Error('capability-request has an invalid "verb"');
       if (!isJsonValue(value.payload)) throw new Error('capability-request has a non-JSON "payload"');
+      if (!isCapabilityVerb(value.verb)) throw new UnsupportedVerbError(value.requestId, value.verb);
       return { type: 'capability-request', requestId: value.requestId, verb: value.verb, payload: value.payload };
     }
 
@@ -141,12 +189,18 @@ function validateBridgeMessage(value: unknown): BridgeMessage {
       if (typeof value.ok !== 'boolean') throw new Error('capability-response missing "ok"');
       if (value.payload !== undefined && !isJsonValue(value.payload)) throw new Error('capability-response has a non-JSON "payload"');
       if (value.error !== undefined && typeof value.error !== 'string') throw new Error('capability-response has a non-string "error"');
+      // Shape-checked only, never against the CapabilityErrorCode union: a
+      // code this build does not know must not fail the whole response on an
+      // older peer, which still has `error` to show. The union is the
+      // TypeScript contract for senders.
+      if (value.code !== undefined && typeof value.code !== 'string') throw new Error('capability-response has a non-string "code"');
       return {
         type: 'capability-response',
         requestId: value.requestId,
         ok: value.ok,
         payload: value.payload as JsonValue | undefined,
         error: value.error as string | undefined,
+        code: value.code as CapabilityErrorCode | undefined,
       };
     }
 
