@@ -128,4 +128,21 @@ function buildSanitizer(options) {
   };
 }
 
-module.exports = { buildSanitizer, forwardSlash };
+/**
+ * The rewrite applied to every string inside a JSON value, keys included, returning a rewritten
+ * copy. A transcript carries the identity in more places than a terminal does (tool inputs,
+ * tool results, the file paths the agent quotes), so it is walked whole rather than field by
+ * field, and the writer then runs assertClean over the serialized result.
+ */
+function sanitizeDeep(value, sanitizer) {
+  if (typeof value === 'string') return sanitizer.apply(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeDeep(item, sanitizer));
+  if (value && typeof value === 'object') {
+    const output = {};
+    for (const [key, item] of Object.entries(value)) output[sanitizer.apply(key)] = sanitizeDeep(item, sanitizer);
+    return output;
+  }
+  return value;
+}
+
+module.exports = { buildSanitizer, forwardSlash, sanitizeDeep };

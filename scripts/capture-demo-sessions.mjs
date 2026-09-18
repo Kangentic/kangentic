@@ -4,7 +4,10 @@
  * Three kinds of recording, all made by scripts/capture-agent-scrollback.js in a real PTY:
  *
  *   sessions   tests/captures/fixtures/demo/manifest.json lists one per session the boards show
- *              (which agent, which repo, the prompt, where the recording is cut).
+ *              (which agent, which repo, the prompt, where the recording is cut). An entry with
+ *              `tiled` is recorded twice, the second time at the tiled width, the way the
+ *              terminal boots below are; an entry with `transcript` also has the agent's own
+ *              transcript derived beside it (transcripts/<file>) for the conversation viewer.
  *   spawns     DERIVED from the dataset: for every task with no session, the agent starting on
  *              that task the way a drag into an auto-spawn column starts it on the desktop, with
  *              the prompt Kangentic's default template sends ("<title>: <description>"). A To Do
@@ -217,7 +220,11 @@ function geometryFor(entry) {
   const forAgent = (surface) => ({ cols: surface.cols, rows: (surface.rowsByAgent && surface.rowsByAgent[entry.agent]) || surface.rows });
   if (entry.kind === 'session') {
     const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
-    return forAgent(session && session.transient ? geometry.commandTerminal : geometry.taskWindow);
+    const transient = !!(session && session.transient);
+    // The tiled variant of a session records at the width its window has beside another
+    // (windows-tiled, command-terminal-tiled in tests/captures/scenes.ts).
+    if (entry.layout === 'tiled') return forAgent(transient ? geometry.commandTerminalTiled : geometry.taskWindowTiled);
+    return forAgent(transient ? geometry.commandTerminal : geometry.taskWindow);
   }
   if (entry.kind === 'terminal') return forAgent(entry.layout === 'tiled' ? geometry.commandTerminalTiled : geometry.commandTerminal);
   return forAgent(geometry.taskWindow);
@@ -250,10 +257,17 @@ function runCapture(entry, cwd) {
   if (entry.stopWhen) args.push('--stop-when', entry.stopWhen);
   // Which sessions are transient is the dataset's fact, not something the capture script can see
   // from a prompt, so the decision is made here. MessageTrailTracker skips a transient session, so
-  // a Command Terminal shows no message trail on the desktop and must show none in the demo.
-  if (isTransientCapture(entry)) args.push('--no-message-trail');
-  if (entry.kind === 'session') {
+  // a Command Terminal shows no message trail on the desktop and must show none in the demo. A
+  // tiled variant carries none either: the card follows the single recording, and a trail from
+  // a second run of the prompt would be a line no card ever shows.
+  if (isTransientCapture(entry) || entry.layout === 'tiled') args.push('--no-message-trail');
+  // The agent's transcript, for the conversation viewer, beside the single recording only.
+  if (entry.transcript && entry.layout !== 'tiled') args.push('--transcript-out', path.join(fixturesDir, 'transcripts', entry.file));
+  if (entry.kind === 'session' && entry.layout !== 'tiled') {
     // The frame at the moment the live frame opens this session at, when it is shown as working.
+    // A tiled variant keeps none: it plays on the single recording's clock, so the frame a still
+    // paints for it is derived from its own frame timeline at the single's opening offset
+    // (loadDemoTiledFrames in tests/captures/helpers/demo-scrollback.ts).
     const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
     const liveTail = (session && session.liveTailMs) || manifest.liveTailMs;
     if (liveTail) args.push('--live-tail', String(liveTail));
@@ -279,12 +293,26 @@ function runCapture(entry, cwd) {
   });
 }
 
+/**
+ * The sessions, each once at its own surface and, where the manifest names a `tiled` sibling,
+ * once more at the tiled width under that file name. The sibling is the same prompt run again,
+ * so it inherits everything but the file and the geometry; the seed shows the two by the width
+ * a window mounts at and keeps the session's clock, trail and diff on the single one.
+ */
+function sessionEntries() {
+  return manifest.captures.flatMap((entry) => {
+    const single = { kind: 'session', layout: 'single', ...entry };
+    if (!entry.tiled) return [single];
+    return [single, { ...single, layout: 'tiled', file: entry.tiled, tiled: undefined }];
+  });
+}
+
 const entries = [
-  ...manifest.captures.map((entry) => ({ kind: 'session', ...entry })),
+  ...sessionEntries(),
   ...derivedSpawnEntries(),
   ...derivedTerminalEntries(),
 ];
-console.error(`[matrix] ${manifest.captures.length} sessions, ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots`);
+console.error(`[matrix] ${entries.filter((entry) => entry.kind === 'session').length} sessions (${manifest.captures.length} in the manifest, the rest tiled variants), ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots`);
 
 const refreshed = new Set();
 const results = [];

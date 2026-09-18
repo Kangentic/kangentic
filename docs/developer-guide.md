@@ -224,7 +224,9 @@ plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, and the agent boots a drag or a new Command
 Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
-the dataset). The five scripts, the recordings, and the guest pages carry a content hash in their
+the dataset), plus the agent transcript behind a session under `transcripts/` (from
+`tests/captures/fixtures/demo/transcripts/`, derived by main's own parsers), which the
+conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, and the guest pages carry a content hash in their
 names, as Vite's own chunks do, so a copy GitHub Pages cached from an earlier release is never
 paired with a new seed. Beside them it emits `scenes.json` unhashed: the scene list (name, reach, the alt text a
 docs figure carries, the maintainer description), the frame size (1600 by 1000), and the app

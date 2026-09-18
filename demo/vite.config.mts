@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildDemoPreConfig, DEMO_PROJECTS } from '../tests/captures/helpers/demo-dataset';
-import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
+import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
 import { SCENES } from '../tests/captures/scenes';
@@ -98,20 +98,40 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
   // Each index entry carries the grid its recording was made at beside the file name, so the
   // seed can decide at a terminal's first resize, before any fetch, whether to hold the terminal
   // at that grid (demo-dataset.ts, the sessions.resize wrapper).
-  const indexEntryOf = (entry: DemoRecordingEntry): { file: string; cols: number; rows: number } => {
+  interface IndexEntry { file: string; cols: number; rows: number; tiled?: IndexEntry }
+  const emitRecording = (entry: DemoRecordingEntry): IndexEntry => {
     const source = JSON.stringify({ serialized: entry.serialized, stream: entry.stream, peek: entry.peek, cols: entry.cols, rows: entry.rows, stopReason: entry.stopReason, frameTimeline: entry.frameTimeline });
     const fileName = hashedName(`recordings/${entry.file}`, source);
     files.push({ fileName, source });
     return { file: fileName.slice('recordings/'.length), cols: entry.cols, rows: entry.rows };
   };
+  // A session's tiled sibling rides on its index entry, so the seed can pair the two layouts the
+  // way it pairs a Command Terminal's two boots (demo-dataset.ts, layoutFor).
+  const indexEntryOf = (entry: DemoRecordingEntry): IndexEntry => {
+    const indexed = emitRecording(entry);
+    return entry.tiled ? { ...indexed, tiled: emitRecording(entry.tiled) } : indexed;
+  };
+  // The agent transcripts the conversation viewer shows, one file per session the manifest
+  // marks, under their own directory: a still frame fetches no recording, and a transcript is
+  // fetched only when a viewer opens.
+  const transcripts: Record<string, { file: string }> = {};
+  for (const [sessionId, entries] of Object.entries(loadDemoTranscripts())) {
+    const source = JSON.stringify({ entries });
+    const fileName = hashedName(`transcripts/${sessionId}.json`, source);
+    files.push({ fileName, source });
+    transcripts[sessionId] = { file: fileName.slice('transcripts/'.length) };
+  }
   const index = {
     base: `${base}recordings/`,
     sessions: Object.fromEntries(Object.entries(recordings.sessions).map(([id, entry]) => [id, indexEntryOf(entry)])),
     spawns: Object.fromEntries(Object.entries(recordings.spawns).map(([key, entry]) => [key, indexEntryOf(entry)])),
     terminals: Object.fromEntries(Object.entries(recordings.terminals).map(([id, entry]) => [id, indexEntryOf(entry)])),
     geometry: recordings.geometry,
+    transcriptsBase: `${base}transcripts/`,
+    transcripts,
   };
-  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions, ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots`);
+  const tiledCount = Object.values(index.sessions).filter((entry) => entry.tiled).length;
+  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(transcripts).length} transcripts`);
   // The guest pages: what each project renders at its dev URL, for the Browser pane's iframe
   // stand-in (demo/webview-shim.js). Keyed by the URL the pane shows, valued by the hashed file.
   const guestPages: Record<string, string> = {};
@@ -165,14 +185,15 @@ function buildSeedScript(version: string): string {
   const peeks = loadDemoPeeks();
   const ends = loadDemoEnds();
   const openFrames = loadDemoOpenFrames();
+  const tiledFrames = loadDemoTiledFrames();
   const messageTrails = loadDemoMessageTrails();
-  console.log(`[demo] recorded terminal sessions embedded: ${Object.keys(scrollback).length}, with a working-tree diff: ${Object.keys(changes).length}, with an open frame: ${Object.keys(openFrames).length}, with an agent message trail: ${Object.keys(messageTrails).length}`);
+  console.log(`[demo] recorded terminal sessions embedded: ${Object.keys(scrollback).length}, with a working-tree diff: ${Object.keys(changes).length}, with an open frame: ${Object.keys(openFrames).length}, with tiled frames: ${Object.keys(tiledFrames).length}, with an agent message trail: ${Object.keys(messageTrails).length}`);
   return [
     '// Generated by demo/vite.config.mts from tests/captures/helpers/demo-dataset.ts and the',
     '// recordings in tests/captures/fixtures/demo/.',
     'window.__demoApplyFixture = function () {',
     buildDemoPreConfig({
-      scrollback, changes, peeks, ends, openFrames,
+      scrollback, changes, peeks, ends, openFrames, tiledFrames,
       peekTimelines: loadDemoPeekTimelines(),
       messageTrails,
       messageTrailMaxEntries: MESSAGE_TRAIL_MAX_ENTRIES,

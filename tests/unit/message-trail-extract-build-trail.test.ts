@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '../../src/shared/types';
 import { MESSAGE_TRAIL_ENTRY_MAX_CHARS } from '../../src/main/agent/message-trail-tracker';
-import { buildMessageTrail } from '../captures/helpers/message-trail-extract';
+import { buildMessageTrail, transcriptWithinRecording } from '../captures/helpers/message-trail-extract';
 
 /** An assistant entry carrying one text block, the shape assistantMessagePreviews reads. */
 function assistantText(uuid: string, ts: number, text: string): TranscriptEntry {
@@ -97,5 +97,46 @@ describe('buildMessageTrail', () => {
     expect(trail).toHaveLength(1);
     expect(trail[0].text).toHaveLength(MESSAGE_TRAIL_ENTRY_MAX_CHARS);
     expect(trail[0].text).toBe(longText.slice(0, MESSAGE_TRAIL_ENTRY_MAX_CHARS));
+  });
+});
+
+describe('transcriptWithinRecording', () => {
+  // The conversation viewer's seed keeps the whole transcript, every kind, but only inside the
+  // recording: the capture ends a session with the adapter's exit sequence AFTER the last byte,
+  // so the `/exit` turn and its command output are in the transcript and in no frame.
+  const startMs = 1_000_000;
+  const streamEndMs = 60_000;
+
+  it('keeps every kind of entry from the first byte to the last, and drops the exit sequence after it', () => {
+    const entries: TranscriptEntry[] = [
+      { kind: 'user', uuid: 'prompt', ts: startMs, text: 'do the thing' },
+      assistantText('answer', startMs + 30_000, 'done'),
+      { kind: 'tool_result', uuid: 'result', ts: startMs + 40_000, toolUseId: 'tool-1', content: 'ok' },
+      assistantText('last-byte', startMs + streamEndMs, 'said as the last byte landed'),
+      { kind: 'user', uuid: 'exit', ts: startMs + streamEndMs + 25_000, text: '/exit' },
+      { kind: 'system', uuid: 'goodbye', ts: startMs + streamEndMs + 25_100, subtype: 'command_output', text: 'Goodbye!' },
+    ];
+
+    const kept = transcriptWithinRecording(entries, startMs, streamEndMs);
+
+    expect(kept.map((entry) => entry.uuid)).toEqual(['prompt', 'answer', 'result', 'last-byte']);
+  });
+
+  it('drops an entry from before the recording started, as the trail does', () => {
+    const entries: TranscriptEntry[] = [
+      assistantText('earlier-run', startMs - 1, 'from a run the match did not pick'),
+      assistantText('this-run', startMs + 1, 'from this run'),
+    ];
+
+    expect(transcriptWithinRecording(entries, startMs, streamEndMs).map((entry) => entry.uuid)).toEqual(['this-run']);
+  });
+
+  it('returns the entries themselves, unmodified and in order', () => {
+    const entries: TranscriptEntry[] = [assistantText('a', startMs + 1, 'a'), assistantText('b', startMs + 2, 'b')];
+
+    const kept = transcriptWithinRecording(entries, startMs, streamEndMs);
+
+    expect(kept[0]).toBe(entries[0]);
+    expect(kept[1]).toBe(entries[1]);
   });
 });

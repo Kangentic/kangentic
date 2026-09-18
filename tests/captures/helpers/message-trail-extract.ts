@@ -240,16 +240,23 @@ async function openCodeCandidates(cwd: string, startMs: number): Promise<{ candi
   return { candidates, where: dbPath };
 }
 
+/** The transcript of one recording's run, as main's parser reads it, with where it was read from. */
+export interface ExtractedTranscript {
+  entries: TranscriptEntry[];
+  sourcePath: string;
+  /** The recording's first millisecond on the wall clock, which every trail offset is measured from. */
+  startMs: number;
+}
+
 /**
- * The trail for one recording, oldest first, or `null` when the agent has no transcript at all.
+ * The transcript behind one recording, or `null` when the agent has no transcript at all.
  *
  * `cwd` is the directory the agent ran in during the capture (`~/work/<repo>`, `~/oss/<repo>`).
  * Throws `TranscriptMatchError` when a trail-capable agent's transcript cannot be identified.
+ * This is the whole run, every entry main's parser produces; the trail below is one derivation
+ * of it, and the conversation viewer's seed is another (scripts/backfill-demo-transcripts.mjs).
  */
-export async function extractMessageTrail(
-  facts: RecordingFacts,
-  cwd: string,
-): Promise<RecordedMessageTrailEntry[] | null> {
+export async function extractTranscript(facts: RecordingFacts, cwd: string): Promise<ExtractedTranscript | null> {
   if (facts.agent in AGENTS_WITHOUT_TRANSCRIPTS) return null;
   const capturedAtMs = Date.parse(facts.capturedAt);
   if (!Number.isFinite(capturedAtMs)) throw new TranscriptMatchError(`unparseable capturedAt ${facts.capturedAt}`);
@@ -268,7 +275,33 @@ export async function extractMessageTrail(
       );
   }
   const chosen = chooseCandidate(found.candidates, facts, startMs, found.where);
-  return buildMessageTrail(chosen.entries, startMs, facts.durationMs);
+  return { entries: chosen.entries, sourcePath: chosen.sourcePath, startMs };
+}
+
+/**
+ * The entries that fall inside the recording: from its first byte to its last.
+ *
+ * The capture ends a session with the adapter's own exit sequence after the recording stops, so
+ * the transcript carries a user `/exit` and its command output that no terminal byte shows. The
+ * trail drops anything past the recording's span for the same reason (`buildMessageTrail`); the
+ * conversation viewer's seed drops it here, so the viewer ends where the terminal does.
+ * `streamEndMs` is the last timed chunk's offset, which is where the bytes end.
+ */
+export function transcriptWithinRecording(entries: readonly TranscriptEntry[], startMs: number, streamEndMs: number): TranscriptEntry[] {
+  return entries.filter((entry) => entry.ts >= startMs && entry.ts <= startMs + streamEndMs);
+}
+
+/**
+ * The trail for one recording, oldest first, or `null` when the agent has no transcript at all.
+ * Same match as `extractTranscript`; this keeps only what a board card prints.
+ */
+export async function extractMessageTrail(
+  facts: RecordingFacts,
+  cwd: string,
+): Promise<RecordedMessageTrailEntry[] | null> {
+  const transcript = await extractTranscript(facts, cwd);
+  if (!transcript) return null;
+  return buildMessageTrail(transcript.entries, transcript.startMs, facts.durationMs);
 }
 
 /**

@@ -38,11 +38,18 @@ const FORBIDDEN_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'a client project name', pattern: /\b(?:RBDMS|OKIES|GWPC|AKWISE|NYSDOT)\b/i },
 ];
 
-function listFixtureFiles(): string[] {
-  if (!fs.existsSync(FIXTURES_DIR)) return [];
-  return fs.readdirSync(FIXTURES_DIR)
-    .filter((name) => name.endsWith('.json'))
-    .map((name) => path.join(FIXTURES_DIR, name));
+/**
+ * Every JSON fixture under the demo directory, subdirectories included: the recordings at the
+ * top, the scaffold history under history/, and the agent transcripts under transcripts/, which
+ * quote tool inputs and results and so carry the identity in more places than a recording does.
+ */
+function listFixtureFiles(directory: string = FIXTURES_DIR): string[] {
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return listFixtureFiles(fullPath);
+    return entry.name.endsWith('.json') ? [fullPath] : [];
+  });
 }
 
 function findLeak(text: string): string | null {
@@ -107,7 +114,9 @@ describe('demo fixtures carry no personal or machine-specific markers', () => {
   });
 
   it('recorded sessions ship a clean, non-empty serialized stream and never the raw bytes', () => {
-    for (const file of listFixtureFiles()) {
+    // The recordings sit at the top of the directory; history/ and transcripts/ have their own
+    // shapes and are covered by the leak scan above and by their own tests.
+    for (const file of listFixtureFiles().filter((candidate) => path.dirname(candidate) === FIXTURES_DIR)) {
       if (path.basename(file) === 'manifest.json') continue;
       const record = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
         raw?: unknown; rawBytes?: unknown; serialized?: unknown; agent?: unknown;

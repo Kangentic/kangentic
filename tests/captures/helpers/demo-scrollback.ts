@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEMO_SESSIONS, type DemoCellWidthTable, type DemoChangesMap, type DemoDiff, type DemoHistory, type DemoScrollbackMap } from './demo-dataset';
+import type { TranscriptEntry } from '../../../src/shared/types';
 import { wcwidthV11 } from '../../../src/shared/xterm-unicode11';
 
 interface DemoCaptureRecord {
@@ -55,7 +56,21 @@ export interface DemoMessageTrailEntry {
 }
 
 interface DemoManifest {
-  captures: Array<{ file: string; sessionId: string; agent: string; project: string }>;
+  captures: Array<{
+    file: string;
+    sessionId: string;
+    agent: string;
+    project: string;
+    /**
+     * The same session recorded at the tiled width (manifest geometry `taskWindowTiled`, or
+     * `commandTerminalTiled` for a Command Terminal session), the way a Command Terminal boot has
+     * a `-tiled` sibling. The seed switches a session between the two by the width its window
+     * mounts at; the session's clock, trail, diff and peeks stay the single recording's.
+     */
+    tiled?: string;
+    /** Whether the agent's transcript was derived beside the recording (transcripts/<file>), for the conversation viewer. */
+    transcript?: boolean;
+  }>;
   /** The PTY size of each surface a recording plays on (see the manifest's comment). */
   geometry?: Record<string, { cols: number; rows: number }>;
   /** How long before its recording's end the live frame opens a session shown as working. */
@@ -80,6 +95,14 @@ export interface DemoRecordingEntry {
    * machine. Rides in the recording file, never the seed, since it is the size of the stream.
    */
   frameTimeline: Array<{ t: number; frame: string }>;
+  /** The same session at the tiled width, when the manifest names one (a session entry only). */
+  tiled?: DemoRecordingEntry;
+}
+
+/** A session's tiled recording as the seed paints it without a fetch: its final frame, and the opening frame of a working session. */
+export interface DemoTiledFrames {
+  serialized: string;
+  openFrame: { serialized: string; peek: string[] } | null;
 }
 
 /**
@@ -140,11 +163,16 @@ export function loadDemoRecordings(fixturesDir: string = DEMO_FIXTURES_DIR): Dem
   };
   const read = (file: string): DemoRecordingEntry | null =>
     entryOf(file, JSON.parse(fs.readFileSync(path.join(fixturesDir, file), 'utf-8')) as DemoCaptureRecord);
-  for (const { sessionId, record } of loadRecordings(fixturesDir)) {
+  for (const { sessionId, record, tiled } of loadRecordings(fixturesDir)) {
     const manifestEntry = manifest.captures.find((entry) => entry.sessionId === sessionId);
     if (!manifestEntry) continue;
     const entry = entryOf(manifestEntry.file, record);
-    if (entry) index.sessions[sessionId] = entry;
+    if (!entry) continue;
+    if (tiled) {
+      const tiledEntry = entryOf(tiled.file, tiled.record);
+      if (tiledEntry) entry.tiled = tiledEntry;
+    }
+    index.sessions[sessionId] = entry;
   }
   for (const file of fs.readdirSync(fixturesDir)) {
     const spawn = /^spawn-(.+)-(plan|acceptEdits|default|dontAsk|bypassPermissions|auto)\.json$/.exec(file);
@@ -180,19 +208,37 @@ export function readAppVersion(): string {
  * read the records (buildDemoPreConfig stringifies them), so sharing one parse between accessors
  * is safe.
  */
-const recordingsCache = new Map<string, Array<{ sessionId: string; record: DemoCaptureRecord }>>();
+interface LoadedRecording {
+  sessionId: string;
+  record: DemoCaptureRecord;
+  /** The manifest's `tiled` sibling, when it names one and the file is on disk. */
+  tiled?: { file: string; record: DemoCaptureRecord };
+}
 
-function loadRecordings(fixturesDir: string): Array<{ sessionId: string; record: DemoCaptureRecord }> {
+const recordingsCache = new Map<string, LoadedRecording[]>();
+
+function loadRecordings(fixturesDir: string): LoadedRecording[] {
   const cacheKey = path.resolve(fixturesDir);
   const cached = recordingsCache.get(cacheKey);
   if (cached) return cached;
   const manifestPath = path.join(fixturesDir, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as DemoManifest;
-  const recordings: Array<{ sessionId: string; record: DemoCaptureRecord }> = [];
+  const recordings: LoadedRecording[] = [];
   for (const entry of manifest.captures) {
     const recordingPath = path.join(fixturesDir, entry.file);
     if (!fs.existsSync(recordingPath)) continue;
-    recordings.push({ sessionId: entry.sessionId, record: JSON.parse(fs.readFileSync(recordingPath, 'utf-8')) as DemoCaptureRecord });
+    const loaded: LoadedRecording = { sessionId: entry.sessionId, record: JSON.parse(fs.readFileSync(recordingPath, 'utf-8')) as DemoCaptureRecord };
+    if (entry.tiled) {
+      const tiledPath = path.join(fixturesDir, entry.tiled);
+      // A named sibling that is not on disk is a matrix run that has not happened yet, and a
+      // session that silently fell back to its single recording would look like a hold bug in
+      // every tiled scene; refuse the way a missing single recording is refused.
+      if (!fs.existsSync(tiledPath)) {
+        throw new Error(`${entry.sessionId}: the manifest names a tiled recording ${entry.tiled} that is not on disk. Run "node scripts/capture-demo-sessions.mjs --only ${entry.tiled.replace(/\.json$/, '')}"`);
+      }
+      loaded.tiled = { file: entry.tiled, record: JSON.parse(fs.readFileSync(tiledPath, 'utf-8')) as DemoCaptureRecord };
+    }
+    recordings.push(loaded);
   }
   recordingsCache.set(cacheKey, recordings);
   return recordings;
@@ -257,15 +303,94 @@ export function loadDemoOpenFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Rec
   const liveTailMs = readLiveTailMs(fixturesDir);
   const frames: Record<string, { serialized: string; peek: string[] }> = {};
   for (const { sessionId, record } of loadRecordings(fixturesDir)) {
-    if (!record.openFrame) continue;
-    const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
-    const expectedTail = session?.liveTailMs ?? liveTailMs;
-    if (record.openFrame.beforeEndMs !== expectedTail) {
-      throw new Error(`${sessionId}: its recording's open frame was kept ${record.openFrame.beforeEndMs} ms before the end, but the live frame opens it ${expectedTail} ms before. Re-run scripts/capture-demo-sessions.mjs --only ${sessionId.replace(/^sess-[a-z]+-/, '')}`);
-    }
-    frames[sessionId] = { serialized: record.openFrame.serialized, peek: Array.isArray(record.openFrame.peek) ? record.openFrame.peek : [] };
+    const openFrame = checkedOpenFrame(sessionId, record, liveTailMs, sessionId.replace(/^sess-[a-z]+-/, ''));
+    if (openFrame) frames[sessionId] = openFrame;
   }
   return frames;
+}
+
+/** A recording's open frame, refused when it was kept at a tail the live frame no longer opens at. */
+function checkedOpenFrame(sessionId: string, record: DemoCaptureRecord, liveTailMs: number, reRecord: string): { serialized: string; peek: string[] } | null {
+  if (!record.openFrame) return null;
+  const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+  const expectedTail = session?.liveTailMs ?? liveTailMs;
+  if (record.openFrame.beforeEndMs !== expectedTail) {
+    throw new Error(`${sessionId}: its recording's open frame was kept ${record.openFrame.beforeEndMs} ms before the end, but the live frame opens it ${expectedTail} ms before. Re-run scripts/capture-demo-sessions.mjs --only ${reRecord}`);
+  }
+  return { serialized: record.openFrame.serialized, peek: Array.isArray(record.openFrame.peek) ? record.openFrame.peek : [] };
+}
+
+/**
+ * What a still paints for a session whose window mounted at the tiled width, keyed by session id:
+ * the tiled recording's final frame, and for a working session the frame at the moment the live
+ * frame opens it. Inline because a still fetches no recording; only the sessions the manifest
+ * gives a `tiled` sibling are here, and the seed falls back to the single recording's frames for
+ * every other one.
+ *
+ * The opening moment is the SINGLE recording's: a session's clock runs on the single recording
+ * (its duration and tail), and a terminal on the tiled layout plays the tiled bytes from that
+ * same offset. So the frame is the tiled recording's own frame timeline at
+ * `single duration - tail`, derived here rather than kept by the capture, whose open frame would
+ * be a tail before the VARIANT's end, a different moment whenever the second run is a different
+ * length (it always is). A variant shorter than that offset has already ended when the live
+ * frame opens it, so its still is its final frame, as the terminal would show.
+ */
+export function loadDemoTiledFrames(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, DemoTiledFrames> {
+  const liveTailMs = readLiveTailMs(fixturesDir);
+  const frames: Record<string, DemoTiledFrames> = {};
+  for (const { sessionId, record, tiled } of loadRecordings(fixturesDir)) {
+    if (!tiled) continue;
+    // Refused for the reason loadRecordings refuses a missing sibling: a named tiled recording
+    // with no frame would silently paint the single recording's frame in every tiled still.
+    if (typeof tiled.record.serialized !== 'string' || tiled.record.serialized.length === 0) {
+      throw new Error(`${sessionId}: its tiled recording ${tiled.file} carries no serialized frame. Re-run "node scripts/capture-demo-sessions.mjs --only ${tiled.file.replace(/\.json$/, '')}"`);
+    }
+    const session = DEMO_SESSIONS.find((candidate) => candidate.id === sessionId);
+    let openFrame: DemoTiledFrames['openFrame'] = null;
+    if (session?.activity === 'thinking') {
+      const stream = Array.isArray(record.stream) ? record.stream : [];
+      const singleDurationMs = stream.length > 0 ? stream[stream.length - 1].t : 0;
+      const opensAtMs = Math.max(0, singleDurationMs - (session.liveTailMs ?? liveTailMs));
+      const timeline = Array.isArray(tiled.record.frameTimeline) ? tiled.record.frameTimeline : [];
+      if (timeline.length === 0) {
+        throw new Error(`${tiled.file} carries no frame timeline, so the moment the live frame opens ${sessionId} at cannot be painted; re-run "node scripts/backfill-demo-timelines.mjs"`);
+      }
+      let current = timeline[0].frame;
+      for (const step of timeline) {
+        if (step.t > opensAtMs) break;
+        current = step.frame;
+      }
+      const tiledDurationMs = timeline[timeline.length - 1].t;
+      openFrame = { serialized: opensAtMs >= tiledDurationMs ? tiled.record.serialized : current, peek: [] };
+    }
+    frames[sessionId] = { serialized: tiled.record.serialized, openFrame };
+  }
+  return frames;
+}
+
+/**
+ * The agent's transcript behind a session, keyed by session id, for the conversation viewer:
+ * main's own parser output (tests/captures/helpers/message-trail-extract.ts derives it from the
+ * transcript the agent wrote during its capture), sanitized and committed under transcripts/.
+ * Only the sessions the manifest marks `transcript: true` carry one; a marked session with no
+ * file is a backfill that has not run, and fails here rather than opening an empty viewer.
+ */
+export function loadDemoTranscripts(fixturesDir: string = DEMO_FIXTURES_DIR): Record<string, TranscriptEntry[]> {
+  const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8')) as DemoManifest;
+  const transcripts: Record<string, TranscriptEntry[]> = {};
+  for (const entry of manifest.captures) {
+    if (!entry.transcript) continue;
+    const transcriptPath = path.join(fixturesDir, 'transcripts', entry.file);
+    if (!fs.existsSync(transcriptPath)) {
+      throw new Error(`${entry.sessionId}: the manifest marks its transcript but ${transcriptPath} is not on disk. Run "node scripts/backfill-demo-transcripts.mjs"`);
+    }
+    const parsed = JSON.parse(fs.readFileSync(transcriptPath, 'utf-8')) as { entries?: unknown };
+    if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) {
+      throw new Error(`${transcriptPath} carries no entries; re-run "node scripts/backfill-demo-transcripts.mjs --force"`);
+    }
+    transcripts[entry.sessionId] = parsed.entries as TranscriptEntry[];
+  }
+  return transcripts;
 }
 
 /**

@@ -472,7 +472,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   useKeybinding('panel.maximize', () => handleToggleMaximized(), { capture: true });
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window">
+    <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window" data-command-slot={slot}>
       {/* Header. Priority-plus layout: the title keeps a ~50ch floor; the pills
           reclaim the space above it and fold into the kebab as the window narrows
           (useHeaderPillOverflow). */}
