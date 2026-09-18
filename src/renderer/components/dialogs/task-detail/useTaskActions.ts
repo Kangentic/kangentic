@@ -228,18 +228,28 @@ export function useTaskActions(input: {
     }
   };
 
-  const handleMoveTo = async (targetSwimlaneId: string) => {
+  const handleMoveTo = async (targetSwimlaneId: string, options: { keepOpen?: boolean } = {}) => {
     const targetName = input.swimlanes.find((candidate) => candidate.id === targetSwimlaneId)?.name ?? 'column';
     if (input.isArchived) {
       input.onClose();
       await host.unarchiveTask({ id: input.task.id, targetSwimlaneId });
     } else {
       const laneTasks = host.laneTasks(targetSwimlaneId);
-      await host.moveTask({ taskId: input.task.id, targetSwimlaneId, targetPosition: laneTasks.length }, false);
+      const result = await host.moveTask({ taskId: input.task.id, targetSwimlaneId, targetPosition: laneTasks.length }, false);
       // If a confirmation dialog was triggered, moveTask returns early without
       // moving. Don't close the detail dialog or show a toast in that case.
       if (host.isMoveConfirmPending()) return;
-      input.onClose();
+      if (options.keepOpen) {
+        // The window stays open on this path (the taskDetail.moveColumnLeft/
+        // Right hotkeys), so a failed move - moveTask has already toasted the
+        // error and rolled back - must not also report success underneath it.
+        // The kebab's "Move to" (keepOpen unset) always closes the window
+        // first and keeps its own toast unconditional, matching its
+        // pre-existing behavior.
+        if (!result.ok) return;
+      } else {
+        input.onClose();
+      }
     }
     useToastStore.getState().addToast({
       message: `Moved "${input.task.title}" to ${targetName}`,

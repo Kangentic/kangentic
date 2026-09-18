@@ -348,6 +348,38 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mod+Shift+K',
     rebindable: true,
   },
+  // Move the open task one column left/right WITHOUT closing its window - the
+  // kebab's "Move to" and a board drag both close or bypass the window.
+  // `Mod+Shift+Arrow*` is window.snapLeft/Right in this same window;
+  // `Mod+Alt+Arrow` is the Windows Intel-graphics display-rotation chord; bare
+  // `Alt+Arrow` is Browser-pane back/forward. Alt+Shift+Arrow is free and sits
+  // beside the existing Alt+Shift+Up/Down (changes.prevFile/nextFile).
+  //
+  // Policy: the hotkey runs the SAME move `handleMoveTo` runs for the kebab -
+  // a target column's automation fires and the existing move confirmations
+  // (the To Do "Reset task?" dialog, the Done confirm) still gate it, exactly
+  // as they do today. Refusing to cross into a session-changing lane would
+  // block the transitions the board is built from (Executing -> Code Review
+  // spawns /code-review); prompting on every automated column defeats a
+  // one-keystroke step. See useTaskActions.ts's `keepOpen` handling.
+  {
+    id: 'taskDetail.moveColumnLeft',
+    label: 'Move Task Left',
+    description: 'Move the open task one column left and keep its window open.',
+    group: 'Task Detail',
+    scope: 'task-dialog',
+    defaultCombo: 'Alt+Shift+ArrowLeft',
+    rebindable: true,
+  },
+  {
+    id: 'taskDetail.moveColumnRight',
+    label: 'Move Task Right',
+    description: 'Move the open task one column right and keep its window open.',
+    group: 'Task Detail',
+    scope: 'task-dialog',
+    defaultCombo: 'Alt+Shift+ArrowRight',
+    rebindable: true,
+  },
   // Changes panel review navigation. Next/prev change steps through the diff
   // hunks and rolls into the adjacent file at a file's first/last change (F7 /
   // Shift+F7 is the VS Code / JetBrains diff-nav convention, offered as an alt).
