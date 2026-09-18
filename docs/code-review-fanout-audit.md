@@ -791,6 +791,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | Review | shape | pack | bodies (windowed) | hunk sections | stubbed | finders | reads beyond pack | findings raised/kept |
 |---|---|---|---|---|---|---|---|---|
 | #650 (this change) | 6f +1450 | 219KB, 3175 lines | 4 (1) | 2 | 0 | 7 | 0 of 6 pack-carrying | 11 / 6 |
+| #686 | 39f +2367 | 214KB, 3610 lines | 14 (5) | 25 | 0 | 8 | 21 of 7 pack-carrying | 11 / 10 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -798,3 +799,13 @@ excluded from the reads column throughout, since it deliberately receives no pac
 does establish is that the reporting works end to end on its first run, and that the driver
 refuted five of eleven candidates, which is the falsifiable-finding contract doing its job on a
 pack whose every line number it then verified (2682 of them, zero mismatched).
+
+Row two is the first hunk-heavy sample: 25 of its 39 files were hunk tier. Of the 21 reads beyond
+the pack, 17 were files outside the changed set (callers of `autoSpawnForTask`, the lock, the
+registry, the engine's abort checkpoint), which is criterion work no context width removes. The
+other 4 were re-reads of pack-carried files: the unchanged gap between `agent-spawn.ts`'s two
+hunk groups (roughly lines 300-620, the `startAgent` closure) twice, because two finders needed
+it to answer a question about a changed guard,
+`docs/mobile-bridge.md` once for an unchanged line, and `session-resume-controllers.ts` once as a
+full body the pack already carried. So the hunk tier cost 3 gap reads on this diff, and one
+finder re-read a body it had; that is the number to watch, not the 21.

@@ -448,7 +448,7 @@ describe('BridgeSession', () => {
       const established = new Promise<void>((resolve) => session.once('established', resolve));
       session.start();
       await established;
-      return { session, responder, deviceTransport };
+      return { session, responder, deviceTransport, desktopTransport };
     }
 
     it('is answered with an ok:false refusal carrying the unsupported-verb code, not dropped', async () => {
@@ -481,6 +481,40 @@ describe('BridgeSession', () => {
       // no handler can run for a verb outside the tuple.
       expect(rejected).not.toHaveBeenCalled();
       expect(delivered).not.toHaveBeenCalled();
+      session.dispose();
+    });
+
+    it('still emits unsupportedVerb, without throwing or emitting frameRejected, when the refusal itself cannot be sent', async () => {
+      const { session, responder, deviceTransport, desktopTransport } = await establishedPair();
+      const rejected = vi.fn();
+      const unsupported = vi.fn();
+      session.on('frameRejected', rejected);
+      session.on('unsupportedVerb', unsupported);
+
+      // Simulates the transport dropping between the open and the send: the
+      // desktop side is what refuseUnsupportedVerb calls to answer, so this
+      // is what a relay hiccup at exactly the wrong moment looks like.
+      vi.spyOn(desktopTransport, 'send').mockImplementation(() => {
+        throw new Error('transport closed');
+      });
+
+      // Red on the try/catch removed from refuseUnsupportedVerb: the mocked
+      // send throws synchronously inside the frame-handler call stack, and
+      // this call itself would throw out of the loopback transport's send
+      // loop rather than returning quietly.
+      expect(() => {
+        sendRawRequest(responder, deviceTransport, {
+          type: 'capability-request', requestId: 'r-2', verb: 'time-travel', payload: {},
+        });
+      }).not.toThrow();
+      await Promise.resolve();
+
+      expect(unsupported).toHaveBeenCalledWith({ requestId: 'r-2', verb: 'time-travel' });
+      // The frame was still answered in spirit (a refusal was attempted), not
+      // dropped, so this stays the same edge as the happy path above.
+      expect(rejected).not.toHaveBeenCalled();
+      // The dropped send means the responder never actually received anything.
+      expect(responder.receivedMessages).toEqual([]);
       session.dispose();
     });
 

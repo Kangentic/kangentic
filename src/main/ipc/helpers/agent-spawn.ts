@@ -812,7 +812,7 @@ export async function autoSpawnForTask(
           await ensureTaskWorktree(context, fullTask, tasks, projectPath, { signal, onProgress, projectId });
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
-          console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
+          console.error('[auto-spawn] Worktree creation failed:', worktreeError);
           notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
           return;
         }
@@ -827,7 +827,7 @@ export async function autoSpawnForTask(
           await ensureTaskBranchCheckout(context, fullTask, projectPath, { signal, onProgress, projectId });
         } catch (checkoutError) {
           if (isAbortError(checkoutError)) throw checkoutError;
-          console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
+          console.error('[auto-spawn] Branch checkout failed:', checkoutError);
           // The explicit projectId, never the ambient current one: MCP auto-spawn
           // targets whichever project the tool named, which is often not the
           // focused one. Falling back to `context.currentProjectId` would stamp
@@ -860,7 +860,7 @@ export async function autoSpawnForTask(
             explicitStart: options.explicitStart,
           });
 
-          console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${current.toLane.name}`);
+          console.log(`[auto-spawn] Spawned agent for "${task.title}" in ${current.toLane.name}`);
         });
       } finally {
         clearSpawnProgress(context.mainWindow, fullTask.id);
@@ -883,7 +883,7 @@ export async function autoSpawnForTask(
         );
         return;
       }
-      console.error('[MCP auto-spawn] Failed:', err);
+      console.error('[auto-spawn] Failed:', err);
       // The task row is scoped to the try, so re-read it here; its override
       // is the best approximation of the agent on this path.
       let failedAgent = 'default';
