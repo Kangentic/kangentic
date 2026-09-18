@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
 import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
@@ -61,10 +61,13 @@ export function ModelCombobox({
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Set around a programmatic refocus of the input so `handleInputFocus` does
+  // not reopen the menu (and fire `onOpen`, a model rescan, again) for a focus
+  // the user did not give it. See the Escape listener below.
+  const suppressOpenOnFocusRef = useRef(false);
 
   // The committed value's friendly label (matches the dropdown rows and the
   // inherited-default placeholder, both of which already go through
@@ -127,21 +130,16 @@ export function ModelCombobox({
   // the visible field rather than relying on an in-flow absolute offset that would
   // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto` (the
   // task-detail edit scroller, the settings panel body, the board manager).
+  // `matchTriggerWidth` replaces the old `left-0 right-0` in-flow stretch; the
+  // hook applies it before it measures. Model often sits in a half-width
+  // column, which makes a missing width obvious.
   const { style: popoverStyle, placement } = usePopoverPosition(containerRef, menuRef, showSuggestions, {
     mode: 'dropdown',
     strategy: 'fixed',
     preferVertical: 'below',
     preferRight: false,
+    matchTriggerWidth: true,
   });
-
-  // The fixed-strategy popover lost the old `left-0 right-0` in-flow stretch, so
-  // the trigger width has to be measured and applied explicitly. Model often sits
-  // in a half-width column, which makes a missing width obvious.
-  useLayoutEffect(() => {
-    if (showSuggestions && containerRef.current) {
-      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
-    }
-  }, [showSuggestions]);
 
   // Ids selectable from within the demoted section, so a task/column already
   // set to a superseded generation or a dated pin opens with the section
@@ -195,6 +193,36 @@ export function ModelCombobox({
     }
   }, [isOpen]);
 
+  // Escape while the menu is showing closes the menu and nothing else. The
+  // host's dismiss listener (SettingsPanelShell, BaseDialog) is a bubble-phase
+  // keydown on `document`, so a React key handler that only closed the menu let
+  // the same keystroke close the panel or dialog underneath it. Capture-phase on
+  // `document` wins the event ahead of the host; gated on a visible menu so a
+  // plain Escape on a closed combobox still reaches the host. Mirrors
+  // BranchPicker (LabelInput gets the same result from a `stopPropagation` in
+  // its input's own key handler, since its suggestions never take keyboard
+  // focus). Covers every focusable in the menu (rows, the 1M chips, the Older
+  // versions toggle) without a handler on each.
+  useEffect(() => {
+    if (!showSuggestions) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      // A menu child held focus: hand it back to the input. The suppress flag
+      // keeps `handleInputFocus` from reopening the menu on that focus (the
+      // same reopen `handleSelectModel` avoids by not refocusing at all).
+      if (menuRef.current?.contains(document.activeElement)) {
+        suppressOpenOnFocusRef.current = true;
+        inputRef.current?.focus();
+        suppressOpenOnFocusRef.current = false;
+      }
+      setIsOpen(false);
+      setFilterText('');
+    };
+    document.addEventListener('keydown', handleEscape, true);
+    return () => document.removeEventListener('keydown', handleEscape, true);
+  }, [showSuggestions]);
+
   const handleInputChange = (newValue: string) => {
     onChange(newValue);
     setFilterText(newValue);
@@ -230,6 +258,7 @@ export function ModelCombobox({
   };
 
   const handleInputFocus = () => {
+    if (suppressOpenOnFocusRef.current) return;
     if (availableModels.length > 0) {
       setIsOpen(true);
       onOpen?.();
@@ -238,6 +267,8 @@ export function ModelCombobox({
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
+      // Reached only with no menu showing (the capture listener above consumes
+      // Escape while one is): reset, and let the host see the key.
       setIsOpen(false);
       setFilterText('');
     } else if (e.key === 'Enter') {
@@ -265,6 +296,8 @@ export function ModelCombobox({
     }
   };
 
+  // Escape on a row is handled by the capture listener above, which runs
+  // before this handler could see the key.
   const handleOptionKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -280,17 +313,6 @@ export function ModelCombobox({
         e.preventDefault();
         chip.focus();
       }
-    } else if (e.key === 'Escape') {
-      // Collapse the menu and hand focus back to the input, matching Combobox /
-      // FontCombobox. NOTE: this does NOT keep the host dialog open. The event is
-      // not stopped, and a dialog's Escape listener is bubble-phase on `document`
-      // (BaseDialog.tsx), so it still fires and closes the dialog underneath -
-      // verified against the task-detail window. Stopping that would need
-      // `e.stopPropagation()` here and in the other two comboboxes, which is a
-      // deliberate change to what Escape means inside a dialog, not a local fix.
-      setIsOpen(false);
-      setFilterText('');
-      inputRef.current?.focus();
     }
   };
 
@@ -407,7 +429,7 @@ export function ModelCombobox({
       <OverlayPopover
         open={showSuggestions}
         popoverRef={menuRef}
-        style={{ ...popoverStyle, width: triggerWidth }}
+        style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto"

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -42,10 +42,13 @@ export function FontCombobox({
   // render; falling back to `value` on an empty string would snap the input
   // back to the stale font name mid-edit.
   const [filterText, setFilterText] = useState<string | null>(null);
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Set around a programmatic refocus of the input so `handleInputFocus` does
+  // not reopen the menu for a focus the user did not give it. See the Escape
+  // listener below.
+  const suppressOpenOnFocusRef = useRef(false);
 
   const displayValue = isOpen && filterText !== null ? filterText : value;
   const searchQuery = (isOpen && filterText !== null ? filterText : '').toLowerCase();
@@ -58,21 +61,15 @@ export function FontCombobox({
   // Portaled to document.body (see render below), so measure and position against
   // the visible field rather than relying on an in-flow absolute offset that would
   // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto` (the settings
-  // panel body scroller).
+  // panel body scroller). `matchTriggerWidth` replaces the old `left-0 right-0`
+  // in-flow stretch; the hook applies it before it measures.
   const { style: popoverStyle, placement } = usePopoverPosition(containerRef, menuRef, showSuggestions, {
     mode: 'dropdown',
     strategy: 'fixed',
     preferVertical: 'below',
     preferRight: false,
+    matchTriggerWidth: true,
   });
-
-  // The fixed-strategy popover lost the old `left-0 right-0` in-flow stretch, so
-  // the trigger width has to be measured and applied explicitly.
-  useLayoutEffect(() => {
-    if (showSuggestions && containerRef.current) {
-      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
-    }
-  }, [showSuggestions]);
 
   useEffect(() => {
     // The menu is portaled OUT of containerRef, so a click inside it must also
@@ -95,6 +92,31 @@ export function FontCombobox({
       return () => document.removeEventListener('mousedown', handleClickOutside, true);
     }
   }, [isOpen]);
+
+  // Escape while the menu is showing closes the menu and nothing else. The
+  // host's dismiss listener (SettingsPanelShell) is a bubble-phase keydown on
+  // `document`, so a React key handler that only closed the menu let the same
+  // keystroke close the panel underneath it. Capture-phase on `document` wins
+  // the event ahead of the host; gated on a visible menu so a plain Escape on
+  // a closed combobox still reaches the host. Mirrors Combobox / ModelCombobox.
+  useEffect(() => {
+    if (!showSuggestions) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      // An option held focus: hand it back to the input. The suppress flag
+      // keeps `handleInputFocus` from reopening the menu on that focus.
+      if (menuRef.current?.contains(document.activeElement)) {
+        suppressOpenOnFocusRef.current = true;
+        inputRef.current?.focus();
+        suppressOpenOnFocusRef.current = false;
+      }
+      setIsOpen(false);
+      setFilterText(null);
+    };
+    document.addEventListener('keydown', handleEscape, true);
+    return () => document.removeEventListener('keydown', handleEscape, true);
+  }, [showSuggestions]);
 
   const handleInputChange = (newValue: string) => {
     onChange(newValue);
@@ -119,11 +141,14 @@ export function FontCombobox({
   };
 
   const handleInputFocus = () => {
+    if (suppressOpenOnFocusRef.current) return;
     if (fonts.length > 0) setIsOpen(true);
   };
 
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
+      // Reached only with no menu showing (the capture listener above consumes
+      // Escape while one is): reset, and let the host see the key.
       setIsOpen(false);
       setFilterText(null);
     } else if (event.key === 'Enter') {
@@ -150,6 +175,8 @@ export function FontCombobox({
     }
   };
 
+  // Escape on an option is handled by the capture listener above, which runs
+  // before this handler could see the key.
   const handleOptionKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -157,10 +184,6 @@ export function FontCombobox({
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       focusAdjacentOption(event.currentTarget, -1);
-    } else if (event.key === 'Escape') {
-      setIsOpen(false);
-      setFilterText(null);
-      inputRef.current?.focus();
     }
   };
 
@@ -200,7 +223,7 @@ export function FontCombobox({
       <OverlayPopover
         open={showSuggestions}
         popoverRef={menuRef}
-        style={{ ...popoverStyle, width: triggerWidth }}
+        style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto py-1"

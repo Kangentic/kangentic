@@ -133,6 +133,36 @@ const HOOK_CALL = 'usePopoverPosition(';
 /** The hook's own definition, which is not a call site. */
 const HOOK_DEFINITION_FILE = path.join(RENDERER_DIR, 'hooks', 'usePopoverPosition.ts');
 
+const TRIGGER_WIDTH_READ = 'getBoundingClientRect().width';
+const WIDTH_OPT_OUT_MARKER = 'popover-width-ok:';
+
+/**
+ * Line indexes where a file that calls `usePopoverPosition` measures a trigger
+ * width itself - the recipe that put the Settings > Agent menu 823px left of its
+ * field on the first open per mount.
+ *
+ * The hook reads the menu's `offsetWidth` in its layout effect. A consumer that
+ * measured the trigger in a SECOND layout effect and passed the result through
+ * `style.width` landed one commit late (layout effects run in declaration
+ * order), so the hook measured a width-less menu: a run of inline-block `w-full`
+ * option buttons on ONE line, ~1300px for 15 agents, which flipped the overflow
+ * check to right-align. The width state survived the close, so only the first
+ * open failed. `matchTriggerWidth: true` on the hook is the replacement; it
+ * writes the width before the hook measures. A read that is genuinely not a
+ * trigger-width-for-the-popover measurement opts out with a
+ * `popover-width-ok: <reason>` marker on the line.
+ */
+function triggerWidthReadLineIndexes(fileText: string): number[] {
+  if (!fileText.includes(HOOK_CALL)) return [];
+  const offenders: number[] = [];
+  fileText.split('\n').forEach((line, lineIndex) => {
+    if (!line.includes(TRIGGER_WIDTH_READ)) return;
+    if (line.includes(WIDTH_OPT_OUT_MARKER)) return;
+    offenders.push(lineIndex);
+  });
+  return offenders;
+}
+
 /**
  * Byte offsets of `usePopoverPosition` calls that ask for `mode: 'dropdown'`
  * without `strategy: 'fixed'` - i.e. the hook writes `top: 100%` / `bottom: 100%`
@@ -218,6 +248,7 @@ function hasOptOut(lines: string[], lineIndex: number): boolean {
 
 const inFlowClassOffenders: string[] = [];
 const inFlowDropdownCallOffenders: string[] = [];
+const triggerWidthReadOffenders: string[] = [];
 
 for (const filePath of collectSourceFiles(RENDERER_DIR)) {
   const fileText = fs.readFileSync(filePath, 'utf-8');
@@ -235,6 +266,9 @@ for (const filePath of collectSourceFiles(RENDERER_DIR)) {
     const lineIndex = fileText.slice(0, offset).split('\n').length - 1;
     if (hasOptOut(lines, lineIndex)) continue;
     inFlowDropdownCallOffenders.push(`${relativePath}:${lineIndex + 1}`);
+  }
+  for (const lineIndex of triggerWidthReadLineIndexes(fileText)) {
+    triggerWidthReadOffenders.push(`${relativePath}:${lineIndex + 1}`);
   }
 }
 
@@ -378,6 +412,75 @@ describe('in-flow scrollable popover menus (clipping regression guard)', () => {
         ].join('\n'),
       ),
     ).toEqual([]);
+  });
+});
+
+/**
+ * A trigger-width-matched menu sizes itself through the hook's
+ * `matchTriggerWidth`, never through a consumer-side measurement.
+ *
+ * The consumer-side recipe (measure the trigger in a second layout effect, pass
+ * `width` through `style`) runs AFTER the hook's own layout effect, so the hook
+ * measured a width-less menu on the mount commit and placed it against the
+ * shrink-to-fit width of a run of inline-block option buttons on one line. In
+ * Settings > Agent that was 823px left of the field on the first open per mount.
+ * The behavioral guard is tests/ui/popover-first-open-alignment.spec.ts; this is
+ * the static tripwire, since a brand-new combobox file does not pre-load the
+ * rule and the unit tier cannot render the hook.
+ */
+describe('trigger-width matching goes through usePopoverPosition', () => {
+  it('has no usePopoverPosition consumer measuring its own trigger width', () => {
+    expect(
+      triggerWidthReadOffenders,
+      `These files call usePopoverPosition AND read a trigger width themselves. Measured in a later layout effect and passed through style.width, that width lands one commit after the hook has already measured and placed the menu, so the first open per mount is positioned against an inflated shrink-to-fit width.\n`
+        + `Pass { matchTriggerWidth: true } to the hook instead (it writes the width before it measures) and delete the measurement - see src/renderer/components/dialogs/Combobox.tsx.\n`
+        + `If the read is genuinely not sizing the popover, add a "${WIDTH_OPT_OUT_MARKER} <reason>" comment on the line.\n\n`
+        + triggerWidthReadOffenders.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('flags the pre-fix Combobox shape and honours the opt-out marker', () => {
+    // The real pre-fix Combobox effect, so a refactor of the predicate cannot
+    // silently neuter it.
+    const preFix = [
+      "  const { style: popoverStyle } = usePopoverPosition(containerRef, menuRef, showSuggestions, {",
+      "    mode: 'dropdown',",
+      "    strategy: 'fixed',",
+      '  });',
+      '  useLayoutEffect(() => {',
+      '    if (showSuggestions && containerRef.current) {',
+      '      setTriggerWidth(containerRef.current.getBoundingClientRect().width);',
+      '    }',
+      '  }, [showSuggestions]);',
+    ];
+    expect(triggerWidthReadLineIndexes(preFix.join('\n'))).toEqual([6]);
+
+    // A width read in a file that never calls the hook is none of this scan's
+    // business (MonitorBody measures a column, useTerminal measures a host).
+    expect(triggerWidthReadLineIndexes(preFix.slice(4).join('\n'))).toEqual([]);
+
+    // The marker waives the line.
+    const waived = [...preFix];
+    waived[6] = `${waived[6]} // ${WIDTH_OPT_OUT_MARKER} sizes a sibling, not the popover`;
+    expect(triggerWidthReadLineIndexes(waived.join('\n'))).toEqual([]);
+  });
+
+  it('sizes the popover before it measures it', () => {
+    // Source order inside the hook's effect is the whole fix: the width write
+    // has to precede BOTH reads, since at the shrink-to-fit width the option
+    // buttons sit on one line and the height read would be one row tall too.
+    const source = fs.readFileSync(HOOK_DEFINITION_FILE, 'utf-8');
+    const widthWriteIndex = source.indexOf('popover.style.width = ');
+    const widthReadIndex = source.indexOf('const popoverWidth = popover.offsetWidth');
+    const heightReadIndex = source.indexOf('const popoverHeight = popover.offsetHeight');
+    expect(widthWriteIndex).toBeGreaterThan(-1);
+    expect(widthReadIndex).toBeGreaterThan(widthWriteIndex);
+    expect(heightReadIndex).toBeGreaterThan(widthWriteIndex);
+    // ...and the write is gated on the option and CLEARED on the negative, like
+    // every other property the effect owns: a menu with its own width class
+    // (`w-64`, `min-w-*`) is never overridden, and an instance whose option
+    // flips off does not keep a stale width.
+    expect(source).toMatch(/popover\.style\.width = matchTriggerWidth \? `\$\{triggerRect\.width\}px` : ''/);
   });
 });
 

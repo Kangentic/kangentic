@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from './Pill';
 import { OverlayPopover } from './OverlayPopover';
@@ -20,7 +20,6 @@ interface LabelInputProps {
 export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, testId }: LabelInputProps) {
   const [labelInput, setLabelInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const labelInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -37,18 +36,15 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
   // Portaled to document.body (see render below), so measure and position against
   // the visible field rather than relying on an in-flow absolute offset that would
   // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto`.
+  // `matchTriggerWidth` replaces the old `left-0 right-0` in-flow stretch; the
+  // hook applies it before it measures.
   const { style: popoverStyle, placement } = usePopoverPosition(containerRef, suggestionsRef, suggestionsOpen, {
     mode: 'dropdown',
     strategy: 'fixed',
     preferVertical: 'below',
     preferRight: false,
+    matchTriggerWidth: true,
   });
-
-  useLayoutEffect(() => {
-    if (suggestionsOpen && containerRef.current) {
-      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
-    }
-  }, [suggestionsOpen]);
 
   // Close suggestions on click outside. The popover is portaled OUT of
   // containerRef, so a click inside it must also count as "inside".
@@ -163,7 +159,7 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
       <OverlayPopover
         open={suggestionsOpen}
         popoverRef={suggestionsRef}
-        style={{ ...popoverStyle, width: triggerWidth }}
+        style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl py-1 max-h-[150px] overflow-y-auto"

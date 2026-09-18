@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
 import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
@@ -60,34 +60,23 @@ export function BranchPicker({
   const branches = fetched?.branches ?? EMPTY_BRANCHES;
   const loading = open && fetched?.openGeneration !== openGeneration;
   const [query, setQuery] = useState('');
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Every variant portals + fixed. The chip lives inside headers and dialogs that
   // clip overflow; the 'input' variant lives in the Settings > Git panel, whose
   // body is an overflow-y-auto scroller, so an in-flow absolute dropdown there
-  // was clipped exactly like the comboboxes were. It stretches to its container's
-  // full width via a measured `width` (below) rather than an in-flow left/right 0.
+  // was clipped exactly like the comboboxes were. The input variant stretches to
+  // its container's full width via the hook's `matchTriggerWidth` (applied before
+  // the hook measures) rather than an in-flow left/right 0; the chip and segment
+  // variants keep their `w-64` class, which an inline width would override.
   const positionAnchor = anchorRef ?? containerRef;
   const { style: dropdownStyle } = usePopoverPosition(
     positionAnchor,
     dropdownRef,
     open,
-    { mode: 'dropdown', strategy: 'fixed', preferRight: false },
+    { mode: 'dropdown', strategy: 'fixed', preferRight: false, matchTriggerWidth: variant === 'input' },
   );
-
-  // Input variant: match the trigger's full width. A fixed-strategy popover is
-  // detached from the container, so `left-0 right-0` no longer stretches it.
-  // Read through the two named refs rather than `positionAnchor`: the compiler
-  // rules allow a state set in a layout effect that syncs from a ref (a DOM
-  // measurement), but cannot see a ref behind a `??` between two of them.
-  useLayoutEffect(() => {
-    if (!open || variant !== 'input') return;
-    const anchor = anchorRef?.current ?? containerRef.current;
-    if (!anchor) return;
-    setTriggerWidth(anchor.getBoundingClientRect().width);
-  }, [open, variant, anchorRef]);
 
   const displayBranch = value || defaultBranch || 'main';
 
@@ -303,7 +292,7 @@ export function BranchPicker({
       <OverlayPopover
         open={open}
         popoverRef={dropdownRef}
-        style={variant === 'input' ? { ...dropdownStyle, width: triggerWidth } : dropdownStyle}
+        style={dropdownStyle}
         portal
         transformOrigin="top left"
         className={`fixed z-[2147483646] bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${

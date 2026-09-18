@@ -46,6 +46,17 @@ async function closeDialog() {
  * that expands Advanced therefore closes through here, not `closeDialog`.
  */
 async function discardDialog(target: Page) {
+  // An open combobox menu consumes the first Escape; the dialog only sees the
+  // next one (see combobox-escape-layering.spec.ts). "Open" is read off the
+  // chevron, whose aria-label flips on the same render as the menu state. The
+  // popover element is the wrong signal: a menu just closed by a click stays
+  // mounted for its exit animation, and its exit class lands a render later,
+  // so an extra press aimed at it would reach the dialog instead.
+  const openChevron = target.locator('button[aria-label="Close dropdown"]').first();
+  if (await openChevron.isVisible().catch(() => false)) {
+    await target.keyboard.press('Escape');
+    await expect(openChevron).toBeHidden({ timeout: 2000 });
+  }
   await target.keyboard.press('Escape');
   await target.locator('button:has-text("Discard")').click();
   await target.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
@@ -273,11 +284,9 @@ test.describe('NewTaskDialog Advanced section', () => {
     await expect(effortOptions.first()).toBeVisible();
     const effortOptionTexts = await effortOptions.allTextContents();
     expect(effortOptionTexts).toEqual(expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max']));
-    // Close via the chevron toggle, NOT Escape: the form isn't dirty yet (no
-    // field has been picked), so Escape would bubble past the dropdown and
-    // trip NewTaskDialog's close-on-Escape guard, tearing down the whole
-    // dialog instead of just this popover (see the identical pitfall called
-    // out in the "Model dropdown open triggers a rescan" test below).
+    // Close via the chevron toggle. Escape would do the same now (an open menu
+    // consumes it; see combobox-escape-layering.spec.ts), but the chevron is
+    // scoped to this one combobox's state, which is the thing under test.
     await effortRow.locator('button[title="Close dropdown"]').click();
     await expect(effortOptions.first()).not.toBeVisible();
 
@@ -650,9 +659,9 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     const optionTexts = await multiPage.locator('[data-combobox-option]').allTextContents();
     expect(optionTexts).toEqual(expect.arrayContaining(['Claude Code', 'Codex CLI']));
 
-    // One Escape, not two: the dialog's binding is capture-phase, so it reaches
-    // the dirty guard past the open dropdown and raises the confirm directly. A
-    // second Escape would dismiss that confirm instead of the dropdown.
+    // The open dropdown consumes the first Escape; `discardDialog` (behind
+    // `closeDialog` here) presses it, then presses again for the dirty guard
+    // and clears the confirm.
     await closeDialog();
   });
 
@@ -676,8 +685,15 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     expect(codexOptionTexts).toEqual(expect.arrayContaining(['gpt-5', 'gpt-5-mini']));
     expect(codexOptionTexts).not.toContain('opus');
 
-    // Escape closes the suggestion popover and (the form is dirty) opens the
-    // discard confirm; Discard then closes the dialog.
+    // The first Escape closes only the suggestion popover (the combobox consumes
+    // it while a menu is showing); the second reaches the dirty dialog and opens
+    // the discard confirm. Discard then closes the dialog.
+    await multiPage.keyboard.press('Escape');
+    await expect(multiPage.locator('[data-testid="task-model-override-menu"]')).toBeHidden();
+    // The host stayed open on that first Escape - asserted directly here
+    // rather than only inferred from the Discard button appearing below,
+    // which a dialog that closed and silently reopened could also satisfy.
+    await expect(multiPage.locator('[data-testid="new-task-dialog"]')).toBeVisible();
     await multiPage.keyboard.press('Escape');
     await multiPage.locator('button:has-text("Discard")').click();
     await multiPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
@@ -872,9 +888,9 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveCount(0);
     await expect(groupedPage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
 
-    // One Escape, not two: the dialog's binding is capture-phase, so it reaches
-    // the dirty guard past the open dropdown and raises the confirm directly. A
-    // second Escape would dismiss that confirm instead of the dropdown.
+    // The open dropdown consumes the first Escape; `discardDialog` (behind
+    // `closeDialog` here) presses it, then presses again for the dirty guard
+    // and clears the confirm.
     await closeDialog();
   });
 
@@ -1152,14 +1168,13 @@ test.describe('NewTaskDialog Advanced - Model dropdown open triggers a rescan', 
       })
       .toBe(1);
 
-    // Close and reopen the dropdown via its own chevron toggle (not Escape):
-    // the form has no other field set (isDirty stays false), so Escape would
-    // route through NewTaskDialog's close guard and animate-close the WHOLE
-    // dialog, not just the suggestion popover. The chevron toggle is a plain
-    // mouse click scoped to ModelCombobox's own open/close state, so it
-    // exercises the cooldown in isolation from that unrelated close path.
-    // Scoped to the model input's own row: Effort/Permission/Agent are the
-    // same Combobox widget and render an identically-titled toggle button.
+    // Close and reopen the dropdown via its own chevron toggle: a plain mouse
+    // click scoped to ModelCombobox's own open/close state, so it exercises
+    // the cooldown in isolation from the dialog's close path. (Escape would
+    // close only the popover too, now that an open menu consumes it; see
+    // combobox-escape-layering.spec.ts.) Scoped to the model input's own row:
+    // Effort/Permission/Agent are the same Combobox widget and render an
+    // identically-titled toggle button.
     const modelRow = rescanPage.locator('div:has(> input[data-testid="task-model-override"])');
     const chevronToggle = modelRow.locator('button[title="Close dropdown"]');
     await chevronToggle.click();
@@ -1238,9 +1253,9 @@ test.describe('NewTaskDialog Advanced - context-window badge (telemetry-learned)
     const haikuRow = contextWindowPage.locator('[data-model-row]').filter({ hasText: 'haiku' });
     await expect(haikuRow.locator('[data-model-context-window]')).toHaveCount(0);
 
-    // The dialog's Escape binding is capture-phase, so one press reaches the
-    // dirty check past the open dropdown. Expanding Advanced selected the
-    // override branch, so that check now prompts.
+    // The open dropdown consumes the first Escape; `discardDialog` presses it,
+    // then presses again for the dirty check. Expanding Advanced selected the
+    // override branch, so that check prompts.
     await discardDialog(contextWindowPage);
   });
 });

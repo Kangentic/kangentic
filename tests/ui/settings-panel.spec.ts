@@ -23,8 +23,23 @@ async function openSettings() {
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 }
 
-/** Close any open settings panel via Escape. Clears search first if active. */
+/**
+ * Close any open settings panel via Escape, innermost layer first: an open
+ * combobox menu consumes the first Escape (see combobox-escape-layering.spec.ts),
+ * a search query clears on the next, and only then does the panel close.
+ */
 async function closeSettings() {
+  // "Open" is read off the chevron, whose aria-label flips on the same render
+  // as the menu state. The popover element is the wrong signal: a menu just
+  // closed by a click stays mounted for its exit animation, and its exit class
+  // lands a render later, so an extra press aimed at it would reach the panel.
+  // Scoped to the panel so a menu leaked elsewhere on the shared page is not
+  // mistaken for this panel's own state.
+  const openChevron = page.getByTestId('settings-panel').locator('button[aria-label="Close dropdown"]').first();
+  if (await openChevron.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape');
+    await expect(openChevron).toBeHidden({ timeout: 2000 });
+  }
   // If search has text, first Escape clears it; press again to close.
   const searchInput = page.getByTestId('settings-search');
   if (await searchInput.isVisible().catch(() => false)) {
@@ -679,9 +694,9 @@ test.describe('Settings Panel', () => {
       'Bypass (Unsafe)',
     ]);
 
-    // The Combobox's Escape handler doesn't stop propagation, so a single
-    // Escape (fired by closeSettings() below) closes both the popover and
-    // the whole panel in one press - no separate close needed here.
+    // The open Combobox menu consumes the first Escape itself (see
+    // combobox-escape-layering.spec.ts); closeSettings() below presses once
+    // for the menu and again for the panel, so no separate close is needed.
     await closeSettings();
   });
 

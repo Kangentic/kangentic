@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -69,10 +69,13 @@ export function Combobox({
 }: ComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
-  const [triggerWidth, setTriggerWidth] = useState<number>();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Set around a programmatic refocus of the input so `handleInputFocus` does
+  // not reopen the menu (and fire `onOpen` again) for a focus the user did not
+  // give it. See the Escape listener below.
+  const suppressOpenOnFocusRef = useRef(false);
 
   const selectedLabel = useMemo(
     () => options.find((option) => option.value === value)?.label ?? value,
@@ -95,20 +98,15 @@ export function Combobox({
   // the visible field rather than relying on an in-flow absolute offset that would
   // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto` (the
   // task-detail edit scroller, the settings panel body, the board manager).
+  // `matchTriggerWidth` replaces the old `left-0 right-0` in-flow stretch; the
+  // hook applies it before it measures, which a separate effect here cannot.
   const { style: popoverStyle, placement } = usePopoverPosition(containerRef, menuRef, showSuggestions, {
     mode: 'dropdown',
     strategy: 'fixed',
     preferVertical: 'below',
     preferRight: false,
+    matchTriggerWidth: true,
   });
-
-  // The fixed-strategy popover lost the old `left-0 right-0` in-flow stretch, so
-  // the trigger width has to be measured and applied explicitly.
-  useLayoutEffect(() => {
-    if (showSuggestions && containerRef.current) {
-      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
-    }
-  }, [showSuggestions]);
 
   useEffect(() => {
     // The menu is portaled OUT of containerRef, so a click inside it must also
@@ -131,6 +129,34 @@ export function Combobox({
       return () => document.removeEventListener('mousedown', handleClickOutside, true);
     }
   }, [isOpen]);
+
+  // Escape while the menu is showing closes the menu and nothing else. The
+  // host's dismiss listener (SettingsPanelShell, BaseDialog) is a bubble-phase
+  // keydown on `document`, so a React key handler that only closed the menu let
+  // the same keystroke close the panel or dialog underneath it. Capture-phase on
+  // `document` wins the event ahead of the host; gated on a visible menu so a
+  // plain Escape on a closed combobox still reaches the host. Mirrors
+  // BranchPicker. LabelInput gets the same result from a `stopPropagation` in
+  // its input's own key handler, which is enough there because its suggestions
+  // never take keyboard focus.
+  useEffect(() => {
+    if (!showSuggestions) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      // An option held focus: hand it back to the input. The suppress flag
+      // keeps `handleInputFocus` from reopening the menu on that focus.
+      if (menuRef.current?.contains(document.activeElement)) {
+        suppressOpenOnFocusRef.current = true;
+        inputRef.current?.focus();
+        suppressOpenOnFocusRef.current = false;
+      }
+      setIsOpen(false);
+      setFilterText('');
+    };
+    document.addEventListener('keydown', handleEscape, true);
+    return () => document.removeEventListener('keydown', handleEscape, true);
+  }, [showSuggestions]);
 
   const handleInputChange = (newValue: string) => {
     setFilterText(newValue);
@@ -162,6 +188,7 @@ export function Combobox({
   };
 
   const handleInputFocus = () => {
+    if (suppressOpenOnFocusRef.current) return;
     if (!disabled && options.length > 0) {
       setIsOpen(true);
       onOpen?.();
@@ -170,6 +197,8 @@ export function Combobox({
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
+      // Reached only with no menu showing (the capture listener above consumes
+      // Escape while one is): reset, and let the host see the key.
       setIsOpen(false);
       setFilterText('');
     } else if (e.key === 'Enter') {
@@ -198,6 +227,8 @@ export function Combobox({
     }
   };
 
+  // Escape on an option is handled by the capture listener above, which runs
+  // before this handler could see the key.
   const handleOptionKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -205,10 +236,6 @@ export function Combobox({
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       focusAdjacentOption(e.currentTarget, -1);
-    } else if (e.key === 'Escape') {
-      setIsOpen(false);
-      setFilterText('');
-      inputRef.current?.focus();
     }
   };
 
@@ -268,7 +295,7 @@ export function Combobox({
       <OverlayPopover
         open={showSuggestions}
         popoverRef={menuRef}
-        style={{ ...popoverStyle, width: triggerWidth }}
+        style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto py-1"
