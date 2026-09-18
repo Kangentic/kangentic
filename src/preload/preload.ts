@@ -673,6 +673,7 @@ const api: ElectronAPI = {
 
   clipboard: {
     readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
+    saveImage: (pngBytes) => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE, pngBytes),
     writeText: (text) => ipcRenderer.invoke(IPC.CLIPBOARD_WRITE_TEXT, text),
   },
 

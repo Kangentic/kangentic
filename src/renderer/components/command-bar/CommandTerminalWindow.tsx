@@ -178,7 +178,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   }, []);
   const config = useConfigStore((s) => s.config);
   const rawProjectPath = useProjectStore((s) => s.currentProject?.path ?? null);
-  // Also the source for CommandTerminalPane's own pasteImageTemplate lookup
+  // Also the source for CommandTerminalPane's own pasteImageCapability lookup
   // (SESSION_INJECT_SETTINGS uses the same signal) - kept here too since
   // ContextBar's agentFallback below needs it regardless of the pane.
   const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);

@@ -19,7 +19,7 @@ import {
 import { createRepaintNudge, isUserInputData, isMouseReport, mouseReportLane, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
-import type { PtyResizeOrigin, SessionResizeResult, TerminalColorOverrides } from '../../shared/types';
+import type { PastedImageCapability, PtyResizeOrigin, SessionResizeResult, TerminalColorOverrides } from '../../shared/types';
 // Type only, so this creates no runtime edge to the arbiter (the hook stays
 // surface-agnostic and never reads the policy - it only labels its own paths).
 import type { ArrivalFocusSite } from '../utils/terminal-arrival-focus';
@@ -260,15 +260,16 @@ interface UseTerminalOptions {
   /** Let Escape bubble (to close the containing dialog) when the mouse pointer
    *  is outside the terminal. Used by the task detail dialog. */
   releaseEscapeWhenPointerOutside?: boolean;
-  /** Adapter-declared template (see `AgentDetectionInfo.pastedImageReferenceTemplate`) for
-   *  the text injected when a pasted/dropped image is captured to a temp PNG. Read live via
-   *  a ref (not captured at attach time) since the agent list loads asynchronously and can
-   *  resolve after `enableTerminalClipboard` has already attached its key handler. */
-  pasteImageTemplate?: string;
+  /** Adapter-declared image-paste capability (`PastedImageCapability`: the extensions the
+   *  CLI attaches natively from a pasted path, and the fallback template for the rest),
+   *  which decides the text pasted when a clipboard image is captured to a temp PNG. Read
+   *  live via a ref (not captured at attach time) since the agent list loads asynchronously
+   *  and can resolve after `enableTerminalClipboard` has already attached its key handler. */
+  pasteImageCapability?: PastedImageCapability;
   /** When true, plain Backspace sends Ctrl+H (0x08) instead of xterm's default
    *  DEL (0x7f), matching native Windows conhost so Claude Code's TUI deletes
    *  the previous word. Read live via a ref (same pattern as
-   *  pasteImageTemplate) so a settings toggle applies without remount. */
+   *  pasteImageCapability) so a settings toggle applies without remount. */
   backspaceSendsCtrlH?: boolean;
   /** Fired every time a scrollback operation (mount replay, reload, watchdog
    *  force-recovery, or IPC-rejection recovery) settles, i.e. whenever
@@ -641,11 +642,11 @@ export function useTerminal(options: UseTerminalOptions) {
    *  change (which reuses the existing atlas and applies synchronously). */
   const lastAppliedFontRef = useRef<{ family: string; size: number } | null>(null);
   /** Updated on every commit (see the layout effect below) so the paste handler
-   *  (attached once by initTerminal) always reads the current template, even
+   *  (attached once by initTerminal) always reads the current capability, even
    *  though the agent list resolves asynchronously after the terminal has
    *  already initialized. */
-  const pasteImageTemplateRef = useRef(options.pasteImageTemplate);
-  /** Updated on every commit (same pattern as pasteImageTemplateRef) so the key
+  const pasteImageCapabilityRef = useRef(options.pasteImageCapability);
+  /** Updated on every commit (same pattern as pasteImageCapabilityRef) so the key
    *  handler attached once by initTerminal always reads the current setting. */
   const backspaceSendsCtrlHRef = useRef(options.backspaceSendsCtrlH);
   /** The grid main is holding this session at (SessionResizeResult.held), or
@@ -666,7 +667,7 @@ export function useTerminal(options: UseTerminalOptions) {
   // conform paths, the watchdog) runs after commit, and neither this hook nor
   // its hosts reads them from a layout effect, so the ordering is safe.
   useLayoutEffect(() => {
-    pasteImageTemplateRef.current = options.pasteImageTemplate;
+    pasteImageCapabilityRef.current = options.pasteImageCapability;
     backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
     configuredFontRef.current = options.fontSize || 14;
     sessionIdRef.current = options.sessionId ?? null;
@@ -911,7 +912,7 @@ export function useTerminal(options: UseTerminalOptions) {
     }
     fitTerminal('renderer-change', false);
   }, [fitTerminal]);
-  /** Updated on every commit (same pattern as pasteImageTemplateRef) so the
+  /** Updated on every commit (same pattern as pasteImageCapabilityRef) so the
    *  settle paths attached by initTerminal/reloadScrollback always call the
    *  caller's current callback. */
   const onScrollbackSettledRef = useRef(options.onScrollbackSettled);
@@ -1244,7 +1245,7 @@ export function useTerminal(options: UseTerminalOptions) {
       options.shellName,
       options.sessionId ?? undefined,
       options.releaseEscapeWhenPointerOutside,
-      () => pasteImageTemplateRef.current,
+      () => pasteImageCapabilityRef.current,
       () => backspaceSendsCtrlHRef.current ?? false,
     );
 
@@ -2290,6 +2291,21 @@ export function useTerminal(options: UseTerminalOptions) {
     xtermRef.current?.focus();
   }, []);
 
+  // Paste text into the terminal through xterm's own paste(), which brackets it
+  // (ESC[200~ ... ESC[201~) exactly when the foreground app enabled mode 2004
+  // and feeds onData, so the bytes ride the same batcher as typed input. This is
+  // the one route the file-drop hook may use: a raw sessions.write bypasses the
+  // bracketing, and an agent TUI's path scan (Claude Code's [Image #N] attach)
+  // runs only on a paste packet. Returns false when no xterm is mounted yet
+  // (TerminalTab's LaunchOverlay window, before its deferred initTerminal), so a
+  // caller can tell a delivered paste from one that had nowhere to go.
+  const paste = useCallback((text: string): boolean => {
+    const terminal = xtermRef.current;
+    if (!terminal) return false;
+    terminal.paste(text);
+    return true;
+  }, []);
+
   // The terminal's current grid, read live off the xterm instance (the same
   // read flushResize already does). Used to seed a respawned PTY's dimensions
   // (e.g. a Command Terminal branch switch) so the new session starts at the
@@ -2305,6 +2321,7 @@ export function useTerminal(options: UseTerminalOptions) {
     fit,
     flushResize,
     focus,
+    paste,
     reloadScrollback,
     scrollbackPending: scrollbackPendingRef,
     suppressDataRef,

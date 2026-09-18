@@ -345,7 +345,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageReferenceTemplate, supportsSummarize, remoteExecution) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, remoteExecution) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)
@@ -422,10 +422,11 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 |---------|---------|---------|
 | `app:getVersion` | invoke | Get Electron app version string |
 
-### Clipboard (2 channels)
+### Clipboard (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `clipboard:readImage` | invoke | Read the native clipboard image, cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path or null |
+| `clipboard:saveImage` | invoke | Save PNG bytes the renderer decoded from a dropped image (a format the agent CLI cannot attach from a path, such as bmp) into the same temp directory under the same cap and prune; returns the file path, or null when the bytes are not a decodable image or the write failed |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
 ### Browser pane (17 channels)

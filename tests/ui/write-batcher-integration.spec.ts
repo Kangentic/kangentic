@@ -13,14 +13,16 @@
  *     never initialized), sessions.write is never called even if the overlay
  *     is open.
  *
- *   - The clipboard onWrite path (enableTerminalClipboard receives
- *     batcher.schedule) is exercised end-to-end: Ctrl+Enter sends a single
- *     write containing the newline character; Ctrl+V with clipboard text pastes
- *     the text through terminal.paste -> onData; and Ctrl+V with a clipboard
- *     image writes the shell-quoted temp-file path returned by the native
- *     clipboard.readImage IPC, formatted through the resolved agent's
- *     pastedImageReferenceTemplate (see terminal-image-paste-reference.spec.ts
- *     for the real task-detail terminal coverage of that template).
+ *   - The clipboard paths are exercised end-to-end: Ctrl+Enter sends a single
+ *     write containing the newline character through the onWrite callback
+ *     (enableTerminalClipboard receives batcher.schedule); Ctrl+V with clipboard
+ *     text pastes the text through terminal.paste -> onData; and Ctrl+V with a
+ *     clipboard image pastes the shell-quoted temp-file path returned by the
+ *     native clipboard.readImage IPC through that same terminal.paste route, as
+ *     a bracketed packet when the terminal is in mode 2004, with WHAT is pasted
+ *     decided by the resolved agent's PastedImageCapability (see
+ *     terminal-image-paste-reference.spec.ts for the real task-detail terminal
+ *     coverage of the fallback template and the mode-off case).
  *
  * Coverage of gap 1 (unmount-flush): flush() is called on unmount by the
  * cleanup effect. The synchronous flush() behavior is already unit-tested in
@@ -41,7 +43,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { TERMINAL_TEXT_LAUNCH_ARGS, enableBracketedPaste, waitForViteReady } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -112,9 +114,12 @@ const deterministicSpawnScript = `
 async function launchWithState(
   extraScript: string,
   permissions?: string[],
+  /** Extra Chromium flags. The image-paste case passes TERMINAL_TEXT_LAUNCH_ARGS
+   *  so terminal CONTENT is assertable as text. */
+  launchArgs: string[] = [],
 ): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: launchArgs });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, permissions });
   const page = await context.newPage();
 
@@ -326,19 +331,22 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
     }
   });
 
-  test('Ctrl+V with a clipboard image writes the adapter-templated reference via the onWrite batcher path', async () => {
-    // The image-paste fix: handlePaste's Priority 1 (text) falls through when the
+  test('Ctrl+V with a clipboard image pastes the bare path as one bracketed packet through the batcher', async () => {
+    // The image-paste path: handlePaste's Priority 1 (text) falls through when the
     // clipboard has no text, then Priority 2 reads the image natively via
     // window.electronAPI.clipboard.readImage() (the main-process Electron clipboard,
     // which bypasses the denied web clipboard-read permission). The returned temp
-    // file path is shell-converted, quoted, and written to the PTY through the same
-    // batcher.schedule onWrite callback. This guards the Ctrl+V image regression.
-    // The path has no spaces or special chars, so quoteForShell leaves it unquoted.
-    // The Command Terminal resolves its pasteImageTemplate via the project's
-    // default_agent (CommandTerminalWindow.tsx has no task to resolve through);
-    // basePreConfig() below sets default_agent: 'claude', and the mock agents.list()
-    // 'claude' entry declares pastedImageReferenceTemplate: 'Read this image: {path} ',
-    // so the write payload is the templated reference, not the bare path.
+    // file path is shell-converted, quoted, and delivered through terminal.paste(),
+    // so it rides onData -> batcher.schedule like typed input and is bracketed
+    // (ESC[200~ ... ESC[201~) because the terminal is in mode 2004 - which is what
+    // lets Claude Code's path scan attach it as an [Image #N] chip. The path has no
+    // spaces or special chars, so quoteForShell leaves it unquoted. The Command
+    // Terminal resolves its paste capability via the project's default_agent
+    // (CommandTerminalWindow.tsx has no task to resolve through); basePreConfig()
+    // sets default_agent: 'claude', and the mock agents.list() 'claude' entry lists
+    // png in pastedImageNativeExtensions, so the payload is the bare path with no
+    // "Read this image:" prefix (see terminal-image-paste-reference.spec.ts for the
+    // task-detail terminal, the fallback template, and the mode-off case).
     const IMAGE_PATH = '/tmp/kangentic-clipboard/pasted-image-test.png';
     const clipboardOverrideScript = `
       ${deterministicSpawnScript}
@@ -347,15 +355,16 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
       try { navigator.clipboard.readText = function () { return Promise.resolve(''); }; } catch (e) {}
       window.electronAPI.clipboard.readImage = function () { return Promise.resolve('${IMAGE_PATH}'); };
     `;
-    const { browser, page } = await launchWithState(clipboardOverrideScript);
+    const { browser, page } = await launchWithState(clipboardOverrideScript, undefined, TERMINAL_TEXT_LAUNCH_ARGS);
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await openCommandBarWithTerminal(page);
+      await enableBracketedPaste(page, page.getByTestId('command-terminal-window'), TRANSIENT_SESSION_ID);
 
       await page.evaluate(() => {
         window.electronAPI.sessions.__writeCalls.length = 0;
       });
-
-      await openCommandBarWithTerminal(page);
 
       // Ctrl+V triggers handlePaste in enableTerminalClipboard's custom key handler.
       await page.keyboard.press('Control+v');
@@ -366,7 +375,7 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
 
       const writeCalls = await page.evaluate(() => window.electronAPI.sessions.__writeCalls);
       expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].sessionId).toBe(TRANSIENT_SESSION_ID);
-      expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].payload).toBe(`Read this image: ${IMAGE_PATH} `);
+      expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].payload).toBe(`\x1b[200~${IMAGE_PATH}\x1b[201~`);
     } finally {
       await browser.close();
     }

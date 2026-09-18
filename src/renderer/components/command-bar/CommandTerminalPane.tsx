@@ -43,11 +43,13 @@ interface CommandTerminalPaneProps {
 export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: CommandTerminalPaneProps) {
   const config = useConfigStore((s) => s.config);
   const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
-  // Adapter-declared: this agent needs an explicit reference (not a bare path) to
-  // reliably read a pasted/dropped image. Never branch on agent name - see
-  // .claude/rules/agent-adapters-boundary.md.
-  const pasteImageTemplate = useConfigStore(
-    (s) => s.agentList.find((a) => a.name === projectAgent)?.pastedImageReferenceTemplate,
+  // Adapter-declared image-paste capability (which extensions this agent attaches
+  // natively from a pasted path, and the fallback text for the rest), read off the
+  // project's default agent since a Command Terminal has no task to resolve
+  // through. The list entry is selected whole (a stable reference). Never branch
+  // on agent name - see .claude/rules/agent-adapters-boundary.md.
+  const pasteImageCapability = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === projectAgent),
   );
   const commandTerminalShell = useSessionStore(
     (s) => s.sessions.find((session) => session.id === sessionId)?.shell,
@@ -62,19 +64,19 @@ export function CommandTerminalPane({ sessionId, isMaximized, gridGetterRef }: C
     [sessionId],
   );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, getDimensions } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, paste, getDimensions } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
     cursorStyle: config.terminal.cursorStyle,
     colors: config.terminal.colors,
     shellName: commandTerminalShell ?? undefined,
-    pasteImageTemplate,
+    pasteImageCapability,
     backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     mayTakeArrivalFocus: mayFocusOnArrival,
   });
 
-  const fileDrop = useTerminalFileDrop(sessionId, focus, commandTerminalShell ?? undefined, pasteImageTemplate);
+  const fileDrop = useTerminalFileDrop(sessionId, focus, paste, commandTerminalShell ?? undefined, pasteImageCapability);
 
   // Publish the live grid getter for the parent to read before a branch
   // respawn. Cleared on unmount so a stale getter from a disposed session is

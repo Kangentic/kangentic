@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
+import { chromium, expect, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -44,6 +44,46 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   throw new Error(`Vite dev server at ${url} not ready after ${timeoutMs}ms`);
+}
+
+/**
+ * Chromium flags for a spec that asserts on terminal CONTENT as text. Under
+ * WebGL, xterm draws rows to a canvas and `.xterm` innerText is empty; with
+ * WebGL disabled xterm falls back to its DOM renderer and the rows are real
+ * text nodes. Pass as `chromium.launch({ args: TERMINAL_TEXT_LAUNCH_ARGS })`.
+ * Costs a "WebGL unavailable" console warning per terminal, nothing else.
+ */
+export const TERMINAL_TEXT_LAUNCH_ARGS = ['--disable-webgl', '--disable-webgl2'];
+
+/**
+ * Put a mounted xterm into bracketed-paste mode the way an agent TUI does, and
+ * return once it is provably there. The mock never sends `\x1b[?2004h` and its
+ * scrollback is empty, so every UI-tier terminal starts with the mode OFF; a
+ * spec asserting a `\x1b[200~ ... \x1b[201~` packet must enable it first.
+ *
+ * Fires the DECSET as live PTY bytes with a sentinel in the same chunk and
+ * waits for the sentinel to render (xterm parses in order, so a visible
+ * sentinel means the mode landed, with no fixed wait). Fired INSIDE the poll: a
+ * chunk that lands while the mount replay is still in flight is held and then
+ * superseded by the replay's frame, so it is simply re-fired until one lands
+ * live; the DECSET is idempotent. Needs `TERMINAL_TEXT_LAUNCH_ARGS`, since the
+ * sentinel is read from `.xterm` innerText. `scope` is the container the
+ * terminal lives in (a task-detail dialog, the command-terminal window).
+ */
+export async function enableBracketedPaste(page: Page, scope: Locator, sessionId: string): Promise<void> {
+  const sentinel = 'MODE2004READY';
+  await expect
+    .poll(async () => {
+      await page.evaluate(
+        ({ targetSessionId, text }) => {
+          (window as unknown as { __mockFireSessionData: (id: string, data: string) => void })
+            .__mockFireSessionData(targetSessionId, `\x1b[?2004h${text}\r\n`);
+        },
+        { targetSessionId: sessionId, text: sentinel },
+      );
+      return scope.locator('.xterm').first().innerText();
+    }, { timeout: 10000, intervals: [250] })
+    .toContain(sentinel);
 }
 
 /**

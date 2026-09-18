@@ -29,6 +29,14 @@ export class GeminiAdapter implements AgentAdapter {
     { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
+  // Gemini CLI scans a bracketed paste for image paths and attaches a match
+  // as an `[Image <name>]` chip, quoted or not. Verified against 0.60.0 with
+  // png, jpg and gif (bmp chipped too, but the Gemini API does not list bmp,
+  // so it is left to the PNG normalization the drop path applies; webp was
+  // not probed and takes the same normalization). A path containing a space
+  // is turned into an `@"..."` file reference instead of a chip, which Gemini
+  // also reads at submit.
+  readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif'];
 
   private readonly detector = new GeminiDetector();
   private readonly commandBuilder = new GeminiCommandBuilder();

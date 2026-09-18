@@ -379,8 +379,9 @@ export const IPC = {
   BACKLOG_ATTACHMENT_GET_DATA_URL: 'backlogAttachment:getDataUrl',
   BACKLOG_ATTACHMENT_OPEN: 'backlogAttachment:open',
 
-  // Clipboard
+  // Clipboard (and the pasted-image temp directory it shares with the drop path)
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
+  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
   CLIPBOARD_WRITE_TEXT: 'clipboard:writeText',
 
   // Browser pane: embedded webview capture-and-send

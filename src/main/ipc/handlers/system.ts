@@ -1,8 +1,7 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard, nativeImage } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -19,7 +18,7 @@ import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found'
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
-import { capClipboardImage, pruneClipboardTempDir } from '../helpers/clipboard-image';
+import { writePastedImage } from '../helpers/clipboard-image';
 import { openPathBounded } from '../helpers/open-path';
 import type {
   NotificationInput,
@@ -670,24 +669,28 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CLIPBOARD_READ_IMAGE, (): string | null => {
     const image = clipboard.readImage();
     if (image.isEmpty()) return null;
-    const tempDir = path.join(os.tmpdir(), 'kangentic-clipboard');
-    try {
-      fs.mkdirSync(tempDir, { recursive: true });
-      // Nothing used to delete these, so the directory grew for the life of the
-      // install. Disk hygiene only - it does not change what an agent is billed.
-      pruneClipboardTempDir(tempDir);
-      const filePath = path.join(tempDir, `pasted-image-${Date.now()}.png`);
-      fs.writeFileSync(filePath, capClipboardImage(image).toPNG());
-      return filePath;
-    } catch (error) {
-      // Degrade to the same null an empty clipboard returns rather than
-      // rejecting the renderer's invoke. The disk can be full, a Windows
-      // antivirus scanner can hold a just-created temp file, and on a shared
-      // Linux /tmp the directory can already belong to another user. None of
-      // those should turn a Ctrl+V into an unhandled rejection.
-      console.error('[clipboard] Failed to save pasted image:', error);
-      return null;
-    }
+    // A write failure degrades to the same null an empty clipboard returns
+    // rather than rejecting the renderer's invoke (see writePastedImage).
+    return writePastedImage(image);
+  });
+
+  // Save PNG bytes the renderer decoded from a dropped image file into the same
+  // temp directory, under the same cap and prune, and return the path. This is
+  // the drop-path twin of CLIPBOARD_READ_IMAGE for a format the agent CLI cannot
+  // take from a path (a bmp: outside Claude Code's native paste scan, and its
+  // Read tool refuses the file as binary). The renderer decodes because it
+  // already holds the dropped File and Chromium reads every format `<img>`
+  // does; main's `nativeImage` decodes only PNG and JPEG, so the bytes arrive
+  // here already PNG and the decode below is a validity check, not a
+  // conversion. Null for anything that is not a decodable image, so the
+  // renderer falls back to the path it had.
+  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, (_event, pngBytes: unknown): string | null => {
+    if (!(pngBytes instanceof Uint8Array) || pngBytes.byteLength === 0) return null;
+    const image = nativeImage.createFromBuffer(
+      Buffer.from(pngBytes.buffer, pngBytes.byteOffset, pngBytes.byteLength),
+    );
+    if (image.isEmpty()) return null;
+    return writePastedImage(image);
   });
 
   // Write text to the clipboard natively in the main process rather than via the web

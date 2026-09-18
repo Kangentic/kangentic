@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { escapeForDoubleQuotedShell, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
+import type { PastedImageCapability } from '../../shared/types';
 
 // ---------------------------------------------------------------------------
 // OSC 52 clipboard sequence handling
@@ -167,9 +168,9 @@ export function quoteForShell(filePath: string, shellName?: string): string {
 }
 
 /**
- * Format the text injected into the PTY for a captured (pasted or dropped)
- * image file. With no template, this is just the bare shell-quoted path
- * (legacy behavior for adapters that have not declared
+ * Format the fallback text for a captured (pasted or dropped) image file the
+ * agent CLI cannot attach from a bare path. With no template, this is just the
+ * bare shell-quoted path (adapters that have not declared
  * `pastedImageReferenceTemplate`). With a template, `{path}` is replaced by
  * the quoted path; a template lacking `{path}` has the quoted path appended.
  */
@@ -180,19 +181,90 @@ export function formatImageReference(quotedPath: string, template?: string): str
     : `${template} ${quotedPath}`;
 }
 
+/** The extension of `filePath` (lowercase, no dot), or '' when it has none. */
+function fileExtension(filePath: string): string {
+  const base = filePath.slice(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1);
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/**
+ * The text to paste for a captured image at `filePath` (`quotedPath` is the
+ * same path already shell-quoted). An extension the adapter attaches natively
+ * (`pastedImageNativeExtensions`) gets the bare quoted path: delivered as a
+ * bracketed paste, the CLI's own path scan attaches it. Every other image
+ * takes `formatImageReference` with the adapter's fallback template, which is
+ * also what an adapter declaring no native set gets for every image.
+ */
+export function resolveImagePasteText(
+  quotedPath: string,
+  filePath: string,
+  capability?: PastedImageCapability,
+): string {
+  const nativeExtensions = capability?.pastedImageNativeExtensions;
+  if (nativeExtensions && nativeExtensions.includes(fileExtension(filePath))) return quotedPath;
+  return formatImageReference(quotedPath, capability?.pastedImageReferenceTemplate);
+}
+
+/**
+ * Whether a dropped image at `filePath` should be re-encoded as PNG before it
+ * is pasted: the adapter attaches PNG natively from a pasted path but not this
+ * file's format. Chromium can decode more than any CLI attaches (a bmp, an
+ * ico), so handing the agent a PNG copy turns a fallback-text drop into a
+ * native attach. False when the format is already native (nothing to gain) or
+ * when the adapter declares no native set at all (a PNG copy would be inert
+ * text there too, so the original path and template are the better delivery).
+ *
+ * Only the drop path asks. The Ctrl+V path never needs to: `clipboard:readImage`
+ * saves every clipboard capture as PNG, which is in every declared native set.
+ */
+export function needsImageNormalization(filePath: string, capability?: PastedImageCapability): boolean {
+  const nativeExtensions = capability?.pastedImageNativeExtensions;
+  if (!nativeExtensions || !nativeExtensions.includes('png')) return false;
+  return !nativeExtensions.includes(fileExtension(filePath));
+}
+
+/**
+ * Deliver a file drop's items through the terminal's paste handle: one
+ * `pasteText` call per item, so under bracketed-paste mode each path is its own
+ * packet and the TUI's path scan sees one token per packet. A single
+ * space-joined paste would hand the scan `"a.png" "b.png"` as ONE token (its
+ * splitter looks ahead for a drive letter or `/`, never a quote) and attach
+ * neither. The separator rides inside the preceding packet (every item but the
+ * last carries a trailing space), so a shell prompt still reads
+ * `"a.png" "b.png"`. Verified against Claude Code 2.1.276: two packets in one
+ * write attach as [Image #1] [Image #2].
+ *
+ * Returns false, and pastes nothing further, when `pasteText` reports it had no
+ * terminal to land in, so a caller can skip the focus that follows a delivery.
+ */
+export function pasteDroppedItems(
+  items: readonly string[],
+  pasteText: (text: string) => boolean,
+): boolean {
+  return items.every((item, index) => pasteText(index < items.length - 1 ? `${item} ` : item));
+}
+
 /**
  * Handle Ctrl+V / Cmd+V paste in the terminal.
  *
  * Priority 1: If the clipboard contains text, paste it into xterm.
  * Priority 2: If the clipboard contains an image (and no text), save it
- *   to a temp file and write a reference to it (see `formatImageReference`)
- *   to the PTY so the agent reliably reads it as an image.
+ *   to a temp file and paste its path (see `resolveImagePasteText`) into
+ *   xterm, the way a native terminal delivers a dropped file.
+ *
+ * Both priorities end in `terminal.paste()`, so the bytes are bracketed
+ * (`ESC[200~ ... ESC[201~`) exactly when the foreground app enabled mode 2004.
+ * That is what lets an agent TUI attach the image from its path: Claude Code's
+ * path scan runs only on a paste packet, never on typed bytes. A shell prompt
+ * that never enabled the mode receives the plain quoted path, and nothing
+ * executes.
  */
 async function handlePaste(
   terminal: Terminal,
   onWrite?: (data: string) => void,
   shellName?: string,
-  getImageReferenceTemplate?: () => string | undefined,
+  getPastedImageCapability?: () => PastedImageCapability | undefined,
 ): Promise<void> {
   // Priority 1: text clipboard
   try {
@@ -205,12 +277,17 @@ async function handlePaste(
     // readText failed or denied - try image below
   }
 
-  // Priority 2: image clipboard (only useful if we can write to PTY).
+  // Priority 2: image clipboard. This path no longer writes through `onWrite`
+  // (xterm's paste feeds onData, and `useTerminal` always passes its batcher,
+  // which drops the bytes itself when no session backs the terminal), but the
+  // check stays as the cheap early-out for a caller that wired no write sink at
+  // all: such a terminal has nowhere to deliver a paste, so it should not spend
+  // a clipboard read on one. The Ctrl+Enter and Backspace paths still write
+  // through it.
   // Read the image natively in the main process (Electron clipboard), which avoids
   // the document-focus requirement of the web clipboard API and behaves identically
   // across platforms (and, unlike the agent CLI's own clipboard reader, reliably
-  // captures a Windows Snipping Tool image), then write a reference to the saved
-  // file path to the PTY so the agent picks it up as an image.
+  // captures a Windows Snipping Tool image), then paste the saved file's path.
   if (!onWrite) return;
 
   try {
@@ -218,7 +295,7 @@ async function handlePaste(
     if (!filePath) return;
     if (shellName) filePath = convertPathForShell(filePath, shellName);
     const quotedPath = quoteForShell(filePath, shellName);
-    onWrite(formatImageReference(quotedPath, getImageReferenceTemplate?.()));
+    terminal.paste(resolveImagePasteText(quotedPath, filePath, getPastedImageCapability?.()));
   } catch {
     // native clipboard read failed - silently fail
   }
@@ -258,7 +335,7 @@ export function enableTerminalClipboard(
   shellName?: string,
   sessionId?: string,
   releaseEscapeWhenPointerOutside?: boolean,
-  getImageReferenceTemplate?: () => string | undefined,
+  getPastedImageCapability?: () => PastedImageCapability | undefined,
   getBackspaceSendsCtrlH?: () => boolean,
 ): void {
   // OSC 52 clipboard writes (write-only). Claude Code's TUI copies a selection by
@@ -309,7 +386,7 @@ export function enableTerminalClipboard(
       ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'V');
 
     if (isPaste) {
-      handlePaste(terminal, onWrite, shellName, getImageReferenceTemplate).catch(() => { /* clipboard access denied */ });
+      handlePaste(terminal, onWrite, shellName, getPastedImageCapability).catch(() => { /* clipboard access denied */ });
       return false;
     }
 

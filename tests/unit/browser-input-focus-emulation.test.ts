@@ -454,6 +454,28 @@ describe('input payloads', () => {
     detachDebugger(guest);
   });
 
+  it('dispatchKeypress reports the key the way a physical keyboard does, whatever the chord spelling', async () => {
+    // A real Ctrl+V press carries `key: 'v'`; handlers compare on it (xterm's
+    // paste chord is `key === 'v'`). Spelled `Ctrl+V`, the chord used to arrive
+    // with `key: 'V'` and no Shift, an unknown combination that did nothing while
+    // the tool reported success. Shift in the chord is what makes the key
+    // uppercase, exactly as on a keyboard.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await dispatchKeypress(guest, 'Ctrl+V');
+    await dispatchKeypress(guest, 'Ctrl+Shift+v');
+
+    expect(sent.map((entry) => entry.params)).toEqual([
+      { type: 'keyDown', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 },
+      { type: 'keyUp', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 },
+      { type: 'keyDown', key: 'V', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 10 },
+      { type: 'keyUp', key: 'V', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 10 },
+    ]);
+    detachDebugger(guest);
+  });
+
   it('dispatchKeypress leaves a shifted SYMBOL text-free rather than guessing a layout', async () => {
     // Shift+1 is `!` on a US layout and something else on many others, and there
     // is no layout map here. Guessing would be a lie; `type` is the right tool.
