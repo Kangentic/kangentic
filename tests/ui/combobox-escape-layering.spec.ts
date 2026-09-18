@@ -169,16 +169,36 @@ test('Settings > Agent: Escape closes the model menu, not the panel, from the in
   }
 });
 
-test('Settings > Terminal: Escape closes the font menu, not the panel', async () => {
+test('Settings > Terminal: Escape closes the font menu, not the panel, from the input and from an option', async () => {
   const { browser, page } = await launchPage();
   try {
     await createProject(page, `EscapeLayeringFont ${Date.now()}`);
     await openSettingsTab(page, 'Terminal');
-    await expect(page.locator('input[data-testid="terminal-font-family"]')).toBeVisible({ timeout: 3000 });
+    const input = page.locator('input[data-testid="terminal-font-family"]');
+    await expect(input).toBeVisible({ timeout: 3000 });
 
+    // From the input.
     await openMenu(page, 'terminal-font-family');
     await expectEscapeClosesOnlyTheMenu(page, 'terminal-font-family');
 
+    // From a focused option: ArrowDown moves focus into the portaled menu, and
+    // Escape there hands focus back to the input. FontCombobox carries its own
+    // copy of this refocus branch (Combobox and ModelCombobox each have their
+    // own too, already covered above and in NewTaskDialog's Effort menu), and
+    // the from-the-input case just above never reaches it -
+    // `document.activeElement` there is already the input, not a menu child -
+    // so a regression here (e.g. dropping the refocus) is not caught by any
+    // other test in this file.
+    await openMenu(page, 'terminal-font-family');
+    await page.keyboard.press('ArrowDown');
+    const firstFontOption = page.locator('[data-testid="terminal-font-family-menu"] [data-font-option]').first();
+    await expect(firstFontOption).toBeFocused();
+    await expectEscapeClosesOnlyTheMenu(page, 'terminal-font-family');
+    await expect(input).toBeFocused();
+
+    // With no menu showing, Escape reaches the panel again. This is also the
+    // proof the refocus did not silently reopen the menu: an open menu would
+    // have consumed this keystroke instead.
     await page.keyboard.press('Escape');
     await expect(page.locator(SETTINGS_PANEL)).toBeHidden({ timeout: 3000 });
   } finally {
