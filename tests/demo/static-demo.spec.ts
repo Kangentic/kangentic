@@ -835,11 +835,14 @@ test('a held terminal reporting its conformed grid is not a resize, so a finishe
 });
 
 test('a display that fits another grid holds the task window at the recording\'s grid and streams its bytes', async ({ browser }) => {
-  // Windows at 125 percent scaling fits 144 by 36 in the task window, not the recorded 154 by 37,
-  // and a recording's bytes address rows for their own grid. The mock answers the terminal's
-  // resize with the grid it holds, the recording's, and the terminal conforms: it takes that grid
-  // and scales its font to fit the pane, so the bytes replay exactly here too. The session goes
-  // on working through it, as an agent does on the desktop when its window is resized.
+  // A display at 125 percent scaling fits fewer columns and rows in the task window than the
+  // recorded 154 by 37 (144 by 36 on Windows, 141 by 36 on CI's Linux fonts), and a recording's
+  // bytes address rows for their own grid. The mock answers the terminal's resize with the grid it
+  // holds and the terminal conforms: it takes that grid and scales its font to fit the pane, so
+  // the bytes replay exactly here too. Which recording is held follows the width the page
+  // measured: a pane narrower than the single recording takes the session's tiled one (the seed's
+  // layoutFor). The session goes on working through it, as an agent does on the desktop when its
+  // window is resized.
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
   const page = await context.newPage();
@@ -847,7 +850,11 @@ test('a display that fits another grid holds the task window at the recording\'s
   await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1' }));
   await waitForDemoReady(page);
   await SCENE_MARKERS.task(page);
-  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(MIDDLEWARE_RECORDED_GRID);
+  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toHaveLength(0);
+  const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
+  expect(natural.rows).toBeLessThan(MIDDLEWARE_RECORDED_GRID.rows);
+  const heldGrid = natural.cols < MIDDLEWARE_RECORDED_GRID.cols ? MIDDLEWARE_TILED_GRID : MIDDLEWARE_RECORDED_GRID;
+  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(heldGrid);
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000);
   expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBeGreaterThan(0);
