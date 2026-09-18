@@ -570,7 +570,7 @@ export interface AgentAdapter {
    * Example (Gemini, Droid, Cursor, Warp, Ollama, Goose):
    *   - Both contexts: returns null. For the first three that is a MEASURED
    *     verdict - their history flushes at turn-end or too variably to bound a
-   *     ~2s delivery budget (numbers in `docs/command-injection.md`) - not an
+   *     ~4s delivery budget (numbers in `docs/command-injection.md`) - not an
    *     unexplored gap. Warp and Ollama expose no usable history at all, and
    *     Goose parses none.
    */
