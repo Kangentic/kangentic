@@ -84,6 +84,7 @@ module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, el
 | MCP create (`kangentic_create_task`) | `autoSpawnForTask` | `spawnAgent` |
 | Column auto-spawn switched on | a column edit or a Board Profile edit, from either the Board Manager or the MCP `update_column` / profile tools, via `reconcileAutoSpawnChange` | `autoSpawnForTask` -> `spawnAgent` (sequential, skips user-paused, active project only) |
 | Unarchive (single + bulk) | Completed Tasks restore / `TASK_UNARCHIVE` | `spawnAgent`, `skipPromptTemplate` + `suppressAutoCommand` (recovery move) |
+| Phone Start (`start-session` verb) | "Start again" from the phone's ended state, via `startTaskSession` (`handlers/session-start.ts`) | `autoSpawnForTask` -> `spawnAgent`, `explicitStart` (lifts the column's `auto_spawn` default and a user pause, as the desktop Resume button does; the role gate stays) |
 | Startup crash recovery | project open, `resumeSuspendedSessions` | `prepareAgentSpawn` (`session-startup/prepare-spawn.ts`) |
 | Startup reconcile | project open, `autoSpawnTasks` | `prepareAgentSpawn` |
 
@@ -267,8 +268,9 @@ them on exactly the slow path where the later read matters most.
 
 `SESSION_RESUME` (the task detail's Pause/Resume toggle) restarts a suspended session **in
 place**, in the task's current column. It is refused for three states, resolved by one shared
-predicate (`src/shared/session-resume-eligibility.ts`) that both the main-process handler and the
-task detail read, and whose role set startup recovery shares:
+predicate (`src/shared/session-resume-eligibility.ts`) that the main-process handler, the task
+detail, and the phone's `startTaskSession` (`handlers/session-start.ts`, the `start-session` verb)
+all read, and whose role set startup recovery shares:
 
 | State | Why |
 |---|---|

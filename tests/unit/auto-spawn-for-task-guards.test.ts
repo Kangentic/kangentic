@@ -41,6 +41,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockSwimlaneGetById = vi.fn();
 const mockTaskGetById = vi.fn();
+const mockFindLiveSessionByTaskId = vi.fn((): unknown => undefined);
 const mockEnsureTaskWorktree = vi.fn();
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockNotifySpawnBlocked = vi.fn();
@@ -112,6 +113,8 @@ function makeContext(boardProfiles: BoardProfile[] = []) {
   return {
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Example', path: '/mock/project' })) },
     boardConfigManager: { getBoardProfiles: vi.fn(() => boardProfiles) },
+    // The live-session re-check under the lock (see the "races itself" block).
+    sessionManager: { findLiveSessionByTaskId: (...args: unknown[]) => mockFindLiveSessionByTaskId(...args) },
     // createProgressCallback / clearSpawnProgress (the real, unmocked
     // spawn-progress module) both read context.mainWindow.
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
@@ -120,6 +123,7 @@ function makeContext(boardProfiles: BoardProfile[] = []) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFindLiveSessionByTaskId.mockReturnValue(undefined);
   // Rejects so autoSpawnForTask's own catch returns immediately once the
   // guard clears - the boundary this test needs, without mocking anything
   // downstream of the worktree phase.
@@ -185,6 +189,94 @@ describe('autoSpawnForTask: the auto_spawn guard reads the profile-folded lane',
     mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: false }));
 
     await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Unprofiled task' }, LANE_ID);
+
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
+});
+
+describe('autoSpawnForTask: a task that already has a live session is never spawned again', () => {
+  // A start that races itself: a second caller queued on the task lock while
+  // the first was still spawning (two phone Starts a second apart on a slow
+  // worktree ensure). spawnAgent's startAgent would bail on the session_id,
+  // but the column's enter list would still run and its message row would
+  // deliver to the LIVE session, typing the column message twice. task-move's
+  // Phase 3 makes the same check; this chokepoint did not, because its
+  // original callers (MCP create, the reconcile) could not race themselves.
+  it('returns before the worktree phase when the registry already holds a live session for the task', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role: null }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Started twice', swimlane_id: LANE_ID, profile_id: null, session_id: 'sess-live',
+    });
+    mockFindLiveSessionByTaskId.mockReturnValue({ id: 'sess-live', taskId: TASK_ID, status: 'running' });
+
+    await autoSpawnForTask(
+      makeContext([]), 'proj-1', { id: TASK_ID, title: 'Started twice' }, LANE_ID,
+      { explicitStart: true },
+    );
+
+    // Red before the guard existed: the worktree phase was reached and the
+    // enter list ran against the live session.
+    expect(mockFindLiveSessionByTaskId).toHaveBeenCalledWith(TASK_ID);
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
+
+  it('still spawns when the registry holds no live session, whatever a stale session_id says', async () => {
+    // A natural exit leaves task.session_id pointing at an exited row; the
+    // registry, not the column, is the source of truth for liveness.
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role: null }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Ended', swimlane_id: LANE_ID, profile_id: null, session_id: 'sess-stale',
+    });
+    mockFindLiveSessionByTaskId.mockReturnValue(undefined);
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Ended' }, LANE_ID);
+
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('autoSpawnForTask: explicitStart lifts the auto_spawn default, not the role gate', () => {
+  // The phone's start-session verb is an explicit user gesture, the bridge
+  // twin of the desktop's Resume button, which starts a session whatever the
+  // column's "Start an agent here" default says. The flag exists to stop an
+  // AUTOMATIC spawn from overriding a user's choice; an explicit Start is that
+  // user changing their mind.
+  it('reaches the worktree phase on an auto_spawn-off column when explicitStart is set', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: false, role: null }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Restarted from the phone', swimlane_id: LANE_ID, profile_id: null,
+    });
+
+    await autoSpawnForTask(
+      makeContext([]), 'proj-1', { id: TASK_ID, title: 'Restarted from the phone' }, LANE_ID,
+      { explicitStart: true },
+    );
+
+    // Red before the option existed: the auto_spawn guard returned first.
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+  });
+
+  it('still honors the auto_spawn default without the flag (the automatic callers are unchanged)', async () => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: false, role: null }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Reconciled', swimlane_id: LANE_ID, profile_id: null,
+    });
+
+    await autoSpawnForTask(makeContext([]), 'proj-1', { id: TASK_ID, title: 'Reconciled' }, LANE_ID, {});
+
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
+
+  it.each([['todo'], ['done']] as const)('never spawns into a %s column even with explicitStart', async (role) => {
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role }));
+    mockTaskGetById.mockReturnValue({
+      id: TASK_ID, title: 'Explicit start into a role column', swimlane_id: LANE_ID, profile_id: null,
+    });
+
+    await autoSpawnForTask(
+      makeContext([]), 'proj-1', { id: TASK_ID, title: 'Explicit start into a role column' }, LANE_ID,
+      { explicitStart: true },
+    );
 
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
   });

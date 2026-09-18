@@ -434,7 +434,7 @@ Desktop / bridge (kangentic board):
   `session-failed`, `plan-complete`, `spawn-stalled` - `PUSH_CATEGORIES` in
   `packages/protocol/src/crypto/push-envelope.ts`). Paired-devices settings UI shipped as the
   Mobile Devices tab (list, rename, revoke); per-device capability toggles were built and then
-  REMOVED, since pairing now grants all ten verbs (see `docs/mobile-bridge.md`) - the capability
+  REMOVED, since pairing now grants every verb (see `docs/mobile-bridge.md`) - the capability
   check and `setDeviceCapabilities()` remain as the seam for a future narrower preset. Still
   open: notification-CATEGORY alignment between the two sides. Desktop has no category type at
   all, only four config booleans (`onAgentIdle`, `onAgentCrash`, `onPlanComplete`,

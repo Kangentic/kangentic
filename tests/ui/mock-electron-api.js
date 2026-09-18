@@ -3718,7 +3718,7 @@
     //     desktop auto-enrolling on the phone's confirm frame. Production
     //     pairing is driven by a main-process PUSH (mobile:pairingConfirmed),
     //     not a renderer-initiated confirm call, so this seeds a device with
-    //     the full ten-verb grant and fires that push directly, exactly as
+    //     the full every-verb grant and fires that push directly, exactly as
     //     MobileBridgeService does on a successful ceremony.
     mobile: (function () {
       var state = {
@@ -3737,11 +3737,13 @@
       var mockDeviceCounter = 0;
 
       // Mirrors packages/protocol/src/capabilities/verbs.ts's CAPABILITY_VERBS -
-      // pairing grants all ten, not a read-only subset.
+      // pairing grants every verb, not a read-only subset. Hand-mirrored, so a
+      // new verb is appended here too; tests/unit/mobile-capability-verbs-parity.test.ts
+      // reads this literal as text and fails when it drifts from the protocol.
       var FULL_CAPABILITY_SET = [
         'read-stream', 'read-board', 'read-diff', 'send-user-message', 'move-task',
         'answer-permission-prompt', 'interactive-terminal', 'board-tool-read',
-        'board-tool-write', 'register-push',
+        'board-tool-write', 'register-push', 'start-session',
       ];
 
       if (typeof window !== 'undefined') {

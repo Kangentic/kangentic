@@ -16,6 +16,7 @@ vi.mock('../../../src/main/mobile-bridge/handlers/interactive-terminal', () => (
 vi.mock('../../../src/main/mobile-bridge/handlers/answer-permission-prompt', () => ({ handleAnswerPermissionPrompt: vi.fn() }));
 vi.mock('../../../src/main/mobile-bridge/handlers/board-tool', () => ({ handleBoardTool: vi.fn() }));
 vi.mock('../../../src/main/mobile-bridge/handlers/register-push', () => ({ handleRegisterPush: vi.fn() }));
+vi.mock('../../../src/main/mobile-bridge/handlers/start-session', () => ({ handleStartSession: vi.fn() }));
 
 import { CAPABILITY_VERBS } from '@kangentic/protocol';
 import { registerCapabilityHandlers } from '../../../src/main/mobile-bridge/handlers';

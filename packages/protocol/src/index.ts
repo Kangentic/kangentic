@@ -46,6 +46,7 @@ export {
   parseReadDiffResponsePayload,
   parseTranscriptWindowResponsePayload,
   parseRegisterPushRequestPayload,
+  parseStartSessionResponsePayload,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
   type ReadStreamRequestPayload,
@@ -75,6 +76,9 @@ export {
   type BoardToolResponsePayload,
   type RegisterPushRequestPayload,
   type RegisterPushResponsePayload,
+  type StartSessionRequestPayload,
+  type StartSessionResponsePayload,
+  type StartSessionOutcome,
 } from './wire/payloads';
 
 export {
