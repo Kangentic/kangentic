@@ -4,7 +4,6 @@ import {
   DndContext,
   closestCenter,
   PointerSensor,
-  KeyboardSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -18,6 +17,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { RegistryIcon, getSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
+import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import type { SwimlaneRole } from '../../../../shared/types';
 
 /** Sentinel id for the "All columns" overview entry. Shared with the dialog. */
@@ -186,9 +186,12 @@ export function ColumnRail({
 }: ColumnRailProps) {
   // Re-key DndContext on HMR; see src/renderer/utils/hmr-generation.ts (Pattern C).
   const hmrGeneration = useHmrGeneration();
+  // Never the stock KeyboardSensor: a click on the grip focuses it, Enter would
+  // lift the row, and an Enter in a field below would drop it. See
+  // intent-keyboard-sensor.ts and keyboard-drag-intent.md.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const overviewSelected = activeId === ALL_COLUMNS_ID;

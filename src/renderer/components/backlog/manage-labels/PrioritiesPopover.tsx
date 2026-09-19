@@ -12,6 +12,7 @@ import {
   verticalListSortingStrategy,
   useSortable,
   arrayMove,
+  sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
@@ -19,6 +20,7 @@ import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
+import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import type { AppConfig } from '../../../../shared/types';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
@@ -85,8 +87,12 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
     return counts;
   }, [items]);
 
+  // The row grip carries dnd-kit's attributes (a Tab stop announced as
+  // sortable), so it gets the shared keyboard sensor. Never the stock
+  // KeyboardSensor (keyboard-drag-intent.md).
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const handleRename = useCallback((index: number, newLabel: string) => {

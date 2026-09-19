@@ -4,7 +4,6 @@ import {
   closestCorners,
   pointerWithin,
   rectIntersection,
-  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -25,6 +24,7 @@ import { useToastStore } from '../stores/toast-store';
 import { useProjectStore } from '../stores/project-store';
 import { useConfigStore } from '../stores/config-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
+import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
 
 interface UseBoardDragDropParams {
@@ -160,11 +160,13 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
   // unmounts mid-drag (dnd-kit fires no dragEnd/dragCancel in that case).
   const dragInFlightRef = useRef(false);
 
+  // Never the stock KeyboardSensor: it arms on a mouse-focused card and cannot
+  // end on a click. See intent-keyboard-sensor.ts and keyboard-drag-intent.md.
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
     }),
-    useSensor(KeyboardSensor, {
+    useSensor(IntentKeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
