@@ -35,11 +35,20 @@
       "color": "#f59e0b",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "autoCommand": "/code-review {{baseBranch}}",
       "modelOverride": "claude-opus-5",
       "effortOverride": "high",
       "sessionTarget": "isolated",
-      "sessionSpawnStrategy": "always_spawn_new"
+      "sessionSpawnStrategy": "always_spawn_new",
+      "automations": {
+        "onEnter": [
+          {
+            "name": "Message",
+            "type": "send_message",
+            "message": "/code-review {{baseBranch}}",
+            "mode": "immediate"
+          }
+        ]
+      }
     },
     {
       "id": "1da886f1-804b-42ea-960e-2109f776d451",
@@ -48,9 +57,18 @@
       "color": "#06b6d4",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "autoCommand": "/pull-request",
       "modelOverride": "claude-sonnet-5",
-      "effortOverride": "high"
+      "effortOverride": "high",
+      "automations": {
+        "onEnter": [
+          {
+            "name": "Message",
+            "type": "send_message",
+            "message": "/pull-request",
+            "mode": "immediate"
+          }
+        ]
+      }
     },
     {
       "id": "8adfe5cc-955c-4c4f-83a2-461e2a9d3c14",
@@ -59,9 +77,18 @@
       "color": "#f97316",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "autoCommand": "/merge-pull-request",
       "modelOverride": "claude-sonnet-5",
-      "effortOverride": "high"
+      "effortOverride": "high",
+      "automations": {
+        "onEnter": [
+          {
+            "name": "Message",
+            "type": "send_message",
+            "message": "/merge-pull-request",
+            "mode": "immediate"
+          }
+        ]
+      }
     },
     {
       "id": "64f9ef9a-c05d-44f8-a846-329a8f15e69f",
@@ -69,40 +96,6 @@
       "role": "done",
       "icon": "circle-check-big",
       "color": "#64748B"
-    }
-  ],
-  "actions": [
-    {
-      "id": "6849712a-b0ea-4785-9ef0-8fcad5dcb599",
-      "name": "Kill Session",
-      "type": "kill_session",
-      "config": {}
-    },
-    {
-      "id": "6b6d8c02-4865-497d-9186-591a4133c915",
-      "name": "Start Planning Agent",
-      "type": "spawn_agent",
-      "config": {
-        "agent": "claude",
-        "promptTemplate": "{{task_xml}}{{attachments}}"
-      }
-    }
-  ],
-  "transitions": [
-    {
-      "from": "*",
-      "to": "Planning",
-      "actions": [
-        "Kill Session",
-        "Start Planning Agent"
-      ]
-    },
-    {
-      "from": "*",
-      "to": "Done",
-      "actions": [
-        "Kill Session"
-      ]
     }
   ],
   "_modifiedBy": "7ef4fd0cb484"
