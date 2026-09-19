@@ -4087,6 +4087,8 @@ export interface MobilePairedDevice {
   pairedAt: string;
   /** Live, not persisted - this device's own connection state (transport refined by whether the phone is actually attached), not the panel-wide aggregate. */
   connectionState: MobileDeviceConnectionState;
+  /** ISO 8601, live, not persisted - when `connectionState` last changed, so a row can say "Offline since 3:17 PM" rather than only "Offline". Null before the device's session has opened. */
+  connectionStateSince: string | null;
 }
 
 export interface MobilePairingSasPayload {

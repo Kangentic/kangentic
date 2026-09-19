@@ -34,7 +34,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import type { CapabilityRequestMessage, CapabilityResponseMessage, RosterDeviceEntry } from '@kangentic/protocol';
+import type { CapabilityRequestMessage, CapabilityResponseMessage, RosterDeviceEntry, TransportState } from '@kangentic/protocol';
+import type { MobileDeviceConnectionState } from '../../../src/shared/types';
 
 vi.mock('electron', () => ({
   app: { isReady: () => true, whenReady: () => Promise.resolve() },
@@ -93,10 +94,16 @@ const createdSessions: FakeBridgeSession[] = [];
 class FakeBridgeSession extends EventEmitter {
   readonly deviceId: string;
   capabilities: Set<string>;
+  /** Mutable so a test can set the next value and then `session.emit('connectionState')`, exactly as the real BridgeSession's 'connectionState' listener reads it. */
+  connectionState: MobileDeviceConnectionState = 'idle';
+  /** Mutable, same reasoning as connectionState above - read by the same listener for the "(transport <transportState>)" suffix. */
+  transportState: TransportState = 'idle';
   start = vi.fn();
   dispose = vi.fn();
   sendMessage = vi.fn();
   sendGoodbye = vi.fn();
+  resumeFromSleep = vi.fn(() => 'redialed' as const);
+  probePresenceNow = vi.fn(() => true);
   constructor(options: { deviceId: string; capabilities: Set<string> }) {
     super();
     this.deviceId = options.deviceId;
@@ -120,7 +127,9 @@ vi.mock('../../../src/main/mobile-bridge/transport/transport-factory', () => ({
   createTransport: vi.fn(() => fakeTransport),
 }));
 
-const { MobileBridgeService } = await import('../../../src/main/mobile-bridge/mobile-bridge-service');
+const { MobileBridgeService, resetForcedRedialTelemetryForTests } = await import('../../../src/main/mobile-bridge/mobile-bridge-service');
+const { trackEvent } = await import('../../../src/main/analytics/analytics');
+const { createTransport } = await import('../../../src/main/mobile-bridge/transport/transport-factory');
 type MobileBridgeServiceInstance = InstanceType<typeof MobileBridgeService>;
 
 /** Settle every microtask queued by the fire-and-forget async chain reconcile() -> syncSessions() -> runSyncSessions() -> openSessionForDevice() kicks off. */
@@ -157,6 +166,12 @@ beforeEach(() => {
   setDeviceCapabilitiesSpy.mockClear();
   fakeTransport.connect.mockClear();
   fakeTransport.close.mockClear();
+  vi.mocked(createTransport).mockClear();
+  // The forced-redial analytics gate is module state (once per reason per
+  // app run), so a case that asserts the event must start from a clear gate
+  // whatever ran before it.
+  resetForcedRedialTelemetryForTests();
+  vi.mocked(trackEvent).mockClear();
 });
 
 describe('MobileBridgeService session-lifecycle wiring', () => {
@@ -212,6 +227,74 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
 
     warnSpy.mockRestore();
     service.dispose();
+  });
+
+  it('resumeAllSessions and probeAllPresence fan out to every open session and log what actually happened', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const logLines = (): string[] => logSpy.mock.calls.map((call) => String(call[0]));
+
+    service.resumeAllSessions('system resumed from sleep');
+    expect(session.resumeFromSleep).toHaveBeenCalledTimes(1);
+    expect(session.resumeFromSleep).toHaveBeenCalledWith('system resumed from sleep');
+    expect(logLines().some((line) => line.includes('system resumed from sleep: redialed 1, probed 0, skipped 0 of 1'))).toBe(true);
+
+    service.probeAllPresence('screen unlocked');
+    expect(session.probePresenceNow).toHaveBeenCalledTimes(1);
+    expect(logLines().some((line) => line.includes('screen unlocked: probed 1 of 1'))).toBe(true);
+
+    // A parked slot whose initiation is still buffered sends nothing, and a
+    // quiet unlock must not write a line saying it probed.
+    session.probePresenceNow.mockReturnValueOnce(false);
+    logSpy.mockClear();
+    service.probeAllPresence('screen unlocked');
+    expect(logLines()).toEqual([]);
+
+    logSpy.mockRestore();
+    service.dispose();
+  });
+
+  it('logs the lifecycle edges the session emits, throttling a rejected-frame burst to one line per window', async () => {
+    vi.useFakeTimers();
+    try {
+      const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+      const session = await openSession(service);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const warnLines = (): string[] => warnSpy.mock.calls.map((call) => String(call[0]));
+
+      session.emit('handshakeFailed', new Error('KK handshake did not complete'));
+      expect(warnLines().filter((line) => line.includes('handshake failed: KK handshake did not complete'))).toHaveLength(1);
+
+      // The reason arrives as a closed enum and is logged as prose; the
+      // analytics count is gated to once per reason per app run, so the
+      // second emission logs again but counts nothing.
+      session.emit('forcedRedial', 'paired-silent');
+      session.emit('forcedRedial', 'paired-silent');
+      expect(warnLines().filter((line) => line.includes('forcing a redial: peer went silent on a paired socket'))).toHaveLength(2);
+      const forcedRedialEvents = vi.mocked(trackEvent).mock.calls.filter(([name]) => name === 'mobile_bridge_forced_redial');
+      expect(forcedRedialEvents).toEqual([['mobile_bridge_forced_redial', { reason: 'paired-silent' }]]);
+
+      // A garbage burst from the blind relay: three frames, one line.
+      session.emit('frameRejected', new Error('bad tag'));
+      session.emit('frameRejected', new Error('bad tag'));
+      session.emit('frameRejected', new Error('bad tag'));
+      expect(warnLines().filter((line) => line.includes('rejected a frame: bad tag'))).toHaveLength(1);
+
+      // The next line carries what the last one swallowed, however long the
+      // quiet gap after the window was: the count is "since the previous
+      // line", never "in the last 10 s".
+      vi.advanceTimersByTime(300_000);
+      session.emit('frameRejected', new Error('bad tag'));
+      const rejectedLines = warnLines().filter((line) => line.includes('rejected a frame: bad tag'));
+      expect(rejectedLines).toHaveLength(2);
+      expect(rejectedLines[1]).toContain('(2 more since the previous line)');
+
+      warnSpy.mockRestore();
+      service.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('an inbound Final drops the device outright - roster, session, subscriptions - with no goodbye echo', async () => {
@@ -391,6 +474,129 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     expect(session.dispose).toHaveBeenCalledTimes(1);
     expect(revokeDeviceSpy).not.toHaveBeenCalled();
     expect(service.getStatus().pairedDeviceCount).toBe(0);
+
+    service.dispose();
+  });
+
+  it('logs a connectionState transition once per actual change, splits warn versus log by the target state, and formats the line as documented', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const label = session.deviceId.slice(0, 8);
+
+    // A change into 'connecting' (log-level), then a REPEAT emission with no
+    // state change: only the first emission may write a line.
+    session.connectionState = 'connecting';
+    session.transportState = 'connecting';
+    session.emit('connectionState');
+    session.emit('connectionState');
+    expect(logSpy.mock.calls).toHaveLength(1);
+    expect(logSpy.mock.calls[0][0]).toBe(`[mobile-bridge] device ${label} idle -> connecting (transport connecting)`);
+
+    // connected: also log-level.
+    session.connectionState = 'connected';
+    session.transportState = 'connected';
+    session.emit('connectionState');
+    expect(logSpy.mock.calls).toHaveLength(2);
+    expect(logSpy.mock.calls[1][0]).toBe(`[mobile-bridge] device ${label} connecting -> connected (transport connected)`);
+
+    // reconnecting, offline, closed: all warn-level, never log-level.
+    session.connectionState = 'reconnecting';
+    session.transportState = 'reconnecting';
+    session.emit('connectionState');
+    session.connectionState = 'offline';
+    session.emit('connectionState');
+    session.connectionState = 'closed';
+    session.transportState = 'closed';
+    session.emit('connectionState');
+
+    expect(warnSpy.mock.calls.map((call) => String(call[0]))).toEqual([
+      `[mobile-bridge] device ${label} connected -> reconnecting (transport reconnecting)`,
+      `[mobile-bridge] device ${label} reconnecting -> offline (transport reconnecting)`,
+      `[mobile-bridge] device ${label} offline -> closed (transport closed)`,
+    ]);
+    // The three warn-level transitions above never also wrote a log-level line.
+    expect(logSpy.mock.calls).toHaveLength(2);
+
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+    service.dispose();
+  });
+
+  it('connectionStateSince is null before a session opens, set at wiring time, bumped only on an actual state change, and cleared when the session is dropped', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+
+      // No session has opened yet for the roster device.
+      expect(service.listDevices()[0]).toMatchObject({
+        deviceId: fakeDevice.deviceId,
+        connectionState: 'idle',
+        connectionStateSince: null,
+      });
+
+      const session = await openSession(service);
+      const openedAt = service.listDevices()[0].connectionStateSince;
+      expect(openedAt).toBe('2026-01-01T00:00:00.000Z');
+
+      // An emission that does not change the reported state leaves the
+      // timestamp untouched, however much time has passed.
+      vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'));
+      session.emit('connectionState');
+      expect(service.listDevices()[0].connectionStateSince).toBe(openedAt);
+
+      // A real change bumps it to the newer timestamp.
+      vi.setSystemTime(new Date('2026-01-01T00:00:10.000Z'));
+      session.connectionState = 'connected';
+      session.transportState = 'connected';
+      session.emit('connectionState');
+      const changedAt = service.listDevices()[0].connectionStateSince;
+      expect(changedAt).toBe('2026-01-01T00:00:10.000Z');
+      expect(changedAt).not.toBe(openedAt);
+
+      // Dropping the live session clears the per-device timestamp while the
+      // roster entry survives - revokeDevice() reaches disposeSession()
+      // (which deletes the connectionStateSinceByDevice entry) through
+      // dropDevice(). Pin the mocked revokeDeviceInRoster to a no-op
+      // explicitly (rather than relying on beforeEach's mockClear(), which
+      // does not reset an implementation an earlier test installed via
+      // mockImplementation) so rosterDevices keeps the device regardless of
+      // run order.
+      revokeDeviceSpy.mockImplementation(() => undefined);
+      service.revokeDevice(session.deviceId);
+      expect(rosterDevices).toEqual([fakeDevice]);
+      expect(service.listDevices()[0]).toMatchObject({
+        deviceId: fakeDevice.deviceId,
+        connectionState: 'idle',
+        connectionStateSince: null,
+      });
+
+      service.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumeAllSessions() is a no-op that writes nothing when there is no open session', () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    service.resumeAllSessions('x');
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes('redialed'))).toBe(false);
+
+    logSpy.mockRestore();
+    service.dispose();
+  });
+
+  it('opens a roster session with logLabel truncated to the first 8 characters of the device id', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    await openSession(service);
+
+    expect(vi.mocked(createTransport)).toHaveBeenCalledWith(expect.objectContaining({ logLabel: fakeDevice.deviceId.slice(0, 8) }));
 
     service.dispose();
   });

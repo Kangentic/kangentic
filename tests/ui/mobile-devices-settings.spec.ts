@@ -1098,7 +1098,7 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('a paired device shows its key fingerprint, connection state, and paired date', async () => {
+  test('a paired device shows its key fingerprint, connection state with its since time, and paired date', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
         {
@@ -1107,6 +1107,7 @@ test.describe('Mobile Devices settings tab', () => {
           capabilities: [],
           pairedAt: '2026-01-01T00:00:00.000Z',
           connectionState: 'connected',
+          connectionStateSince: '2026-01-02T15:17:00.000Z',
         },
       ];
     });
@@ -1119,7 +1120,34 @@ test.describe('Mobile Devices settings tab', () => {
     // as four space-separated groups of four.
     await expect(deviceRow.getByTestId('mobile-device-fingerprint')).toHaveText('a1b2 c3d4 e5f6 0789');
     await expect(deviceRow.getByTestId('mobile-device-connection')).toContainText('Connected');
+    // The since time is locale-formatted, so only its presence and prefix are
+    // pinned; the full timestamp rides the tooltip.
+    await expect(deviceRow.getByTestId('mobile-device-connection-since')).toContainText('since');
+    await expect(deviceRow.getByTestId('mobile-device-connection-since')).toHaveAttribute('title', /.+/);
     await expect(deviceRow).toContainText('Paired');
+
+    await closeSettings();
+  });
+
+  test('a device whose session has not opened yet shows no since time', async () => {
+    await page.evaluate(() => {
+      (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
+        {
+          deviceId: 'b1b2c3d4e5f60789fedcba9876543210',
+          displayName: 'Fresh iPhone',
+          capabilities: [],
+          pairedAt: '2026-01-01T00:00:00.000Z',
+          connectionState: 'connecting',
+          connectionStateSince: null,
+        },
+      ];
+    });
+
+    await openMobileTab();
+
+    const deviceRow = page.locator('li', { hasText: 'Fresh iPhone' });
+    await expect(deviceRow.getByTestId('mobile-device-connection')).toContainText('Connecting');
+    await expect(deviceRow.getByTestId('mobile-device-connection-since')).toHaveCount(0);
 
     await closeSettings();
   });
@@ -1133,6 +1161,7 @@ test.describe('Mobile Devices settings tab', () => {
           capabilities: [],
           pairedAt: new Date().toISOString(),
           connectionState: 'idle',
+          connectionStateSince: null,
         },
       ];
     });
@@ -1149,8 +1178,8 @@ test.describe('Mobile Devices settings tab', () => {
   test('shows the "Connecting…" and "Reconnecting…" connection states in amber, distinct from each other', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'connecting-device-1', displayName: 'Connecting Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connecting' },
-        { deviceId: 'reconnecting-device-1', displayName: 'Reconnecting Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'reconnecting' },
+        { deviceId: 'connecting-device-1', displayName: 'Connecting Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connecting', connectionStateSince: null },
+        { deviceId: 'reconnecting-device-1', displayName: 'Reconnecting Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'reconnecting', connectionStateSince: null },
       ];
     });
 
@@ -1175,7 +1204,7 @@ test.describe('Mobile Devices settings tab', () => {
   test('shows the "Disconnected" connection state in the danger color when the relay is closed', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'closed-device-1', displayName: 'Closed Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'closed' },
+        { deviceId: 'closed-device-1', displayName: 'Closed Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'closed', connectionStateSince: null },
       ];
     });
 
@@ -1192,7 +1221,7 @@ test.describe('Mobile Devices settings tab', () => {
   test('shows the "Offline" connection state muted, distinct from a relay that is reconnecting', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'offline-device-1', displayName: 'Offline Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'offline' },
+        { deviceId: 'offline-device-1', displayName: 'Offline Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'offline', connectionStateSince: null },
       ];
     });
 
@@ -1218,8 +1247,8 @@ test.describe('Mobile Devices settings tab', () => {
     // frozen on "Connecting…" while the phone was already serving data.
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
-        { deviceId: 'steady-device-1', displayName: 'Steady Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connected' },
-        { deviceId: 'joining-device-1', displayName: 'Joining Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connecting' },
+        { deviceId: 'steady-device-1', displayName: 'Steady Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connected', connectionStateSince: null },
+        { deviceId: 'joining-device-1', displayName: 'Joining Device', capabilities: [], pairedAt: new Date().toISOString(), connectionState: 'connecting', connectionStateSince: null },
       ];
     });
 

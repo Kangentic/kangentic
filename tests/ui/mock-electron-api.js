@@ -3790,6 +3790,7 @@
             capabilities: FULL_CAPABILITY_SET.slice(),
             pairedAt: new Date().toISOString(),
             connectionState: 'connected',
+            connectionStateSince: new Date().toISOString(),
           };
           state.devices.push(device);
           state.pairingInProgress = false;

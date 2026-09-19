@@ -11,8 +11,10 @@ import { RelayClient } from './relay-client';
 export interface TransportFactoryOptions {
   relayUrl: string;
   slotId: string;
+  /** Short tag for the transport's log lines (a truncated device id, or 'pairing'); never the slot id. */
+  logLabel?: string;
 }
 
 export function createTransport(options: TransportFactoryOptions): Transport {
-  return new RelayClient({ relayUrl: options.relayUrl, slotId: options.slotId });
+  return new RelayClient({ relayUrl: options.relayUrl, slotId: options.slotId, logLabel: options.logLabel });
 }

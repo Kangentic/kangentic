@@ -3,7 +3,7 @@ import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smar
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
-import { formatDate } from '../../../lib/datetime';
+import { formatDate, formatDateTime, formatShortDateTime } from '../../../lib/datetime';
 import { INPUT_CLASS, SectionHeader, Select, SettingToggleRow, useScopedUpdate } from '../shared';
 import { Pill } from '../../Pill';
 import { settingProps } from '../settings-registry';
@@ -806,6 +806,16 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           {connection.icon}
                           {connection.label}
                         </span>
+                        {/* When the state last changed, so a row stuck on
+                            Offline says for how long without a log read.
+                            Absolute rather than relative: the list re-renders
+                            only on a state push, so "5 minutes ago" would
+                            go stale in place. */}
+                        {device.connectionStateSince && (
+                          <span title={formatDateTime(device.connectionStateSince)} data-testid="mobile-device-connection-since">
+                            since {formatShortDateTime(device.connectionStateSince)}
+                          </span>
+                        )}
                         <span aria-hidden="true">|</span>
                       </>
                     )}
