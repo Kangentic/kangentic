@@ -19,6 +19,8 @@ import {
 } from '@kangentic/protocol';
 import type { MobileDeviceConnectionState } from '../../../shared/types';
 import type { BridgeIdentity } from '../identity';
+import { isRedialableTransport } from '../transport/relay-client';
+import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './forced-redial-reason';
 
 /** WireGuard's REKEY_AFTER_TIME: bounded post-compromise security via periodic re-handshake, not just initial forward secrecy. */
 const REHANDSHAKE_INTERVAL_MS = 2 * 60 * 1000;
@@ -55,6 +57,19 @@ const PEER_PRESENCE_TIMEOUT_MS = 5 * 1000;
  * moment it arrives (#635). The relay's own park timeout (60s, PARK_TIMEOUT_MS
  * in kangentic-relay) closes a parked socket and RelayClient redials, which is
  * what re-initiates a stale attempt; see beginHandshake()'s guard.
+ *
+ * A spent budget is ALSO the one liveness verdict the transport cannot reach
+ * on its own. A socket the relay already reaped (its keepalive terminates a
+ * peer that misses a pong) never receives that park-timeout close, yet still
+ * reads 'connected' here: a router restart left four such sockets ESTABLISHED
+ * for 31 minutes while the relay had nothing for this desktop at all. So when
+ * the budget is spent on a socket that carried NOTHING inbound for the whole
+ * episode, and the socket is one the relay's park timeout could not have
+ * been about to close anyway (see onPresenceProbeTimeout()), the session
+ * abandons it and redials. A wrong verdict costs the phone one bounce (the
+ * relay closes its half with PEER_CLOSED, it redials in 500 ms and
+ * re-handshakes); today that same verdict already reported 'offline' and
+ * dropped the phone's subscriptions.
  */
 const PEER_PRESENCE_FAILURES_BEFORE_ABSENT = 2;
 
@@ -127,6 +142,28 @@ export class BridgeSession extends EventEmitter {
    * same as failedPresenceProbes: a fresh socket knows nothing yet.
    */
   private peerSeenOnThisConnection = false;
+  /**
+   * Whether ANY frame, valid or garbled, arrived since the current probe
+   * episode opened. Episode-scoped on purpose, unlike peerSeenOnThisConnection
+   * above, which stays true for the whole life of a socket that went dead
+   * after the phone had answered on it - exactly the socket the spent-budget
+   * redial exists to abandon. A frame that arrived proves the socket is
+   * forwarding whatever the frame says, so the redial must stand down; this
+   * is the desktop analogue of the phone's rekeyEpoch guard.
+   */
+  private inboundSinceProbeStart = false;
+  /**
+   * Whether the current probe episode was opened by the REHANDSHAKE_INTERVAL_MS
+   * tick rather than a 'connected' edge. On the hosted relay a live parked
+   * socket is closed at the 60 s park timeout, so a 120 s tick can only ever
+   * land on a parked socket whose close never arrived; a connect-edge episode
+   * on a never-answered socket is the ordinary "phone is away" park, which
+   * the relay's own timeout recycles and which must not be redialed every
+   * 10 s instead.
+   */
+  private probeOpenedByRekey = false;
+  /** Initiations that actually left through the transport; probePresenceNow() reads it to report whether the guard let one through. */
+  private initiationsSent = 0;
   private presenceTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -277,12 +314,24 @@ export class BridgeSession extends EventEmitter {
       remoteStatic: this.remoteStaticPublicKey,
     });
     const { message } = this.handshake.writeMessage(new Uint8Array(0));
+    // A probe episode OPENS here and only here: when no window is armed. The
+    // under-budget re-arm in onPresenceProbeTimeout() arms its window BEFORE
+    // calling back into this method, so on that call the timer is non-null
+    // and both flags survive from the episode's open - a garbled frame in the
+    // first window still counts as inbound at the second exhaustion, and a
+    // tick-opened episode still reads as tick-opened. Reordering that re-arm
+    // against its beginHandshake() call would silently reset both.
+    if (this.presenceTimer === null) {
+      this.inboundSinceProbeStart = false;
+      this.probeOpenedByRekey = replaceOutstanding;
+    }
     // Every initiation doubles as a presence probe: a reply proves the phone is
     // attached to this slot, silence eventually proves it is not. Armed BEFORE
     // the send, because a peer that replies synchronously (any in-process
     // transport, and every test double) completes the handshake inside send()
     // - arming afterwards would leave a probe nothing can ever cancel.
     this.armPresenceTimer();
+    this.initiationsSent += 1;
     this.transport.send(wrapSessionFrame(SessionFrameKind.Handshake, message));
     // Re-arm the rekey timer from this handshake (WireGuard REKEY_AFTER_TIME is
     // measured from the last handshake), so a reconnect-driven initiation resets
@@ -350,10 +399,102 @@ export class BridgeSession extends EventEmitter {
     this.failedPresenceProbes += 1;
     if (this.failedPresenceProbes >= PEER_PRESENCE_FAILURES_BEFORE_ABSENT) {
       this.markPeerAbsent();
+      this.redialIfSocketProvablyDead();
       return;
     }
     this.armPresenceTimer();
     this.beginHandshake();
+  }
+
+  /**
+   * The spent-budget liveness verdict, taken on EVERY exhaustion rather than
+   * only on the absence edge: a parked device's edge fired at app start, and
+   * on a zombie only the non-edge exhaustion recurs (5 s after each rekey
+   * tick, since markPeerAbsent() pins the counter). Lives here, not in
+   * markPeerAbsent(), because the Final-goodbye path also calls that and a
+   * deliberate unpair must never redial; budget exhaustion is the one path
+   * where "the socket carried nothing" is evidence.
+   *
+   * Three conditions, all required: nothing inbound during the episode (a
+   * frame of any kind proves the relay is forwarding); the socket is one the
+   * relay's park timeout could not be about to recycle anyway (the phone had
+   * answered on it, or a rekey tick found it still open past the park
+   * timeout); and the transport still reads 'connected' with a redial to
+   * offer. A fresh park whose phone is simply away fails the second and keeps
+   * the relay's 60 s churn, which is what preserves #635's one initiation per
+   * parked connection: this redial closes the old socket rather than sending
+   * on it, so the fresh 'connected' edge's msg1 lands in an empty buffer.
+   *
+   * Runs synchronously inside the probe callback and arms no timer of its
+   * own: RelayClient.redialNow() emits 'reconnecting' before it dials, so
+   * onTransportState()'s leave-connected cleanup runs re-entrantly here
+   * (presence is already 'absent', so no reconnect grace arms) and the next
+   * 'connected' edge re-initiates. No loop: the new socket's first
+   * exhaustion is a connect-edge episode the second condition rejects. On a
+   * self-hosted relay with a park timeout longer than REHANDSHAKE_INTERVAL_MS
+   * this is one redial per ~125 s per absent device instead of a persistent
+   * socket; the hosted relay never lets a live park reach that tick.
+   */
+  private redialIfSocketProvablyDead(): void {
+    if (this.inboundSinceProbeStart) return;
+    if (!this.peerSeenOnThisConnection && !this.probeOpenedByRekey) return;
+    if (this.transport.state !== 'connected') return;
+    if (!isRedialableTransport(this.transport)) return;
+    const reason: ForcedRedialReason = this.peerSeenOnThisConnection ? 'paired-silent' : 'parked-stale';
+    this.emit('forcedRedial', reason);
+    this.redialTransport(FORCED_REDIAL_DESCRIPTIONS[reason]);
+  }
+
+  /**
+   * Abandon this device's socket and dial afresh, for a caller with
+   * out-of-band proof the socket is dead: the spent budget above, and a
+   * sleep resume with no phone attached. No-op on a transport that cannot
+   * redial (every in-process test double).
+   */
+  redialTransport(reason: string): void {
+    if (this.disposed || !isRedialableTransport(this.transport)) return;
+    this.transport.redialNow({ force: true, reason });
+  }
+
+  /**
+   * The system resumed from sleep. Every relay socket older than the relay's
+   * keepalive cycle has been reaped while the machine was away, and nothing
+   * tells the bridge - but powerMonitor's 'resume' also fires after a standby
+   * short enough that the socket survived, and a forced redial on a socket a
+   * live phone is using costs that phone a bounce (PEER_CLOSED, a reconnect,
+   * a handshake) on every wake. So the decision is per session, on the same
+   * evidence rule as the spent budget: a session with no phone attached
+   * (parked, or already absent) redials at once, since there is nobody to
+   * bounce and the ~125 s the rekey tick would take is pure delay; a session
+   * whose phone was present is probed instead, and only a spent budget (~10 s)
+   * redials it. Returns what it did, for the service's log line.
+   */
+  resumeFromSleep(reason: string): 'redialed' | 'probed' | 'skipped' {
+    if (this.disposed || !isRedialableTransport(this.transport)) return 'skipped';
+    if (this.peerPresence === 'present') return this.probePresenceNow() ? 'probed' : 'skipped';
+    this.redialTransport(reason);
+    return 'redialed';
+  }
+
+  /**
+   * Send one presence probe now, for a caller with a hint rather than proof
+   * (the screen unlocking). The GUARDED initiation, never the rekey tick's
+   * replacing one: on a parked slot with a msg1 already buffered a second one
+   * is #635's extra rekey per arrival, so this is a no-op there and the rekey
+   * tick covers a parked zombie within 125 s regardless. On a paired socket
+   * it costs one rekey, which the phone handles routinely; if the socket is
+   * dead the budget spends in ~10 s and redialIfSocketProvablyDead() acts.
+   * One accepted duplicate: a paired socket whose rekey msg1 is already
+   * outstanding lets this through (the phone had answered on it) and gets a
+   * second msg1 that goes nowhere; the budget already running resolves it.
+   * Returns whether an initiation actually left, so the caller can log the
+   * number that probed rather than the number it asked.
+   */
+  probePresenceNow(): boolean {
+    if (this.disposed) return false;
+    const before = this.initiationsSent;
+    this.beginHandshake();
+    return this.initiationsSent !== before;
   }
 
   /**
@@ -386,6 +527,9 @@ export class BridgeSession extends EventEmitter {
     // msg1 already sits in the relay's buffer, and the relay's own park
     // timeout (60s) is what forces a fresh connection and a fresh initiation -
     // see beginHandshake()'s guard and onTransportState()'s 'connected' branch.
+    // The one exception, a socket that can never receive that close, is
+    // decided by the probe-timeout caller (redialIfSocketProvablyDead), not
+    // here: this method is also the Final-goodbye path.
     this.clearReconnectGrace();
     if (changed) {
       // The absence EDGE, for per-device state that must not outlive the
@@ -407,8 +551,10 @@ export class BridgeSession extends EventEmitter {
     // prior initiation is still outstanding (unanswered, unparked - e.g. a
     // self-hosted relay with no park timeout) replaces it rather than being
     // silently blocked by beginHandshake()'s parked-slot guard. Against the
-    // real relay this branch is normally moot: the 60s park timeout closes a
-    // parked socket well before this 120s tick could ever fire on it.
+    // real relay a LIVE parked socket never reaches this tick: the 60s park
+    // timeout closes it first. A parked socket that does is one whose close
+    // never arrived, which is why a tick-opened probe episode is one of the
+    // two grounds redialIfSocketProvablyDead() accepts.
     this.rehandshakeTimer = setInterval(() => this.beginHandshake(true), REHANDSHAKE_INTERVAL_MS);
     this.rehandshakeTimer.unref?.();
   }
@@ -439,6 +585,7 @@ export class BridgeSession extends EventEmitter {
     // never parked and buffering: while genuinely parked, nobody is on the
     // other end to send us anything. See beginHandshake()'s guard.
     this.peerSeenOnThisConnection = true;
+    this.inboundSinceProbeStart = true;
     let unwrapped: { kind: SessionFrameKind; payload: Uint8Array };
     try {
       unwrapped = unwrapSessionFrame(rawFrame);

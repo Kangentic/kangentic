@@ -318,7 +318,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, relay transport state, paired device count, pairing-in-progress |
 | `mobile:startPairing` | invoke | Mint a pairing token, connect the pairing relay slot, and return the QR payload URI. Supersedes a stale in-progress ceremony rather than throwing |
 | `mobile:cancelPairing` | invoke | Cancel an in-progress pairing ceremony |
-| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at, live connection state) |
+| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at, live connection state and the time it last changed) |
 | `mobile:revokeDevice` | invoke | Revoke a paired device: drop it from the signed roster and tear down its session |
 | `mobile:renameDevice` | invoke | Rename a paired device (re-signs the roster entry, preserves paired-at) |
 | `mobile:setDeviceCapabilities` | invoke | Update a paired device's granted capability verbs (re-signs the roster entry); no longer surfaced as settings-tab UI, kept as the enforcement/future-preset seam |
@@ -492,7 +492,7 @@ Conversation-memory semantic layer (Smart-mode search). See the Memory settings 
 ### Diagnostics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. |
+| `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, falling back to `<configDir>/logs/` while no project is open (the same fallback crash capture uses). |
 | `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`, falling back to the app's own config directory when no project is open (a crash must never be silently dropped for that reason). Always-on - no toggle. |
 
 ### Dictation (14 channels)

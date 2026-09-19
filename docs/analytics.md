@@ -29,6 +29,7 @@ Eighteen event types are tracked, all on critical-path actions only:
 | `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`), exitCode (see below), phase (`first` / `latched`) |
 | `foreign_minidump_dropped` | A native crash dump reached us from a process that is not ours, and was filtered out before upload (see "Error Reporting" below) | module (the crashing executable's file name, never a path) |
 | `gpu_process_gone` | The GPU process exited abnormally (not a clean exit on quit): at most twice per app run, on the first death and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
+| `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
 There is no close event. Every quit path exits before a network send can complete, so
 `app_close` fired on every quit and landed on none of them; the run's duration is instead

@@ -6,8 +6,9 @@
  *     even when the verbosity toggle is off (errors are never silently lost).
  *   - info / debug / log are persisted only when the toggle is on.
  *   - Each persisted line is valid NDJSON conforming to the LogEntry shape.
- *   - When `getProjectRoot()` returns null, persistence is skipped without
- *     throwing (cold-start path before any project is open).
+ *   - When `getProjectRoot()` returns null (the Welcome Screen, the gap
+ *     between projects), the line lands in `<configDir>/logs/<date>.log`
+ *     instead of being dropped, the same fallback crash capture uses.
  *   - The IPC.LOG_APPEND handler is registered for the renderer-side relay.
  *
  * The module patches global `console.*` at install time, so the test
@@ -31,6 +32,18 @@ vi.mock('electron', () => ({
   },
 }));
 
+// The app's own config dir, which the mirror falls back to with no project
+// open. Read through a getter so each test's fresh module (vi.resetModules)
+// sees the per-test tmpdir assigned in beforeEach.
+const fallbackConfigDir = vi.hoisted(() => ({ current: '' }));
+vi.mock('../../src/main/config/paths', () => ({
+  PATHS: {
+    get configDir() {
+      return fallbackConfigDir.current;
+    },
+  },
+}));
+
 let tempDirectory: string;
 let originalLog: typeof console.log;
 let originalWarn: typeof console.warn;
@@ -41,6 +54,7 @@ let originalDebug: typeof console.debug;
 beforeEach(async () => {
   ipcHandlers.clear();
   tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'log-mirror-test-'));
+  fallbackConfigDir.current = path.join(tempDirectory, 'app-config');
   originalLog = console.log;
   originalWarn = console.warn;
   originalError = console.error;
@@ -144,8 +158,8 @@ describe('log-mirror', () => {
     expect(levels).toEqual(['debug', 'info', 'log']);
   });
 
-  it('drops writes silently when project root is null (no project open)', async () => {
-    const { startLogMirror } = await import('../../src/main/diagnostics/log-mirror');
+  it('falls back to the app config dir when project root is null (no project open)', async () => {
+    const { startLogMirror, resolveLogDirectory } = await import('../../src/main/diagnostics/log-mirror');
     startLogMirror({
       getProjectRoot: () => null,
       getPersistInfoDebug: () => true,
@@ -156,11 +170,22 @@ describe('log-mirror', () => {
       console.info('still no-project');
     }).not.toThrow();
 
-    // Drain the queue (no work expected - getProjectRoot returned null
-    // so nothing was queued).
+    // A global subsystem (the mobile bridge, the updater) logs whether or
+    // not a project is open; those lines used to vanish for as long as none
+    // was. They land beside crash capture's own fallback instead.
     const { flushAllForTest } = await import('../../src/main/diagnostics/async-file-queue');
     await flushAllForTest();
+    expect(resolveLogDirectory(null)).toBe(path.join(fallbackConfigDir.current, 'logs'));
+    expect(resolveLogDirectory(tempDirectory)).toBe(path.join(tempDirectory, '.kangentic', 'logs'));
     expect(fs.existsSync(path.join(tempDirectory, '.kangentic', 'logs'))).toBe(false);
+    const fallbackFile = path.join(fallbackConfigDir.current, 'logs', `${todayUtc()}.log`);
+    const lines = fs
+      .readFileSync(fallbackFile, 'utf-8')
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as { level: string; args: string[] });
+    expect(lines.map((entry) => entry.level).sort()).toEqual(['error', 'info']);
+    expect(lines.find((entry) => entry.level === 'error')?.args[0]).toBe('no-project');
   });
 
   it('registers an IPC.LOG_APPEND handler for renderer-side relay', async () => {

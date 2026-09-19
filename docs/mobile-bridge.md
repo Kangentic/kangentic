@@ -43,10 +43,11 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
     pairing-token.ts          # single-use, ~10min pairing token
     pairing-service.ts        # one pairing ceremony: handshake -> SAS -> phone confirm frame -> auto-enroll
   transport/
-    relay-client.ts           # outbound WebSocket relay client with reconnect/backoff
+    relay-client.ts           # outbound WebSocket relay client with reconnect/backoff, forced redial, dial watchdog
     transport-factory.ts      # Transport swap point (relay today, P2P later)
   session/
-    bridge-session.ts         # one connected device's Noise KK session + re-handshake timer
+    bridge-session.ts         # one connected device's Noise KK session + re-handshake timer + spent-budget redial
+    forced-redial-reason.ts   # closed enum for why a session forced a redial (paired-silent / parked-stale), shared by the event and the analytics gate
     subscription-registry.ts  # per-device live event subscriptions (read-stream/board/diff), keyed and torn down together
   push/
     push-registration-store.ts # per-device Expo token + envelope key sidecar (cleared on revoke)
@@ -239,6 +240,11 @@ by the transport shows a green "Connected" for a device that is gone.
 | `reconnecting` | The relay link itself dropped and `RelayClient` is backing off. |
 | `closed` | The transport was closed. |
 
+Each row also carries `connectionStateSince` (ISO 8601, live, null until the device's session
+has opened): when the reported state last changed, written by the same service listener that
+logs the transition, and shown as "since <time>" beside the badge so a row stuck on Offline says
+for how long without a log read.
+
 `offline` and `reconnecting` are deliberately distinct: they call for opposite user actions (open
 the phone vs. fix the network). `offline` is a presence conclusion rather than a transport state,
 so it is **not** part of `MobileBridgeTransportState`, which must keep mirroring
@@ -269,8 +275,27 @@ Two guards keep the value honest without making it twitchy:
   `RelayClient` redials, and the fresh `'connected'` edge sends a fresh msg1 into what is now an
   empty buffer. The `REHANDSHAKE_INTERVAL_MS` tick is the one caller allowed to override this and
   replace an outstanding initiation outright, as a backstop for a relay that does not time a park
-  out; against the hosted relay it is normally moot, since the 60s park timeout closes a parked
-  socket well before this 120s tick could land on it.
+  out; against the hosted relay a live parked socket never reaches it, since the 60s park timeout
+  closes a parked socket well before this 120s tick could land on it.
+- **A spent budget on a provably dead socket redials.** The park-timeout close above cannot reach
+  a socket the relay has already reaped: the relay's keepalive (`PING_INTERVAL_MS` 30s,
+  `terminate()` on a missed pong) drops a peer whose network went away, and the desktop is left
+  holding an ESTABLISHED socket that still reads `connected` and that the OS never reports on.
+  A router restart on 2026-09-18 left four such sockets for 31 minutes; the relay had nothing for
+  the desktop the whole time, and the phone could not pair. So `onPresenceProbeTimeout()` takes
+  one more decision after `markPeerAbsent()`, on EVERY exhaustion rather than only the absence
+  edge (a parked device's edge fired at app start): if nothing arrived on the socket during the
+  probe episode (any frame, valid or garbled, proves the relay is forwarding), and the socket is
+  one the park timeout could not have been about to recycle anyway (the phone had answered on
+  it, or a rekey tick found it still open past the park timeout), the session calls
+  `RelayClient.redialNow({ force: true })`, which abandons the socket and dials afresh. A fresh
+  park whose phone is simply away matches neither ground and keeps the 60s churn, which is what
+  preserves the one-initiation-per-parked-connection property: the redial closes the old socket
+  instead of sending on it, so the next `'connected'` edge's msg1 lands in an empty buffer. The
+  Final-goodbye path never reaches this decision. Recovery after the network returns is bounded
+  by one rekey interval plus the budget (about 130s), or the reconnect ladder if the forced dial
+  itself fails. `resumeFromSleep()` and `probePresenceNow()` expose the same two levers to the
+  service for the OS wake sources (see [Wake sources](#wake-sources)).
 - **Application traffic proves presence.** Promotion is evidence-based the same way demotion is:
   any frame the desktop can open came from the phone, since only it holds the matching send key,
   so opening one restarts the probe budget. Without that, presence rested on the handshake alone,
@@ -297,11 +322,59 @@ was already serving data.
 
 `src/main/mobile-bridge/transport/relay-client.ts` is the desktop's **outbound-only** WebSocket client to a blind relay (self-hostable, or Kangentic's hosted instance). The relay forwards opaque ciphertext frames only - it authenticates nothing and reads nothing, because every frame is already Noise-encrypted (or, during pairing, is itself a Noise handshake message the relay cannot decrypt).
 
-- **Wire contract:** connect to `${relayUrl}?slot=<hex-encoded-slot-id>`. Both slot ids are *derived*: `derivePairingSlotId(token)` during pairing, and `deriveSessionSlotId(desktopKey, phoneKey)` for an ongoing session (both in `packages/protocol/src/crypto/slot.ts`, both 16 bytes / 32 hex characters). The relay rendezvouses the two connections presenting the *same* value and never interprets its cryptographic meaning, only its bytes. **Both slots are routing labels, never key material** - the slot rides in a query string, the most-logged part of a URL, so nothing secret may be placed there. **The relay server lives in the separate [`kangentic-relay`](https://github.com/Kangentic/kangentic-relay) repo**, which implements exactly this contract (see its README for the self-host quickstart and full config reference).
-- **Reconnect with capped exponential backoff:** starts at 500ms, doubles up to a 30s ceiling, resets on a successful connect.
+- **Wire contract:** connect to `${relayUrl}?slot=<hex-encoded-slot-id>&role=desktop`. Both slot ids are *derived*: `derivePairingSlotId(token)` during pairing, and `deriveSessionSlotId(desktopKey, phoneKey)` for an ongoing session (both in `packages/protocol/src/crypto/slot.ts`, both 16 bytes / 32 hex characters). The relay rendezvouses the two connections presenting the *same* value and never interprets its cryptographic meaning, only its bytes. **Both slots are routing labels, never key material** - the slot rides in a query string, the most-logged part of a URL, so nothing secret may be placed there. `role` is a metrics hint only: the relay attributes its waiting-peer gauge by it, never gates on it, and collapses anything but the exact literal to `unknown` (`kangentic-relay`'s `guards/peerRole.ts`). **The relay server lives in the separate [`kangentic-relay`](https://github.com/Kangentic/kangentic-relay) repo**, which implements exactly this contract (see its README for the self-host quickstart and full config reference).
+- **Reconnect with capped exponential backoff:** starts at 500ms, doubles up to a 30s ceiling, resets on a successful connect. The reconnect timer is armed BEFORE the `'reconnecting'` notification, so a listener that reacts by redialing or closing clears an armed timer instead of racing one.
+- **`redialNow({ force?, reason? })`** (`RedialableTransport`, a desktop-local extension of the protocol's `Transport` mirroring the phone's, so every in-process test double stays a plain `Transport` and the guard `isRedialableTransport()` no-ops on it): resets the backoff ladder and dials now. Without `force` it only rescues a transport sitting in backoff; with `force` it abandons the existing socket first, open or mid-dial, detaching its handlers before closing it so a late close can neither null the successor nor arm a second reconnect. `BridgeSession` is the caller with proof (a spent presence budget on a silent socket); `powerMonitor` `resume` is the caller with proof from the OS.
+- **Dial watchdog** (`DIAL_TIMEOUT_MS`, 30s): a dial that reaches none of `onopen` / `onerror` / `onclose` is abandoned and joins the backoff ladder. undici bounds TCP and TLS on its own; this covers a black-holed upgrade reply, the one way a transport can sit in `connecting` for minutes, and nothing above the transport could rescue that state because every presence path skips a non-connected transport.
 - **Per-session byte cap** (`maxBytesPerSession`, default 256MB) as defense-in-depth against a runaway send loop on either end.
 - **Accountless:** no Kangentic account/entitlement coupling in this client. Any such gate belongs only on the hosted relay's own connection-acceptance policy (open-core design - see the research doc section 10); this client behaves identically against a self-hosted or Kangentic-hosted relay.
 - `src/main/mobile-bridge/transport/transport-factory.ts` is the deliberate swap point: pairing service, bridge sessions, and the capability router only ever see the `Transport` interface (`packages/protocol/src/transport/transport.ts`). A future WebRTC data-channel implementation (Phase 4) slots in at `createTransport()` with nothing above it changing.
+
+### Reading the log
+
+The bridge writes its connection trace through `console.*`, which `src/main/diagnostics/log-mirror.ts`
+persists to `.kangentic/logs/<date>.log`: `warn` lines on every build, `log` lines only with
+Persist Console Logs on (the dev-build default). So the routine churn stays at `log` and every
+diagnostic edge is at `warn`, and the close code is what splits them. Labels are a truncated
+device id or `pairing`; no slot ids, no key material, no message content.
+
+| Line | Level | Means |
+|---|---|---|
+| `[mobile-bridge/relay-client <label>] connected after N ms` | log | A dial opened. |
+| `... parked slot timed out (code 4408) after N s; redial in N ms` | log | The relay's park timeout recycling a slot whose phone is away: once a minute per absent device, forever. |
+| `... closed: code=1006 reason="" clean=false after N s connected; redial in N ms` | warn | The relay's keepalive reaped this socket (a missed pong), or the TCP peer died. The line this whole trace exists for. |
+| `... closed: code=4000 reason="peer_closed" ...` | warn | The phone's half left; the relay tore this half down with it. |
+| `... closed: code=4409 reason="slot_busy" ...` | warn | A third peer on the slot, or this desktop's own stale socket still counted at the relay; the contention probe evicts the dead one within 2s. |
+| `... dial failed: <undici error>; redial in N ms` | warn | A dial that never opened, with the connector's error folded in (DNS, TCP, TLS). Thirty minutes of these is the reading `redialNow` cannot help and the backoff ladder already covers. |
+| `... dial timed out after 30 s; redial in N ms` | warn | The watchdog: a dial that reached no handler at all. |
+| `... forced redial (<reason>) from <state>` | warn | `redialNow({ force })` acting: the session's spent budget, or a system resume on a session with no phone attached. |
+| `[mobile-bridge] system resumed from sleep: redialed N, probed N, skipped N of N device session(s)` | log | The per-session resume decisions. |
+| `[mobile-bridge] screen unlocked: probed N of N device session(s)` | log | Only when at least one probe actually left. |
+| `[mobile-bridge] device <id8> <from> -> <to> (transport <state>)` | log / warn | Every change of the reported connection state: `-> connected` and `-> connecting` at `log`; `-> offline`, `-> reconnecting`, `-> closed` at `warn`. |
+| `[mobile-bridge] device <id8> handshake established` | log | A KK handshake completed. |
+| `[mobile-bridge] device <id8> handshake failed: ...` | warn | A garbled or injected handshake frame; a fresh initiation follows in `HANDSHAKE_RETRY_MS`. |
+| `[mobile-bridge] device <id8> rejected a frame: ...` | warn | A frame the session could not open, one line per 10s window per device with the suppressed count. |
+| `[mobile-bridge] device <id8> forcing a redial: <reason>` | warn | The spent-budget verdict, from the session's side. |
+
+### Wake sources
+
+`src/main/index.ts` wires two `powerMonitor` events to the service, next to the existing
+`suspend` heartbeat. `resume` calls `resumeAllSessions()`, and each session decides on its own
+evidence (`BridgeSession.resumeFromSleep()`): a machine that slept comes back with every relay
+socket reaped and nothing to tell the bridge, but `resume` also fires after a standby short
+enough that the socket survived, and a forced redial on a socket a live phone is using costs
+that phone a bounce on every wake. So a session with no phone attached (parked, or already
+absent) abandons its socket and dials afresh at once (about 1s instead of the ~125s the rekey
+tick would take, and nobody to bounce), while a session whose phone was present is probed and
+only a spent budget (~10s) redials it. `unlock-screen` calls `probeAllPresence()`: an unlock is a
+hint, not proof, so each session sends one guarded presence probe (`beginHandshake()` without
+`replaceOutstanding`, a no-op on a parked slot with a msg1 already buffered, so it cannot recreate
+the #635 double initiation) and lets its own budget decide. A healthy session pays one rekey; a
+dead one fails the budget in ~10s and redials on the evidence. Both log what they actually did
+(redialed / probed / skipped counts), and a quiet unlock with every phone away writes nothing.
+Neither touches an in-flight pairing ceremony, which has its own timeouts. Electron emits
+`unlock-screen` on Windows and macOS only; on Linux a zombie socket is recovered by `resume`,
+the rekey tick, and the spent-budget redial alone.
 
 ### Honest relay-metadata statement
 

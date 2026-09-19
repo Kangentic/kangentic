@@ -1709,6 +1709,27 @@ app.whenReady().then(async () => {
     checkpointRunUptime();
   });
 
+  // The mobile bridge's relay sockets do not survive a sleep: the relay's
+  // keepalive reaps a peer that misses one pong, and a socket the relay
+  // reaped while the machine was away still reads ESTABLISHED to this
+  // process afterwards, with nothing to tell the bridge (measured on
+  // 2026-09-18 after a router restart: four such sockets, 31 minutes). On
+  // resume each roster session redials or probes on its own evidence (a
+  // session with no phone attached redials at once; one whose phone was
+  // present is probed, since 'resume' also fires after a standby short
+  // enough that the socket survived); an unlock is only a hint, so it sends
+  // one presence probe and lets the session's own budget decide. Both are
+  // no-ops with the bridge disabled (no sessions), and neither touches an
+  // in-flight pairing. Electron emits 'unlock-screen' on Windows and macOS
+  // only; Linux recovers a zombie socket through 'resume', the rekey tick,
+  // and the spent-budget redial alone.
+  powerMonitor.on('resume', () => {
+    getOptionalIpcContext()?.mobileBridgeService.resumeAllSessions('system resumed from sleep');
+  });
+  powerMonitor.on('unlock-screen', () => {
+    getOptionalIpcContext()?.mobileBridgeService.probeAllPresence('screen unlocked');
+  });
+
   // OS-initiated shutdown/reboot bypasses before-quit entirely on Linux/macOS
   // (Windows's equivalent is the BrowserWindow 'session-end' handler above).
   // Route it through the same flush so an OS shutdown still suspends the

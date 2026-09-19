@@ -5,25 +5,30 @@ import type { LogEntry } from '../../shared/types';
 import { resolveLogEntry } from './source-map-resolver';
 import { queueAppend } from './async-file-queue';
 import { getCurrentProjectLogName } from './project-log-context';
+import { PATHS } from '../config/paths';
 
 /**
  * Persistent console-output mirror. Patches `console.log/warn/error/info/debug`
  * in the main process and listens on IPC.LOG_APPEND for renderer-side output
  * forwarded by the preload script. Lines are appended as NDJSON to
- * `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`.
+ * `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, or to
+ * `<configDir>/logs/<YYYY-MM-DD>.log` while no project is open (the Welcome
+ * Screen, the gap between projects), the same fallback crash-capture.ts
+ * uses. Global subsystems (the mobile bridge, the updater, shutdown) log
+ * regardless of which project is open, and their trace used to vanish for
+ * exactly as long as none was.
  *
  * Verbosity gating:
  *   - `error` and `warn` are ALWAYS persisted.
  *   - `info`, `debug`, `log` are persisted only when `developer.persistConsoleLogs`
  *     is `true`.
  *
- * Resilience: when `getProjectRoot()` returns null (no project open yet) or
- * when the file system rejects the write, the call is silently dropped. We
- * never want a diagnostic feature to crash the app. The same guarantee
- * covers the terminal echo below: the echo itself can throw, which is what
- * a packaged Windows GUI build with no console attached did, and that throw
- * must not propagate into whatever main-process code called `console.*` in
- * the first place. The catch names which paths actually reach it.
+ * Resilience: when the file system rejects the write, the call is silently
+ * dropped. We never want a diagnostic feature to crash the app. The same
+ * guarantee covers the terminal echo below: the echo itself can throw, which
+ * is what a packaged Windows GUI build with no console attached did, and that
+ * throw must not propagate into whatever main-process code called `console.*`
+ * in the first place. The catch names which paths actually reach it.
  */
 
 interface LogMirrorOptions {
@@ -150,8 +155,12 @@ export function prefixConsoleArgs(args: unknown[], prefix: string): unknown[] {
   return [prefix, ...args];
 }
 
+/** Where a line lands: the open project's log directory, else the app's own. Exported for the test that pins the fallback. */
+export function resolveLogDirectory(projectRoot: string | null): string {
+  return projectRoot ? path.join(projectRoot, '.kangentic', 'logs') : path.join(PATHS.configDir, 'logs');
+}
+
 function appendLog(projectRoot: string | null, entry: LogEntry): void {
-  if (!projectRoot) return;
   // Pass entries through the source-map resolver so any embedded stacks
   // in stringified Error args resolve to original source coordinates
   // (V1 is a passthrough; replacing the resolver body adds real
@@ -159,7 +168,7 @@ function appendLog(projectRoot: string | null, entry: LogEntry): void {
   const resolved = resolveLogEntry(entry);
   // YYYY-MM-DD slice of an ISO 8601 timestamp.
   const date = resolved.ts.slice(0, 10);
-  const file = path.join(projectRoot, '.kangentic', 'logs', `${date}.log`);
+  const file = path.join(resolveLogDirectory(projectRoot), `${date}.log`);
   // Async-buffered: queueAppend returns immediately; the disk write
   // happens on the next setImmediate turn. Eliminates the per-call
   // appendFileSync + mkdirSync that blocked the main event loop on

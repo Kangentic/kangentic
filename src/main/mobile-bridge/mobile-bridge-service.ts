@@ -15,6 +15,7 @@ import {
 } from '@kangentic/protocol';
 import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
 import { trackFeatureUsed } from '../analytics/usage';
+import { trackEvent } from '../analytics/analytics';
 import { validateRelayUrl } from '../../shared/relay';
 import type { MobileBridgeStatus, MobileBridgeTransportState, MobileDeviceConnectionState } from '../../shared/types';
 import { DevQuickPair } from './dev-quick-pair';
@@ -29,6 +30,7 @@ import {
 import { PairingService, sanitizeDeviceName } from './pairing/pairing-service';
 import { createTransport } from './transport/transport-factory';
 import { BridgeSession } from './session/bridge-session';
+import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './session/forced-redial-reason';
 import { SubscriptionRegistry } from './session/subscription-registry';
 import { CapabilityRouter } from './capability-router';
 import { registerCapabilityHandlers } from './handlers';
@@ -58,6 +60,40 @@ export interface MobileBridgeConfig {
  */
 const RELAY_STATE_EMIT_WINDOW_MS = 500;
 
+/**
+ * A frame the session could not open is a diagnostic edge worth a line, but
+ * the blind relay is a named adversary and a garbage flood would otherwise
+ * write one line per frame. One line per device per window, carrying the
+ * count it swallowed.
+ */
+const FRAME_REJECTED_LOG_WINDOW_MS = 10_000;
+
+/** The transition lines that persist on every build (log-mirror.ts keeps `warn` unconditionally). */
+const CONNECTION_STATES_LOGGED_AT_WARN: ReadonlySet<MobileDeviceConnectionState> = new Set(['offline', 'reconnecting', 'closed']);
+
+/**
+ * Per-run gate for the `mobile_bridge_forced_redial` event, mirroring the
+ * restart-policy and gpu-health precedent: at most once per reason per app
+ * run, so a flapping network cannot turn one desktop into an event stream
+ * and the count still answers the question that matters fleet-wide, which
+ * is how many runs meet a socket the OS never reported dead. The reason is
+ * a closed enum (see ForcedRedialReason), never free text, so the label set
+ * cannot grow. Module-level rather than per service instance: the run is
+ * the unit, and the service is constructed once per run anyway.
+ */
+const forcedRedialReasonsTracked = new Set<ForcedRedialReason>();
+
+function trackForcedRedialOnce(reason: ForcedRedialReason): void {
+  if (forcedRedialReasonsTracked.has(reason)) return;
+  forcedRedialReasonsTracked.add(reason);
+  trackEvent('mobile_bridge_forced_redial', { reason });
+}
+
+/** Test seam, mirroring `resetGpuHealthForTests`: the per-run gate is module state, so a suite that asserts the event must clear it between cases. */
+export function resetForcedRedialTelemetryForTests(): void {
+  forcedRedialReasonsTracked.clear();
+}
+
 export interface PairedDeviceSummary {
   deviceId: string;
   displayName: string;
@@ -65,6 +101,8 @@ export interface PairedDeviceSummary {
   pairedAt: string;
   /** Live, not persisted - per-device connection state, sourced from its open BridgeSession (or 'idle' if none is open yet). Replaces a panel-wide relay indicator with one that answers "is THIS device reachable". */
   connectionState: MobileDeviceConnectionState;
+  /** ISO 8601, live, not persisted - when `connectionState` last changed; null before the session opened. */
+  connectionStateSince: string | null;
 }
 
 /**
@@ -93,6 +131,13 @@ export class MobileBridgeService extends EventEmitter {
   private activePairing: PairingService | null = null;
   private readonly sessions = new Map<string, BridgeSession>();
   private readonly subscriptionsByDevice = new Map<string, SubscriptionRegistry>();
+  /**
+   * When each device's reported connection state last changed (ISO 8601),
+   * written by the same listener that logs the transition, so the row in
+   * Settings can say "Offline since 3:17 PM" and a stuck state is visible
+   * without reading the log. Dropped with the session.
+   */
+  private readonly connectionStateSinceByDevice = new Map<string, string>();
   /**
    * Bridge-owned diff watcher, NEVER `IpcContext.diffWatcher` - that
    * instance is shared with the renderer's git-diff panel and is
@@ -404,7 +449,7 @@ export class MobileBridgeService extends EventEmitter {
 
   private openSessionForDevice(identity: BridgeIdentity, device: RosterDeviceEntry): void {
     const slotId = deriveSessionSlotId(identity.staticKeyPair.publicKey, device.staticPublicKey);
-    const transport = createTransport({ relayUrl: this.config.relayUrl, slotId });
+    const transport = createTransport({ relayUrl: this.config.relayUrl, slotId, logLabel: device.deviceId.slice(0, 8) });
     const session = new BridgeSession({
       identity,
       deviceId: device.deviceId,
@@ -492,7 +537,84 @@ export class MobileBridgeService extends EventEmitter {
     // the transport, so it moves on edges 'transportState' never sees (a
     // completed handshake, a spent presence probe, an expired reconnect
     // hold). Scheduling from both is free - the signature check dedupes.
-    session.on('connectionState', () => this.scheduleRelayStateEmit());
+    //
+    // The same event is the one place every lifecycle edge passes through,
+    // so it is also where the desktop's connection trace is written: one
+    // line per CHANGE of the reported state (present -> absent and back, the
+    // transport edges, establishment), never per event. Until 2026-09-18
+    // nothing in the bridge logged a transport edge, and a router restart
+    // that left every relay socket half-open for 31 minutes had to be
+    // reconstructed from NIC events and Get-NetTCPConnection.
+    const label = deviceId.slice(0, 8);
+    let lastLoggedConnectionState: MobileDeviceConnectionState = session.connectionState;
+    this.connectionStateSinceByDevice.set(deviceId, new Date().toISOString());
+    session.on('connectionState', () => {
+      this.scheduleRelayStateEmit();
+      const next = session.connectionState;
+      if (next === lastLoggedConnectionState) return;
+      const line = `[mobile-bridge] device ${label} ${lastLoggedConnectionState} -> ${next} (transport ${session.transportState})`;
+      lastLoggedConnectionState = next;
+      this.connectionStateSinceByDevice.set(deviceId, new Date().toISOString());
+      if (CONNECTION_STATES_LOGGED_AT_WARN.has(next)) console.warn(line);
+      else console.log(line);
+    });
+    session.on('established', () => {
+      console.log(`[mobile-bridge] device ${label} handshake established`);
+    });
+    session.on('handshakeFailed', (error: unknown) => {
+      console.warn(`[mobile-bridge] device ${label} handshake failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    session.on('forcedRedial', (reason: ForcedRedialReason) => {
+      console.warn(`[mobile-bridge] device ${label} forcing a redial: ${FORCED_REDIAL_DESCRIPTIONS[reason]}`);
+      trackForcedRedialOnce(reason);
+    });
+    // Negative infinity rather than 0 so the first rejected frame always
+    // opens a window, whatever the clock reads (a fake clock near the epoch
+    // would otherwise swallow it).
+    let frameRejectedWindowStartedAt = Number.NEGATIVE_INFINITY;
+    let frameRejectedSuppressed = 0;
+    session.on('frameRejected', (error: unknown) => {
+      const now = Date.now();
+      if (now - frameRejectedWindowStartedAt < FRAME_REJECTED_LOG_WINDOW_MS) {
+        frameRejectedSuppressed += 1;
+        return;
+      }
+      // "since the previous line", not "in the last N s": the suppressed
+      // frames landed inside the window that line opened, however long ago
+      // that was, and the next line can come minutes later.
+      const suffix = frameRejectedSuppressed > 0 ? ` (${frameRejectedSuppressed} more since the previous line)` : '';
+      frameRejectedWindowStartedAt = now;
+      frameRejectedSuppressed = 0;
+      console.warn(`[mobile-bridge] device ${label} rejected a frame: ${error instanceof Error ? error.message : String(error)}${suffix}`);
+    });
+  }
+
+  /**
+   * The system resumed from sleep: every roster session decides for itself
+   * whether its socket is worth keeping (BridgeSession.resumeFromSleep). The
+   * pairing transport is deliberately left alone; its ceremony has its own
+   * timeouts and error path.
+   */
+  resumeAllSessions(reason: string): void {
+    if (this.sessions.size === 0) return;
+    const outcomes = { redialed: 0, probed: 0, skipped: 0 };
+    for (const session of this.sessions.values()) outcomes[session.resumeFromSleep(reason)] += 1;
+    console.log(`[mobile-bridge] ${reason}: redialed ${outcomes.redialed}, probed ${outcomes.probed}, skipped ${outcomes.skipped} of ${this.sessions.size} device session(s)`);
+  }
+
+  /**
+   * Send one presence probe on every roster session, for a wake hint rather
+   * than proof (the screen unlocking): a healthy session pays one rekey, a
+   * dead one fails its budget in ~10 s and redials on the evidence. A parked
+   * slot with its initiation still buffered sends nothing (see
+   * BridgeSession.probePresenceNow), and the line says how many actually did,
+   * so a quiet unlock with every phone away writes nothing at all.
+   */
+  probeAllPresence(reason: string): void {
+    let probed = 0;
+    for (const session of this.sessions.values()) if (session.probePresenceNow()) probed += 1;
+    if (probed === 0) return;
+    console.log(`[mobile-bridge] ${reason}: probed ${probed} of ${this.sessions.size} device session(s)`);
   }
 
   /**
@@ -583,6 +705,7 @@ export class MobileBridgeService extends EventEmitter {
     this.sessions.delete(deviceId);
     this.subscriptionsByDevice.get(deviceId)?.dispose();
     this.subscriptionsByDevice.delete(deviceId);
+    this.connectionStateSinceByDevice.delete(deviceId);
   }
 
   /** Creates a new identity if none exists. Only called from startPairing() - a deliberate user action - never from a read path. */
@@ -637,6 +760,7 @@ export class MobileBridgeService extends EventEmitter {
       capabilities: device.capabilities,
       pairedAt: device.pairedAt,
       connectionState: this.sessions.get(device.deviceId)?.connectionState ?? 'idle',
+      connectionStateSince: this.connectionStateSinceByDevice.get(device.deviceId) ?? null,
     }));
   }
 
@@ -718,7 +842,7 @@ export class MobileBridgeService extends EventEmitter {
     // Derived, never the token itself: the slot travels in cleartext in the
     // relay URL, and the token is the Noise PSK. See derivePairingSlotId().
     const slotId = derivePairingSlotId(token.token);
-    const transport = createTransport({ relayUrl: this.config.relayUrl, slotId });
+    const transport = createTransport({ relayUrl: this.config.relayUrl, slotId, logLabel: 'pairing' });
 
     pairingService.on('sas', (payload: { sas: ShortAuthenticationString; phoneStaticPublicKeyHex: string }) => {
       this.emit('pairingSas', payload);
