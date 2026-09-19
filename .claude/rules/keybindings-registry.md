@@ -35,7 +35,10 @@ the same array.
     pop-out window's own dismissal (`PopOutWindowFrame`'s bubble-phase Escape closes the OS
     window, guarded so open overlays, DOM windows, and focused text fields keep their Escape),
     and a TRANSIENT IN-GESTURE cancel that must beat the dialog dismissal to the event: BrowserPane's
-    Esc-cancels-Inspect and `useWindowDrag`'s Esc-cancels-drag. Both of the latter register a
+    Esc-cancels-Inspect, `useWindowDrag`'s Esc-cancels-drag, and `IntentKeyboardSensor`'s
+    document tracker (`src/renderer/utils/intent-keyboard-sensor.ts`), which consumes Escape only
+    while a keyboard drag is in flight and the key is aimed at the dragged node (see
+    `keyboard-drag-intent.md`). All three register a
     CAPTURE-phase listener and call `stopImmediatePropagation`, because the focused window closes
     itself on a bubble-phase `document` Escape - without the capture-phase intercept, Escape
     during the gesture closes the window instead of cancelling. Each gates on the gesture being
