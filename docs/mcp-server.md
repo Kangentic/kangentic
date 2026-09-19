@@ -1212,7 +1212,7 @@ Run a read-only SQL query against the project database. The connection uses `PRA
 
 ### kangentic_tail_logs
 
-Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. Errors and warnings are always captured; `info`, `debug`, and `log` levels are captured only when `developer.persistConsoleLogs` is on. Useful for diagnosing "the action didn't work" or following up on a `console.error` trace. Returns formatted text lines plus structured `items: LogEntry[]` for typed access.
+Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, merged with the app's global fallback at `<configDir>/logs/<YYYY-MM-DD>.log` (where the log mirror writes while no project is open, so a global subsystem such as the mobile bridge keeps its trace across the gap). The two files are combined and sorted by timestamp before the filters apply. Errors and warnings are always captured; `info`, `debug`, and `log` levels are captured only when `developer.persistConsoleLogs` is on. Useful for diagnosing "the action didn't work" or following up on a `console.error` trace. Returns formatted text lines plus structured `items: LogEntry[]` for typed access.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

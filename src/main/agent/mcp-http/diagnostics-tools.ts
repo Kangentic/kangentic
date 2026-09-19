@@ -31,7 +31,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_tail_logs',
     {
       description:
-        'Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. Errors and warnings are always captured; info/debug are captured only when Settings → Developer → Persist Console Logs is on. Useful for diagnosing "the action didn\'t work" or following up on a console.error trace. Pass `project` to read another project\'s logs.',
+        'Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, merged with the app\'s global config-dir fallback (`<configDir>/logs/<YYYY-MM-DD>.log`, where the log mirror writes while no project is open, so global subsystems such as the mobile bridge keep their trace across the gap). Errors and warnings are always captured; info/debug are captured only when Settings → Developer → Persist Console Logs is on. Useful for diagnosing "the action didn\'t work" or following up on a console.error trace. Pass `project` to read another project\'s logs.',
       inputSchema: z.object({
         date: z
           .string()
@@ -67,8 +67,16 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       }
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
+      // Two files: the per-project one (the normal case), and the app's
+      // global config dir, where log-mirror.ts writes while no project is
+      // open (the Welcome Screen, the gap between projects). Merged and
+      // re-sorted by timestamp so neither location is a blind spot for this
+      // tool, the same way kangentic_get_recent_crashes below merges its
+      // crash directories - see log-mirror.ts's `resolveLogDirectory`.
       const filePath = path.join(projectPath, '.kangentic', 'logs', `${targetDate}.log`);
-      const entries = readJsonLines<LogEntry>(filePath);
+      const fallbackFilePath = path.join(PATHS.configDir, 'logs', `${targetDate}.log`);
+      const entries = [...readJsonLines<LogEntry>(filePath), ...readJsonLines<LogEntry>(fallbackFilePath)];
+      entries.sort((left, right) => (left.ts < right.ts ? -1 : left.ts > right.ts ? 1 : 0));
       const filtered = entries.filter((entry) => {
         if (since && entry.ts < since) return false;
         if (level && entry.level !== level) return false;
@@ -78,7 +86,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       const tail = filtered.slice(-(limit ?? 200));
       if (tail.length === 0) {
         return textResult(
-          `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath}.`,
+          `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
           { items: [] },
         );
       }
