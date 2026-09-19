@@ -347,6 +347,15 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 4. Click anywhere on a row to select it (or use the checkbox)
 5. Click **Import (N)** to pull selected items into the backlog
 
+The dialog opens from a per-project cache of the source's items, so the list paints at once, and a
+"Syncing..." line at the bottom shows while it fetches only the items changed since the last sync in
+the background. The cache survives an app restart and a project switch. The **Open / Closed / All**
+toggle filters that cache on the spot, without another fetch. If the sync fails, the error banner
+carries a **Retry**; once every item is imported, **Refresh to check for new items** on the empty
+state refetches the whole source rather than only the changes.
+See [board-integration.md](board-integration.md) for the adapter contract behind the incremental
+fetch.
+
 Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small GitHub icon appears on imported items linking back to the original ticket.
 
 Items that have already been imported are detected by `external_source` + `external_id` and shown with a checkmark. Re-importing the same source skips duplicates automatically.
