@@ -229,6 +229,25 @@ export async function clickPastDragSwallow(
 }
 
 /**
+ * Wait until a dnd-kit keyboard drag that has just started can take its next key.
+ *
+ * dnd-kit registers the keyboard sensor's own `keydown` listener on a 0ms timer
+ * after pickup (`KeyboardSensor.attach`), so the activating key cannot end the
+ * drag it started. Blink runs an input task ahead of a due timer task, so a key
+ * pressed within a frame of the lifted item appearing can arrive before that
+ * listener exists and do nothing (seen as "the second Space did not drop, the
+ * third did"). A person cannot press two keys inside one frame; an automation
+ * can. A timer queued here lands BEHIND dnd-kit's in the same queue, so once it
+ * fires the listener is attached. This is a deterministic wait, not a fixed one.
+ *
+ * Call it after asserting the pickup happened (the overlay is visible, or the
+ * handle reads `aria-pressed="true"`) and before the next `keyboard.press`.
+ */
+export async function settleDndKitKeyboardSensor(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+}
+
+/**
  * Launch a headless Chromium page with the electronAPI mock injected.
  * The Vite dev server must be running (started by playwright webServer config).
  */

@@ -1,11 +1,12 @@
 import React, { useCallback, useMemo, useRef } from 'react';
 import { GripVertical, Pencil, Plus, Trash2, Zap } from 'lucide-react';
-import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
+import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { SETTING_DESCRIPTION_CLASS, SETTING_LABEL_CLASS } from '../../SettingText';
 import { ToggleSwitch } from '../../settings/shared';
 import { AutomationIcon } from './automation-icons';
@@ -122,9 +123,12 @@ export function AutomationsPane(props: AutomationsPaneProps) {
   // Pattern C: a DndContext's internal subscriptions go stale across a Fast
   // Refresh, so it is re-keyed on the HMR generation.
   const hmrGeneration = useHmrGeneration();
+  // Never the stock KeyboardSensor: a click on the grip focuses it, Enter would
+  // lift the row, and an Enter in a field of this dialog would drop it. See
+  // intent-keyboard-sensor.ts and keyboard-drag-intent.md.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   /**

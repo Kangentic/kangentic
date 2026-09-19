@@ -137,6 +137,8 @@ The agent keeps its conversation across these moves; the message is the only new
 
 Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
 
+**From the keyboard.** Tab to a card, press Space to pick it up, move it with the arrow keys, and press Space again to drop it; Escape puts it back. The pickup only arms from a Tab-placed focus: a card you clicked or dragged with the mouse stays put on Space and Enter, and a picked-up card is released the moment you click anywhere or focus lands in a terminal. The same keys reorder columns (from the grip in the column header), backlog rows, Column Manager rows, priorities, and shortcuts.
+
 ### Complete a Task
 
 Drag to Done. The worktree directory is removed to reclaim disk, the session is suspended (not destroyed), the task is archived, and the conversation ID is preserved. The branch is deleted too when **git.autoCleanup** is on (the default) and kept when it is off. A clean move happens silently; a confirmation dialog appears only when the move would destroy real work - uncommitted files, or commits that exist only on the local branch about to be deleted - and it spells out exactly what is at risk (worktree deleted, branch kept or deleted, session history kept). If you later unarchive the task and drag it to an active column, Kangentic recreates the worktree and the agent resumes with full conversation context.
@@ -311,7 +313,7 @@ When multiple items are selected and you right-click one of them, the context me
 
 ### Drag to Reorder
 
-Drag rows by the grip handle on the left to manually reorder items. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, created date), manual reorder is disabled until the sort is cleared.
+Drag rows by the grip handle on the left to manually reorder items, or Tab to the grip and use Space and the arrow keys. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, created date), manual reorder is disabled until the sort is cleared.
 
 ### Promoting to the Board
 
@@ -460,7 +462,7 @@ every column's counts side by side.
 
 ### Reorder Columns
 
-Drag column headers to reorder.
+Drag a column by the grip in its header to reorder, or Tab to the grip and use Space and the arrow keys (see [Move Between Active Columns](#move-between-active-columns)). To Do stays first.
 
 ### Delete a Column
 

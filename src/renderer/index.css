@@ -445,13 +445,21 @@
   height: 0;
 }
 
-/* Drag overlay styling. The FlyingCard's frame 0 (KanbanBoard.tsx) mirrors
-   these exact values so the overlay->fly handoff on a Done drop is seamless;
-   keep opacity and rotation in sync across both. */
+/* Drag overlay styling, in two layers. `.drag-overlay` is the node dnd-kit
+   MEASURES (the overlay's first child) for the collision rect and the drop
+   animation, so it carries no transform: a rotated bounding box sat 1.6px left
+   and 7px above the card, and the keyboard coordinate getter then read every
+   same-column sibling as "to the right". The tilt lives on `.drag-overlay-tilt`.
+   The FlyingCard's frame 0 (KanbanBoard.tsx) mirrors the tilt layer's exact
+   values so the overlay->fly handoff on a Done drop shows no step; keep opacity
+   and rotation in sync across both. */
 .drag-overlay {
+  pointer-events: none;
+}
+
+.drag-overlay-tilt {
   opacity: 0.9;
   transform: rotate(3deg);
-  pointer-events: none;
 }
 
 /* Swirling drop zone border */

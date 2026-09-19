@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import { PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
+import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useBacklogStore } from '../stores/backlog-store';
+import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
 import type { BacklogTask } from '../../shared/types';
 import type { DragEndEvent } from '@dnd-kit/core';
 
@@ -48,8 +49,13 @@ export function useBacklogDragDrop(displayItems: BacklogTask[], allItems: Backlo
   const reorderItems = useBacklogStore((state) => state.reorderItems);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  // Each row's grip (`DataTable`'s drag handle cell) carries dnd-kit's
+  // attributes, so it is a Tab stop announced as sortable; the shared keyboard
+  // sensor is what makes that announcement true. Never the stock KeyboardSensor
+  // (keyboard-drag-intent.md).
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const handleDragStart = useCallback((event: { active: { id: string | number } }) => {

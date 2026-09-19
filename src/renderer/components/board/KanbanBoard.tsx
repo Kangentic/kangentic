@@ -36,7 +36,24 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
     data: { type: 'column' },
   });
 
-  const isDraggable = swimlane.role !== 'todo';
+  // Custom columns only: `Swimlane` renders the grip that takes these props and
+  // `DoneSwimlane` renders none, so handle props for the Done lane would be a
+  // focus stop with nothing to land on.
+  const isDraggable = swimlane.role === null;
+
+  // dnd-kit's `attributes` (tabindex, role, aria-*) travel WITH the listeners to
+  // the header grip, never to this wrapper. On the wrapper they made every
+  // column an invisible `outline-none` focus stop: a click on empty lane space
+  // landed focus on it, a screen reader announced it as sortable, and the grip
+  // that actually sorts was unreachable from the keyboard. With both on the
+  // grip, Tab reaches it and the shared keyboard sensor lifts the column.
+  // Memoized because both inputs are stable across renders (dnd-kit memoizes
+  // them) and every sortable re-renders on each drag move: a fresh object here
+  // would re-render the memoized lane, and every card in it, per move.
+  const dragHandleProps = useMemo(
+    () => (isDraggable ? { ...attributes, ...listeners } : undefined),
+    [isDraggable, attributes, listeners],
+  );
 
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -47,22 +64,22 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
 
   if (swimlane.role === 'done') {
     return (
-      <div ref={setNodeRef} style={style} {...attributes} className="h-full outline-none">
+      <div ref={setNodeRef} style={style} className="h-full">
         <DoneSwimlane
           swimlane={swimlane}
           tasks={tasks}
-          dragHandleProps={isDraggable ? listeners : undefined}
+          dragHandleProps={dragHandleProps}
         />
       </div>
     );
   }
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} className="h-full outline-none">
+    <div ref={setNodeRef} style={style} className="h-full">
       <Swimlane
         swimlane={swimlane}
         tasks={tasks}
-        dragHandleProps={isDraggable ? listeners : undefined}
+        dragHandleProps={dragHandleProps}
       />
     </div>
   );
@@ -78,8 +95,8 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
  *  overlay clone competing with it.
  *
  *  Frame 0 matches the DragOverlay's last frame exactly (rotate(3deg) at opacity
- *  0.9, see `.drag-overlay` in index.css) so the overlay->FlyingCard handoff has
- *  no visible tilt/dim step; the fly un-rotates as part of the motion.
+ *  0.9, see `.drag-overlay-tilt` in index.css) so the overlay->FlyingCard handoff
+ *  has no visible tilt/dim step; the fly un-rotates as part of the motion.
  *
  *  This card mounts the instant a Done drop is detected (setCompletingTask runs
  *  before the worktree probe), but the move does NOT persist here. The card only
@@ -172,9 +189,9 @@ function FlyingCard() {
     zIndex: 9999,
     pointerEvents: 'none',
     willChange: 'transform, opacity',
-    // Frame 0 (flying === false) matches `.drag-overlay` exactly (opacity 0.9,
-    // rotate(3deg)) so the overlay->FlyingCard swap is seamless; the fly then
-    // un-rotates and shrinks toward the Done drop zone.
+    // Frame 0 (flying === false) matches `.drag-overlay-tilt` exactly (opacity
+    // 0.9, rotate(3deg)) so the overlay->FlyingCard swap shows no step; the fly
+    // then un-rotates and shrinks toward the Done drop zone.
     opacity: flying ? 0 : 0.9,
     transition: reduceMotion
       ? 'opacity 150ms ease-out'
@@ -408,10 +425,19 @@ export function KanbanBoard() {
             useBoardDragDrop's resolveDropKeyframes. */}
         <DragOverlay dropAnimation={dropAnimation} style={{ pointerEvents: 'none', willChange: 'transform' }}>
           {activeTask ? (
-            // Appearance (opacity 0.9, rotate(3deg)) lives in `.drag-overlay`
-            // (index.css) so the FlyingCard frame 0 can match it exactly.
+            // Two layers on purpose. dnd-kit measures the overlay's FIRST CHILD
+            // (`getMeasurableNode`) for the collision rect and the drop
+            // animation, so `.drag-overlay` carries no transform: with the tilt
+            // on it the measured box sat 1.6px left and 7px above the card, the
+            // keyboard coordinate getter's "to the right of" test then admitted
+            // every same-column sibling, and ArrowRight landed on the card below
+            // instead of the next column. Appearance (opacity 0.9, rotate(3deg))
+            // lives on `.drag-overlay-tilt` (index.css) so the FlyingCard frame 0
+            // can match it exactly.
             <div className="drag-overlay">
-              <TaskCard task={activeTask} isDragOverlay />
+              <div className="drag-overlay-tilt">
+                <TaskCard task={activeTask} isDragOverlay />
+              </div>
             </div>
           ) : null}
         </DragOverlay>
