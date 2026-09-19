@@ -27,7 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { settleDndKitKeyboardSensor, waitForViteReady } from './helpers';
+import { collectPageErrors, settleDndKitKeyboardSensor, waitForViteReady } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -516,6 +516,65 @@ test('the tracker survives the Board Manager closing', async () => {
     await pickUpWithSpace(page);
     await page.keyboard.press('Escape');
     await expect(page.locator(OVERLAY)).toHaveCount(0, { timeout: 3000 });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a keyboard drag lifted in the Board Manager disposes cleanly when the dialog unmounts mid-drag', async () => {
+  const { browser, page } = await launchWithState(buildPreConfig({ withLiveSession: false }));
+  const getPageErrors = collectPageErrors(page);
+  try {
+    await page.locator('[data-swimlane-name="Planning"] [data-testid="edit-column-btn"]').click();
+    const railTab = page.locator('[data-testid="board-manager-tab"][data-tab-name="Executing"]');
+    await railTab.waitFor({ state: 'visible', timeout: 10000 });
+    const gripSelector = 'div:has(> [data-testid="board-manager-tab"][data-tab-name="Executing"]) > [data-drag-handle]';
+
+    await focusByKeyboard(page, gripSelector);
+    await liftGripWithSpace(page, gripSelector);
+
+    // A SCRIPT click, not a Playwright pointer click: the native `.click()`
+    // method dispatches only a `click` event, with no pointerdown ahead of it.
+    // A real pointerdown here would hit the sensor's own
+    // `listeners.add('pointerdown', cancel, ...)` and release the registration
+    // through the ordinary cancel path - the dialog closing would then be
+    // exercising that path again, not the unmount-time dispose this pins.
+    const closeButton = page.locator('[data-testid="board-manager-dialog"] button[aria-label="Close"]');
+    await closeButton.evaluate((element) => (element as HTMLElement).click());
+    await railTab.waitFor({ state: 'hidden', timeout: 5000 });
+
+    // BaseDialog's trapFocus restores focus to the opener (edit-column-btn) on
+    // close. `isAimedAt` only claims body once the dragged node is gone, so
+    // drive focus there explicitly rather than assume where it landed.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
+    // The tracker consumes Escape from a CAPTURE-phase document listener, so a
+    // bubble-phase recorder only sees the key when the tracker did NOT claim
+    // it. Initialized to null, not a boolean, so a tracker that wrongly
+    // swallows the event leaves this null forever instead of misreading as
+    // "not prevented".
+    await page.evaluate(() => {
+      (window as unknown as { __kdiUnmountEscapeDefaultPrevented: boolean | null }).__kdiUnmountEscapeDefaultPrevented = null;
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          (window as unknown as { __kdiUnmountEscapeDefaultPrevented: boolean | null }).__kdiUnmountEscapeDefaultPrevented = event.defaultPrevented;
+        }
+      });
+    });
+    await page.keyboard.press('Escape');
+
+    // Red against a setup() teardown that leaves the dead sensor's
+    // registration in place: without dispose(), the stale drag claims this
+    // Escape (isAimedAt falls back to `target === document.body` once its
+    // node is gone) and swallows it - the incident this pins, where the next
+    // Escape on the board was consumed by a dialog the user had already
+    // closed.
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __kdiUnmountEscapeDefaultPrevented: boolean | null }).__kdiUnmountEscapeDefaultPrevented))
+      .toBe(false);
+
+    expect(getPageErrors()).toEqual([]);
   } finally {
     await browser.close();
   }
