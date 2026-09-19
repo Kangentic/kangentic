@@ -105,7 +105,11 @@ field of the same dialog drops it.
   rather than scrolling the lane, a real click into a terminal cancels the drag and the terminal
   takes focus (the cancel must not prevent the pointerdown), the tracker survives the Board
   Manager closing (the ref count), and no column wrapper is a Tab stop while only custom columns
-  carry a grip. Every card case is red against the stock sensor except the pure
+  carry a grip. One more pins the unmount-mid-drag dispose: a row lifted in the Board Manager
+  whose dialog is then closed by a script click (no pointerdown, so only `setup()`'s teardown can
+  release the drag), after which an Escape on the board reaches the bubble phase with
+  `defaultPrevented` false; it is red with the `dispose()` call removed. Every card case is red
+  against the stock sensor except the pure
   keyboard one. It asserts on overlay presence, `aria-pressed` and the lane highlight, never on a
   completed reorder: dnd-kit's arrow move is the part Playwright cannot drive reliably.
 - **Review:** the `keyboard-drag-intent.md` line in `/code-review`'s Project Conventions list
