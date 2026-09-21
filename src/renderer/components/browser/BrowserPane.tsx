@@ -978,7 +978,12 @@ function BrowserPaneActive({
           Inspect
         </button>
 
-        {/* Compose zone */}
+        {/* Compose zone. A bare Enter sends, and the absent modifier check is
+            deliberate: `submitTextTarget` commits a dictation target by
+            dispatching a plain Enter on the field, so requiring Ctrl/Cmd here
+            would leave push-to-talk unable to send a note at all. Ctrl/Cmd+Enter
+            falls through the same guard and sends too, which is why the button's
+            tooltip names the short form only. */}
         <input
           ref={noteInputRef}
           type="text"
@@ -999,7 +1004,7 @@ function BrowserPaneActive({
           onClick={handleSend}
           disabled={sending}
           className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
-          title="Send to agent (Ctrl/Cmd+Enter)"
+          title="Send to agent (Enter)"
           data-testid="browser-send"
         >
           {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
