@@ -47,6 +47,13 @@
  *     guard introduced alongside the Ctrl+Enter -> plain Enter unification).
  *     Testable here because the guard fires before the webview call.
  *
+ * Every Enter case here is a NEGATIVE. The affirmative one lives in
+ * tests/ui/browser-pane-agent-input-focus.spec.ts, beside the intercepted-Enter
+ * case: openPaneWithGuest stubs a guest on the webview, so a plain Enter drives
+ * handleSend far enough to fail for want of a real guest and report it in the
+ * error strip, and the strip appearing is what proves Send ran. Read it before
+ * changing the note input's onKeyDown.
+ *
  * Draw mode and inspect mode shortcut tests (the affirmative paths) belong in
  * tests/e2e/ where a real Electron webview provides executeJavaScript.
  *

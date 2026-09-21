@@ -9,7 +9,7 @@ A side-pane in the modeless task-detail window (`TaskDetailWindow`) that hosts a
 3. URL bar supports back/forward/reload, pin to project default, pin to task override.
 4. **Draw** mode (`Ctrl/Cmd+D`): free-draw strokes on a transparent overlay above the webview. Pointer-events flip to `none` on the webview while drawing so events reach the canvas.
 5. **Inspect** mode (`Ctrl/Cmd+I`, `Esc` to exit): click an element to capture a structured fingerprint (selector, role, ARIA name, testid, classes, ancestors, computed styles, outerHTML). The picked element keeps a blue persistent overlay that follows scroll/resize until cleared. Re-entering Inspect replaces the prior pick.
-6. **Send** (`Ctrl/Cmd+Enter`): composites webview frame + strokes into a single PNG, captures any text selection, builds an XML-tagged prompt, and submits to the agent's PTY via the paste engine.
+6. **Send** (`Enter` in the note field, or the Send button): composites webview frame + strokes into a single PNG, captures any text selection, builds an XML-tagged prompt, and submits to the agent's PTY via the paste engine. The note field's `onKeyDown` bails on Shift alone, so `Ctrl/Cmd+Enter` sends as well while `Shift+Enter` stays a no-op. From anywhere else in the dialog it is a no-op: the handler lives on the note field, and the document-level listener that used to fire from anywhere was removed in `15076930` because it hijacked the terminal's `Mod+Enter` newline.
 
 ## Architecture
 
