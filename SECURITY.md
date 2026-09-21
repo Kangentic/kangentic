@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Use GitHub's [private vulnerability reporting](https://github.com/Kangentic/kangentic/security/advisories/new),
-or email **support@kangentic.com** if you would rather not go through GitHub. Please do not open a
+or email **security@kangentic.com** if you would rather not go through GitHub. Please do not open a
 public GitHub issue for a security problem, so we can ship a fix before the details are public.
 
 Include whatever you have:
