@@ -6,7 +6,7 @@ import { createQwenCommandInjectionVerifier } from './command-injection-verifier
 import { parseQwenTranscript, locateQwenTranscriptFile } from './transcript-parser';
 import { QwenStatusParser } from './status-parser';
 import { discoverQwenCapabilities } from './capability-discovery';
-import { ensureWorktreeTrust } from './trust-manager';
+import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
@@ -66,6 +66,17 @@ export class QwenAdapter implements AgentAdapter {
     // ~/.qwen/trustedFolders.json so the trust prompt does not block
     // drag-to-spawn. When disabled (default), this is a no-op.
     await ensureWorktreeTrust(workingDirectory);
+  }
+
+  /**
+   * `ensureTrust` has no ancestor check, so with folder trust enabled it
+   * records one entry per task worktree. `~/.qwen/trustedFolders.json` needs
+   * the same cleanup Codex's `config.toml` does or it grows by a dead entry
+   * per task forever. See `removeWorktreeTrust` for the two deliberate
+   * asymmetries with the write path.
+   */
+  async onWorktreeRemoved(worktreePath: string): Promise<void> {
+    await removeWorktreeTrust(worktreePath);
   }
 
   buildCommand(options: SpawnCommandOptions): string {
