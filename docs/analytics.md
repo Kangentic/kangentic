@@ -372,6 +372,72 @@ in one Sentry org, one triage surface.
   or KDE desktop, which is the case that ships. Because the pattern hand-matches a third-party
   template, `tests/unit/updater-error-classifier.test.ts` reads the installed
   `electron-updater` and fails if that template is reworded or a fifth sudo front-end appears.
+- **A read-only volume is counted, not reported, and is the one condition the user hears about.**
+  `isReadOnlyVolumeError` (`src/main/updater.ts`) gates the same `reportHandledError` call from
+  the same position as the two above. A macOS app launched straight from the mounted DMG, or
+  running translocated, cannot write over itself, so Squirrel.Mac refuses the install. That is a
+  property of where the user put the app, not a defect: no build of ours would behave
+  differently. DESKTOP-1A filed it 11 times from a single install.
+
+  Unlike every other suppressed branch, this one also pushes `updater:blocked` to the renderer,
+  which toasts a sentence pointing at the Applications folder. The reason is that the condition
+  is permanent and silent: an install in this state never updates again and says nothing, so
+  dropping the Sentry issue without telling anyone would leave the user on a frozen version
+  indefinitely. The push is latched in main for the app's lifetime, so a condition every 4-hour
+  check rediscovers still produces one toast per run.
+
+  The pattern matches Squirrel's opening sentence only. Squirrel appends a recovery suggestion
+  naming Downloads, macOS Sierra and a GitHub issue URL, none of which identifies the condition.
+- **An EAGAIN install failure is counted, not reported.** `isResourceUnavailableError`
+  (`src/main/updater.ts`), the branch below. DESKTOP-1B is the POSIX `EAGAIN` reaching us through
+  macOS's `NSError` rendering rather than through Node, which is the only reason
+  `isTransientUpdaterError` misses it: `ECONNRESET` and friends sit beside `EAGAIN` in the same
+  errno table, but a Squirrel.Mac error carries no `code` for those branches to read. It is as
+  transient as the network blips above and gets the same treatment.
+
+  The pattern matches `Resource temporarily unavailable`, the strerror text, and ignores the
+  `The operation couldn't be completed.` sentence in front of it. That half is `NSError`
+  boilerplate identifying nothing, and it carries a typographic apostrophe no source pattern
+  should have to reproduce.
+- **A prerelease build with no matching release is counted, not reported.**
+  `isPrereleaseWithNoMatchingRelease` (`src/main/updater.ts`), the last branch before the report.
+  `AppUpdater` derives `allowPrerelease` from whether the running version has a prerelease
+  component, so a `0.41.0-dev.1` build asks `GitHubProvider` for a `dev` channel, finds nothing
+  in the feed, and throws. We publish no such channel, so that is the build's expected steady
+  state. DESKTOP-17.
+
+  The predicate is conjunctive and the version half is the point of it. `GitHubProvider` throws
+  the same `No published versions on GitHub` sentence from two places: the tag-is-null throw,
+  which carries `ERR_UPDATER_NO_PUBLISHED_VERSIONS` and needs `allowPrerelease`, and the feed's
+  own entry lookup, which throws it codeless when the Atom feed has no entries at all. On a
+  stable build that second one means our releases feed is empty or broken, which still reports.
+  `tests/unit/updater-error-classifier.test.ts` pins both throw sites against the installed
+  `electron-updater`, and pins the stable-build negative.
+
+  Two gaps are named rather than left implicit. The macOS predicates above get no upstream drift
+  guard and cannot: Squirrel.Mac is compiled into Electron and the EAGAIN text is macOS
+  localization, so neither string has a source on disk to assert against. A reword would cost a
+  rediscovery, not a silent regression, since the issue would simply reappear.
+- **Reading `app_error` / `source: updater`: the count is not every updater failure.** The five
+  suppressions above are not uniform about it, and the split is older than any of them.
+  `isTransientUpdaterError` gates ABOVE `trackEvent`, so the classes it catches (a raw
+  `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, `ENOTFOUND`, `ENETUNREACH`, `EPIPE`, an `HTTP_ERROR_5xx`
+  / `408` / `429` / `618`, a `net::ERR_`, an aborted request, a failed pipe) produce no event at
+  all. That was the deliberate call when it was written: keep network blips out of `app_error`
+  entirely. Every gate added since sits BELOW `trackEvent` and keeps the count.
+
+  The practical consequence: one underlying network failure is counted or not depending on
+  whether electron-updater rewrapped it. A feed fetch that fails with an intact errno is
+  suppressed silently; the same fetch failing through `GitHubProvider`'s double rewrap loses its
+  code, falls through to `hasTransientNetworkCause`, and IS counted. So "how often do update
+  checks fail" undercounts by exactly the class that kept its errno. Moving
+  `isTransientUpdaterError` below `trackEvent` would make the file consistent, and is the obvious
+  cleanup, but it would redefine a metric that has counted the same way since April 2026
+  (`5513c7cc`). Treat it as a telemetry decision, not a refactor.
+
+  Also note `sanitizeErrorMessage` truncates to 180 characters, which is shorter than the
+  read-only-volume message. The classes are still distinguishable by their opening sentence,
+  since there is no per-class tag on the event.
 - **Affected-install counts:** the same anonymous, non-reversible `clientId` documented under
   "Unique Installs" is attached as the Sentry user id, so an issue's Users column means
   "installs affected." It contains no personal data and shares the same kill switches.

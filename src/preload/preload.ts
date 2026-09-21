@@ -543,6 +543,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
       return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
     },
+    onUpdateBlocked: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+      ipcRenderer.on(IPC.UPDATE_BLOCKED, handler);
+      return () => ipcRenderer.removeListener(IPC.UPDATE_BLOCKED, handler);
+    },
   },
 
   hostMemory: {

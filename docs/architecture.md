@@ -450,12 +450,13 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `browser:downloadDone` | push | A download from a guest finished, carrying `{ fileName, filePath, state }` for the toast and its "Show in folder" action (which reuses the existing `shell:showItemInFolder`). Sent to the INITIATING guest's host window, resolved per download rather than captured at install time, since one `Session` serves every pane in a worktree |
 | `browser:guestMouseButton` | push | A guest page's mouse BACK / FORWARD button went down or up, carrying the guest's `webContentsId` and a MAIN-stamped `at`. A guest consumes the mouse outright - measured, one real back press produced 31 events inside the page and ZERO on the host window - so no renderer listener can see the button that push-to-talk and back-navigation both live on. `webContents.on('input-event')` does see it, and reports a true down/up PAIR, which is what makes push-to-HOLD possible rather than a one-shot toggle. The timestamp is stamped in main because the renderer's own clock is congested by the work a press starts (mic permission, engine start, AudioWorklet load: an 80ms timer measured 414ms), which would misfile a tap as a hold |
 
-### Updater (3 channels)
+### Updater (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `updater:check` | invoke | Check for application updates |
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
+| `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
 
 ### Host memory pressure (1 channel)
 | Channel | Pattern | Purpose |
