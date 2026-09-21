@@ -25,6 +25,7 @@ import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, lo
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
 import { SCENES } from '../tests/captures/scenes';
+import { DEFAULT_CONFIG } from '../src/shared/types';
 
 // Vite keeps an ambient NODE_ENV, and "development" from a shell or IDE ships React's development
 // build plus every `import.meta.env.DEV` branch while the build still exits 0 (measured: the
@@ -154,8 +155,34 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
   return { scripts: scripts.map((script) => script.fileName), files };
 }
 
+/**
+ * The field names each POPULATED nested block of `AppConfig` carries, so `demo/boot.js` can refuse
+ * a `state=` blob that names only some of them.
+ *
+ * A config override is merged with a shallow `Object.assign`, twice (boot.js into
+ * `__mockConfigOverrides`, then the mock into its own defaults), so a nested block REPLACES the
+ * default rather than merging into it. Naming one field of `monitor` therefore leaves the other
+ * six undefined, on settings nothing in the frame shows. The scene registry's own test catches
+ * that for `SCENES`; a hand-written `state=` URL has no such check, and that is the audience the
+ * README points at this escape hatch. Emitted rather than restated in boot.js, which is a classic
+ * script and cannot import the type.
+ *
+ * Empty and non-object defaults are skipped: they have no shape to match, and a map keyed by
+ * project id (`workspaceByProject`) is meant to carry only the entries a scene names.
+ */
+function nestedConfigShape(): Record<string, string[]> {
+  const shape: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(DEFAULT_CONFIG as Record<string, unknown>)) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const fields = Object.keys(value);
+    if (fields.length === 0) continue;
+    shape[key] = fields;
+  }
+  return shape;
+}
+
 function buildScenesScript(version: string, recordingsScript: string): string {
-  return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\n${recordingsScript}`;
+  return `window.__demoScenes = ${JSON.stringify(SCENES)};\nwindow.__demoVersion = ${JSON.stringify(version)};\nwindow.__demoConfigShape = ${JSON.stringify(nestedConfigShape())};\n${recordingsScript}`;
 }
 
 /** The frame every scene is authored at: the site's 1600 by 1000 (demo/stage.html). */

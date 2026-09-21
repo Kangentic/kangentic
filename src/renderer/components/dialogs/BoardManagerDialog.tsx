@@ -2251,6 +2251,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         the reader is deciding between. */}
                     <div className={SECTION_FULL_SPAN}>
                       <ToggleCard
+                        testId="column-handoff-context"
                         label="Hand off context when the agent changes"
                         description="Codex to Claude, for example. The new agent receives the previous one's conversation instead of starting with just the task title and description."
                         checked={draft.handoff_context}

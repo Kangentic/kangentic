@@ -557,7 +557,7 @@ The activity icon on each task card is wrapped in a tooltip rendering `ActivityR
 
 ### Activity Engine Debug Overlay (Developer settings tab)
 
-A per-project setting under **Developer → Activity Engine Debug Overlay** enables a floating panel showing live engine state:
+A global setting under **Developer → Activity Engine Debug Overlay** enables a floating panel showing live engine state. Global, not per-project: Developer is a system tab, and the overlay reads `globalConfig` precisely so a project override cannot toggle it. It shows:
 - Current activity + reason for each running session
 - Raw counters (tools, subagents, bg shells)
 - **Compensation counters** (`staleThinking`, `bgShellHatch`, `stuckPendingTools`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`, `stuckSubagent`) - monotonic tallies of silent recovery events. In a clean session all eight read 0; any non-zero value flags a watchdog / forced transition / unattributable or discarded event that did not visibly flip the activity pill. (`ignoredInnerSubagentStop` is the benign exception: non-zero is normal on any session that ran subagents - it is the count of spurious empty-detail inner stops the engine correctly discarded.)
