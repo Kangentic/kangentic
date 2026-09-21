@@ -64,6 +64,19 @@ declare global {
     __mockHostMemoryPressureListeners?: Array<(event: import('../../src/shared/types').HostMemoryPressureEvent) => void>;
     /** Fires the host-memory-pressure push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
     __mockFireHostMemoryPressure?: (event: import('../../src/shared/types').HostMemoryPressureEvent) => void;
+
+    /** Pushes `config:writeFailed`, which App.tsx toasts verbatim at variant 'error', duration 12000. Installed once `config.onWriteFailed` has a subscriber, so wait for the app to mount. */
+    __mockFireConfigWriteFailed?: (message: string) => void;
+
+    /** Pre-seeds the Board Profiles the mock serves from `boardConfig.getBoardProfiles()`. Set in addInitScript. */
+    __mockBoardProfiles?: import('../../src/shared/types').BoardProfile[];
+    /** Makes `boardConfig.setBoardProfiles()` reject with this message, leaving the seeded list intact so the store's reload still answers. Set in addInitScript or at runtime. */
+    __mockBoardProfilesSaveError?: string;
+
+    /** Set by a toast action's onClick in toast-click-through.spec.ts, to prove a real click reached it. */
+    __toastActionClicked?: boolean;
+    /** Counts calls to a spec-overridden `navigator.clipboard.writeText` in toast-click-through.spec.ts. */
+    __clipboardRejectCalls?: number;
   }
 }
 

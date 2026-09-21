@@ -1051,5 +1051,10 @@ if (import.meta.env.DEV) {
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,
+    // Not IPC-backed like the rest, but exposed for the same reason: without it
+    // a UI test cannot raise an arbitrary toast and has to borrow whichever push
+    // happens to toast verbatim (`config:writeFailed`), which drags unrelated
+    // setup into a test about toasts.
+    toast: useToastStore,
   };
 }

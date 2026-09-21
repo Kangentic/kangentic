@@ -15,7 +15,7 @@
  * old test was deleted, not lower.
  */
 import { test, expect } from '@playwright/test';
-import { launchPage, waitForBoard, createProject } from './helpers';
+import { launchPage, waitForBoard, createProject, clickPastDragSwallow } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 // Each describe is isolated per worker (separate process; per-test page launch /
@@ -74,7 +74,6 @@ async function saveManager(detachTimeout = 10000): Promise<void> {
   // interaction that caused it; clicking a disabled button is a no-op Playwright
   // reports as success.
   await expect(save).toBeEnabled({ timeout: 5000 });
-  await save.click();
   // A click can be SWALLOWED here, and the cause is dnd-kit rather than this
   // app: `AbstractPointerSensor` arms a capture-phase `click` -> stopPropagation
   // on the DOCUMENT for the whole drag and removes it on a `setTimeout(..., 50)`
@@ -83,15 +82,17 @@ async function saveManager(detachTimeout = 10000): Promise<void> {
   // commands, and the first click anywhere on the page goes nowhere. Measured:
   // Save was enabled, hit-tested to itself, had `pointer-events: auto`, raised
   // no toast and did nothing for 25s, and a second click closed the dialog
-  // immediately. So re-click rather than wait. Bounded, and skipped entirely
-  // once the dialog is gone, so a save that worked is never issued twice.
-  for (let retry = 0; retry < 3; retry += 1) {
-    if (await dialog().count() === 0) return;
-    const closed = await dialog().waitFor({ state: 'detached', timeout: 1500 })
-      .then(() => true).catch(() => false);
-    if (closed) return;
-    await save.click();
-  }
+  // immediately. So re-click rather than wait.
+  //
+  // Note the measurement says it HIT-TESTED TO ITSELF, which is what separates
+  // this from the toast-over-the-footer swallow that `toast-click-through.spec.ts`
+  // covers: there, elementFromPoint returned the toast. Do not conflate them.
+  //
+  // `clickPastDragSwallow` is the shared form of that retry (bounded, and it
+  // stops as soon as the dialog is gone, so a save that worked is never issued
+  // twice). The diagnostic poll below is what this helper adds on top.
+  await clickPastDragSwallow(save, dialog(), 'detached');
+  if (await dialog().count() === 0) return;
   // Poll for the close rather than waiting on it, and collect every notice seen
   // along the way. Save blocks on an empty or duplicate name and says so in a
   // toast that clears after four seconds, so reading the live DOM only once the
