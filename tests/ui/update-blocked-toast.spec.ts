@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { launchPage, createProject, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -91,6 +91,14 @@ test.describe('Update-blocked toast', () => {
     // A persistent toast the user cannot get rid of would be worse than the
     // silence it replaced.
     await page.getByTestId('toast-dismiss').click();
-    await expect(page.getByTestId('toast')).toHaveCount(0);
+
+    // The card animates out, so wait for the node to go before counting. The
+    // count itself is the non-retrying helper rather than toHaveCount(0):
+    // that matcher retries for ~5s, which is long enough for an ordinary
+    // toast to auto-dismiss and report a false pass. This one cannot (it is
+    // duration: 0), but the helper is the house rule and the assertion is
+    // then true for the reason it claims rather than by accident.
+    await page.getByTestId('toast').waitFor({ state: 'detached' });
+    expect(await toastCountRightNow(page)).toBe(0);
   });
 });
