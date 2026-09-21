@@ -23,6 +23,7 @@ import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
+import { resolveIdleToast } from './utils/idle-toast';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { describeAutomationFailure } from '../shared/automation-describe';
@@ -211,10 +212,10 @@ export function App() {
     // Session changed (queued, running, suspended) - push full Session object
     if (sessions.onStatus) {
       cleanups.push(sessions.onStatus((sessionId, session) => {
-        // Deferred through the coalescer: held during an active board drag so
-        // a spawning session's status flip doesn't re-render a sortable card
-        // mid-drag. Wrapped whole so the (currently side-effect-free) write and
-        // auto-name scheduling stay in arrival order with the other handlers.
+        // Routed through the coalescer, which runs the thunk synchronously today
+        // (the board-drag hold was removed - see enqueueSessionUpdate's docblock).
+        // Wrapped whole so the (currently side-effect-free) write and auto-name
+        // scheduling stay in arrival order with the other handlers.
         enqueueSessionUpdate(() => {
           // Mid-session conversation fork (e.g. Claude /clear): the live
           // session's agent id is null until first capture (that flip stays
@@ -259,7 +260,9 @@ export function App() {
       }));
     }
 
-    // Notification helpers -- shared by idle, exit, and auto-move handlers.
+    // Desktop-notification helpers, now used only by the spawn-stall and
+    // auto-move handlers: the idle and exit desktop notifications moved to main
+    // (src/main/notifications/desktop-notifier.ts), which owns their cooldown.
     const notificationCooldowns = new Map<string, number>();
 
     async function shouldNotify(key: string, sessionProjectId: string): Promise<boolean> {
@@ -281,6 +284,39 @@ export function App() {
       notificationCooldowns.set(key, Date.now());
       window.electronAPI.notifications.show({ title, body, projectId: notifyProjectId, taskId: notifyTaskId });
       window.electronAPI.window.flashFrame(true);
+    }
+
+    /**
+     * Open a task's detail because the user acted on a notification about it -
+     * an OS notification click, or the Open action on an idle toast. Both mean
+     * the same thing, so they share one path.
+     *
+     * The current project is re-read here rather than captured by the caller: a
+     * toast stays up for `durationSeconds`, and the user can switch projects
+     * before clicking it.
+     */
+    function openTaskFromNotification(notifyProjectId: string, notifyTaskId: string) {
+      // The Command Terminal layer is top-layered over the board, so opening a
+      // task detail underneath it leaves the user looking at a terminal they did
+      // not ask for. A cross-project click closes the layer anyway (close-on-
+      // project-switch); this covers the same-project case. Every PTY stays alive.
+      //
+      // The toast caller can hit this while the user is PRESENT and typing in a
+      // Command Terminal, which the OS-click caller cannot. Hiding it anyway is
+      // deliberate: clicking Open names a task, and a detail window opening
+      // behind the layer is the worse outcome. The layer reopens on Ctrl+Shift+P
+      // with every terminal reattached.
+      useSessionStore.getState().requestHideCommandBar();
+      // agent-focus-ok: acting on a notification is the user asking for this task,
+      // so the detail it opens SHOULD take focus. The OS-click path arrives over an
+      // IPC push like the agent's does, which is why the origin is stated here
+      // rather than inferred. See .claude/rules/agent-driven-focus.md.
+      if (useProjectStore.getState().currentProject?.id === notifyProjectId) {
+        useSessionStore.getState().setDetailTaskId(notifyTaskId);
+      } else {
+        useSessionStore.getState().setPendingOpenTaskId(notifyTaskId);
+        useProjectStore.getState().openProject(notifyProjectId);
+      }
     }
 
     // Spawn-stall watcher: when a task sits in a "preparing" spawn-progress
@@ -525,10 +561,12 @@ export function App() {
     // but only run auto-focus for current project.
     if (sessions.onActivity) {
       cleanups.push(sessions.onActivity((sessionId, state, reason, projectId) => {
-        // Deferred whole through the coalescer (held during an active board
-        // drag). The auto-focus effect reads getState() AFTER updateActivity,
-        // so the write and its reads must stay atomic - deferring the body as
-        // one thunk preserves that read-after-write.
+        // Routed whole through the coalescer. It runs the thunk synchronously
+        // today (the board-drag hold was removed - see enqueueSessionUpdate's
+        // docblock for why), so this is about ATOMICITY, not deferral: the
+        // auto-focus and toast blocks below read getState() AFTER
+        // updateActivity, and passing the body as one thunk keeps that
+        // read-after-write intact if a hold is ever reintroduced.
         enqueueSessionUpdate(() => {
           // Read the prior state BEFORE the write: this channel now also carries
           // a reason-only refresh (same state, moved reason kind), and auto-focus
@@ -547,6 +585,25 @@ export function App() {
           const config = useConfigStore.getState().config;
           const sessionStore = useSessionStore.getState();
 
+          // Which sessions already have their terminal on another surface. EVERY
+          // owner source, not just this renderer's windows: a detail hosted in the
+          // detached monitor has no tab here either, and making it the active tab is
+          // how the panel ends up selecting a session it renders nothing for. A
+          // phone streaming the terminal is an owner for the same reason, and is the
+          // one source `derivePanelSessions` treats as optional - omit it and the
+          // suppression `resolveIdleToast` documents silently does not happen.
+          //
+          // Hoisted out of the auto-focus branch because the idle toast below reads
+          // it too. One computation, so the two cannot disagree about what the user
+          // can actually see.
+          const ownedSessionIds = derivePanelSessions({
+            sessions: sessionStore.sessions,
+            currentProjectId: activeProjectId ?? null,
+            dialogSessionIds: sessionStore.dialogSessionIds,
+            remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
+            mobileTerminalStreamedSessionIds: sessionStore.mobileTerminalStreamedSessionIds,
+          }).owned;
+
           // Auto-focus: switch the bottom panel to the most recently idle session
           // (only for current project sessions). Treat 'permission' like 'idle'
           // for focus rules - the agent is paused, the user should see it.
@@ -560,20 +617,47 @@ export function App() {
               newState: state,
               previousState,
               currentActiveSessionId: sessionStore.activeSessionId,
-              // Both owner sources, not just this renderer's windows: a detail hosted in
-              // the detached monitor has no tab here either, and making it the active tab
-              // is how the panel ends up selecting a session it renders nothing for.
-              ownedSessionIds: derivePanelSessions({
-                sessions: sessionStore.sessions,
-                currentProjectId: activeProjectId ?? null,
-                dialogSessionIds: sessionStore.dialogSessionIds,
-                remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
-              }).owned,
+              ownedSessionIds,
               sessionActivity: sessionStore.sessionActivity,
               sessions: projectSessions,
             });
             if (target !== null) {
               sessionStore.setActiveSession(target);
+            }
+          }
+
+          // In-app toast for a session that stopped and is waiting on the user.
+          // The desktop half of this same event is owned by main (see below) and
+          // fires on the opposite condition - when the user is AWAY. This covers
+          // the case that one skips: the user is here, on this project, but is not
+          // looking at this particular agent.
+          const toastSession = sessionStore.sessions.find((s) => s.id === sessionId);
+          if (toastSession) {
+            const toastTask = useBoardStore.getState().tasks.find((t) => t.id === toastSession.taskId);
+            const idleToast = resolveIdleToast({
+              state,
+              previousState,
+              enabled: config.notifications.toasts.onAgentIdle,
+              // Strict, unlike `isCurrentProject` above, which is permissive when
+              // either id is missing. Matches the exit and idle-timeout handlers:
+              // a toast has to name a task on the board the user is looking at.
+              isCurrentProject: Boolean(activeProjectId) && toastSession.projectId === activeProjectId,
+              transient: Boolean(toastSession.transient),
+              ownedByDetailSurface: ownedSessionIds.has(sessionId),
+              taskTitle: toastTask?.title,
+              sessionIdShort: sessionId.slice(0, 8),
+            });
+            if (idleToast) {
+              const openProjectId = toastSession.projectId;
+              const openTaskId = toastSession.taskId;
+              useToastStore.getState().addToast({
+                message: idleToast.message,
+                variant: idleToast.variant,
+                // No board row means nothing to open, so the toast stays informational.
+                action: idleToast.hasTask
+                  ? { label: 'Open', onClick: () => { openTaskFromNotification(openProjectId, openTaskId); } }
+                  : undefined,
+              });
             }
           }
 
@@ -641,25 +725,16 @@ export function App() {
             .catch(() => {});
           return;
         }
-        // The Command Terminal layer is top-layered over the board, so opening a
-        // task detail underneath it leaves the user looking at a terminal they did
-        // not ask for. A cross-project click closes the layer anyway (close-on-
-        // project-switch); this covers the same-project case. Every PTY stays alive.
-        // Also the path the DETACHED monitor takes: its row click routes through
-        // main and re-emits here, so pop-out and in-app behave identically.
-        useSessionStore.getState().requestHideCommandBar();
-        // agent-focus-ok: a notification click is the user asking for this task,
-        // so the detail it opens SHOULD take focus. It arrives over an IPC push
-        // like the agent's does, which is why the origin is stated here rather
-        // than inferred. See .claude/rules/agent-driven-focus.md.
-        if (taskId && alreadyActive) {
-          useSessionStore.getState().setDetailTaskId(taskId);
-        } else {
-          if (taskId) {
-            useSessionStore.getState().setPendingOpenTaskId(taskId);
-          }
+        // A click carrying no task can still only mean "go to that project".
+        if (!taskId) {
+          useSessionStore.getState().requestHideCommandBar();
           useProjectStore.getState().openProject(projectId);
+          return;
         }
+        // Shared with the idle toast's Open action. Also the path the DETACHED
+        // monitor takes: its row click routes through main and re-emits here, so
+        // pop-out and in-app behave identically.
+        openTaskFromNotification(projectId, taskId);
       }));
     }
 
@@ -891,7 +966,13 @@ export function App() {
         }
 
         const notifyConfig = useConfigStore.getState().config.notifications;
-        if (notifyConfig.toasts.onPlanComplete) {
+        // Active project only, like every other toast (exit, idle, idle-timeout,
+        // spawn-stall). An auto-move on a BACKGROUND project used to toast here
+        // unconditionally, naming a task on a board the user is not looking at -
+        // and the desktop notification below fires for exactly that case, so the
+        // one event raised both alerts at once.
+        const isActiveProjectMove = !autoMoveProjectId || autoMoveProjectId === activeProjectId;
+        if (isActiveProjectMove && notifyConfig.toasts.onPlanComplete) {
           useToastStore.getState().addToast({
             message: `Plan complete. Moved "${taskTitle}" to next column`,
             variant: 'success',

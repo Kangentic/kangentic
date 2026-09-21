@@ -30,6 +30,33 @@ export function collectPageErrors(page: Page): () => string[] {
 }
 
 /**
+ * Count the toasts on screen RIGHT NOW, with no assertion retry.
+ *
+ * This is the only correct way to assert "no toast appeared", and the reason is
+ * not obvious: `expect(locator).toHaveCount(0)` AUTO-RETRIES for up to the expect
+ * timeout (~5s by default), while a toast auto-dismisses after
+ * `notifications.toasts.durationSeconds` (4s in the mock config). So a wrongly
+ * raised toast disappears on its own INSIDE the retry window and the assertion
+ * reports a false pass. The test goes green against the bug it exists to catch.
+ *
+ * That has been rediscovered three times in this suite (add-project-flow,
+ * agent-driven-invalidation, idle-toast), each time as a local helper. It lives
+ * here now, and `tests/unit/toast-negative-assertion.test.ts` fails any new
+ * `toHaveCount(0)` against a toast locator.
+ *
+ * A fake clock (`page.clock.install()`) also masks the problem, because page
+ * timers freeze while Playwright retries in real time. Do not rely on that: the
+ * protection is invisible at the call site and vanishes if the clock is dropped.
+ *
+ * Pair it with a POSITIVE assertion that the path under test actually ran, or
+ * "no toast" is indistinguishable from "nothing happened yet".
+ */
+export async function toastCountRightNow(page: Page, hasText?: string | RegExp): Promise<number> {
+  const toasts = page.getByTestId('toast');
+  return hasText === undefined ? toasts.count() : toasts.filter({ hasText }).count();
+}
+
+/**
  * Poll the Vite dev server until it responds with HTTP 200.
  * Prevents thundering-herd timeouts when multiple workers launch simultaneously
  * before Vite finishes its initial compilation.

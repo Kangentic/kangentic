@@ -146,7 +146,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
 
   // ── Notifications > Events ──
-  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent needs attention on a non-visible project', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent finishes its turn or needs permission', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onAgentCrash', tabId: 'notifications', label: 'Agent Crash', description: 'When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
   { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan Complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn Stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },

@@ -722,7 +722,11 @@ Command Terminals keep running when you hide the layer and when you switch proje
 
 ### Notifications
 
-Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
+Notifications fire when an agent needs attention and you cannot already see it. The two channels cover opposite halves of that, so between them nothing is missed and nothing is said twice.
+
+Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash.
+
+Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 
 The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
 
@@ -832,7 +836,7 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 - The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch. The pill names the branch the checkout is actually on: it is re-read from git whenever you reopen the layer and whenever the checkout moves (an agent running `git checkout` inside the terminal, or your own git usage), so it never keeps claiming a branch the repo has left. Reopening never checks anything out.
 - The terminal's **Changes** panel measures ahead/behind, and diffs its Branch tab, against the project's default base branch, the same base the pill's default names.
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
-- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
+- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts when they exit or go idle
 - Your terminals are **preserved across project switches**. If you open terminals, switch to another project, and switch back, they are still running. Each project keeps its own terminals, so you can keep ad-hoc work going while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 

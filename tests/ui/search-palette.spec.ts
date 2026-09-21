@@ -7,7 +7,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, collectPageErrors } from './helpers';
+import { waitForViteReady, collectPageErrors, toastCountRightNow } from './helpers';
 import { PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -672,7 +672,9 @@ test.describe('Search Palette', () => {
       // would have leaked the PROJECT_NOT_FOUND: sentinel straight into the UI.
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: /no longer available|out of sync/ });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(page.locator('[data-testid="toast"]', { hasText: PROJECT_NOT_FOUND_PREFIX })).toHaveCount(0);
+      // One-shot count, not toHaveCount(0) - see toastCountRightNow. The visible
+      // assertion above is the positive signal that the failure path ran at all.
+      expect(await toastCountRightNow(page, PROJECT_NOT_FOUND_PREFIX)).toBe(0);
 
       // The palette itself: `activate`'s task branch only reaches
       // `requestClose()` when `switchProjectIfNeeded()` resolves true, so a
