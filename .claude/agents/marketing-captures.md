@@ -35,9 +35,10 @@ The capture framework lives in the `kangentic` app repo (NOT the site repo). It 
 
 | File | Purpose |
 |------|---------|
-| `playwright.config.ts` | `captures` project entry (workers: 1, chromium, headless) |
+| `playwright.config.ts` | `captures` project entry (workers: 1, chromium, headless, 60s per still, one CI retry) |
 | `tests/captures/helpers/resolutions.ts` | Viewport presets: frame (1600x1000@2x, the site's embed size and the scene captures' default), hero (1920x1080@2x), inline (1024x768@2x), thumbnail (640x480@2x) |
 | `tests/captures/scenes.ts` | The scene registry: one still per entry, shot from the BUILT web demo by `tests/captures/features/scenes.capture.ts` through `helpers/scene-page.ts` |
+| `demo/posters.mjs` | The docs poster set: drives `scenes.capture.ts` for every scene in `clay` and `rust` at `frame`, verifies the shots against `dist/demo/scenes.json`, zips them with a manifest (`scripts/lib/demo-posters.mjs`); `release.yml` attaches the zip to every release |
 | `tests/captures/helpers/capture-page.ts` | Page launcher: sets viewport, scale, theme, font, injects mock + fixture, waits for render |
 | `tests/captures/helpers/marketing-fixture.ts` | Deterministic seed data: project, swimlanes, tasks, sessions, activity states, usage, scrollback |
 | `tests/captures/features/*.capture.ts` | Individual capture specs |
@@ -50,13 +51,17 @@ The capture framework lives in the `kangentic` app repo (NOT the site repo). It 
 npm run capture                    # All captures (builds dist/demo first)
 npx playwright test --project=captures --grep "agent-orchestration"  # Specific feature
 npx playwright test --project=captures --grep "board night frame$"   # Single scene still
+npm run demo:posters               # The docs poster set (needs dist/demo; refuses a stale build)
 ```
 
 `scenes.capture.ts` shoots the built web demo and refuses a missing `dist/demo`, so a direct
 `npx playwright test` run of it needs `npm run build:demo` first; `npm run capture` does that build
-itself.
+itself. Its axes are env vars: `CAPTURE_SCENES`, `CAPTURE_THEMES` (validated against
+`SCENE_THEMES` in `helpers/scene-page.ts`), `CAPTURE_RESOLUTIONS`, and `CAPTURE_OUTPUT_ROOT`
+(replaces the timestamped output root; what `demo/posters.mjs` sets).
 
-Output goes to `captures/<feature>/<variant>.png` (gitignored during dev).
+Output goes to `captures/<timestamp>/<feature>/<variant>.png` (gitignored); the poster set goes to
+`dist/demo-posters/` and `dist/demo-posters-<version>.zip` instead.
 
 ## The Mock System
 

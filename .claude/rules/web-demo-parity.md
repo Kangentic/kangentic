@@ -50,7 +50,10 @@ three things staying in step, and each is enforced rather than remembered.
   applier of its own, so the two cannot describe one state two ways.
 - **The site learns the list from the build, never from a copy.** The build emits `scenes.json`
   unhashed beside `index.html`, generated from `SCENES`: name, reach, alt, description, and the
-  app version. A vendored or packaged copy can lag what is deployed; a URL cannot.
+  app version. A vendored or packaged copy can lag what is deployed; a URL cannot. The poster set
+  the site's figures fall back to (`demo/posters.mjs`, attached to every release as
+  `demo-posters-<version>.zip`) is shot by the rig from that same build, and its `manifest.json`
+  carries that same `version`, so the site can refuse a set that is not the demo it deploys.
 - **The sample install is one dataset.** The marketing captures and the web build both seed
   `demo-dataset.ts`; terminal content comes from recordings in `tests/captures/fixtures/demo/`
   made by `scripts/capture-agent-scrollback.js` and sanitized at record time. There is no

@@ -25,7 +25,10 @@
  * would rename the existing four mac entries and silently drop arm64 coverage.
  * Duplicate the four mac lines below for the new arch instead, and bump the asset
  * count the test and the docs hardcode (tests/unit/release-asset-manifest.test.ts,
- * docs/deployment.md, .claude/skills/release/SKILL.md all say 11).
+ * docs/deployment.md, .claude/skills/release/SKILL.md). Those three say 11 BUILD
+ * assets, and the docs also say a finished release carries 12: release.yml's
+ * demo-posters job attaches the docs poster set after publishing, deliberately
+ * outside this list, since this manifest is verified before that job runs.
  */
 const MAC_ARCH = 'arm64';
 

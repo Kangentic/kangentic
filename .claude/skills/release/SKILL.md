@@ -376,13 +376,15 @@ Summarize the release:
 
 **Watch the run before opening anything.** Get the run id with `gh run list --repo
 Kangentic/kangentic --workflow=release.yml --limit 1`, then wait on it with `gh run watch <runId>
---repo Kangentic/kangentic --exit-status` (run it in the background; it takes 10 to 15 minutes).
+--repo Kangentic/kangentic --exit-status` (run it in the background; it takes 15 to 25 minutes,
+the last ten of them the `demo-posters` job shooting the docs poster set after the release is
+already published).
 
 **Then** verify the end state rather than trusting the exit code, and only after that open the
 releases page in the user's browser with `start
 https://github.com/Kangentic/kangentic/releases`:
 
-- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 11 assets.
+- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 12 assets: the 11 build assets `scripts/release-assets.js` lists, plus `demo-posters-X.Y.Z.zip` from the `demo-posters` job, which runs after the release is published. 11 after a green `gh run watch` means that job did not attach the poster set; read its log.
 - `npm view kangentic version` must report the new version.
 
 Opening the releases page while the builds are still running is what caused the v0.39.0 failure
@@ -391,7 +393,7 @@ front of a human for the ten minutes when clicking it does the most damage.
 
 **Never publish the draft by hand.** Publishing is automatic once
 `scripts/verify-release-assets.js` confirms the tag resolves to exactly one release carrying all
-11 expected assets. So a release still sitting as a draft after the workflow finishes means that
+11 expected build assets. So a release still sitting as a draft after the workflow finishes means that
 gate FAILED, and the draft is presumed incomplete. Clicking Publish in the GitHub UI bypasses the
 only check that stands between a partial release and every user's auto-updater, which is exactly
 how v0.35.0 shipped macOS-less. Read the `publish-release` job log, fix the cause, and re-run the

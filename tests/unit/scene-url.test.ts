@@ -5,7 +5,7 @@
  * by name). This pins that contract without driving a real page.
  */
 import { describe, it, expect } from 'vitest';
-import { sceneUrl, type OpenSceneOptions } from '../../tests/captures/helpers/scene-page';
+import { SCENE_THEMES, sceneUrl, type OpenSceneOptions } from '../../tests/captures/helpers/scene-page';
 import type { SceneDefinition } from '../../tests/captures/scenes';
 
 const options: OpenSceneOptions = { baseUrl: 'http://127.0.0.1:4173/demo/', theme: 'sand' };
@@ -76,6 +76,18 @@ describe('sceneUrl', () => {
   it('preserves the base URL trailing slash', () => {
     const url = sceneUrl(stateScene, options);
     expect(url.startsWith('http://127.0.0.1:4173/demo/?')).toBe(true);
+  });
+
+  // The theme travels to demo/boot.js verbatim, which resolves the aliases itself. The rig
+  // validates CAPTURE_THEMES against this same list, and the poster set shoots clay and rust
+  // through it, so the product pair has to be here and has to pass through untouched.
+  it('passes every rig theme through as theme=, the product pair included', () => {
+    expect(SCENE_THEMES).toContain('clay');
+    expect(SCENE_THEMES).toContain('rust');
+    for (const theme of SCENE_THEMES) {
+      const url = new URL(sceneUrl(stateScene, { ...options, theme }));
+      expect(url.searchParams.get('theme')).toBe(theme);
+    }
   });
 
   it('carries a driver scene through state=, with no view param', () => {

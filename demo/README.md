@@ -24,6 +24,9 @@ node demo/measure.mjs --geometry      # the grid each terminal surface fits, at 
 npm run demo:serve                    # serve dist/demo/ and stay up for a manual look
 npm run capture                       # build, then one still per scene and theme (and the marketing
                                       # video and walkthrough), into a gitignored captures/<timestamp>/
+npm run demo:posters                  # build first; every scene in clay and rust at 2x, verified and
+                                      # zipped with a manifest into dist/demo-posters-<version>.zip,
+                                      # the release asset the site's docs figures read
 ```
 
 `demo:serve` prints a board URL. The one to open for a look is `stage.html`, the fixed-size host a
@@ -40,9 +43,12 @@ serves none of this; the web build is a separate artifact and needs a static ser
 
 **A dataset change is not finished until the captures are re-run.** The web demo rebuilds itself on
 every release (`deploy-demo.yml`), and the marketing PNGs do not: no workflow runs `npm run capture`.
-The scene stills are shot FROM the built demo (`tests/captures/features/scenes.capture.ts` opens
-each registry scene by URL and screenshots it), so they cannot describe a state the live embed does
-not, but a PNG someone copied into the site stays as old as the day it was shot. The hover video
+The one set a workflow does shoot is the poster set (`npm run demo:posters`, driving only
+`scenes.capture.ts`; see "The poster set" below), which `release.yml` attaches to every release, so
+a docs figure's poster is as fresh as the release it names and never fresher. The scene stills are
+shot FROM the built demo (`tests/captures/features/scenes.capture.ts` opens each registry scene by
+URL and screenshots it), so they cannot describe a state the live embed does not, but a marketing
+PNG someone copied into the site stays as old as the day it was shot. The hover video
 (`agent-orchestration.capture.ts`) is now the only capture that seeds the dev server with
 `marketing-fixture.ts` (the walkthrough builds its own state), and
 `tests/unit/demo-dataset-consumer-parity.test.ts` keeps that seed and the build's in step; retire
@@ -305,7 +311,70 @@ figure's scene name (an unknown name or a `driver` scene fails the site build ra
 rendering the error card inside a captioned figure), and takes `alt` and `version` from it. A URL
 cannot lag the way a vendored package does, which is the failure `@kangentic/branding` plus
 `scripts/sync-brand.mjs` is known for. Placing frames on pages is the site's job (kangentic.com
-#78 and #79); this file and the registry are the whole app-side contract.
+#78 and #79); this file, the registry, and the poster set below are the whole app-side contract.
+
+### The poster set, the second hand-off
+
+A docs figure is an iframe of one scene, and before that frame boots, and instead of it in print,
+under no JS, on a phone, and in a browser without CSS trig functions, the figure shows a poster:
+a still of the same scene in the same theme. The site does not shoot its own (it would duplicate
+the rig, and it could never build the three `driver` scenes); the rig shoots them here and every
+release attaches the set:
+
+```
+demo-posters-<version>.zip
+  manifest.json
+  board.clay.frame.png
+  board.rust.frame.png
+  ...                       one pair per scene in scenes.json, driver scenes included
+```
+
+```json
+{ "version": "0.42.0", "frame": { "width": 1600, "height": 1000 }, "scale": 2,
+  "scenes": { "board": { "clay": "board.clay.frame.png", "rust": "board.rust.frame.png" }, ... } }
+```
+
+The themes are `clay` and `rust`, the product pair the site embeds with (the rig's own default is
+`night,sand`, which the site does not use). Every poster is the frame at 2x, 3200 by 2000, with
+the 40px title bar kept; the site crops it. `version` is the string `scenes.json` carries, and the
+site fails its build when the two differ, when a figure names a scene the manifest lacks, or when
+a named file is absent, so a stale or partial set cannot ship quietly. That is the
+`sync-brand.mjs` precedent with its failure mode fixed.
+
+`npm run demo:posters` (`demo/posters.mjs`) is the command. It refuses a missing or stale build
+(`dist/demo/scenes.json` has to carry `package.json`'s version), runs
+`tests/captures/features/scenes.capture.ts` with `CAPTURE_THEMES=clay,rust`,
+`CAPTURE_RESOLUTIONS=frame`, and `CAPTURE_OUTPUT_ROOT=dist/demo-posters/` (so the shots land in
+one known directory instead of a timestamped `captures/` run, which a Playwright retry would
+otherwise split), then checks the shots against `scenes.json` (every scene at every theme, every
+PNG exactly 3200 by 2000 by its header and whole by its IEND trailer, nothing the manifest would
+not name) and zips them, posters stored rather than deflated, as
+`dist/demo-posters-<version>.zip`. Nothing decodes a poster along the way; the two ends are what
+a header-only check misses when a shot is cut short. The pure half is
+`scripts/lib/demo-posters.mjs`, covered by `tests/unit/demo-posters.test.ts`.
+
+`release.yml`'s `demo-posters` job runs it after `publish-release`, beside `deploy-demo`, and
+attaches the zip with `gh release upload --clobber`, so a re-run of a finished release replaces
+the asset in place. It is deliberately not in `scripts/release-assets.js`: that manifest is
+verified before the job runs, and a twelfth expected asset would fail every release. Being after
+publish also means the release stands when the job fails; the run goes red and the site's own
+sync fails on the missing asset.
+
+The posters are shot on `ubuntu-latest`, so they render with that runner's system fonts, where a
+reader on Windows or macOS sees Segoe or SF in the live frame. No single poster matches every
+reader's fonts (a set shot on Windows mismatches every Mac), the terminals' held grid keeps their
+layout right whatever the font, and a set shot on CI is at least the same from release to
+release. Installing a font package in the job is a later polish if the swap ever reads badly.
+
+A scoped run for a look at one scene, from PowerShell at the repository root (a relative
+`CAPTURE_OUTPUT_ROOT` resolves against the shell's working directory, so run it from the root;
+`demo/posters.mjs` always passes an absolute one):
+
+```
+$env:CAPTURE_SCENES='board,card-drag'; $env:CAPTURE_THEMES='clay,rust'; $env:CAPTURE_RESOLUTIONS='frame'
+$env:CAPTURE_OUTPUT_ROOT='dist/demo-posters'
+npx playwright test --project=captures tests/captures/features/scenes.capture.ts
+```
 
 ### One viewport, one scale
 
@@ -742,8 +811,14 @@ That report (kangentic.com #76) came from a capture at an emulated device pixel 
 it is the capture, not the frame: under Playwright's `deviceScaleFactor` the `device-pixel-content-box`
 a `ResizeObserver` reports is the CSS size, and xterm's WebGL addon, which trusts that observer
 for its canvas backing store, draws 2x glyphs into a 1x buffer. A real 2x display reports real
-device pixels. A 2x poster is captured with WebGL off (`chromium.launch({ args: ['--disable-webgl'] })`),
-which puts every terminal on the DOM renderer at the right size.
+device pixels, and so does Chromium when the scale is forced on the browser rather than only
+emulated on the context: the rig launches with `--force-device-scale-factor=2` on top of the
+context's `deviceScaleFactor` (`launchCaptureBrowser` in `tests/captures/helpers/capture-page.ts`),
+the forced scale reaches the compositor, the observer reports 3200 by 2000 device pixels for the
+1600 by 1000 frame, and the WebGL renderer draws each glyph into a buffer of the right size. That
+is the recipe every 2x poster is shot with, and it is the only one that is: `--disable-webgl` puts
+the terminals on the DOM renderer, which sizes right but is not what a reader's frame draws, and
+an emulated scale alone is the bug above. WebGL stays on.
 
 ## What the page ships, and what it costs
 
@@ -877,3 +952,8 @@ a recording replays only into the grid its seed describes, and a stale one lands
 text on one row. With the hash in the name a changed file is a new URL, an unchanged one is
 still cached, and `index.html` is the only file whose cached copy can lag, for ten minutes, as a
 whole and self-consistent page.
+
+`npm run demo:posters` writes beside this tree, never into it: the shots go to
+`dist/demo-posters/scenes/` and the zip to `dist/demo-posters-<version>.zip`, so a poster run
+leaves the deployable build untouched and `build:demo` (which empties only `dist/demo/`) leaves
+the last poster set where it was.
