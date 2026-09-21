@@ -346,18 +346,31 @@ test('Escape posts nothing while the app owns it, and the app closes its own sur
   // Each case settles on the app's OWN visible answer (the surface closing), never on a timer:
   // that is both the proof the keystroke was processed and the behaviour being asserted. A
   // second Escape, which this does not press, is what would then reach the host.
+  //
+  // Both cases focus a BUTTON inside the frame and press through the frame's own keyboard, for two
+  // separate reasons. `page.locator('#demo').press()` focuses the iframe ELEMENT, so the key
+  // reaches the frame's content only if Chromium restores the frame's previously focused
+  // descendant: it does on Windows and does NOT on the headless Linux runner, where this read
+  // green locally and red on every CI push. And a button rather than a text field keeps each case
+  // on the rung it is named for, since a focused input would satisfy rung 1 first and the assertion
+  // would hold for the wrong reason (rung 1 has its own test above).
   const readDialogMessages = await hostFrame(page, 'new-task');
   const dialog = page.frameLocator('#demo').locator('[data-testid="new-task-dialog"]');
   await expect(dialog).toBeVisible();
-  await page.locator('#demo').press('Escape');
+  await dialog.getByRole('button', { name: 'Cancel' }).focus();
+  await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   expect(hasEscape(await readDialogMessages()), 'a dialog owns the first Escape').toBe(false);
 
   // A restored task window owns it the same way, through the [data-testid^="window-frame-"] rung.
   const readWindowMessages = await hostFrame(page, 'task');
-  const detail = page.frameLocator('#demo').locator('[data-testid="task-detail-titlebar"]');
+  const frame = page.frameLocator('#demo');
+  const detail = frame.locator('[data-testid="task-detail-titlebar"]');
   await expect(detail).toBeVisible();
-  await page.locator('#demo').press('Escape');
+  // Pin the isolation the way the rung-1 test does: no dialog is open, so this can only be rung 3.
+  await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
+  await frame.locator('[data-testid="task-detail-close"]').focus();
+  await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
   expect(hasEscape(await readWindowMessages()), 'a task window owns the first Escape').toBe(false);
 });
