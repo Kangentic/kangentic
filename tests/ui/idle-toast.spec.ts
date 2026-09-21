@@ -17,6 +17,12 @@
  * are load-bearing: the first version of this spec had four of six tests passing
  * against code that raised a toast, because the toast auto-dismissed inside the
  * retry window. See `toastCountRightNow` in ./helpers for the mechanism.
+ *
+ * Two more describe blocks live in this file, both because they share this
+ * file's fixtures rather than because they are about the toast itself: one
+ * covers auto-focus reading the SAME `ownedSessionIds` value App.tsx computes
+ * for the toast, and one covers the toast's Open action re-reading the current
+ * project at click time instead of at toast-creation time.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -42,6 +48,10 @@ const TASK_TITLE = 'Fix the drag ghost';
 const MOBILE_SESSION_ID = 'session-idle-toast-mobile';
 const MOBILE_TASK_ID = 'task-idle-toast-mobile';
 const MOBILE_TASK_TITLE = 'Stream this one to the phone';
+
+// A second project, used only by the "Open after a project switch" test below,
+// so that test can leave the fixture's normal single-project shape alone.
+const OTHER_PROJECT_ID = 'proj-idle-toast-other';
 
 /** How long to let a toast that should NOT exist have to show up. */
 const NEGATIVE_ASSERTION_BUDGET_MS = 300;
@@ -229,6 +239,96 @@ async function launchWithMobileStreamedState(): Promise<{ browser: Browser; page
   return { browser, page };
 }
 
+/**
+ * The fixture's normal single project (used as the toast's own project) plus a
+ * second, empty project to switch to. Used only by the "Open after a project
+ * switch" test below, which needs somewhere else to go.
+ */
+async function launchWithSecondProjectState(): Promise<{ browser: Browser; page: Page }> {
+  await waitForViteReady(VITE_URL);
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const page = await context.newPage();
+
+  await page.addInitScript({ path: MOCK_SCRIPT });
+  await page.addInitScript(`
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+
+      state.projects.push({
+        id: '${PROJECT_ID}',
+        name: 'Idle Toast Test',
+        path: '/mock/idle-toast-test',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.projects.push({
+        id: '${OTHER_PROJECT_ID}',
+        name: 'Somewhere Else',
+        path: '/mock/idle-toast-other',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+
+      var laneIds = {};
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        var id = 'lane-idle-' + s.name.toLowerCase().replace(/\\s+/g, '-');
+        laneIds[s.name] = id;
+        state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: ts }));
+      });
+
+      state.sessions.push({
+        id: '${SESSION_ID}',
+        taskId: '${TASK_ID}',
+        projectId: '${PROJECT_ID}',
+        pid: 4242,
+        status: 'running',
+        shell: 'bash',
+        cwd: '/mock/idle-toast-test',
+        startedAt: ts,
+        exitCode: null,
+      });
+
+      state.tasks.push({
+        id: '${TASK_ID}',
+        title: '${TASK_TITLE}',
+        description: 'Drives the idle toast',
+        swimlane_id: laneIds['Code Review'],
+        position: 0,
+        agent: 'claude',
+        session_id: '${SESSION_ID}',
+        worktree_path: null,
+        branch_name: null,
+        pr_number: null,
+        pr_url: null,
+        base_branch: null,
+        use_worktree: 0,
+        labels: [],
+        priority: 0,
+        attachment_count: 0,
+        archived_at: null,
+        created_at: ts,
+        updated_at: ts,
+      });
+
+      return { currentProjectId: '${PROJECT_ID}' };
+    });
+  `);
+
+  await page.goto(VITE_URL);
+  await page.waitForLoadState('load');
+  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+  await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+
+  await patchToastConfig(page, { durationSeconds: 60 });
+
+  return { browser, page };
+}
+
 /** Patch notifications.toasts.* in the renderer config store. */
 async function patchToastConfig(page: Page, patch: Record<string, unknown>): Promise<void> {
   await page.evaluate((toastPatch) => {
@@ -283,6 +383,28 @@ async function openTaskDetail(page: Page): Promise<void> {
     if (!stores?.session) throw new Error('session store not exposed on __zustandStores');
     stores.session.getState().setDetailTaskId(id);
   }, TASK_ID);
+}
+
+/** `config.autoFocusIdleSession`. Top-level, unlike the notification toggles
+ *  above, which live under `notifications.toasts`. */
+async function setAutoFocusIdleSession(page: Page, enabled: boolean): Promise<void> {
+  await page.evaluate((value) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { config: { setState: (fn: (s: { config: Record<string, unknown> }) => unknown) => void } };
+    }).__zustandStores;
+    if (!stores?.config) throw new Error('config store not exposed on __zustandStores');
+    stores.config.setState((s) => ({ config: { ...s.config, autoFocusIdleSession: value } }));
+  }, enabled);
+}
+
+/** The bottom panel's current tab, per the session store (not the DOM). */
+async function getActiveSessionId(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { activeSessionId: string | null } } };
+    }).__zustandStores;
+    return stores?.session?.getState().activeSessionId ?? null;
+  });
 }
 
 /** The window claims its session a frame after it mounts, so wait for the claim
@@ -427,6 +549,154 @@ test.describe('Agent Idle toast', () => {
       await fireActivityFor(page, MOBILE_SESSION_ID, MOBILE_TASK_ID, 'idle');
 
       expect(await toastCountAfterBudget(page)).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * App.tsx hoisted `derivePanelSessions(...).owned` out of the auto-focus
+ * branch specifically so the toast above could read it too - and in doing so
+ * started passing `mobileTerminalStreamedSessionIds` into the SAME call the
+ * auto-focus branch consumes, which the old inline call (scoped to the
+ * auto-focus `if`) omitted. That is a real behavior change, not just a
+ * relocation: a phone-streamed session going idle used to steal the bottom
+ * panel from whatever the user was looking at, and now it does not.
+ *
+ * Nothing else pins this. `resolveAutoFocusTarget`'s own unit tests
+ * (tests/unit/auto-focus.test.ts) take `ownedSessionIds` as a direct input and
+ * cannot see a wiring regression between App.tsx and `derivePanelSessions`;
+ * the mobile-streamed toast test above only proves the toast side of the
+ * shared value, not the auto-focus side.
+ */
+test.describe('Auto-focus reads the same ownedSessionIds as the toast', () => {
+  test('a mobile-streamed session going idle does not steal the bottom panel, unlike the same session once unstreamed', async () => {
+    const { browser, page } = await launchWithMobileStreamedState();
+    try {
+      await setAutoFocusIdleSession(page, true);
+
+      // Seed a deterministic baseline directly, rather than relying on the
+      // panel's own mount-time tab fallback: the viewed session must be
+      // THINKING, not idle/permission. If it were idle, `resolveAutoFocusTarget`'s
+      // "already viewing a paused session" guard would swallow the incoming
+      // idle event on its own, and the test would pass whether or not the
+      // mobile session is actually excluded from `ownedSessionIds`.
+      await page.evaluate(({ sessionId, mobileSessionId }) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session?: { setState: (patch: Record<string, unknown>) => void } };
+        }).__zustandStores;
+        if (!stores?.session) throw new Error('session store not exposed on __zustandStores');
+        stores.session.setState({
+          activeSessionId: sessionId,
+          sessionActivity: { [sessionId]: 'thinking' },
+          mobileTerminalStreamedSessionIds: [mobileSessionId],
+        });
+      }, { sessionId: SESSION_ID, mobileSessionId: MOBILE_SESSION_ID });
+
+      // The stimulus: the STREAMED session finishes its turn. A broken wiring
+      // (mobile stream omitted from ownedSessionIds) would switch the panel to
+      // it - there is no "already viewing a paused session" guard to catch
+      // that omission here, since the viewed session is thinking, not paused.
+      await fireActivityFor(page, MOBILE_SESSION_ID, MOBILE_TASK_ID, 'thinking');
+      await fireActivityFor(page, MOBILE_SESSION_ID, MOBILE_TASK_ID, 'idle');
+
+      // Give a wrongly-triggered switch a chance to land, then read state now.
+      // (Intentional fixed wait - "the tab did not change" cannot be polled for.)
+      await page.waitForTimeout(NEGATIVE_ASSERTION_BUDGET_MS);
+      expect(await getActiveSessionId(page)).toBe(SESSION_ID);
+
+      // Positive control, same page, same session: un-stream it and repeat the
+      // exact same transition. If this does NOT now switch the panel, the
+      // suppression above was never about ownership at all (auto-focus could
+      // be silently broken by the `setAutoFocusIdleSession` call, an unrelated
+      // gate, or the fixture), and the negative assertion means nothing.
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session?: { setState: (patch: Record<string, unknown>) => void } };
+        }).__zustandStores;
+        stores?.session?.setState({ mobileTerminalStreamedSessionIds: [] });
+      });
+      await fireActivityFor(page, MOBILE_SESSION_ID, MOBILE_TASK_ID, 'thinking');
+      await fireActivityFor(page, MOBILE_SESSION_ID, MOBILE_TASK_ID, 'idle');
+
+      await expect.poll(() => getActiveSessionId(page), { timeout: 10000 }).toBe(MOBILE_SESSION_ID);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * `openTaskFromNotification`'s docblock (App.tsx) states the current project
+ * is re-read at CLICK time rather than captured by the caller, because a toast
+ * can sit for `durationSeconds` while the user switches projects. Nothing
+ * exercised that through the toast's own Open action: the existing same-project
+ * click test (above) never switches projects, and the existing cross-project
+ * click test (sidebar-command-terminals.spec.ts) drives the OS-notification
+ * caller, whose projects already differ the instant the click fires - it
+ * cannot distinguish a live re-read from a value captured when the toast (or
+ * notification) was first raised.
+ */
+test.describe('The Open action re-reads the current project at click time', () => {
+  test('clicking Open after switching away from the toast\'s project reopens that project instead of opening the detail in place', async () => {
+    const { browser, page } = await launchWithSecondProjectState();
+    try {
+      await fireActivity(page, 'thinking');
+      await fireActivity(page, 'idle');
+
+      const toast = page.getByTestId('toast');
+      await expect(toast.first()).toBeVisible();
+
+      // Leave the toast up (durationSeconds is 60) and switch to a different
+      // project before clicking it - exactly the scenario the docblock names.
+      await page.evaluate(async (otherProjectId) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { project?: { getState: () => { openProject: (id: string) => Promise<void> } } };
+        }).__zustandStores;
+        if (!stores?.project) throw new Error('project store not exposed on __zustandStores');
+        await stores.project.getState().openProject(otherProjectId);
+      }, OTHER_PROJECT_ID);
+
+      await expect.poll(async () => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { project?: { getState: () => { currentProject: { id: string } | null } } };
+        }).__zustandStores;
+        return stores?.project?.getState().currentProject?.id ?? null;
+      }), { timeout: 10000 }).toBe(OTHER_PROJECT_ID);
+
+      const openCallsBeforeClick = await page.evaluate(
+        () => (window.electronAPI.projects as unknown as { __openCalls: string[] }).__openCalls.slice(),
+      );
+      expect(openCallsBeforeClick).toEqual([OTHER_PROJECT_ID]);
+
+      await toast.getByRole('button', { name: 'Open' }).click();
+
+      // Primary assertion: it re-read the (now different) current project and
+      // took the cross-project branch, which is the ONLY branch that calls
+      // openProject again. A stale "was current when the toast was raised"
+      // read would instead call setDetailTaskId directly and never touch
+      // __openCalls a second time.
+      await expect.poll(async () => page.evaluate(
+        () => (window.electronAPI.projects as unknown as { __openCalls: string[] }).__openCalls,
+      ), { timeout: 5000 }).toEqual([OTHER_PROJECT_ID, PROJECT_ID]);
+
+      // End to end: the switch actually lands back on the toast's project...
+      await expect.poll(async () => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { project?: { getState: () => { currentProject: { id: string } | null } } };
+        }).__zustandStores;
+        return stores?.project?.getState().currentProject?.id ?? null;
+      }), { timeout: 10000 }).toBe(PROJECT_ID);
+
+      // ...and the detail opens there (via the parked pendingOpenTaskId), not
+      // as a direct write against the project the user had switched to.
+      await expect.poll(async () => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session?: { getState: () => { detailTaskId: string | null } } };
+        }).__zustandStores;
+        return stores?.session?.getState().detailTaskId ?? null;
+      }), { timeout: 10000 }).toBe(TASK_ID);
     } finally {
       await browser.close();
     }
