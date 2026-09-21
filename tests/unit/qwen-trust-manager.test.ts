@@ -26,7 +26,16 @@ vi.mock('node:os', async () => {
   };
 });
 
-import { ensureQwenWorktreeTrust } from '../../src/main/agent/adapters/qwen-code';
+import {
+  ensureQwenWorktreeTrust,
+  removeQwenWorktreeTrust,
+  QwenAdapter,
+} from '../../src/main/agent/adapters/qwen-code';
+// Not re-exported through the barrel above; imported straight from the module so a
+// test can occupy the shared lock the same way ensureWorktreeTrust and the
+// relocation pass do. Node resolves this to the same module instance as the
+// barrel import, so both share the one underlying lock chain.
+import { withQwenTrustLock } from '../../src/main/agent/adapters/qwen-code/trust-manager';
 
 function qwenDir(): string {
   return path.join(tmpHome, '.qwen');
@@ -51,6 +60,11 @@ function enableFolderTrust(): void {
 
 function readTrustedFolders(): Record<string, string> {
   return JSON.parse(fs.readFileSync(trustedFoldersPath(), 'utf-8'));
+}
+
+function writeTrustedFolders(entries: Record<string, string>): void {
+  fs.mkdirSync(qwenDir(), { recursive: true });
+  fs.writeFileSync(trustedFoldersPath(), JSON.stringify(entries, null, 2));
 }
 
 beforeEach(() => {
@@ -378,5 +392,167 @@ describe('Concurrent qwen trust writes (lock serialization)', () => {
     for (const key of keys) {
       expect(entries[key]).toBe('TRUST_FOLDER');
     }
+  });
+});
+
+describe('removeQwenWorktreeTrust', () => {
+  // ensureQwenWorktreeTrust has no ancestor check, so with folder trust on it
+  // writes one key per task worktree. Without removal on cleanup the file grows
+  // by a dead entry per task forever - the same accumulation that reached 473
+  // entries in Codex's config.toml before its equivalent cleanup existed.
+  //
+  // Paths are built host-absolute (path.resolve) so the literals still resolve
+  // on Windows and on CI's Linux runner.
+  const WORKTREE = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', '3');
+
+  it('drops the entry for a removed worktree', async () => {
+    enableFolderTrust();
+    await ensureQwenWorktreeTrust(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(1);
+
+    await removeQwenWorktreeTrust(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('does not grow the file across repeated create/remove cycles', async () => {
+    enableFolderTrust();
+    for (let taskIndex = 0; taskIndex < 25; taskIndex += 1) {
+      const worktree = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', String(taskIndex));
+      await ensureQwenWorktreeTrust(worktree);
+      await removeQwenWorktreeTrust(worktree);
+    }
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('leaves other projects untouched', async () => {
+    enableFolderTrust();
+    const otherProject = path.resolve('/other/project');
+    writeTrustedFolders({ [otherProject]: 'TRUST_FOLDER' });
+    await ensureQwenWorktreeTrust(WORKTREE);
+    await removeQwenWorktreeTrust(WORKTREE);
+    expect(readTrustedFolders()[otherProject]).toBe('TRUST_FOLDER');
+  });
+
+  it('never removes a user decision', async () => {
+    // TRUST_PARENT / DO_NOT_TRUST are the user's, not ours: a later worktree
+    // at the same path must still honor them.
+    for (const level of ['TRUST_PARENT', 'DO_NOT_TRUST']) {
+      writeTrustedFolders({ [WORKTREE]: level });
+      await removeQwenWorktreeTrust(WORKTREE);
+      expect(readTrustedFolders()[WORKTREE]).toBe(level);
+    }
+  });
+
+  it('is a no-op when there is no file or no matching entry', async () => {
+    await expect(removeQwenWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
+
+    const otherProject = path.resolve('/other/project');
+    // "3" is the WORKTREE's own basename, and a relative key in a hand-edited
+    // file. It must survive whatever the process cwd happens to be, which is
+    // what the isAbsolute guard in the matcher is for: path.resolve would
+    // otherwise expand it against cwd and could match by accident.
+    writeTrustedFolders({ [otherProject]: 'TRUST_FOLDER', '3': 'TRUST_FOLDER' });
+    await removeQwenWorktreeTrust(WORKTREE);
+    expect(readTrustedFolders()[otherProject]).toBe('TRUST_FOLDER');
+    expect(readTrustedFolders()['3']).toBe('TRUST_FOLDER');
+  });
+
+  it('removes even when security.folderTrust.enabled is off', async () => {
+    // The deliberate asymmetry with ensureQwenWorktreeTrust, which skips
+    // entirely when the flag is unset. The flag lives in a separate,
+    // user-editable file, so gating the reap on it would leak every entry a
+    // user wrote before they turned folder trust back off.
+    writeTrustedFolders({ [WORKTREE]: 'TRUST_FOLDER' });
+    expect(fs.existsSync(settingsPath())).toBe(false);
+
+    await removeQwenWorktreeTrust(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('matches a key stored with native separators and a trailing slash', async () => {
+    // The relocation pass rewrites arbitrary keys and Qwen's own CLI writes
+    // its own, so the file holds mixed separator styles. Matching is on the
+    // resolved location, not the raw string.
+    const nativeKey = `${WORKTREE}${path.sep}`;
+    writeTrustedFolders({ [nativeKey]: 'TRUST_FOLDER' });
+
+    await removeQwenWorktreeTrust(WORKTREE.replace(/\\/g, '/'));
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('is wired to the adapter via onWorktreeRemoved', async () => {
+    enableFolderTrust();
+    const adapter = new QwenAdapter();
+    await adapter.ensureTrust(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(1);
+
+    await adapter.onWorktreeRemoved(WORKTREE);
+    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
+  });
+
+  it('never rejects when the write fails, and leaves the file untouched', async () => {
+    // The counterpart to the ensure path's rejects.toThrow() above. By the time
+    // this runs the worktree is gone, so a failed write may only leave a stale
+    // entry behind - it must never fail the cleanup.
+    enableFolderTrust();
+    await ensureQwenWorktreeTrust(WORKTREE);
+
+    // Occupy the backup destination with a directory so the atomic write's
+    // copyFileSync throws and it aborts before touching the real file.
+    fs.mkdirSync(`${trustedFoldersPath()}.kangentic-backup`, { recursive: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      await expect(removeQwenWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+    expect(Object.keys(readTrustedFolders())).toHaveLength(1);
+  });
+
+  it('queues behind an operation already holding the shared lock instead of running ahead of it', async () => {
+    // removeWorktreeTrustSync (and ensureWorktreeTrustSync) are wholly synchronous,
+    // so a plain Promise.all of several concurrent removals cannot expose a missing
+    // lock: each call's read, filter, and write completes before the next call even
+    // starts, and JS never interleaves them regardless of whether withQwenTrustLock
+    // wraps the call. Verified empirically - with the lock wrapper stripped from
+    // removeWorktreeTrust, a Promise.all of 20 concurrent removals over 10 distinct
+    // worktrees still left exactly 0 entries, and an interleaved ensure/remove pair
+    // on the same path still ended with the entry gone, matching the locked result
+    // in both cases.
+    //
+    // A held operation with a promise we control is the one thing that can actually
+    // force two callers apart: this occupies the lock, then starts a removal, and
+    // asserts the removal has NOT touched disk while the lock is still held. This
+    // holds no matter how many microtask turns pass, since the removal is chained
+    // behind a promise nothing but releaseHeldOperation() can settle. If
+    // removeWorktreeTrust ever called removeWorktreeTrustSync directly instead of
+    // going through withQwenTrustLock, the removal would run immediately and the
+    // first assertion below would fail.
+    writeTrustedFolders({ [WORKTREE]: 'TRUST_FOLDER' });
+
+    let releaseHeldOperation: () => void = () => {};
+    const heldOperationSettled = new Promise<void>((resolve) => {
+      releaseHeldOperation = resolve;
+    });
+    const heldOperation = withQwenTrustLock(() => heldOperationSettled);
+
+    const removalPromise = removeQwenWorktreeTrust(WORKTREE);
+    try {
+      // A macrotask turn drains the entire microtask queue first, so this is a
+      // stronger check than a fixed count of `await Promise.resolve()` calls: any
+      // amount of queued microtask work runs before this resolves.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(readTrustedFolders()[WORKTREE]).toBe('TRUST_FOLDER');
+    } finally {
+      // Always release, even if the assertion above throws - otherwise the shared
+      // lock chain stays pending forever and hangs every later test in this file
+      // that calls ensureQwenWorktreeTrust or removeQwenWorktreeTrust.
+      releaseHeldOperation();
+    }
+    await heldOperation;
+    await removalPromise;
+    expect(readTrustedFolders()[WORKTREE]).toBeUndefined();
   });
 });
