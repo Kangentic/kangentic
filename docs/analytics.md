@@ -236,10 +236,11 @@ in one Sentry org, one triage surface.
     registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
     must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
   - **Native crashes in processes that are not ours**, filtered in `beforeSend`
-    (`filterNativeCrashEvent`) rather than in `ignoreErrors`. On macOS a task's mach exception ports
-    are inherited across exec, so a process spawned from a Kangentic PTY writes ITS crashes into our
-    Crashpad database and the SDK uploads them as ours. DESKTOP-K was Homebrew ffmpeg's `ffprobe`
-    failing to start, ten fatal events; DESKTOP-N was a Puppeteer `chrome-headless-shell`;
+    (`beforeSendEvent` -> `filterNativeCrashEvent`) rather than in `ignoreErrors`. On macOS a
+    task's mach exception ports are inherited across exec, so a process spawned from a Kangentic
+    PTY writes ITS crashes into our Crashpad database and the SDK uploads them as ours. DESKTOP-K
+    was Homebrew ffmpeg's `ffprobe` failing to start, ten fatal events; DESKTOP-N was a Puppeteer
+    `chrome-headless-shell`;
     DESKTOP-Q was `/usr/local/share/dotnet/dotnet`, ten more. None loaded a single Kangentic
     image. This class cannot go in `ignoreErrors`, which is the
     `eventFiltersIntegration` and matches only an event's message and its exception type and value:
@@ -252,10 +253,20 @@ in one Sentry org, one triage surface.
     through is noise while a real crash dropped by a parser bug is gone. Each drop increments
     `foreign_minidump_dropped`, which is the only fleet-wide evidence left once the events stop
     arriving, and the before-and-after number for resetting the exception ports at spawn.
+- **Tagging shares that hook, and runs before the filter.** `beforeSend` is `beforeSendEvent`,
+  which tags and then delegates to `filterNativeCrashEvent`. `tagTruncatedStack` sets
+  `stack_truncated: 'true'` on any event whose parsed stack sits exactly on the SDK's 50-frame
+  cap. The parser reads a V8 stack innermost-first and stops there, so a capped event has lost its
+  OUTER frames - the app code that called into the library and the timer it ran under - and reads
+  as a self-contained third-party failure with `in_app: false` everywhere. Sentry DESKTOP-19 is
+  the case that earned the tag: six events, fifty monaco frames each, no in-app frame, and the app
+  frame that armed the call truncated away. The tag makes "no app frames survived" distinguishable
+  from "no app frames" without counting by hand. Tagging is annotation, not filtering: it never
+  drops an event.
 - **Errors only:** release-health session tracking (the SDK's `MainProcessSession` integration,
   on by default) is filtered out, and tracing and session replay are never enabled.
 - **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so
-  both error boundaries hand the real `Error` to `captureException` explicitly, alongside the
+  all three error boundaries hand the real `Error` to `captureException` explicitly, alongside the
   existing Aptabase funnel.
 - **Handled errors are forwarded too** (`reportHandledError`): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
@@ -276,7 +287,7 @@ in one Sentry org, one triage surface.
   minimal reading like that took a multi-hour investigation to establish because the diagnosis
   lived only in the minidump's `chromium_stability_report`, not on the event proper). The main
   process samples `process.getSystemMemoryInfo()` every 60s and calls `Sentry.setContext` on the
-  ambient scope (not `beforeSend`, which is already `filterNativeCrashEvent` below and has no
+  ambient scope (not `beforeSend`, which is already `beforeSendEvent` below and has no
   transaction for `setMeasurement` to hang on), so whatever event fires next - including a native
   crash - carries the freshest sample. `correctNativeCrashEvent` prunes `host_memory` under the
   same stale-dump condition as `app_memory`/`free_memory`, since a startup-found dump can otherwise
