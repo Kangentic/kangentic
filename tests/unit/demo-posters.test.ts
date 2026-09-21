@@ -34,6 +34,22 @@ import {
 import { frame } from '../../tests/captures/helpers/resolutions';
 import { SCENE_THEMES } from '../../tests/captures/helpers/scene-page';
 
+// tests/captures/features/scenes.capture.ts validates CAPTURE_THEMES at module load, before it
+// ever reaches a call that only makes sense inside the real Playwright test runner
+// (test.beforeAll). Importing it here is the only way to run that validation for real, since
+// tests/captures sits outside tsconfig's `include` and is never typechecked. The mock lets the
+// import proceed past the runner-only calls on a valid theme, so a passing import is read as a
+// clean pass through the guard rather than an artifact of loading outside the runner. This mock
+// is file-wide (vi.mock is hoisted above every import in the file, including scene-page.ts's own
+// `import { expect } from '@playwright/test'`), which is safe today because nothing this file
+// imports calls that `expect`; a future named import from '@playwright/test' in the rig's
+// dependency graph would silently receive this stub instead.
+vi.mock('@playwright/test', () => {
+  const testFn = vi.fn();
+  Object.assign(testFn, { describe: vi.fn(), beforeAll: vi.fn(), afterAll: vi.fn() });
+  return { test: testFn, expect: vi.fn() };
+});
+
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
 /** The shape demo/vite.config.mts emits as dist/demo/scenes.json, cut to three scenes, one of them rig-only. */
@@ -436,6 +452,43 @@ describe('the packer agrees with the rig', () => {
       const outputDir = await import('../../tests/captures/helpers/output-dir');
       expect(outputDir.CAPTURES_ROOT).toMatch(/captures[\\/]\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
       expect(outputDir.CAPTURES_ROOT).not.toBe(path.resolve(scratchDir));
+    });
+  });
+
+  // The rig refuses a CAPTURE_THEMES name SCENE_THEMES does not carry "rather than shooting the
+  // page's error card" (the rig's own header comment). That guard runs at module load, so
+  // importing the file with each env value set is what actually exercises it, rather than
+  // re-stating the `.includes` check as a second copy of the same logic.
+  describe('CAPTURE_THEMES validation (scenes.capture.ts)', () => {
+    let scratchDir: string;
+
+    beforeAll(() => {
+      scratchDir = scratch('capture-themes-validation');
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      delete process.env.CAPTURE_OUTPUT_ROOT;
+      delete process.env.CAPTURE_THEMES;
+      vi.resetModules();
+    });
+
+    it('refuses a CAPTURE_THEMES name the registry does not know, naming the known list', async () => {
+      vi.stubEnv('CAPTURE_OUTPUT_ROOT', scratchDir);
+      vi.stubEnv('CAPTURE_THEMES', 'not-a-real-theme');
+      vi.resetModules();
+      await expect(import('../../tests/captures/features/scenes.capture')).rejects.toThrow(
+        `CAPTURE_THEMES names "not-a-real-theme"; known: ${SCENE_THEMES.join(', ')}`,
+      );
+    });
+
+    it('does not refuse a theme the registry knows, the poster themes clay and rust included', async () => {
+      for (const theme of SCENE_THEMES) {
+        vi.stubEnv('CAPTURE_OUTPUT_ROOT', scratchDir);
+        vi.stubEnv('CAPTURE_THEMES', theme);
+        vi.resetModules();
+        await expect(import('../../tests/captures/features/scenes.capture')).resolves.toBeDefined();
+      }
     });
   });
 });
