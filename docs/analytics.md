@@ -7,7 +7,7 @@ the same kill switch (below).
 
 ## What We Collect (Aptabase)
 
-Eighteen event types are tracked, all on critical-path actions only:
+Nineteen event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -266,8 +266,9 @@ in one Sentry org, one triage surface.
 - **Errors only:** release-health session tracking (the SDK's `MainProcessSession` integration,
   on by default) is filtered out, and tracing and session replay are never enabled.
 - **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so
-  all three error boundaries hand the real `Error` to `captureException` explicitly, alongside the
-  existing Aptabase funnel.
+  all three error boundaries hand the real `Error` to `captureException` explicitly. Two of them
+  also keep the existing Aptabase funnel (`ErrorBoundary` as `boundary: 'root'`,
+  `PanelErrorBoundary` as `boundary: 'panel'`); `DiffErrorBoundary` reports to Sentry only.
 - **Handled errors are forwarded too** (`reportHandledError`): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
   spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a

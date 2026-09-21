@@ -19,12 +19,21 @@ import { join } from 'node:path';
 const REPO_ROOT = join(__dirname, '..', '..');
 
 /**
- * The role address. A personal address here would be a `no-personal-info.md`
- * violation in a public repo, and the Covenant ships with a placeholder that has
- * to be replaced by hand, so this pins the one correct value rather than merely
- * asserting that some email is present.
+ * The role address each reporting file routes to. A personal address here would
+ * be a `no-personal-info.md` violation in a public repo, and the Covenant ships
+ * with a placeholder that has to be replaced by hand, so this pins the one
+ * correct value per file rather than merely asserting that some email is present.
+ *
+ * SECURITY.md deliberately differs: a vulnerability report goes to the security
+ * alias, not the general support one. Pinning a single shared address across all
+ * three is what made this test fail on main after that split landed, so the map
+ * is per file on purpose.
  */
-const CONTACT_ADDRESS = 'support@kangentic.com';
+const CONTACT_ADDRESSES: Record<string, string> = {
+  'CODE_OF_CONDUCT.md': 'support@kangentic.com',
+  'CONTRIBUTING.md': 'support@kangentic.com',
+  'SECURITY.md': 'security@kangentic.com',
+};
 
 /** Drop full-line comments so a file's own prose cannot satisfy a key scan. */
 function stripComments(source: string): string[] {
@@ -52,18 +61,19 @@ describe('CODE_OF_CONDUCT.md', () => {
 });
 
 /**
- * Three files route reports to the same role address, and this diff put it in
- * two of them. A stale address in any one sends a report nowhere, and none of
- * the three is read often enough for that to surface on its own.
+ * Three files route reports to a role address. A stale address in any one sends
+ * a report nowhere, and none of the three is read often enough for that to
+ * surface on its own.
  */
 describe('report routing', () => {
-  it.each(['CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md'])(
-    '%s routes reports to the role address',
+  it.each(Object.keys(CONTACT_ADDRESSES))(
+    '%s routes reports to its role address',
     (fileName) => {
+      const expectedAddress = CONTACT_ADDRESSES[fileName];
       expect(
         readFileSync(join(REPO_ROOT, fileName), 'utf8'),
-        `${fileName} must route reports to ${CONTACT_ADDRESS}.`,
-      ).toContain(CONTACT_ADDRESS);
+        `${fileName} must route reports to ${expectedAddress}.`,
+      ).toContain(expectedAddress);
     },
   );
 });
