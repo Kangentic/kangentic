@@ -85,8 +85,10 @@ already collapse to no-ops).
   the component on every Fast Refresh of its module instead of preserving state. Five window-manager
   components had `const useStore = useLayerStore()`, which is why every task-detail window was
   rebuilt (and every live pane guest destroyed) whenever anything in its import chain refreshed,
-  with no page reload and no bailout to point at. Opt out per line with `// hook-local-ok: <reason>`.
-  Runs in CI via `npm run test:unit`.
+  with no page reload and no bailout to point at. Opt out with `// hook-local-ok: <reason>` on the
+  declaration or in the comment block directly above it (`tests/unit/helpers/opt-out-marker.ts` is
+  the shared reader; it requires the reason, and the marker has to open a comment, so prose that
+  quotes one does not count). Runs in CI via `npm run test:unit`.
 
 **The `use` prefix is load-bearing on locals, not stylistic.** This is the third and subtlest of the
 three ways a dev-mode save killed a Browser pane guest, and the only one with no visible symptom in

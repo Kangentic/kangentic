@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
+import { hasJsxOptOutMarker } from './helpers/opt-out-marker';
 
 // Guards the text-selection half of the clickable-control convention. A native
 // <button> gets `user-select: none` from the @layer base rule in index.css
@@ -30,10 +31,11 @@ import * as ts from 'typescript';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const RENDERER_ROOT = path.join(REPO_ROOT, 'src/renderer');
 
-// How many lines above the element a `// select-none-ok:` marker may sit. The
-// element's own opening line counts, so a marker on the line directly above a
-// multi-line opening tag is still found.
-const MARKER_LOOKBACK_LINES = 3;
+// The `// select-none-ok:` marker is read by the shared JSX walk
+// (helpers/opt-out-marker.ts), which replaced a fixed three-line window. The
+// window was wrong in both directions: too narrow for a justification that runs
+// past three lines, and wide enough to reach across a sibling element and waive
+// something it was never written for.
 
 // The cursors that advertise a gesture, matching the action cursors
 // `light-dismiss-denylist.md` already enumerates. They share the failure this
@@ -108,13 +110,11 @@ function scanSource(fileLabel: string, source: string): ClickableControl[] {
 
         if (inScope) {
           const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-          const lookbackStart = Math.max(0, line - MARKER_LOOKBACK_LINES);
-          const markerLookbackText = sourceLines.slice(lookbackStart, line + 1).join('\n');
           found.push({
             file: fileLabel,
             line: line + 1,
             tagName,
-            marked: markerLookbackText.includes('select-none-ok:'),
+            marked: hasJsxOptOutMarker(sourceLines, line, 'select-none-ok'),
           });
         }
       }

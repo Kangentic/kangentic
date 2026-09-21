@@ -26,6 +26,8 @@
  * from `name` with no per-tool hardcoding.
  */
 
+import { DOCS_URLS } from './docs-links';
+
 export type McpToolCategoryId = 'tasks' | 'board' | 'sessions' | 'browser' | 'diagnostics';
 
 export interface McpToolManifestEntry {
@@ -129,7 +131,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
 ];
 
 /** Live docs reference for the MCP server. Each tool's heading anchor is its registered name. */
-export const MCP_SERVER_DOCS_URL = 'https://kangentic.com/mcp-server/';
+export const MCP_SERVER_DOCS_URL = DOCS_URLS.mcpServer;
 
 /** Deep link to a tool's entry on the docs page. Anchor = manifest/registered tool name. */
 export function mcpToolDocsUrl(toolName: string): string {

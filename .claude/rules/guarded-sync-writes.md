@@ -67,11 +67,13 @@ a site the guard governs.
   `fs.writeFileSync` / `fs.mkdirSync` / `fs.renameSync`. A `safeWriteJson(` call is a different
   function and never enters the candidate set at all, so routing a write through the guard takes
   it out of the scan rather than passing it. A candidate passes if it sits lexically inside a
-  `TryStatement`'s block, or the source line immediately above (or a trailing comment on the same
-  line) reads `// sync-write-ok: <reason>`. The reason must be non-empty: a bare
+  `TryStatement`'s block, or it carries `// sync-write-ok: <reason>` on its own line or anywhere in
+  the comment block directly above it, so the reason may wrap. The reason must be non-empty: a bare
   `// sync-write-ok:` fails the scan, so the escape hatch cannot wave a write through without
-  saying what depends on it. Everything else is an offender, reported with its `file:line`. Runs
-  in CI via `npm run test:unit`.
+  saying what depends on it. Both the association rule and the reason requirement come from the
+  shared reader, `tests/unit/helpers/opt-out-marker.ts`, which also wants the marker to open a
+  comment, so prose quoting it does not pass. Everything else is an offender, reported with its
+  `file:line`. Runs in CI via `npm run test:unit`.
 - **Review:** `/code-review` flags a new unguarded write in the scoped trees with neither a
   `safeWriteJson` call nor a marker naming which of the two throw shapes applies.
 

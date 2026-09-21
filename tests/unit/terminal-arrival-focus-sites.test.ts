@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // Enforces .claude/rules/terminal-arrival-focus.md. Every programmatic focus on an ARRIVING
 // terminal (deferred init, mount replay, a reload the caller did not opt out of) must be
@@ -20,7 +21,7 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIR = 'src/renderer';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
-const OK_MARKER = /arrival-focus-ok/;
+const OK_MARKER = 'arrival-focus-ok';
 const ARBITER_GUARD = /mayTakeArrivalFocus|mayFocusOnArrival/;
 
 /** The arbiter itself, and the hook option's own plumbing, are not call sites. */
@@ -96,7 +97,7 @@ describe('every arrival focus in a terminal host is arbitrated', () => {
         }
         const block = context.join('\n');
         if (ARBITER_GUARD.test(block)) return;
-        if (OK_MARKER.test(block)) return;
+        if (hasOptOutMarker(lines, index, OK_MARKER)) return;
 
         offenders.push(`${relative}:${index + 1}  ${line.trim()}`);
       });

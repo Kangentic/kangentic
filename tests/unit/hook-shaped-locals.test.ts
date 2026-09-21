@@ -23,6 +23,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 const RENDERER_DIR = path.resolve(__dirname, '../../src/renderer');
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -92,9 +93,7 @@ describe('hook-shaped local variables', () => {
         const lineNumber = source.slice(0, match.index).split('\n').length;
         // Per-line opt-out for a local that genuinely IS a hook resolved from a
         // stable binding and has been checked against the probe.
-        const sameLine = lines[lineNumber - 1] ?? '';
-        const previousLine = lines[lineNumber - 2] ?? '';
-        if (/\/\/\s*hook-local-ok:/.test(sameLine) || /\/\/\s*hook-local-ok:/.test(previousLine)) continue;
+        if (hasOptOutMarker(lines, lineNumber - 1, 'hook-local-ok')) continue;
         const relative = path.relative(REPO_ROOT, file).replace(/\\/g, '/');
         violations.push(`${relative}:${lineNumber} -> ${match[1]}`);
       }

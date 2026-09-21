@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // Enforces .claude/rules/restore-no-animation-replay.md (the value-pulse arm). A project
 // switch / restore re-points the status and context bars to a different context's numbers;
@@ -17,7 +18,7 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIR = 'src/renderer';
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
-const OK_MARKER = /value-pulse-ok/;
+const OK_MARKER = 'value-pulse-ok';
 
 // The hook's own definition lives here; it is not a call site.
 const DEFINITION_FILE = 'src/renderer/hooks/useValuePulse.ts';
@@ -79,10 +80,7 @@ describe('every useValuePulse call rebaselines on a context change (resetKey)', 
 
         const callLine = lineNumberAt(text, match.index); // 1-based
         const lineIndex = callLine - 1;
-        if (OK_MARKER.test(lines[lineIndex])) continue;
-        let previousIndex = lineIndex - 1;
-        while (previousIndex >= 0 && lines[previousIndex].trim() === '') previousIndex--;
-        if (previousIndex >= 0 && OK_MARKER.test(lines[previousIndex])) continue;
+        if (hasOptOutMarker(lines, lineIndex, OK_MARKER)) continue;
 
         offenders.push(`${relative}:${callLine}`);
       }
