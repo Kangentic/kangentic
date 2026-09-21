@@ -19,7 +19,10 @@ import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { SCENES } from '../captures/scenes';
-import { DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, PROJECT_CONTOSO } from '../captures/helpers/demo-dataset';
+import {
+  DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, PROJECT_CONTOSO,
+  SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE,
+} from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
 
@@ -131,6 +134,48 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     // rather than the switch simply always reading on.
     const executingRow = page.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Executing' });
     await expect(executingRow.getByRole('switch', { name: 'Hand off context when the agent changes' })).toHaveAttribute('aria-checked', 'false');
+  },
+  'session-states': async (page) => {
+    // The scene's `ready` selector (the Onboarding empty states card existing at all) resolves
+    // whether or not demo/boot.js's new session.status patch actually landed: that card is in the
+    // sample install either way. CardStatusBar's own testid is what a visitor reads the state from.
+    const pausedCard = page.locator('[data-task-id="task-cw-empty-states"]');
+    await expect(pausedCard.locator('[data-testid="status-bar"]')).toContainText('Paused');
+    const queuedCard = page.locator('[data-task-id="task-cw-rate-limit"]');
+    await expect(queuedCard.locator('[data-testid="status-bar"]')).toContainText('Queued');
+    // Sibling negative, in the SAME boot rather than a second one: the scene's own click step
+    // targets the middleware session, which the patch does not name and which stays 'running' in
+    // the dataset, so its card keeps the running footer instead of picking up Paused or Queued
+    // from a patch that landed on the wrong row.
+    const middlewareCard = page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`);
+    await expect(middlewareCard.locator('[data-testid="usage-bar"]')).toBeVisible();
+    await expect(middlewareCard.locator('[data-testid="status-bar"]')).toHaveCount(0);
+  },
+  'activity-overlay': async (page) => {
+    const overlay = page.locator('[data-testid="activity-debug-overlay"]');
+    // `ready` only waits for this element to mount, which happens as soon as ANY session in the
+    // project is 'running' - with or without real snapshot data (ActivityDebugOverlayContent
+    // renders on `projectSessionIds.length > 0` alone). If activityStatsCache never populated, or
+    // activityStatsFor threw while the seed built it, the panel falls back to its own "no state"
+    // diagnostic instead of failing the boot, which the ready gate would not catch.
+    await expect(overlay).not.toContainText('Activity engine has no state');
+    // One row per running contoso-web session, proving activityStatsCache was populated for
+    // every one of them and not just enough to dodge the diagnostic above.
+    const runningContosoSessionIds = DEMO_SESSIONS
+      .filter((session) => session.projectId === PROJECT_CONTOSO && session.status === 'running')
+      .map((session) => session.id);
+    for (const sessionId of runningContosoSessionIds) {
+      await expect(overlay.locator(`[data-session-id="${sessionId}"]`)).toBeVisible();
+    }
+    // The derived reason branches, read off one session of each activity kind: activityStatsFor's
+    // three-way switch (permission / thinking-with-tool / idle) drives the pill label straight
+    // from the seeded session, so a wrong branch here means the derivation broke, not the wiring
+    // checked above. currentTool is the seeded session's own last event, not an invented value.
+    const middlewareRow = overlay.locator(`[data-session-id="${SESSION_MIDDLEWARE}"]`);
+    await expect(middlewareRow).toContainText('Thinking');
+    await expect(middlewareRow).toContainText('running Bash');
+    await expect(overlay.locator(`[data-session-id="${SESSION_WEBSOCKET}"]`)).toContainText('Awaiting permission');
+    await expect(overlay.locator(`[data-session-id="${SESSION_RATE_LIMIT}"]`)).toContainText('Idle');
   },
 };
 

@@ -997,7 +997,7 @@ Two things stay out of reach of a live frame: the Browser pane's REAL guest (a p
 index.html                       the entry, five classic scripts then the module bundle
 stage.html                       the fixed-size host a direct visit lands on
 scenes.json                      the scene list the site reads at build time: name, reach, alt, version
-demo-scenes-<hash>.js            the registry, the app version, the recordings and transcripts index, the guest pages
+demo-scenes-<hash>.js            the registry, the app version, the config shape a state= blob is checked against, the recordings and transcripts index, the guest pages
 demo-boot-<hash>.js              demo/boot.js verbatim
 demo-webview-<hash>.js           demo/webview-shim.js verbatim: the iframe standing in for <webview>
 mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim
