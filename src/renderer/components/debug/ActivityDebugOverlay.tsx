@@ -804,7 +804,10 @@ const SnapshotRow = memo(function SnapshotRow({ snapshot, label, pollNow }: { sn
   // ("claude-*" → Claude adapter, "codex-*" → Codex, etc.).
   const modelId = useSessionStore((state) => state.sessionUsage[snapshot.sessionId]?.model.id);
   return (
-    <div className="space-y-2 min-w-0 border border-edge/50 rounded-md p-2.5 bg-surface/30">
+    <div
+      className="space-y-2 min-w-0 border border-edge/50 rounded-md p-2.5 bg-surface/30"
+      data-session-id={snapshot.sessionId}
+    >
       {/* Title on row 1, status pill on row 2 underneath, always left-aligned.
           Layout stays consistent regardless of title length so long board
           names don't push the pill to a right-floated second line. */}
