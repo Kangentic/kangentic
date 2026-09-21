@@ -61,30 +61,49 @@ function lineNumberAt(text: string, index: number): number {
   return line;
 }
 
+interface ValuePulseCall {
+  file: string;
+  line: number;
+  hasResetKey: boolean;
+  suppressed: boolean;
+}
+
+// Takes the source text (plus a label) rather than only a path, so the marker
+// handling can be driven directly over known input below. Without this, the
+// `value-pulse-ok` opt-out's positive path (a marker actually suppressing a
+// missing-resetKey call) is exercised only if the live tree happens to carry
+// one, which it does not today - a wiring regression here (wrong marker name,
+// wrong line index) would report nothing and the whole suite would still pass.
+function scanSource(fileLabel: string, text: string): ValuePulseCall[] {
+  const lines = text.split('\n');
+  const callPattern = /useValuePulse\s*\(/g;
+  const found: ValuePulseCall[] = [];
+
+  for (const match of text.matchAll(callPattern)) {
+    const openParenIndex = match.index + match[0].length - 1;
+    const args = extractCallArgs(text, openParenIndex);
+    const callLine = lineNumberAt(text, match.index); // 1-based
+    found.push({
+      file: fileLabel,
+      line: callLine,
+      hasResetKey: /resetKey/.test(args),
+      suppressed: hasOptOutMarker(lines, callLine - 1, OK_MARKER),
+    });
+  }
+  return found;
+}
+
 describe('every useValuePulse call rebaselines on a context change (resetKey)', () => {
   it('no useValuePulse call site in src/renderer omits resetKey', () => {
-    const offenders: string[] = [];
     const absoluteDir = path.join(REPO_ROOT, SCAN_DIR);
-    const callPattern = /useValuePulse\s*\(/g;
-
-    for (const filePath of collectSourceFiles(absoluteDir)) {
-      const relative = toPosix(path.relative(REPO_ROOT, filePath));
-      if (relative === DEFINITION_FILE) continue;
-      const text = fs.readFileSync(filePath, 'utf-8');
-      const lines = text.split('\n');
-
-      for (const match of text.matchAll(callPattern)) {
-        const openParenIndex = match.index + match[0].length - 1;
-        const args = extractCallArgs(text, openParenIndex);
-        if (/resetKey/.test(args)) continue;
-
-        const callLine = lineNumberAt(text, match.index); // 1-based
-        const lineIndex = callLine - 1;
-        if (hasOptOutMarker(lines, lineIndex, OK_MARKER)) continue;
-
-        offenders.push(`${relative}:${callLine}`);
-      }
-    }
+    const offenders = collectSourceFiles(absoluteDir)
+      .filter((filePath) => toPosix(path.relative(REPO_ROOT, filePath)) !== DEFINITION_FILE)
+      .flatMap((filePath) => {
+        const relative = toPosix(path.relative(REPO_ROOT, filePath));
+        return scanSource(relative, fs.readFileSync(filePath, 'utf-8'))
+          .filter((call) => !call.hasResetKey && !call.suppressed)
+          .map((call) => `${call.file}:${call.line}`);
+      });
 
     expect(
       offenders,
@@ -93,5 +112,40 @@ describe('every useValuePulse call rebaselines on a context change (resetKey)', 
         `See .claude/rules/restore-no-animation-replay.md. For a call that never re-points across a ` +
         `context boundary, add // value-pulse-ok: <reason>.\nOffenders:\n${offenders.join('\n')}`,
     ).toEqual([]);
+  });
+});
+
+// The test above can stay green while the `value-pulse-ok` opt-out is wired wrong -
+// no live marker exercises its positive path today (see the comment on scanSource).
+// These drive it over known input instead.
+describe('the value-pulse-ok opt-out', () => {
+  it('suppresses a marked call with no resetKey', () => {
+    const found = scanSource('probe.tsx', [
+      '  // value-pulse-ok: this value never re-points across a context boundary.',
+      '  const pulse = useValuePulse(value);',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 2, hasResetKey: false, suppressed: true }]);
+  });
+
+  it('does not suppress an unmarked call with no resetKey', () => {
+    const found = scanSource('probe.tsx', '  const pulse = useValuePulse(value);');
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 1, hasResetKey: false, suppressed: false }]);
+  });
+
+  it('does not suppress a bare marker with no reason after the colon', () => {
+    const found = scanSource('probe.tsx', [
+      '  // value-pulse-ok:',
+      '  const pulse = useValuePulse(value);',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 2, hasResetKey: false, suppressed: false }]);
+  });
+
+  it('does not need suppression when resetKey is passed', () => {
+    const found = scanSource('probe.tsx', '  const pulse = useValuePulse(value, { resetKey: projectId });');
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 1, hasResetKey: true, suppressed: false }]);
   });
 });
