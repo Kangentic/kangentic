@@ -155,8 +155,10 @@ export const DEFAULT_STALE_AFTER_IDLE_HINT_MS = 180_000;
  * the idle. Prevents idle->thinking flicker from out-of-order hook
  * arrivals.
  *
- * Bypassed by Interrupted (instant), watchdog timeout (already 180s),
- * and PTY silence (already 3s).
+ * Bypassed by Interrupted (instant), watchdog timeout (which waits at
+ * least `DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS`, and
+ * `DEFAULT_STALE_THINKING_TIMEOUT_MS` on a normal turn), and PTY
+ * silence (gated by `PTY_SILENCE_THRESHOLD_MS` in PtyActivityTracker).
  *
  * Default 400ms. Override via constructor option for tests / disable.
  */

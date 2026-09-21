@@ -163,7 +163,8 @@ export class CodexAdapter implements AgentAdapter {
     // Using it for detectIdle causes false idle transitions during active
     // work (state oscillates thinking↔idle on every frame). Empirically
     // verified: Codex goes completely SILENT when idle (no TUI redraws),
-    // so the 10-second silence timer in PtyActivityTracker fires reliably.
+    // so PtyActivityTracker's silence timer (`PTY_SILENCE_THRESHOLD_MS`)
+    // fires reliably.
     //
     // Content deduplication in SessionManager provides an agent-agnostic
     // safety net: if any TUI agent does continuously redraw, repeated

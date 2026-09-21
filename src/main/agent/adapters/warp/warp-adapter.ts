@@ -137,8 +137,9 @@ export class WarpAdapter implements AgentAdapter {
    * - Session ID: omitted - Warp has no CLI-level resume mechanism.
    *
    * No detectIdle callback is provided because `oz agent run` has no
-   * interactive prompt to match. The PTY silence timer (default 10s)
-   * is the sole idle detection mechanism.
+   * interactive prompt to match. The PTY silence timer
+   * (`PTY_SILENCE_THRESHOLD_MS` in PtyActivityTracker) is the sole idle
+   * detection mechanism.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     activity: ActivityDetection.pty(),

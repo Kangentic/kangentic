@@ -851,8 +851,9 @@ describe('Codex Adapter', () => {
       expect(strategy.kind).toBe('pty');
       // Codex does NOT use detectIdle. The guillemet (›) is always
       // visible in the Ink TUI prompt area, even during active work,
-      // so it causes false idle transitions. Silence timer (10s) is
-      // the sole idle detection mechanism.
+      // so it causes false idle transitions. PtyActivityTracker's
+      // silence timer (PTY_SILENCE_THRESHOLD_MS) is the sole idle
+      // detection mechanism.
       expect((strategy as { detectIdle?: unknown }).detectIdle).toBeUndefined();
     });
   });
