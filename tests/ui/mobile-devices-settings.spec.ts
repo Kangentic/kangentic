@@ -207,7 +207,7 @@ test.describe('Mobile Devices settings tab', () => {
     await docsLink.click();
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
-      .toEqual(['https://www.kangentic.com/mobile/']);
+      .toEqual(['https://kangentic.com/mobile/']);
 
     await closeSettings();
   });
@@ -345,7 +345,7 @@ test.describe('Mobile Devices settings tab', () => {
     // Mobile goes to /mobile/ - which is the collision this split fixed.
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
-      .toEqual(['https://www.kangentic.com/relay/']);
+      .toEqual(['https://kangentic.com/relay/']);
 
     await closeSettings();
   });

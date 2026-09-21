@@ -73,6 +73,7 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.npmjs.org)",
       "WebFetch(domain:www.kangentic.com)",
+      "WebFetch(domain:kangentic.com)",
       "Skill"
     ],
     "deny": []

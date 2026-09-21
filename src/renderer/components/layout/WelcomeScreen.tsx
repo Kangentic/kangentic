@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
+import { DOCS_URLS } from '../../../shared/docs-links';
 import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand, RECOMMENDED_AGENT_ORDER } from '../../utils/agent-display-name';
 import { useAddProject } from '../../hooks/useAddProject';
@@ -12,8 +13,6 @@ import { OverseerMascot } from '../onboarding/OverseerMascot';
 // fixed id, which would collide if inlined more than once per document.
 import brandLogoUrl from '@kangentic/branding/assets/brandmark-small.svg?url';
 
-const SETUP_GUIDE_URL = 'https://www.kangentic.com/getting-started/';
-const MOBILE_PAIRING_URL = 'https://www.kangentic.com/mobile/pairing/';
 const CURATED_NOT_FOUND_LIMIT = 3;
 
 /** Reusable detection row used for both the Git and agent entries */
@@ -451,9 +450,9 @@ export function WelcomeScreen() {
         <div className="mt-6 mb-8 flex items-center justify-center gap-4 text-sm">
           <button
             type="button"
-            onClick={() => window.electronAPI.shell.openExternal(SETUP_GUIDE_URL)}
+            onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.gettingStarted)}
             className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-            title={SETUP_GUIDE_URL}
+            title={DOCS_URLS.gettingStarted}
             data-testid="welcome-setup-guide"
           >
             Read the setup guide
@@ -461,9 +460,9 @@ export function WelcomeScreen() {
           </button>
           <button
             type="button"
-            onClick={() => window.electronAPI.shell.openExternal(MOBILE_PAIRING_URL)}
+            onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.mobilePairing)}
             className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
-            title={MOBILE_PAIRING_URL}
+            title={DOCS_URLS.mobilePairing}
             data-testid="welcome-pair-phone"
           >
             Pair a phone
