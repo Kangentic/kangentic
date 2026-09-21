@@ -10,6 +10,12 @@
  * expanded diff, restored after unchanged regions were folded away, must stay
  * inside the scrollable range rather than leaving an offset past the end.
  *
+ * The third test covers the asymmetric case, on the ORIGINAL side: after a
+ * refold on a diff whose original half is shorter than its modified half, the
+ * original editor's viewport must still resolve inside its own model. It is a
+ * guard, not a reproduction of Sentry DESKTOP-19; the comment above the test
+ * says what was measured and why.
+ *
  * Monaco virtualizes lines: only visible lines exist as `.view-line` DOM nodes,
  * so DOM presence of a token is a proxy for "scrolled to that region". The diff
  * is computed client-side from the mock's original/modified strings, so no real
@@ -40,6 +46,31 @@ const DELTA_TAIL_TOKEN = 'DELTA_TAIL_TOKEN_QQQ';
 const DELTA_TOTAL_LINES = 3000;
 const DELTA_CHANGE_LINE = 5;
 
+// gamma.ts is the ASYMMETRIC file, and the asymmetry is its whole reason to
+// exist.
+//
+// delta.ts above has the same 3000 lines on both sides, so any offset Monaco
+// mirrors from the modified editor onto the original one
+// (diffEditorViewZones.js's "update scroll original" autorun) is always a valid
+// offset for the original too. gamma.ts inserts a large block instead: the
+// original side is 1500 lines, the modified side 3000, and Monaco pads the
+// original with an alignment view zone as tall as the insertion to keep the
+// sides level. It also keeps large unchanged spans at both ends, so "Collapse
+// unchanged" has real regions to fold.
+//
+// Measured on this fixture while investigating Sentry DESKTOP-19: a refold with
+// a deep scroll live walks the ORIGINAL editor's viewport to model line 1500
+// against a line count of exactly 1500 - the boundary of the throw, which is
+// `lineNumber > getLineCount()` in textModel.js. delta.ts cannot get near that.
+const GAMMA_TAIL_TOKEN = 'GAMMA_TAIL_TOKEN_WWW';
+const GAMMA_ORIGINAL_LINES = 1500;
+const GAMMA_INSERTED_LINES = 1500;
+const GAMMA_INSERT_AFTER_LINE = 10;
+// A pure insertion after line 10 reports modifiedStartLineNumber 11, distinct
+// from alpha (100), beta (2) and delta (5), so it identifies gamma's own diff
+// result (see readModifiedFirstChangeLine).
+const GAMMA_CHANGE_LINE = GAMMA_INSERT_AFTER_LINE + 1;
+
 // Build a long file whose only change sits deep in the middle (line 100), with a
 // recognizable token on line 1 so we can tell whether the viewport is at the top.
 function buildFixtureScript(): string {
@@ -65,11 +96,28 @@ function buildFixtureScript(): string {
       deltaModifiedLines[${DELTA_CHANGE_LINE} - 1] = 'const deltaChanged = true;';
       var deltaModified = deltaModifiedLines.join('\\n');
 
+      var gammaOriginalLines = [];
+      for (var gammaLineNumber = 1; gammaLineNumber <= ${GAMMA_ORIGINAL_LINES}; gammaLineNumber++) {
+        if (gammaLineNumber === ${GAMMA_ORIGINAL_LINES}) { gammaOriginalLines.push('// ${GAMMA_TAIL_TOKEN} ' + gammaLineNumber); }
+        else { gammaOriginalLines.push('// gamma line ' + gammaLineNumber); }
+      }
+      var gammaInsertedLines = [];
+      for (var gammaInsertIndex = 1; gammaInsertIndex <= ${GAMMA_INSERTED_LINES}; gammaInsertIndex++) {
+        gammaInsertedLines.push('const gammaAdded' + gammaInsertIndex + ' = ' + gammaInsertIndex + ';');
+      }
+      var gammaModifiedLines = gammaOriginalLines
+        .slice(0, ${GAMMA_INSERT_AFTER_LINE})
+        .concat(gammaInsertedLines)
+        .concat(gammaOriginalLines.slice(${GAMMA_INSERT_AFTER_LINE}));
+      var gammaOriginal = gammaOriginalLines.join('\\n');
+      var gammaModified = gammaModifiedLines.join('\\n');
+
       window.__mockGitDiff = {
         files: [
           { path: 'alpha.ts', status: 'M', insertions: 1, deletions: 1, original: original, modified: modified, language: 'typescript' },
           { path: 'beta.ts', status: 'M', insertions: 1, deletions: 0, original: 'const a = 1;', modified: 'const a = 1;\\nconst b = 2;', language: 'typescript' },
           { path: 'delta.ts', status: 'M', insertions: 1, deletions: 1, original: deltaOriginal, modified: deltaModified, language: 'typescript' },
+          { path: 'gamma.ts', status: 'M', insertions: ${GAMMA_INSERTED_LINES}, deletions: 0, original: gammaOriginal, modified: gammaModified, language: 'typescript' },
         ],
       };
     })();
@@ -83,10 +131,16 @@ interface ModifiedEditorHandle {
   setScrollTop: (scrollTop: number) => void;
 }
 
+interface OriginalEditorHandle {
+  getModel: () => { getLineCount: () => number } | null;
+  getVisibleRanges: () => { endLineNumber: number }[];
+}
+
 interface MonacoTestHandle {
   editor: {
     getDiffEditors: () => {
       getModifiedEditor: () => ModifiedEditorHandle;
+      getOriginalEditor: () => OriginalEditorHandle;
       getLineChanges: () => { modifiedStartLineNumber: number }[] | null;
     }[];
   };
@@ -137,6 +191,49 @@ async function readModifiedFirstChangeLine(target: Page): Promise<number> {
     const diffEditors = monaco?.editor.getDiffEditors() ?? [];
     if (diffEditors.length === 0) return -1;
     return diffEditors[0].getLineChanges()?.[0]?.modifiedStartLineNumber ?? -1;
+  });
+}
+
+/**
+ * The ORIGINAL (left) editor's model line count and the furthest line its
+ * viewport currently resolves. `threw: true` when the read itself raised.
+ *
+ * The original side is where Sentry DESKTOP-19 throws, and it is never the side
+ * app code scrolls: Monaco mirrors the modified editor's scrollTop onto it
+ * (diffEditorViewZones.js's "update scroll original" autorun), and on a diff
+ * that inserts lines the original is the shorter of the two. `getVisibleRanges`
+ * walks the same viewport data the throwing `getModelVisibleRanges` does, so a
+ * read that raises here is the condition itself rather than a proxy for it.
+ *
+ * `visibleRangeCount` exists so a caller can tell "the viewport resolved to
+ * line N" from "the viewport reported nothing": `getVisibleRanges()` can
+ * return an empty array before the original pane has laid out, and an empty
+ * array folds into `maxVisibleLine: 0` via the reduce's seed below, which is
+ * trivially `<= lineCount` for any positive line count. Without this field a
+ * caller cannot distinguish that false pass from an actual walk to the
+ * model's last line.
+ */
+async function readOriginalViewportState(
+  target: Page,
+): Promise<{ lineCount: number; maxVisibleLine: number; visibleRangeCount: number; threw: boolean }> {
+  return target.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) {
+      return { lineCount: -1, maxVisibleLine: -1, visibleRangeCount: -1, threw: false };
+    }
+    const originalEditor = diffEditors[0].getOriginalEditor();
+    try {
+      const lineCount = originalEditor.getModel()?.getLineCount() ?? -1;
+      const visibleRanges = originalEditor.getVisibleRanges();
+      const maxVisibleLine = visibleRanges.reduce(
+        (furthest, range) => Math.max(furthest, range.endLineNumber),
+        0,
+      );
+      return { lineCount, maxVisibleLine, visibleRangeCount: visibleRanges.length, threw: false };
+    } catch {
+      return { lineCount: -1, maxVisibleLine: -1, visibleRangeCount: -1, threw: true };
+    }
   });
 }
 
@@ -450,6 +547,121 @@ test.describe('Changes view: diff scroll memory', () => {
       expect(getPageErrors()).toHaveLength(0);
     } finally {
       // Leave the shared page as this test found it for any later spec run.
+      await setCollapseUnchanged(page, false);
+    }
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  // The ASYMMETRIC counterpart to the DESKTOP-8 guard above, and like it a
+  // guard rather than a reproduction. Read this before trusting it as coverage.
+  //
+  // Sentry DESKTOP-19 ("Illegal value for lineNumber", the recurrence that
+  // survived the clamp) throws on the ORIGINAL editor, from a scrollTop Monaco
+  // mirrors onto it rather than one any app code sets. Its stack resolves to
+  // Monaco reading a viewport line past the original model's end while
+  // `hideUnchangedRegions` rebuilds hidden areas - a window that exists because
+  // ViewModel.setHiddenAreas shrinks the view-line projections several
+  // statements before it updates the layout's line count.
+  //
+  // This test does NOT reproduce that throw, and it is not a coin flip away
+  // from doing so. It was attempted and measured: on this fixture the original
+  // viewport reaches model line 1500 against a line count of exactly 1500, the
+  // boundary and never past it. Async content arrival, rapid file alternation,
+  // CPU throttling at several rates, and a fixture large enough to force the
+  // legacy diff algorithm's 2000ms budget were all tried; the only thing that
+  // ever produced a throw was unrelated instrumentation slowing the main
+  // thread, which is a flake and not a test.
+  //
+  // What it does pin is the app-side contract on the side that throws: after a
+  // refold on a diff whose original side is half the length of its modified
+  // side, the original editor's viewport still resolves inside its own model,
+  // and no renderer error surfaces. The fixture is the durable part - delta.ts
+  // cannot get near that boundary because both its sides are the same length.
+  test('refolding an asymmetric diff leaves the original viewport inside its own model', async () => {
+    test.slow();
+
+    const getPageErrors = collectPageErrors(page);
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=Diff Scroll Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const diffArea = page.locator('[data-testid="diff-editor-area"]');
+    try {
+      await diffArea.waitFor({ state: 'visible', timeout: 3000 });
+    } catch {
+      await page.locator('[data-testid="changes-toggle"]').click();
+      await diffArea.waitFor({ state: 'visible', timeout: 10000 });
+    }
+    await page.locator('.view-line').first().waitFor({ state: 'visible', timeout: 10000 });
+
+    try {
+      // Open gamma.ts and wait for its OWN diff, not just any diff: the reveal
+      // that positions a first visit fires from onDidUpdateDiff, and scrolling
+      // before it lands lets the reveal reset scrollTop afterwards (the flake
+      // aae810ac and c604886e fixed on the test above).
+      await page.locator('button', { hasText: 'gamma.ts' }).click();
+      await page.locator('.view-line', { hasText: 'gammaAdded' }).first().waitFor({ state: 'visible', timeout: 10000 });
+      await expect
+        .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
+        .toBe(GAMMA_CHANGE_LINE);
+
+      // Drive deep, so the position committed under gamma's key is one the
+      // folded layout cannot reach and the mirrored offset is large.
+      await scrollModifiedToBottom(page);
+      await expect(page.locator('.view-line', { hasText: GAMMA_TAIL_TOKEN }).first()).toBeVisible({ timeout: 10000 });
+      await expect
+        .poll(async () => (await readModifiedScrollState(page)).scrollTop, { timeout: 10000 })
+        .toBeGreaterThan(1000);
+
+      // Switch away so the deep position is committed, then turn collapse on
+      // while gamma.ts is NOT the open file, so returning to it restores the
+      // deep position and forces the refold in the same diff-update turn.
+      await page.locator('button', { hasText: 'beta.ts' }).click();
+      await expect(page.locator('.view-line', { hasText: 'const b = 2;' })).toBeVisible({ timeout: 10000 });
+
+      await setCollapseUnchanged(page, true);
+      await page.locator('button', { hasText: 'gamma.ts' }).click();
+      await page.locator('.view-line', { hasText: 'gamma' }).first().waitFor({ state: 'visible', timeout: 10000 });
+
+      // Wait for the fold to land, otherwise the assertions below run against
+      // the still-expanded layout and prove nothing.
+      await expect
+        .poll(async () => page.locator('.diff-hidden-lines').count(), { timeout: 10000 })
+        .toBeGreaterThan(0);
+
+      // Wait for the original pane's viewport to actually resolve before
+      // trusting maxVisibleLine: getVisibleRanges() can return an empty array
+      // before layout catches up, and an empty array folds into
+      // maxVisibleLine: 0 via the reduce's seed, which is trivially <=
+      // lineCount for any positive line count. Capture the state that
+      // satisfied the poll rather than re-reading afterward, so the
+      // assertions below cannot land on a later, different snapshot.
+      let originalState = await readOriginalViewportState(page);
+      await expect
+        .poll(
+          async () => {
+            originalState = await readOriginalViewportState(page);
+            return originalState.visibleRangeCount;
+          },
+          { timeout: 10000 },
+        )
+        .toBeGreaterThan(0);
+
+      expect(originalState.threw).toBe(false);
+      expect(originalState.lineCount).toBeGreaterThan(0);
+      expect(originalState.maxVisibleLine).toBeLessThanOrEqual(originalState.lineCount);
+
+      // A throw on this path escapes a setTimeout to window.onerror and never
+      // reaches monacoConfig's funnel, so it surfaces here as a page error.
+      expect(getPageErrors()).toHaveLength(0);
+    } finally {
       await setCollapseUnchanged(page, false);
     }
     await page.keyboard.press('Control+Shift+W');

@@ -244,6 +244,8 @@ The diff toolbar's **View options** menu collects the rendering choices as named
 
 The panel persists its expanded/collapsed state, selected file, selected commit, the diff scope, which files you have marked viewed, whether the rail's History section is expanded, and the divider positions across dialog reopens. Those are per-task; the View options above are app-wide.
 
+Each file also remembers where you had scrolled it. Open a file for the first time and it opens centred on its first change; leave it and come back and it returns to where you left off. That memory is per task and per diff scope, and it is held in memory rather than in the database, so it lasts as long as the app is running and a restart puts every file back on its first change.
+
 The whole panel can also detach into its own OS window - click the pop-out icon in its header - not just a single file's diff. Unlike the properties above, this is not preserved through a close: while the window is open the header pill still reads **Hide changes**, but closing the window leaves the panel closed instead of restoring it inline; click **Show changes** again to reopen it.
 
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
