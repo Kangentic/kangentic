@@ -116,7 +116,7 @@ Object.defineProperty(process, 'resourcesPath', {
 });
 
 // Import after mocks are registered.
-import { checkWithRetry, downloadWithRetry, initUpdater } from '../../src/main/updater';
+import { checkWithRetry, downloadWithRetry, initUpdater, updateUpdaterWindow } from '../../src/main/updater';
 import { BrowserWindow } from 'electron';
 
 // ---------------------------------------------------------------------------
@@ -476,6 +476,48 @@ describe("autoUpdater.on('error') listener", () => {
     initUpdater(new BrowserWindow() as unknown as import('electron').BrowserWindow);
     getRegisteredListener('error')(readOnly);
     expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+
+    consoleLogSpy.mockRestore();
+  });
+
+  it('keeps the once-per-app-run latch armed across a window rebuild via updateUpdaterWindow', () => {
+    // rebuildMainWindow() (src/main/index.ts) - macOS dock-icon reactivation
+    // with no live window, and a second-instance arrival that finds the same -
+    // re-points the updater at the new window through updateUpdaterWindow, NOT
+    // initUpdater. The process never restarted, so this is not the "later
+    // launch" the latch comment on notifyReadOnlyVolume reserves a fresh
+    // notice for: the user already saw this run's one notice, and a rebuilt
+    // window must not repeat it. A refactor that folds updateUpdaterWindow and
+    // initUpdater's window assignment into one shared setter, and carries the
+    // latch reset along with it, would turn every dock-icon click during a
+    // read-only-volume failure back into a fresh toast - the exact spam
+    // DESKTOP-1A's 11 events were.
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorListener = getRegisteredListener('error');
+    const readOnly = makeError('Cannot update while running on a read-only volume.');
+
+    // App run 1's window (from beforeEach) gets the notice.
+    errorListener(readOnly);
+    expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+
+    // All windows close and macOS rebuilds one, in the SAME app run.
+    const rebuiltWindowSend = vi.fn();
+    const rebuiltWindow = {
+      isDestroyed: () => false,
+      webContents: { send: rebuiltWindowSend },
+    } as unknown as import('electron').BrowserWindow;
+    updateUpdaterWindow(rebuiltWindow);
+
+    errorListener(readOnly);
+    // Latch held across the rebuild: no second toast on the new window.
+    expect(rebuiltWindowSend).not.toHaveBeenCalled();
+
+    // Positive control: the rebuilt window IS the live target, so the silence
+    // above is the latch holding, not a dead reference the error can't reach.
+    // Only a genuine new app run (initUpdater) re-arms the latch.
+    initUpdater(rebuiltWindow);
+    getRegisteredListener('error')(readOnly);
+    expect(rebuiltWindowSend).toHaveBeenCalledTimes(1);
 
     consoleLogSpy.mockRestore();
   });
