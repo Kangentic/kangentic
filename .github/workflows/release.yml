@@ -670,6 +670,105 @@ jobs:
       pages: write
       id-token: write
 
+  # Shoot the docs poster set from the tag that just shipped and attach it to the
+  # release as demo-posters-<version>.zip, which kangentic.com's figure sync reads
+  # by version: one 3200 by 2000 still per registry scene in the clay and rust
+  # themes, driver scenes included, shot by the capture rig from the same dist/demo
+  # build the demo deploy publishes (demo/posters.mjs; demo/README.md, "The poster
+  # set").
+  #
+  # After publish-release on purpose, beside deploy-demo: the release stands, and
+  # a failure here marks the run red while the site's own sync fails loudly on the
+  # missing asset. It is NOT in scripts/release-assets.js: that manifest is checked
+  # before this job runs (in publish-release, and in create-draft-release's re-run
+  # check), so a 12th expected asset would fail every release.
+  #
+  # The version chain is three links, none redundant: the tag must match
+  # package.json (the gate below), package.json must match dist/demo/scenes.json
+  # (demo/posters.mjs refuses a stale build), and the zip is named from
+  # scenes.json. --clobber keeps a re-run of a finished release green.
+  #
+  # `!cancelled()` replaces the implied success() gate exactly as on deploy-demo,
+  # so publish-release is named in the if: by hand.
+  demo-posters:
+    needs: [publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Determine version tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Same judgement as deploy-demo.yml's version gate: a tag whose checkout
+      # carries another version would name the zip after one and stamp its
+      # manifest with the other, and the site refuses that. Both branches say
+      # which way they went.
+      - name: State the tag and version
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          echo "Shooting the poster set for $TAG; package.json version is $version."
+          if [ "$version" != "${TAG#v}" ]; then
+            echo "::error::Tag $TAG names version ${TAG#v}, but its package.json says $version. Refusing to attach a poster set whose manifest would not match the tag. Check that the tag points at the release commit."
+            exit 1
+          fi
+          echo "Tag $TAG matches package.json; the asset will be demo-posters-$version.zip."
+
+      # --with-deps for the reason deploy-demo.yml gives: once per release, the
+      # apt install is a cheap guarantee the rig can launch at all.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Default base: demo/static-server.mjs reads the base out of index.html, and
+      # the pixels do not depend on it. deploy-demo already smoke-tests this ref.
+      - name: Build the web demo
+        run: npm run build:demo
+
+      - name: Shoot, verify, and pack the poster set
+        run: npm run demo:posters
+
+      - name: Attach the poster set to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="dist/demo-posters-${TAG#v}.zip"
+          if [ ! -f "$asset" ]; then
+            echo "::error::demo/posters.mjs exited 0 but $asset does not exist. Its zip name comes from dist/demo/scenes.json, which the script checks against package.json, so this is a bug in the script rather than a version drift."
+            exit 1
+          fi
+          # A probe failure fails the step (set -e) rather than reading as "absent".
+          existing=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')
+          if printf '%s\n' "$existing" | grep -qxF "$(basename "$asset")"; then
+            echo "Replacing $(basename "$asset") on release $TAG (idempotent re-run)."
+          else
+            echo "Attaching $(basename "$asset") to release $TAG."
+          fi
+          gh release upload "$TAG" "$asset" --clobber --repo "${{ github.repository }}"
+          echo "Attached $(basename "$asset") to $TAG."
+
   publish-npm:
     needs: [publish-release]
     if: ${{ !cancelled() && needs.publish-release.result == 'success' }}

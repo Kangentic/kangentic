@@ -241,7 +241,14 @@ The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run 
 the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
 screenshots it per theme into the gitignored `captures/<timestamp>/scenes/`, playing the gesture
 a `driver` scene needs (a held drag, a right-click) with Playwright. The rig has no scene applier
-of its own; `demo/boot.js` is the applier for both consumers.
+of its own; `demo/boot.js` is the applier for both consumers. `npm run demo:posters`
+(`demo/posters.mjs`) drives that same rig for the site's docs figures: every scene in the `clay`
+and `rust` themes at the frame's 2x (`CAPTURE_THEMES`, `CAPTURE_RESOLUTIONS`, and
+`CAPTURE_OUTPUT_ROOT` into `dist/demo-posters/`), checked against the build's own `scenes.json`
+(every scene at every theme, every PNG 3200 by 2000, the build's version equal to
+`package.json`'s) and zipped with a `manifest.json` as `dist/demo-posters-<version>.zip`.
+`release.yml`'s `demo-posters` job runs it after `publish-release` and attaches the zip to the
+release; `demo/README.md` ("The poster set") carries the manifest shape and the reasons.
 
 ### Worktree Dev
 

@@ -12,9 +12,10 @@ import path from 'node:path';
 // `needs:` failed, but naming always(), cancelled(), or failure() in the `if:` replaces that
 // implied success() gate, so a job listed in `needs:` and NOT also named in the `if:` still runs
 // when its dependency FAILED. release.yml carries always() on two jobs to tolerate the conditional
-// create-tag and `!cancelled()` on the two publish jobs and the demo deploy, which means every
-// future `needs:` entry added to any of the five has to be repeated in the `if:` by hand. The
-// comment above create-draft-release warns about this; this test is what makes the warning binding.
+// create-tag and `!cancelled()` on the two publish jobs, the demo deploy, and the poster job, which
+// means every future `needs:` entry added to any of the six has to be repeated in the `if:` by
+// hand. The comment above create-draft-release warns about this; this test is what makes the
+// warning binding.
 //
 // The blunt one is a gate simply going missing: preflight-symbols exists because v0.37.0 and
 // v0.38.0 both shipped with zero sourcemaps and zero native debug files, the KANGENTIC_SENTRY_TOKEN
@@ -121,6 +122,7 @@ describe('release.yml job graph', () => {
     expect(names).toContain('release');
     expect(names).toContain('publish-release');
     expect(names).toContain('deploy-demo');
+    expect(names).toContain('demo-posters');
   });
 
   // buildJob reads `if:` with a single-line regex, so a condition folded onto
@@ -150,11 +152,12 @@ describe('release.yml job graph', () => {
   const selfGatedJobs = jobs.filter((job) => STATUS_FUNCTION_PATTERN.test(job.condition ?? ''));
 
   // An empty or shrunken filter would turn the it.each below into zero tests, which passes. The
-  // five jobs that carry a status function are named here so dropping one from the workflow, or
+  // six jobs that carry a status function are named here so dropping one from the workflow, or
   // a parse regression that stops recognizing one, fails rather than quietly reducing coverage.
   it('selects every job whose if: replaces the implied success() gate', () => {
     expect(selfGatedJobs.map((job) => job.name).sort()).toEqual([
       'create-draft-release',
+      'demo-posters',
       'deploy-demo',
       'publish-npm',
       'publish-release',
@@ -226,6 +229,48 @@ describe('release.yml job graph', () => {
     const checkoutRef = publishRelease?.body.match(/^ {10}ref: (.+)$/m)?.[1];
     expect(checkoutRef).toBeDefined();
     expect(deployDemo?.body).toContain(`      ref: ${checkoutRef}`);
+  });
+
+  // The poster set kangentic.com's figures read is attached AFTER the release is published, from
+  // the same ref, and is deliberately absent from scripts/release-assets.js (that manifest is
+  // verified before this job runs). Four shapes keep it honest: the ref parity above, a version
+  // gate that fails rather than names the zip after the wrong version, an upload that replaces
+  // in place so a re-run of a finished release stays green, and both branches of that upload
+  // saying which one they took.
+  it('shoots the poster set after publishing, from the published ref, with leave to upload', () => {
+    const posters = jobs.find((job) => job.name === 'demo-posters');
+    const publishRelease = jobs.find((job) => job.name === 'publish-release');
+    expect(posters).toBeDefined();
+    expect(posters?.needs).toEqual(['publish-release']);
+    expect(posters?.condition).toContain("needs.publish-release.result == 'success'");
+    const checkoutRef = publishRelease?.body.match(/^ {10}ref: (.+)$/m)?.[1];
+    expect(checkoutRef).toBeDefined();
+    expect(posters?.body).toContain(`          ref: ${checkoutRef}`);
+    // Uploading needs contents: write; the sibling deploy-demo narrows to read, so a copy-paste
+    // of its permissions block would fail the upload at the end of a 10-minute shoot.
+    expect(posters?.body).toMatch(/^ {6}contents: write$/m);
+  });
+
+  it('gates the shoot on the tag naming the version package.json carries', () => {
+    const versionGate = stepBody('demo-posters', 'State the tag and version');
+    expect(versionGate).toContain('exit 1');
+    expect(versionGate).toContain('::error::');
+    expect(versionGate).toContain('matches package.json');
+
+    expect(stepBody('demo-posters', 'Shoot, verify, and pack the poster set')).toContain('npm run demo:posters');
+  });
+
+  it('uploads the poster set replacing in place, says which way it went, and stays out of the asset manifest', () => {
+    const upload = stepBody('demo-posters', 'Attach the poster set to the release');
+    expect(upload).toContain('set -euo pipefail');
+    expect(upload).toContain('gh release upload');
+    expect(upload).toContain('--clobber');
+    expect(upload).toContain('Replacing');
+    expect(upload).toContain('Attaching');
+
+    // The comment carrying the "not an expected asset" decision is pinned against the whole file
+    // because parseJobs files a job's header comment under the PRECEDING job's body.
+    expect(workflowSource).toContain('It is NOT in scripts/release-assets.js');
   });
 });
 

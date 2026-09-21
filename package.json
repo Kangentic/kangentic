@@ -32,6 +32,7 @@
     "test:demo": "playwright test --project=demo",
     "demo:measure": "node demo/measure.mjs",
     "demo:serve": "node demo/measure.mjs --serve",
+    "demo:posters": "node demo/posters.mjs",
     "validate:kimi-mcp": "node scripts/kimi-validate-mcp.mjs",
     "prepare": "husky"
   },
@@ -92,6 +93,7 @@
     "eslint": "^10.10.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "fast-check": "^4.8.0",
+    "fflate": "^0.8.3",
     "globals": "^17.6.0",
     "husky": "^9.1.7",
     "lucide-react": "^1.17.0",

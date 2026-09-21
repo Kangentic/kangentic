@@ -9,17 +9,21 @@
  * reports ready, which is what no page can do for itself.
  *
  * Output: captures/<timestamp>/scenes/<scene>.<theme>.<resolution>.png, in the same gitignored,
- * per-run directory the marketing captures use. Axes are env-selectable for a quick single run:
+ * per-run directory the marketing captures use. Axes are env-selectable for a quick single run,
+ * and every axis refuses a name it does not know rather than shooting the page's error card:
  *   CAPTURE_SCENES=board,usage        only these scenes (default: all)
- *   CAPTURE_THEMES=night              default: night,sand
+ *   CAPTURE_THEMES=clay,rust          default: night,sand (the poster set shoots the product pair)
  *   CAPTURE_RESOLUTIONS=frame,hero    default: frame (the site's 1600 by 1000, at 2x)
+ *   CAPTURE_OUTPUT_ROOT=<dir>         replaces captures/<timestamp>; demo/posters.mjs points it at
+ *                                     dist/demo-posters/ so the set it verifies and zips is in one
+ *                                     known place (tests/captures/helpers/output-dir.ts)
  */
 import { test } from '@playwright/test';
 import path from 'node:path';
 import { startDemoServer } from '../../../demo/static-server.mjs';
 import { SCENES } from '../scenes';
 import { hideDevOnlyChrome, launchCaptureBrowser } from '../helpers/capture-page';
-import { openScene, type SceneTheme } from '../helpers/scene-page';
+import { openScene, SCENE_THEMES, type SceneTheme } from '../helpers/scene-page';
 import { frame, hero, inline, thumbnail, type Resolution } from '../helpers/resolutions';
 import { getOutputDir } from '../helpers/output-dir';
 
@@ -35,7 +39,12 @@ function envList(name: string, fallback: string[]): string[] {
 }
 
 const sceneNames = envList('CAPTURE_SCENES', Object.keys(SCENES));
-const themes = envList('CAPTURE_THEMES', ['night', 'sand']) as SceneTheme[];
+const themes = envList('CAPTURE_THEMES', ['night', 'sand']).map((name) => {
+  if (!(SCENE_THEMES as readonly string[]).includes(name)) {
+    throw new Error(`CAPTURE_THEMES names "${name}"; known: ${SCENE_THEMES.join(', ')}`);
+  }
+  return name as SceneTheme;
+});
 const resolutions = envList('CAPTURE_RESOLUTIONS', ['frame']).map((name) => {
   const resolution = RESOLUTIONS_BY_NAME[name];
   if (!resolution) throw new Error(`CAPTURE_RESOLUTIONS names "${name}"; known: ${Object.keys(RESOLUTIONS_BY_NAME).join(', ')}`);

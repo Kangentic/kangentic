@@ -17,7 +17,14 @@ import { isRigStep, type DemoBootStep, type DemoState, type RigStep, type SceneD
 const READY_TIMEOUT_MS = 20_000;
 const STEP_TIMEOUT_MS = 10_000;
 
-export type SceneTheme = 'night' | 'sand' | 'kangentic-light' | 'kangentic-dark';
+/**
+ * The `theme=` values the rig may ask demo/boot.js for: the two site names (`night` is the app's
+ * dark theme, `sand` a light one), the product pair the site's figures embed with (`clay`, `rust`),
+ * and the pair's earlier spellings, which boot.js still resolves. One list so the rig can refuse a
+ * theme name the page would answer with its error card, rather than shooting the card.
+ */
+export const SCENE_THEMES = ['night', 'sand', 'clay', 'rust', 'kangentic-light', 'kangentic-dark'] as const;
+export type SceneTheme = (typeof SCENE_THEMES)[number];
 
 export interface OpenSceneOptions {
   /** The served build's base URL, e.g. http://127.0.0.1:PORT/demo/ (a trailing slash). */
