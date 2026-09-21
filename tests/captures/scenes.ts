@@ -434,7 +434,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'notification-toast': {
     name: 'notification-toast',
     reach: 'state',
-    description: 'An in-app toast over the board, for the Notifications page, which can otherwise show only the announcement banner because an OS notification cannot appear in a browser. This is the session-ended toast: the idle toast the Notifications tab offers is configurable but unimplemented in the renderer, so there is no honest way to seed one.',
+    description: 'An in-app toast over the board, for the Notifications page, which can otherwise show only the announcement banner because an OS notification cannot appear in a browser. This is the session-ended toast, which the app raises off the exit push seeded below. The idle toast the Notifications tab also offers is edge-triggered off an activity TRANSITION, and a scene can seed only a static activity value into the mock cache, so there is still no push here for it to fire on.',
     alt: 'The board with an in-app toast in its bottom right corner, reporting that the session for Integration test coverage ended with exit code 0, and carrying a control to dismiss it.',
     // The app raises this itself off the exit push, gated on notifications.toasts.onAgentCrash;
     // the scene seeds the push, never the toast store.
