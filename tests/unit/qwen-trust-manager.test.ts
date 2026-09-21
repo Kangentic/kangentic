@@ -511,6 +511,25 @@ describe('removeQwenWorktreeTrust', () => {
     expect(Object.keys(readTrustedFolders())).toHaveLength(1);
   });
 
+  it('never rejects when trustedFolders.json exists but is malformed, and leaves it byte-for-byte untouched', async () => {
+    // Complements the write-failure test above: that one pins never-throws
+    // against a failed WRITE. This pins the other half - a corrupt READ.
+    // Today this is provably safe because removeWorktreeTrustSync goes
+    // through the same readTrustedFolders() helper already exercised on the
+    // ensure path for this exact input ("treats malformed trustedFolders.json
+    // as empty and recovers" above) and returns before ever reaching
+    // atomicWriteFileWithBackup. A future refactor that inlines
+    // JSON.parse(fs.readFileSync(...)) directly into removeWorktreeTrustSync,
+    // bypassing the shared helper, would reject here instead of no-opping -
+    // exactly the regression this guards against.
+    const malformed = '{ not valid JSON !!!';
+    fs.mkdirSync(qwenDir(), { recursive: true });
+    fs.writeFileSync(trustedFoldersPath(), malformed);
+
+    await expect(removeQwenWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
+    expect(fs.readFileSync(trustedFoldersPath(), 'utf-8')).toBe(malformed);
+  });
+
   it('queues behind an operation already holding the shared lock instead of running ahead of it', async () => {
     // removeWorktreeTrustSync (and ensureWorktreeTrustSync) are wholly synchronous,
     // so a plain Promise.all of several concurrent removals cannot expose a missing
