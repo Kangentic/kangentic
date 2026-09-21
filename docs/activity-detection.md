@@ -369,7 +369,7 @@ When the predicate flips from `thinking` to `idle` due to a Stop event or a coun
 Bypassed by:
 - `Interrupted` (Esc - instant, no flicker concern)
 - `forceIdle` (PTY-driven; already debounced 3s in PtyActivityTracker)
-- Stale-thinking watchdog (already 180s)
+- Stale-thinking watchdog (already 180s, or 30s on a heartbeat-forced turn)
 
 Configurable via `ActivityEngineOptions.idleStabilityWindowMs`. Tests set this to 0 for deterministic timing.
 
