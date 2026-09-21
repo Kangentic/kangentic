@@ -322,17 +322,17 @@ something is listening on.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when agent goes idle on non-visible project |
+| `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when an agent finishes its turn or needs permission. Suppressed only while the window is focused AND that session's project is the open one, so an unfocused window still alerts on the open project |
 | `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error |
 | `notifications.desktop.onPlanComplete` | boolean | `true` | Desktop notification when plan completes and task auto-moves |
 | `notifications.desktop.onSpawnStalled` | boolean | `true` | Desktop notification when a task spawn stays in a preparing phase (worktree/git queue) past the stall threshold (~8s) |
-| `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when agent goes idle |
+| `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when an agent finishes its turn or needs permission, on the open project. Skipped while that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it |
 | `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when a session exits (error or clean); the `notifications.desktop.onAgentCrash` row fires on error exits only |
-| `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when plan completes |
+| `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when a plan completes and its task auto-moves, on the open project |
 | `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast (with a Cancel action) when a task spawn stalls past the threshold while preparing |
 | `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |
-| `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications per session |
+| `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications of the same kind for one session. Idle and crash have separate buckets, so a crash is never suppressed by a recent idle alert |
 
 ### contextBar.*
 

@@ -1301,8 +1301,25 @@
           tasks: withAttachmentCounts(sorted.slice(0, boundedLimit)),
         };
       },
-      onAutoMoved: function () {
-        return noop;
+      onAutoMoved: function (callback) {
+        // Tests fire this via
+        // window.__mockFireTaskAutoMoved(taskId, targetSwimlaneId, taskTitle, projectId).
+        if (!window.__mockTaskAutoMovedListeners) window.__mockTaskAutoMovedListeners = [];
+        window.__mockTaskAutoMovedListeners.push(callback);
+        if (!window.__mockFireTaskAutoMoved) {
+          window.__mockFireTaskAutoMoved = function (taskId, targetSwimlaneId, taskTitle, projectId) {
+            var listeners = (window.__mockTaskAutoMovedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(taskId, targetSwimlaneId, taskTitle, projectId); });
+          };
+        }
+        // A REAL unsubscribe, matching the preload bridge: App.tsx pushes this
+        // onto its cleanups array, and a noop would leave the unmounted
+        // renderer's listener attached across an HMR re-subscribe.
+        return function () {
+          var listeners = window.__mockTaskAutoMovedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       onSpawnBlocked: function (callback) {
         // Tests fire this via window.__mockFireTaskSpawnBlocked(taskId, title, message, projectId).

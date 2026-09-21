@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
-import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist } from './helpers';
+import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist, toastCountRightNow } from './helpers';
 
 /**
  * Coverage for useAddProject's branches (src/renderer/hooks/useAddProject.ts): the
@@ -189,20 +189,8 @@ test.describe('Add project flow', () => {
       page.locator('[data-testid="toast"]').filter({ hasText: 'Could not open that project' }),
     ).toBeVisible({ timeout: 5000 });
 
-    // One-shot counts, not expect(...).toHaveCount(0): toasts auto-dismiss
-    // after their configured duration, so a retrying assertion would keep
-    // polling past that window and report "0" once a wrongly-shown git
-    // toast had already expired on its own, masking the bug this test
-    // exists to catch.
-    const gitCreatedToastCount = await page
-      .locator('[data-testid="toast"]')
-      .filter({ hasText: 'Started a git repo in this folder' })
-      .count();
-    expect(gitCreatedToastCount).toBe(0);
-    const gitFailedToastCount = await page
-      .locator('[data-testid="toast"]')
-      .filter({ hasText: 'Could not set up git here' })
-      .count();
-    expect(gitFailedToastCount).toBe(0);
+    // One-shot counts, not toHaveCount(0) - see toastCountRightNow.
+    expect(await toastCountRightNow(page, 'Started a git repo in this folder')).toBe(0);
+    expect(await toastCountRightNow(page, 'Could not set up git here')).toBe(0);
   });
 });

@@ -21,7 +21,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -169,9 +169,11 @@ test.describe('spawn stall: waiting label + notification', () => {
       // Enter the preparing state -> arms the 8s stall timer.
       await seedSpawnProgress(page, TASK_ID, 'Waiting...');
 
-      // No toast before the threshold.
+      // No toast before the threshold. One-shot count, not toHaveCount(0) - see
+      // toastCountRightNow. The fake clock happens to mask that trap here, but
+      // relying on it would break silently if the clock were ever dropped.
       await page.clock.fastForward(STALL_THRESHOLD_MS - 1000);
-      await expect(page.getByTestId('toast')).toHaveCount(0);
+      expect(await toastCountRightNow(page)).toBe(0);
 
       // Cross the threshold -> the stall toast fires.
       await page.clock.fastForward(1200);
@@ -201,7 +203,7 @@ test.describe('spawn stall: waiting label + notification', () => {
 
       // Past the threshold: the gate is off, so no toast appears.
       await page.clock.fastForward(STALL_THRESHOLD_MS + 1000);
-      await expect(page.getByTestId('toast')).toHaveCount(0);
+      expect(await toastCountRightNow(page)).toBe(0);
     } finally {
       await browser.close();
     }
@@ -228,8 +230,7 @@ test.describe('spawn stall: waiting label + notification', () => {
       await page.clock.fastForward(STALL_THRESHOLD_MS + 2000);
 
       // No toast should appear: the wrong-project gate blocked it.
-      // (Intentional fixed wait - we cannot poll for non-occurrence.)
-      await expect(page.getByTestId('toast')).toHaveCount(0);
+      expect(await toastCountRightNow(page)).toBe(0);
     } finally {
       await browser.close();
     }

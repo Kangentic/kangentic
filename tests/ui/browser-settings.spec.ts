@@ -11,7 +11,7 @@
  * both describe blocks need the same Settings panel scaffold.
  */
 import { test, expect } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { launchPage, createProject, toastCountRightNow } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -68,11 +68,13 @@ test.describe('Browser settings tab', () => {
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('h3:has-text("Clear browser data?")')).toBeHidden();
 
-    // No toast should appear
-    await expect(page.getByTestId('toast')).toHaveCount(0);
-    // Button is back to idle (not disabled, label "Clear data")
+    // Button is back to idle (not disabled, label "Clear data"). This is the
+    // positive signal that the cancel path actually ran, so the no-toast check
+    // below is not just "nothing has happened yet".
     await expect(page.getByTestId('browser-clear-storage')).toBeEnabled();
     await expect(page.getByTestId('browser-clear-storage')).toContainText('Clear data');
+    // One-shot count, not toHaveCount(0) - see toastCountRightNow.
+    expect(await toastCountRightNow(page)).toBe(0);
     await closeSettings();
   });
 

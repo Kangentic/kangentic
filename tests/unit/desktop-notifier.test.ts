@@ -1,8 +1,8 @@
 /**
  * Unit tests for src/main/notifications/desktop-notifier.ts
  *
- * Covered: the idle/permission and crash triggers, the shared
- * (idle+crash) cooldown bucket keyed by sessionId, the focus/active-project
+ * Covered: the idle/permission and crash triggers, the per-trigger
+ * cooldown buckets keyed `<trigger>:<sessionId>`, the focus/active-project
  * suppression gate (including a destroyed/missing window counting as
  * unfocused - the behavior this notifier exists to preserve), title/body
  * assembly (including the Command Terminal transient-session case), the
@@ -195,15 +195,25 @@ describe('DesktopNotifier', () => {
     expect(showNotification).not.toHaveBeenCalled();
   });
 
-  it('idle and crash share ONE cooldown bucket keyed by sessionId', () => {
+  it('a crash is NOT suppressed by the same session\'s recent idle notification', () => {
     sessionManager.getSession.mockReturnValue(makeSession());
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
     expect(showNotification).toHaveBeenCalledTimes(1);
 
-    // A crash for the SAME session within the cooldown is suppressed -
-    // splitting this into two buckets would be a regression (see the plan's
-    // rationale for moving crash alongside idle).
+    // Idle and crash used to share one bucket keyed by the bare sessionId, so
+    // this crash was swallowed. An agent dying right after a turn is the
+    // ordinary shape of the bug: cooldown exists to stop ONE event repeating,
+    // not to let one event mask a different, more important one.
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(showNotification).toHaveBeenCalledTimes(2);
+    expect(showNotification.mock.calls[1][0].title).toContain('Session crashed');
+  });
+
+  it('each trigger still throttles its OWN repeats', () => {
+    sessionManager.getSession.mockReturnValue(makeSession());
+    buildNotifier();
+    sessionManager.emit('exit', 'sess-1', 1, false);
     sessionManager.emit('exit', 'sess-1', 1, false);
     expect(showNotification).toHaveBeenCalledTimes(1);
   });

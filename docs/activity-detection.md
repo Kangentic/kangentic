@@ -1,6 +1,6 @@
 # Activity Detection
 
-Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting user approval). This drives the task card spinner, the desktop "task done" notification, idle-timeout suspend, and auto-focus behavior.
+Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting user approval). This drives the task card spinner, the desktop "task done" notification, the in-app idle toast, idle-timeout suspend, and auto-focus behavior.
 
 ## Why this matters
 
@@ -98,8 +98,12 @@ Three top-level states:
 - **`idle`** - agent is truly done. Notification fires. Auto-focus / auto-suspend can act. The
   desktop notify decision (cooldown, focus gate, active-project gate, title assembly) is owned by
   `src/main/notifications/desktop-notifier.ts`, which listens to `SessionManager`'s own `activity`
-  event directly rather than a renderer round-trip.
-- **`permission`** - agent paused awaiting user approval. Distinct from `idle` so the UI can render a different affordance (lock icon vs idle dot).
+  event directly rather than a renderer round-trip. The in-app toast half lives in the renderer
+  (`src/renderer/utils/idle-toast.ts`) and fires on the opposite condition: the user is on this
+  project but is not already looking at that session's terminal. It is edge-triggered off the
+  previous state, because `session:activity` also carries reason-only refreshes that must not
+  retrigger it.
+- **`permission`** - agent paused awaiting user approval. Distinct from `idle` so the UI can render a different affordance (lock icon vs idle dot). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs.
 
 ## ActivityReason (discriminated union)
 

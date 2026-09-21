@@ -35,7 +35,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -638,19 +638,6 @@ test.describe('useAgentDrivenInvalidation - current project create renders the c
 // ---------------------------------------------------------------------------
 
 test.describe('useAgentDrivenInvalidation - task:sessionResync is a quiet reconcile', () => {
-  /**
-   * Snapshot the current toast count without Playwright's own assertion
-   * retry. `expect(locator).toHaveCount(0)` auto-retries for up to the
-   * expect timeout (default ~5s), and the mock config's toast
-   * `durationSeconds` is 4, so a wrongly-raised toast would auto-dismiss
-   * itself WITHIN that retry window and the assertion would report a false
-   * pass once it disappeared. A single un-retried `.count()` read is the
-   * only way to correctly assert "no toast right now".
-   */
-  async function toastCountRightNow(page: Page): Promise<number> {
-    return page.getByTestId('toast').count();
-  }
-
   test('same-project resync reloads the board and raises no toast', async () => {
     const { browser, page } = await launch();
 
@@ -748,11 +735,6 @@ test.describe('useAgentDrivenInvalidation - task:sessionResync is a quiet reconc
 // ---------------------------------------------------------------------------
 
 test.describe('useAgentDrivenInvalidation - task:prLinkChanged is a quiet reconcile', () => {
-  /** See the identical helper above: a retrying assertion false-passes here. */
-  async function toastCountRightNow(page: Page): Promise<number> {
-    return page.getByTestId('toast').count();
-  }
-
   test('same-project PR-link change reloads the board and raises no toast', async () => {
     const { browser, page } = await launch();
 
@@ -893,11 +875,6 @@ test.describe('useAgentDrivenInvalidation - task:prLinkChanged is a quiet reconc
 // ---------------------------------------------------------------------------
 
 test.describe('useAgentDrivenInvalidation - task:movedByMobile is a quiet invalidation', () => {
-  /** See the identical helper above: a retrying assertion false-passes here. */
-  async function toastCountRightNow(page: Page): Promise<number> {
-    return page.getByTestId('toast').count();
-  }
-
   test('same-project mobile move reloads the board and raises no toast', async () => {
     const { browser, page } = await launch();
 

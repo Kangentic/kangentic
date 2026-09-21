@@ -7,17 +7,28 @@
  * window is closed) - it listens to SessionManager's own 'activity' and
  * 'exit' events rather than an IPC round-trip through a live renderer.
  *
- * This is a structural move, not a redesign: it intentionally does NOT adopt
- * the mobile PushNotifier's edge-tracking or permission debounce. It stays
- * level-triggered on `requiresUserInteraction(state)`, matching the exact
- * renderer behavior it replaces.
+ * It arrived as a structural move rather than a redesign, and that still holds
+ * for the TRIGGER: it intentionally does NOT adopt the mobile PushNotifier's
+ * edge-tracking or permission debounce, and stays level-triggered on
+ * `requiresUserInteraction(state)`, matching the renderer behavior it replaced.
+ * The cooldown KEYING has since diverged deliberately; see below.
  *
- * Two triggers, sharing ONE cooldown bucket keyed by sessionId (matching the
- * renderer, which passed the bare sessionId as the cooldown key for both):
+ * (The renderer now raises an in-app toast for the same idle event, and that one
+ * IS edge-triggered, because it has no focus gate to hide a repeat behind. See
+ * `src/renderer/utils/idle-toast.ts`.)
+ *
+ * Two triggers, each with its OWN cooldown bucket:
  *
  * - `requiresUserInteraction(state)` true (idle or permission) with
  *   `desktop.onAgentIdle` enabled.
  * - A non-zero, non-intentional exit with `desktop.onAgentCrash` enabled.
+ *
+ * They shared one bucket keyed by the bare sessionId until 2026-09-21, ported
+ * verbatim from the renderer policy this replaced. That silently swallowed the
+ * more important of the two: a session that goes idle and then crashes within
+ * `cooldownSeconds` (10s by default) is the ordinary shape of an agent dying
+ * right after a turn, and the crash notification never fired. Cooldown exists to
+ * stop one event repeating, not to let one event mask a different one.
  *
  * Suppressed when the window is focused AND the session's project is the
  * active one. A destroyed/missing window counts as unfocused - that is the
@@ -42,8 +53,8 @@ export interface DesktopNotifierOptions {
 
 export class DesktopNotifier {
   private readonly options: DesktopNotifierOptions;
-  /** Last-notified wall-clock ms per sessionId - idle and crash intentionally
-   *  share one bucket, matching the renderer policy this replaces. */
+  /** Last-notified wall-clock ms, keyed `<trigger>:<sessionId>` so a crash is
+   *  never suppressed by this session's recent idle notification. */
   private readonly cooldowns = new Map<string, number>();
   private started = false;
   private disposed = false;
@@ -80,7 +91,7 @@ export class DesktopNotifier {
 
     const session = this.options.sessionManager.getSession(sessionId);
     if (!session) return;
-    if (!this.shouldNotify(sessionId, session.projectId)) return;
+    if (!this.shouldNotify(`idle:${sessionId}`, session.projectId)) return;
 
     const projectName = this.options.resolveProjectName(session.projectId) ?? 'A project';
     const taskTitle = session.transient ? undefined : this.options.resolveTaskTitle(session.projectId, session.taskId);
@@ -89,7 +100,7 @@ export class DesktopNotifier {
     const body = state === 'permission' ? `Needs permission: ${projectName}` : projectName;
     const clickTaskId = session.transient ? COMMAND_TERMINAL_NOTIFICATION_TASK_ID : session.taskId;
 
-    this.notify(sessionId, label, body, session.projectId, clickTaskId);
+    this.notify(`idle:${sessionId}`, label, body, session.projectId, clickTaskId);
   }
 
   private readonly onExit = (sessionId: string, exitCode: number, intentional?: boolean): void => {
@@ -112,13 +123,13 @@ export class DesktopNotifier {
     // Transient (Command Terminal) sessions are ephemeral - skip, matching the renderer.
     const session = this.options.sessionManager.getSession(sessionId);
     if (!session || session.transient) return;
-    if (!this.shouldNotify(sessionId, session.projectId)) return;
+    if (!this.shouldNotify(`crash:${sessionId}`, session.projectId)) return;
 
     const projectName = this.options.resolveProjectName(session.projectId) ?? 'A project';
     const taskTitle = this.options.resolveTaskTitle(session.projectId, session.taskId);
     const label = taskTitle ?? sessionId.slice(0, 8);
 
-    this.notify(sessionId, `Session crashed: ${label}`, projectName, session.projectId, session.taskId);
+    this.notify(`crash:${sessionId}`, `Session crashed: ${label}`, projectName, session.projectId, session.taskId);
   }
 
   /** Cooldown + focus/active-project suppression, ported verbatim from the renderer's shouldNotify. */
