@@ -4013,7 +4013,17 @@
       },
       onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
       getBoardProfiles: async function () { return mockBoardProfiles; },
-      setBoardProfiles: async function (profiles) { mockBoardProfiles = profiles; },
+      // window.__mockBoardProfilesSaveError makes the write reject, for a spec
+      // covering the failure path. It throws BEFORE assigning, deliberately:
+      // board-store's catch reloads via getBoardProfiles() before it toasts, so
+      // the last good array has to survive or the spec fails on a second,
+      // different error instead of the one under test.
+      setBoardProfiles: async function (profiles) {
+        if (window.__mockBoardProfilesSaveError) {
+          throw new Error(String(window.__mockBoardProfilesSaveError));
+        }
+        mockBoardProfiles = profiles;
+      },
       onBoardProfilesChanged: function (/* callback(projectId) */) { return noop; },
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
