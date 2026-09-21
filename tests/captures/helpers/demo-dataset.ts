@@ -253,6 +253,26 @@ export const DEMO_LANES_BY_PROJECT: Record<string, DemoLane[]> = {
 };
 
 /**
+ * The id the seed gives a column, from its project and its slug. Exported because a scene that
+ * patches a column names one, and a scene's `__mock*` seed gets none of the id validation a
+ * `tasks` or `sessions` patch gets (`tests/unit/scene-registry.test.ts`). A typo'd id fails
+ * SILENTLY in the worst way available here: the dialog still opens, the slot still reads "Add
+ * automation", the ready selector still resolves, and the alt written from that frame is wrong.
+ * The registry test resolves every seeded id through this function, so the formula has one home
+ * and the guard cannot drift from what the seed actually writes.
+ */
+export function demoLaneId(projectId: string, slug: string): string {
+  return `lane-${projectId.replace(/^proj-/, '')}-${slug}`;
+}
+
+/** Every column id the sample install seeds, for that guard. */
+export function demoLaneIds(): string[] {
+  return Object.entries(DEMO_LANES_BY_PROJECT).flatMap(
+    ([projectId, lanes]) => lanes.map((lane) => demoLaneId(projectId, lane.slug)),
+  );
+}
+
+/**
  * A label is coloured only when the colour changes what the reader does about it: something is
  * broken (red) or something is slow (amber). Everything else classifies the work rather than
  * flagging it, so it takes one muted slate and stays quiet.
@@ -463,8 +483,17 @@ export function buildDemoPreConfig(options: {
   const dataset = {
     groups: DEMO_GROUPS,
     projects: DEMO_PROJECTS,
-    lanesByProject: DEMO_LANES_BY_PROJECT,
-    tasks: DEMO_TASKS,
+    // Column ids are computed HERE, not in the applier below. The applier is generated JS text
+    // that cannot import anything, so a formula written there would be a second copy of
+    // `demoLaneId` and the guard that resolves a scene's seeded ids would drift from what the
+    // seed actually writes. Precomputing keeps it one function.
+    lanesByProject: Object.fromEntries(
+      Object.entries(DEMO_LANES_BY_PROJECT).map(([projectId, lanes]) => [
+        projectId,
+        lanes.map((lane) => ({ ...lane, id: demoLaneId(projectId, lane.slug) })),
+      ]),
+    ),
+    tasks: DEMO_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
     sessions: DEMO_SESSIONS,
     backlog: DEMO_BACKLOG,
     labelColors: DEMO_LABEL_COLORS,
@@ -542,6 +571,80 @@ export function buildDemoPreConfig(options: {
       // drag or click can add a session the way the main process would.
       var mockState = null;
 
+      // What sessions.getActivityStats() serves the Developer tab's activity debug overlay.
+      // Derived from the session's OWN seeded events and activity state, never authored: the
+      // overlay's whole job is to explain why the engine reports what it reports, and a panel of
+      // invented counters beside a real activity pill would be the one thing on this board that
+      // does not agree with itself.
+      //
+      // Most of the snapshot has a documented correct value here rather than a derived one, and
+      // that is not a shortcut. \`compensationCounters\` is "in a clean session, all eight fields
+      // read 0", and no seeded session has had a watchdog fire. \`recentPtyChunks\` is "empty in
+      // production builds where the recorder is dead-code-eliminated", which is the build this
+      // renderer IS. The background-shell and subagent counters are zero because no seeded
+      // session runs either.
+      //
+      // One field is a placeholder and is called out rather than faked: \`permissionAwaitedToolId\`
+      // wants the tool_use_id a PermissionRequest hook carried, and a recording keeps the agent's
+      // BYTES, not its hook payloads. Null is what the overlay shows for "not captured"; a
+      // plausible id would be the invention this comment exists to refuse.
+      function activityStatsFor(session) {
+        var events = session.events || [];
+        var last = events.length > 0 ? events[events.length - 1] : null;
+        var lastSignalAt = last ? now - last.minutesAgo * 60000 : null;
+        var thinking = session.activity === 'thinking';
+        var permission = session.activity === 'permission';
+        var needsUser = session.activity === 'idle' || permission;
+        var reason;
+        if (permission) reason = { kind: 'permission', since: lastSignalAt || now };
+        else if (thinking) reason = { kind: 'tool', pendingCount: 1, currentTool: last ? last.tool : null };
+        else reason = { kind: 'idle', since: lastSignalAt || now };
+        // One entry per seeded tool call, which is exactly the run the engine would have recorded,
+        // plus the step that parked the session when it is not still working.
+        var transitions = events.map(function (event) {
+          return {
+            ts: now - event.minutesAgo * 60000,
+            from: 'thinking', to: 'thinking', reasonKind: 'tool',
+            trigger: 'event:tool_start', counterDelta: 'tools +1',
+          };
+        });
+        if (needsUser && lastSignalAt !== null) {
+          transitions.push({
+            ts: lastSignalAt,
+            from: 'thinking', to: session.activity, reasonKind: permission ? 'permission' : 'idle',
+            trigger: permission ? 'event:permission' : 'event:idle',
+            counterDelta: permission ? 'permission yes' : 'turn no',
+          });
+        }
+        return {
+          sessionId: session.id,
+          activity: session.activity,
+          reason: reason,
+          pendingToolCount: thinking ? 1 : 0,
+          subagentDepth: 0,
+          backgroundShellIds: [],
+          anonymousBackgroundShellCount: 0,
+          exemptBackgroundShellIds: [],
+          turnActive: thinking,
+          permissionPending: permission,
+          permissionAwaitedToolId: null,
+          msSinceLastSignal: lastSignalAt === null ? null : now - lastSignalAt,
+          lastSignalAt: lastSignalAt,
+          lastPtyOutputAt: lastSignalAt,
+          msSincePtyOutput: lastSignalAt === null ? null : now - lastSignalAt,
+          pendingIdleArmed: false,
+          needsUserSince: needsUser ? lastSignalAt : null,
+          idleHintPending: false,
+          retryFailurePending: false,
+          recentTransitions: transitions.slice(-20),
+          compensationCounters: {
+            staleThinking: 0, bgShellHatch: 0, stuckPendingTools: 0, forceThinking: 0,
+            forceIdle: 0, unmatchedBgShellEnd: 0, ignoredInnerSubagentStop: 0, stuckSubagent: 0,
+          },
+          recentPtyChunks: [],
+        };
+      }
+
       // The trail a session has shown by a given moment of its replay: every line up to then,
       // keeping the newest few, which is exactly what MessageTrailTracker.merge pushes.
       function trailAt(sessionId, offsetMs) {
@@ -590,7 +693,7 @@ export function buildDemoPreConfig(options: {
           }
           (data.lanesByProject[project.id] || []).forEach(function (lane, index) {
             state.swimlanes.push({
-              id: 'lane-' + project.id.replace(/^proj-/, '') + '-' + lane.slug,
+              id: lane.id,
               projectId: project.id,
               name: lane.name, role: lane.role, color: lane.color, icon: lane.icon,
               is_archived: lane.is_archived, is_ghost: false,
@@ -605,7 +708,7 @@ export function buildDemoPreConfig(options: {
           var project = projectsById[task.projectId];
           var row = {
             id: task.id, projectId: task.projectId, display_id: task.display_id, title: task.title, description: task.description,
-            swimlane_id: 'lane-' + task.projectId.replace(/^proj-/, '') + '-' + task.lane, position: task.position,
+            swimlane_id: task.swimlane_id, position: task.position,
             agent: task.agent, session_id: task.session_id,
             worktree_path: task.worktree_folder ? project.path + worktreeSubpath + task.worktree_folder : null,
             worktree_folder: task.worktree_folder, branch_name: task.branch_name,
@@ -626,7 +729,10 @@ export function buildDemoPreConfig(options: {
             startedAt: minutesAgo(session.startedMinutesAgo), exitCode: null,
             transient: session.transient || false, branch: session.commandTerminalBranch || null,
           });
-          if (session.activity) state.activityCache[session.id] = session.activity;
+          if (session.activity) {
+            state.activityCache[session.id] = session.activity;
+            state.activityStatsCache[session.id] = activityStatsFor(session);
+          }
           // Seeded BEFORE the renderer mounts, not pushed after: syncSessions reconciles the store
           // against the getMessageTrails() snapshot, so a push-only seed would be dropped, and a
           // card would paint its description first and then flip.
