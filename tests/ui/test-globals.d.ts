@@ -46,6 +46,10 @@ declare global {
     __mockUpdateDownloadedListeners?: Array<(info: { version: string; releaseNotes: string }) => void>;
     /** Fires the update-downloaded push to every registered subscriber. Installed eagerly at mock-bootstrap time. */
     __mockFireUpdateDownloaded?: (info: { version: string; releaseNotes: string }) => void;
+    /** Subscribers registered via `updater.onUpdateBlocked`; fired by `__mockFireUpdateBlocked`. */
+    __mockUpdateBlockedListeners?: Array<(message: string) => void>;
+    /** Fires the update-blocked push (DESKTOP-1A) to every registered subscriber. Installed eagerly at mock-bootstrap time. */
+    __mockFireUpdateBlocked?: (message: string) => void;
 
     /** Subscribers registered via `notifications.onClicked`; fired by `__mockFireNotificationClicked`. */
     __mockNotificationClickListeners?: Array<(projectId: string, taskId: string) => void>;

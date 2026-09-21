@@ -846,6 +846,23 @@ export function App() {
       }));
     }
 
+    // This install cannot update itself until the user moves it - DESKTOP-1A,
+    // the macOS read-only-volume case. Main composes the whole sentence and
+    // latches it for the app's lifetime, so this toasts verbatim, same as
+    // onWriteFailed above. Persistent rather than timed: unlike a failed write,
+    // this does not resolve on its own, and the updater already uses a
+    // persistent toast for the other thing the user has to act on (see
+    // updater-store's no-release-notes branch).
+    if (window.electronAPI?.updater?.onUpdateBlocked) {
+      cleanups.push(window.electronAPI.updater.onUpdateBlocked((message) => {
+        useToastStore.getState().addToast({
+          message,
+          variant: 'warning',
+          duration: 0,
+        });
+      }));
+    }
+
     // A column's auto_command finished delivering. Main only pushes the
     // outcomes worth acting on (see `shouldNotify` in auto-command-outcome.ts),
     // so anything arriving here is either a real failure or a success that

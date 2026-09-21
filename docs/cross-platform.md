@@ -236,7 +236,9 @@ completes. See "Error Reporting" in [analytics.md](analytics.md) for the full me
 
 Auto-update via `electron-updater` runs on **all three platforms**. The guard in `src/main/updater.ts` checks `app.isPackaged` only, so the sole exclusion is dev mode.
 
-Linux is included because `electron-updater` ships `DebUpdater` / `RpmUpdater` and selects one via the `package-type` marker `electron-builder` writes into `resourcesPath` for every fpm target in its `supportsAutoUpdate` list. The one platform difference is `autoInstallOnAppQuit`, forced to `false` on Linux because the package manager always elevates and an auth prompt on the quit path is both confusing and race-prone. See [Linux auto-update](deployment.md#linux-auto-update).
+Linux is included because `electron-updater` ships `DebUpdater` / `RpmUpdater` and selects one via the `package-type` marker `electron-builder` writes into `resourcesPath` for every fpm target in its `supportsAutoUpdate` list. The one platform branch in `initUpdater` is `autoInstallOnAppQuit`, forced to `false` on Linux because the package manager always elevates and an auth prompt on the quit path is both confusing and race-prone. See [Linux auto-update](deployment.md#linux-auto-update).
+
+Two platform-specific FAILURES have no branch in that guard, because each is recognized by the error it produces rather than by `process.platform`. On Linux a denied elevation prompt is counted and never filed. On macOS an app running from a read-only volume cannot be written over, so it never updates; that one is also the single updater failure the app tells the user about. See [macOS read-only volumes](deployment.md#macos-read-only-volumes) and the "counted, not reported" entries in [analytics.md](analytics.md).
 
 Release notes are not gated by that guard either. The post-update "What's New" dialog reads notes inlined into the renderer bundle at build time, so it works for every install route: an `npx kangentic` upgrade and a manual installer run both surface it on the next launch. See [Auto-Update Behavior](deployment.md#auto-update-behavior).
 

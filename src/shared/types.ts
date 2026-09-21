@@ -5936,6 +5936,13 @@ export interface ElectronAPI {
     checkForUpdate: () => Promise<void>;
     installUpdate: () => Promise<void>;
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
+    /**
+     * This install cannot update itself until the user moves it (DESKTOP-1A).
+     * Carries the whole sentence to toast: main composes and latches it, so the
+     * renderer neither formats nor deduplicates. The updater's only other push
+     * is `onUpdateDownloaded`; ordinary update failures stay silent.
+     */
+    onUpdateBlocked: (callback: (message: string) => void) => () => void;
   };
 
   // Host memory pressure (Sentry DESKTOP-16): a push-only notification, no

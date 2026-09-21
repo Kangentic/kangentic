@@ -25,6 +25,9 @@ import {
   isTransientUpdaterError,
   hasTransientNetworkCause,
   isElevationDeniedError,
+  isReadOnlyVolumeError,
+  isResourceUnavailableError,
+  isPrereleaseWithNoMatchingRelease,
 } from '../../src/main/updater';
 
 /**
@@ -39,6 +42,34 @@ const DESKTOP_F_MESSAGE = [
   '"method: GET url: https://github.com/Kangentic/kangentic/releases/tag/v0.38.0\n',
   'Data:\n<html><body><h1>504 Gateway Time-out</h1>\n</body></html>"',
 ].join('');
+
+/**
+ * DESKTOP-1A, copied verbatim from the Sentry event rather than trimmed to the
+ * sentence the pattern matches. Squirrel.Mac appends a recovery suggestion, and
+ * keeping it here is what proves the predicate survives that tail.
+ */
+const DESKTOP_1A_MESSAGE = [
+  'Cannot update while running on a read-only volume.',
+  ' The application is on a read-only volume.',
+  ' Please move the application and try again.',
+  " If you're on macOS Sierra or later, you'll need to move the application",
+  ' out of the Downloads directory.',
+  ' See https://github.com/Squirrel/Squirrel.Mac/issues/182 for more information.',
+].join('');
+
+/**
+ * DESKTOP-1B, verbatim. The apostrophe is U+2019, which is exactly why the
+ * predicate matches the strerror half and not this NSError boilerplate: a
+ * fixture may carry the character, a source pattern should not have to.
+ */
+const DESKTOP_1B_MESSAGE =
+  'The operation couldn’t be completed. Resource temporarily unavailable';
+
+/** DESKTOP-17, verbatim. The provider writes exactly this, with no detail. */
+const DESKTOP_17_MESSAGE = 'No published versions on GitHub';
+
+/** The release DESKTOP-17 arrived from, prerelease component and all. */
+const PRERELEASE_VERSION = '0.41.0-dev.1';
 
 type ErrorShape = { code?: string; message?: string };
 
@@ -473,6 +504,169 @@ describe('isElevationDeniedError', () => {
   });
 });
 
+describe('isReadOnlyVolumeError', () => {
+  it('matches the production DESKTOP-1A message', () => {
+    expect(isReadOnlyVolumeError(makeError({ message: DESKTOP_1A_MESSAGE }))).toBe(true);
+  });
+
+  it('matches the leading sentence without the recovery suggestion', () => {
+    // Squirrel's tail names Downloads, Sierra and a URL, none of which
+    // identifies the condition. Losing it must not lose the match.
+    expect(isReadOnlyVolumeError(makeError({
+      message: 'Cannot update while running on a read-only volume.',
+    }))).toBe(true);
+  });
+
+  it('needs no code, since the error arrives from Squirrel with none', () => {
+    const error = makeError({ message: DESKTOP_1A_MESSAGE });
+    expect((error as NodeJS.ErrnoException).code).toBeUndefined();
+    expect(isReadOnlyVolumeError(error)).toBe(true);
+  });
+
+  it.each([
+    ['a genuine install failure', 'Command pkexec exited with code 1'],
+    ['a read-only DATA directory, which is a different bug', 'EROFS: read-only file system'],
+    ['an empty message', ''],
+  ])('does not claim %s', (_label, message) => {
+    expect(isReadOnlyVolumeError(makeError({ message }))).toBe(false);
+  });
+
+  it('does not claim the other two new conditions', () => {
+    expect(isReadOnlyVolumeError(makeError({ message: DESKTOP_1B_MESSAGE }))).toBe(false);
+    expect(isReadOnlyVolumeError(makeError({ message: DESKTOP_17_MESSAGE }))).toBe(false);
+  });
+
+  it('is not claimed by the classifiers that already ran', () => {
+    // The gate order only holds if the earlier predicates pass this through.
+    const error = makeError({ message: DESKTOP_1A_MESSAGE });
+    expect(isTransientUpdaterError(error)).toBe(false);
+    expect(hasTransientNetworkCause(error)).toBe(false);
+    expect(isElevationDeniedError(error)).toBe(false);
+  });
+});
+
+describe('isResourceUnavailableError', () => {
+  it('matches the production DESKTOP-1B message', () => {
+    expect(isResourceUnavailableError(makeError({ message: DESKTOP_1B_MESSAGE }))).toBe(true);
+  });
+
+  it('matches on the strerror half alone, with no NSError boilerplate', () => {
+    expect(isResourceUnavailableError(makeError({
+      message: 'Resource temporarily unavailable',
+    }))).toBe(true);
+  });
+
+  it('does not depend on the U+2019 apostrophe', () => {
+    // The whole reason the pattern ignores the first sentence: macOS could
+    // render it with a straight quote, or localize it away entirely.
+    expect(isResourceUnavailableError(makeError({
+      message: "The operation couldn't be completed. Resource temporarily unavailable",
+    }))).toBe(true);
+  });
+
+  it.each([
+    ['a different NSError with the same boilerplate', 'The operation couldn’t be completed. No such file or directory'],
+    ['an empty message', ''],
+  ])('does not claim %s', (_label, message) => {
+    expect(isResourceUnavailableError(makeError({ message }))).toBe(false);
+  });
+
+  it('does not claim the other two new conditions', () => {
+    expect(isResourceUnavailableError(makeError({ message: DESKTOP_1A_MESSAGE }))).toBe(false);
+    expect(isResourceUnavailableError(makeError({ message: DESKTOP_17_MESSAGE }))).toBe(false);
+  });
+
+  it('is not claimed by the classifiers that already ran', () => {
+    const error = makeError({ message: DESKTOP_1B_MESSAGE });
+    expect(isTransientUpdaterError(error)).toBe(false);
+    expect(hasTransientNetworkCause(error)).toBe(false);
+    expect(isElevationDeniedError(error)).toBe(false);
+  });
+});
+
+describe('isPrereleaseWithNoMatchingRelease', () => {
+  it('matches the production DESKTOP-17 error, by code', () => {
+    expect(isPrereleaseWithNoMatchingRelease(
+      makeError({ code: 'ERR_UPDATER_NO_PUBLISHED_VERSIONS', message: DESKTOP_17_MESSAGE }),
+      PRERELEASE_VERSION,
+    )).toBe(true);
+  });
+
+  it('matches by phrase when the code is lost between the throw and the emit', () => {
+    // The disjunction exists so the predicate cannot go blind in production
+    // while every test that sets `code` by hand keeps passing.
+    expect(isPrereleaseWithNoMatchingRelease(
+      makeError({ message: DESKTOP_17_MESSAGE }),
+      PRERELEASE_VERSION,
+    )).toBe(true);
+  });
+
+  it.each([
+    '0.41.0-dev.1',
+    '0.42.0-alpha.3',
+    '1.0.0-beta',
+    '0.41.0-0',
+  ])('treats %s as a prerelease build', (version) => {
+    expect(isPrereleaseWithNoMatchingRelease(
+      makeError({ code: 'ERR_UPDATER_NO_PUBLISHED_VERSIONS' }),
+      version,
+    )).toBe(true);
+  });
+
+  /**
+   * The conjunct's whole reason for existing. GitHubProvider throws this same
+   * sentence from two places: the tag-is-null throw, which carries the code and
+   * needs allowPrerelease, and the feed's own entry lookup, which throws it
+   * codeless when the Atom feed has no entries at all. On a stable build the
+   * second means our releases feed is empty, which is a real failure. Drop the
+   * version check and that failure disappears from the issue stream with it.
+   */
+  describe('a STABLE build seeing the same error still reports', () => {
+    it.each([
+      ['0.42.0', 'a plain release'],
+      ['1.0.0', 'a major'],
+      ['0.42.0+build.7', 'build metadata, which is not a prerelease'],
+    ])('%s (%s)', (version) => {
+      expect(isPrereleaseWithNoMatchingRelease(
+        makeError({ code: 'ERR_UPDATER_NO_PUBLISHED_VERSIONS', message: DESKTOP_17_MESSAGE }),
+        version,
+      )).toBe(false);
+      expect(isPrereleaseWithNoMatchingRelease(
+        makeError({ message: DESKTOP_17_MESSAGE }),
+        version,
+      )).toBe(false);
+    });
+  });
+
+  it('does not claim an unrelated failure just because the build is prerelease', () => {
+    expect(isPrereleaseWithNoMatchingRelease(
+      makeError({ code: 'ERR_UPDATER_INVALID_RELEASE_FEED', message: DESKTOP_F_MESSAGE }),
+      PRERELEASE_VERSION,
+    )).toBe(false);
+  });
+
+  it('does not claim the other two new conditions', () => {
+    expect(isPrereleaseWithNoMatchingRelease(
+      makeError({ message: DESKTOP_1A_MESSAGE }), PRERELEASE_VERSION,
+    )).toBe(false);
+    expect(isPrereleaseWithNoMatchingRelease(
+      makeError({ message: DESKTOP_1B_MESSAGE }), PRERELEASE_VERSION,
+    )).toBe(false);
+  });
+
+  it('is not claimed by the classifiers that already ran', () => {
+    const error = makeError({
+      code: 'ERR_UPDATER_NO_PUBLISHED_VERSIONS',
+      message: DESKTOP_17_MESSAGE,
+    });
+    expect(isTransientUpdaterError(error)).toBe(false);
+    // Worth pinning rather than assuming: the message says "on GitHub", which
+    // is a near miss for FEED_WRAPPER_PHRASES' "latest version on GitHub".
+    expect(hasTransientNetworkCause(error)).toBe(false);
+    expect(isElevationDeniedError(error)).toBe(false);
+  });
+});
+
 /**
  * isElevationDeniedError matches a third-party message template by hand, so it
  * goes quietly blind if electron-updater rewords that template or grows a new
@@ -516,5 +710,90 @@ describe('against the installed electron-updater source', () => {
     // the same reason as above: the compiled output's quote style is not a
     // semantic change.
     expect(linuxUpdaterSource).toMatch(/return ['"]sudo['"]/);
+  });
+
+  it('still throws the no-published-versions error the DESKTOP-17 gate matches', () => {
+    const gitHubProviderSource = fs.readFileSync(
+      path.join(updaterOutDir, 'providers', 'GitHubProvider.js'),
+      'utf-8',
+    );
+    // Both throw sites, because the predicate's prerelease conjunct exists
+    // precisely to tell them apart. If either is reworded or the code is
+    // renamed, the gate goes blind and this goes red instead.
+    expect(gitHubProviderSource).toContain('No published versions on GitHub');
+    expect(gitHubProviderSource).toContain('ERR_UPDATER_NO_PUBLISHED_VERSIONS');
+  });
+
+  it('still derives allowPrerelease from the running version', () => {
+    // The predicate reads the app's own version as a proxy for the branch
+    // GitHubProvider will take. That proxy holds only while AppUpdater keeps
+    // setting allowPrerelease from the current version's prerelease
+    // components; if upstream makes it an explicit option instead, a stable
+    // build could reach the coded throw and the conjunct would wrongly
+    // suppress it.
+    const appUpdaterSource = fs.readFileSync(
+      path.join(updaterOutDir, 'AppUpdater.js'),
+      'utf-8',
+    );
+    expect(appUpdaterSource).toMatch(
+      /this\.allowPrerelease = hasPrereleaseComponents\(currentVersion\)/,
+    );
+  });
+});
+
+/**
+ * The two macOS predicates get no such guard, and this names that rather than
+ * leaving it to read as an oversight.
+ *
+ * isReadOnlyVolumeError and isResourceUnavailableError both match strings that
+ * have no source in node_modules to read. Squirrel.Mac is compiled into
+ * Electron's framework binary, and `Resource temporarily unavailable` is
+ * macOS's own strerror text reached through NSError. There is nothing on disk
+ * for a drift test to assert against, so an upstream reword of either would go
+ * unnoticed until the issue reappeared in Sentry. Accepted: both errors are
+ * already suppressed on their message alone because they arrive with no code,
+ * no cause and no stack, so a reword costs a rediscovery rather than a
+ * regression, and the failure mode is an issue coming back, not one being
+ * silently swallowed.
+ */
+describe('the macOS predicates have no upstream source to pin', () => {
+  const macUpdaterSource = fs.readFileSync(
+    path.join(path.dirname(requireFromTest.resolve('electron-updater')), 'MacUpdater.js'),
+    'utf-8',
+  );
+
+  it('confirms electron-updater only forwards them, so nothing here throws them', () => {
+    // The forward itself IS assertable, and it is what makes these errors
+    // reach our handler at all. If MacUpdater stops re-emitting the native
+    // updater's errors, both gates become dead code.
+    expect(macUpdaterSource).toMatch(/nativeUpdater\.on\(["']error["']/);
+    expect(macUpdaterSource).not.toContain('read-only volume');
+    expect(macUpdaterSource).not.toContain('Resource temporarily unavailable');
+  });
+
+  /**
+   * The read-only error arrives on the DOWNLOAD path, and gate 1 of our error
+   * handler swallows anything that lands while a retry is in flight. It only
+   * escapes because the forward is registered in MacUpdater's CONSTRUCTOR,
+   * while the `once("error", reject)` that eventually sets our downloadRetrying
+   * flag is registered later, inside doDownloadUpdate. Constructor-first means
+   * our listener runs on the emit, before the rejection has propagated.
+   *
+   * The wiring test in updater-retry.test.ts hand-writes emit-then-reject, so
+   * it proves our handler behaves correctly GIVEN that order. This is the half
+   * that checks the order is upstream's and not our assumption about it.
+   */
+  it('registers its error forward in the constructor, before doDownloadUpdate reject', () => {
+    const forwardIndex = macUpdaterSource.search(/nativeUpdater\.on\(["']error["']/);
+    const downloadIndex = macUpdaterSource.indexOf('async doDownloadUpdate');
+    const rejectIndex = macUpdaterSource.search(/nativeUpdater\.once\(["']error["']/);
+
+    expect(forwardIndex).toBeGreaterThan(-1);
+    expect(downloadIndex).toBeGreaterThan(-1);
+    expect(rejectIndex).toBeGreaterThan(-1);
+    // Constructor body precedes the method, and the method precedes its own
+    // once(). Both orderings are what make the forward win the first emit.
+    expect(forwardIndex).toBeLessThan(downloadIndex);
+    expect(downloadIndex).toBeLessThan(rejectIndex);
   });
 });

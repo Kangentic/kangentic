@@ -538,6 +538,16 @@
     listeners.forEach(function (fn) { fn(info); });
   };
 
+  // Update-blocked test hooks (Sentry DESKTOP-1A), same eager pattern as the
+  // update-downloaded hooks above. Main latches this push, so a spec that
+  // wants the "already toasted" case fires once and asserts on the toast
+  // count rather than expecting the mock to deduplicate.
+  window.__mockUpdateBlockedListeners = [];
+  window.__mockFireUpdateBlocked = function (message) {
+    var listeners = window.__mockUpdateBlockedListeners.slice();
+    listeners.forEach(function (fn) { fn(message); });
+  };
+
   // Host memory pressure test hooks (Sentry DESKTOP-16), same eager pattern
   // as the update-downloaded hooks above: `__mockFireHostMemoryPressure`
   // exists before any renderer subscriber has registered.
@@ -4063,6 +4073,17 @@
         window.__mockUpdateDownloadedListeners.push(callback);
         return function () {
           var listeners = window.__mockUpdateDownloadedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onUpdateBlocked: function (callback) {
+        // Fired via `window.__mockFireUpdateBlocked('<sentence>')`; the
+        // listener array and the fire hook are installed eagerly at
+        // mock-bootstrap time (see top of file), not lazily here.
+        window.__mockUpdateBlockedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockUpdateBlockedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
