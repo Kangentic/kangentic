@@ -1,5 +1,5 @@
 import { browserPaneRegistry, type BrowserPaneEntry, type PaneUnregisterReason } from './browser-pane-registry';
-import { openLane, destroyHandoffLanesForTask, hasHandoffLaneForTask } from './browser-lane-manager';
+import { openLane, destroyLanesForTask, hasLaneForTask } from './browser-lane-manager';
 import { isShuttingDown } from '../shutdown-state';
 
 /**
@@ -30,12 +30,13 @@ import { isShuttingDown } from '../shutdown-state';
  *
  * When a user-visible pane unmounts while its task still has a live agent session,
  * main opens an offscreen LANE at the same URL and registers it under a NEW
- * `lane_` handle for the same task. An agent that omits `sessionId` resolves
- * to it through the ordinary caller-task rule, which ranks a hand-off lane
- * right behind the visible pane. An agent holding the old `pane_` handle is
- * told the truth instead of being retargeted: that handle now returns
- * `surface-gone`, naming the lane and saying that per-tab state did not carry
- * over (the lane is a fresh document in the same cookie jar).
+ * `lane_` handle for the same task. This is the task's SAME one surface in its
+ * offscreen form, not a second one. An agent that omits `sessionId` resolves to
+ * it through the ordinary caller-task rule, which ranks a lane right behind the
+ * visible pane. An agent holding the old `pane_` handle is told the truth
+ * instead of being retargeted: that handle now returns `surface-gone`, naming
+ * the lane and saying that per-tab state did not carry over (the lane is a
+ * fresh document in the same cookie jar).
  *
  * The user's close is still honoured: the window really closes and its renderer
  * surface really goes away. What survives is a headless browser the agent owns.
@@ -44,16 +45,18 @@ import { isShuttingDown } from '../shutdown-state';
  * agent just asked to close would be the same class of surprise this file
  * exists to prevent.
  *
- * ## Standing down
+ * ## Reclaim
  *
- * When the user reopens that task's Browser pane, the hand-off lane is
+ * When the user reopens that task's Browser pane, the offscreen surface is
  * destroyed. Two surfaces for one task would otherwise make every implicit call
  * ambiguous (`multiple-panes`), and the visible pane is the better answer
- * whenever it exists - the user can see it.
+ * whenever it exists - the user can see it, and every supervision guard (the
+ * veil, the ring, the label, the pointer block) lives on it.
  *
- * Only AUTO-CREATED hand-off lanes stand down that way. A lane the agent asked
- * for with `isolated: true` is its own working surface and is never touched
- * here.
+ * Every lane is reclaimed that way, with no exception, because a task has
+ * exactly one surface. There used to be one: a lane the agent asked for with
+ * `isolated: true` was its own working surface and was never touched here. That
+ * argument came out with the parameter - see `browser-lane-manager.ts`.
  */
 
 export interface LaneHandoffDependencies {
@@ -94,7 +97,7 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason, del
   if (!entry.url) return;
   if (!entry.projectId) return;
   if (!dependencies.hasLiveSession(entry.taskId)) return;
-  if (hasHandoffLaneForTask(entry.taskId)) return;
+  if (hasLaneForTask(entry.taskId)) return;
 
   // `entry.projectId` and not the ambient current project: the pane may well be
   // closing while a DIFFERENT project is open (a retained pane survives a
@@ -106,7 +109,6 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason, del
     // Owned by the pane's session, so it dies with the agent it serves.
     ownerSessionId: entry.ownerSessionId ?? undefined,
     url: entry.url,
-    handoff: true,
   })
     .then((result) => {
       if (result.ok) {
@@ -124,14 +126,15 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason, del
 }
 
 function onPaneRegistered(entry: BrowserPaneEntry): void {
-  // The user's own pane is back, so the stand-in is no longer the best answer -
-  // and keeping both would make every implicit call ambiguous.
+  // The user's own pane is back, so the offscreen form of this task's surface
+  // is no longer the answer - and keeping both would make every implicit call
+  // ambiguous.
   if (entry.kind === 'lane') return;
-  const destroyed = destroyHandoffLanesForTask(entry.taskId);
+  const destroyed = destroyLanesForTask(entry.taskId);
   if (destroyed > 0) {
     console.log(
-      `[browser-pane] handoff ended task=${entry.taskId.slice(0, 8)} ` +
-        `(${destroyed} lane(s) closed, the visible pane is back)`,
+      `[browser-pane] reclaimed task=${entry.taskId.slice(0, 8)} ` +
+        `(offscreen surface closed, the visible pane is back)`,
     );
   }
 }

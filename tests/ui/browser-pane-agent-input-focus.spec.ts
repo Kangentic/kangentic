@@ -484,54 +484,364 @@ test.describe('agent input focus guard', () => {
  * The VISIBLE signal, which is the actual answer to "the agent stole my focus".
  *
  * Interacting with a page means clicking it, and a click gives the guest real
- * keyboard focus - so the focus move cannot be designed away, and every attempt
- * to hide it put keystrokes on the wrong side. It is SHOWN instead: the terminal
- * dims and the pane is marked, so the user can see where their typing will land
- * rather than discovering it afterwards. The routing above stays as the safety
- * net for anyone who types anyway.
+ * keyboard focus, so the focus move cannot be designed away. It is SHOWN
+ * instead - but on the PAGE, not on the terminal. Main intercepts every keyDown
+ * at the guest and writes it to the terminal, so the terminal is the surface
+ * that still works and the page is the one that cannot take a keystroke. The
+ * veil, the accent border and the label all mark the page.
+ *
+ * Every assertion here has to wait out `AGENT_DRIVE_VEIL_GRACE_MS`: the raw
+ * router signal is up for about half a second on a single click, and the cue
+ * deliberately paints nothing for a drive that short.
  */
 test.describe('an agent drive is visible', () => {
-  test('marks the pane, and un-marks it when the drive ends', async () => {
+  const veil = (page: Page) => page.locator('[data-testid="browser-agent-driving"]');
+
+  /**
+   * Put the veil back to rest before a test that needs a false baseline.
+   *
+   * The run closes `AGENT_DRIVE_VEIL_LINK_MS` (5s) after the last burst, which
+   * is correct for the product and long enough to leak across tests sharing
+   * one page. The timeout has to clear that window, so it is explicit rather
+   * than Playwright's 5s default, which would race it.
+   */
+  async function settleIdle(page: Page) {
+    await page
+      .evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID)
+      .catch(() => {});
+    if (await veil(page).count()) {
+      await expect(veil(page)).toHaveAttribute('data-driving', 'false', { timeout: 8000 });
+    }
+  }
+
+  /** End a test without leaving the run open for the next one. */
+  const releaseDrive = (page: Page) =>
+    page.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID);
+
+  /** One agent call: the guest is held briefly, then released. */
+  async function oneCall(page: Page) {
+    await page.evaluate((guestId) => {
+      window.__mockBrowser?.emitAgentInput(guestId, true);
+      setTimeout(() => window.__mockBrowser?.emitAgentInput(guestId, false), 120);
+    }, GUEST_ID);
+    await page.waitForTimeout(220);
+  }
+
+  test('marks the pane on the FIRST call, with no threshold to cross', async () => {
+    // Show as soon as possible is a requirement in its own right, not a
+    // nicety: the pointer block engages on this same call, and a page that
+    // stops accepting clicks with nothing on screen explaining it is worse
+    // than a brief mark.
+    //
+    // An earlier cut waited for the second burst and so trailed the agent by
+    // a whole inter-call gap (median 1.6s). It was solving the wrong problem:
+    // the reported flicker was one cue strobing 27 times across a single
+    // piece of work, which the link window cures, not a cue appearing once.
     await openPaneWithGuest(sharedPage);
-    await expect(sharedPage.locator('[data-testid="browser-agent-driving"]')).toHaveCount(0);
+    await settleIdle(sharedPage);
 
     await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
-    await expect(sharedPage.locator('[data-testid="browser-agent-driving"]')).toBeVisible();
 
-    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID);
-    await expect(sharedPage.locator('[data-testid="browser-agent-driving"]')).toHaveCount(0);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+    await expect(veil(sharedPage)).toBeVisible();
+    await releaseDrive(sharedPage);
+  });
+
+  test('stays up across the gap between calls, instead of blinking per call', async () => {
+    // The failure this replaces: at the router's cadence a 27-call run painted
+    // 27 times. Gaps between calls are model latency, around 1.1 to 4.4s, and
+    // the veil must ride straight over them.
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+    await oneCall(sharedPage);
+    await oneCall(sharedPage);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+
+    const wentDown = await sharedPage.evaluate(() => {
+      const element = document.querySelector('[data-testid="browser-agent-driving"]');
+      if (!element) throw new Error('veil element not found');
+      return new Promise<boolean>((resolve) => {
+        let dropped = false;
+        const observer = new MutationObserver(() => {
+          if (element.getAttribute('data-driving') === 'false') dropped = true;
+        });
+        observer.observe(element, { attributes: true, attributeFilter: ['data-driving'] });
+        setTimeout(() => { observer.disconnect(); resolve(dropped); }, 1800);
+      });
+    });
+
+    expect(wentDown).toBe(false);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+    await releaseDrive(sharedPage);
+  });
+
+  test('a run of calls produces exactly ONE on and ONE off, never a strobe', async () => {
+    // This is the anti-flicker invariant now that there is no open threshold.
+    // The reported annoyance was one cue strobing across a single piece of
+    // work - a 27-call verification flashing 27 times - so what has to be
+    // guarded is the COUNT of transitions, not whether a brief appearance can
+    // happen at all.
+    //
+    // Counted with an observer rather than sampled, because a strobe and a
+    // steady hold look identical at the end: both finish `true`.
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+
+    const transitions = await sharedPage.evaluate((guestId) => {
+      const element = document.querySelector('[data-testid="browser-agent-driving"]');
+      if (!element) throw new Error('veil element not found');
+      const seen: string[] = [];
+      const observer = new MutationObserver(() => {
+        const now = element.getAttribute('data-driving') ?? '';
+        if (seen[seen.length - 1] !== now) seen.push(now);
+      });
+      observer.observe(element, { attributes: true, attributeFilter: ['data-driving'] });
+
+      // Six calls with gaps well inside the link window, which is how a real
+      // verification arrives: ~300ms of work then ~1.6s of model latency.
+      let call = 0;
+      const fire = () => {
+        window.__mockBrowser?.emitAgentInput(guestId, true);
+        setTimeout(() => window.__mockBrowser?.emitAgentInput(guestId, false), 120);
+        if (++call < 6) setTimeout(fire, 700);
+      };
+      fire();
+
+      return new Promise<string[]>((resolve) => {
+        setTimeout(() => { observer.disconnect(); resolve(seen); }, 5200);
+      });
+    }, GUEST_ID);
+
+    // Up once at the first call, and still up at the end: the gaps were
+    // bridged rather than blinked through.
+    expect(transitions).toEqual(['true']);
+    await releaseDrive(sharedPage);
   });
 
   test('says it in words, not colour alone', async () => {
-    // "Why has my typing stopped appearing" is exactly the moment a colour cue is
-    // not enough, and colour alone is not readable by everyone.
+    // A veil on its own reads as loading, disabled or stale, and this is none
+    // of those. Colour alone is also not readable by everyone.
     await openPaneWithGuest(sharedPage);
     await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
 
-    await expect(sharedPage.locator('[data-testid="browser-agent-driving"]'))
-      .toContainText('Agent typing here');
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true', { timeout: 4000 });
+    await expect(veil(sharedPage)).toContainText('Agent is driving');
+    await releaseDrive(sharedPage);
+  });
+
+  test('the ring actually breathes, because the veil alone has no baseline', async () => {
+    // Reported from a live drive: "on a white background the dim isn't coming
+    // through". The veil WAS applied - a viewer cannot tell a veiled white page
+    // from a page that is simply grey, because they never see the two side by
+    // side. A tint needs a baseline; motion does not, so the motion is the
+    // primary cue and its absence is a real regression rather than a cosmetic
+    // one.
+    //
+    // Asserts the computed animation rather than the class, so a keyframe that
+    // is deleted, renamed or lost to the cascade fails here. The activity marks
+    // have been bitten by exactly that: an un-important override silently won
+    // and an indicator stopped moving for months.
+    await openPaneWithGuest(sharedPage);
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true', { timeout: 4000 });
+
+    const motion = await veil(sharedPage).evaluate((element) => {
+      const ring = element.querySelector('.kng-drive-pulse');
+      if (!ring) return null;
+      const style = getComputedStyle(ring);
+      return {
+        name: style.animationName,
+        durationMs: Math.round(parseFloat(style.animationDuration) * 1000),
+        iteration: style.animationIterationCount,
+      };
+    });
+
+    expect(motion).not.toBeNull();
+    expect(motion?.name).not.toBe('none');
+    expect(motion?.iteration).toBe('infinite');
+    // The activity marks' shared period: a driving pane must breathe in
+    // lockstep with every other "working" indicator rather than add a cadence.
+    expect(motion?.durationMs).toBe(1400);
+
+    // And it STOPS when the run does. An infinite opacity animation is ticked
+    // and composited even at `opacity: 0`, and this subtree lives for as long
+    // as the pane does in every open task window, so leaving it running would
+    // be a permanent background cost for a cue nobody is looking at.
+    await releaseDrive(sharedPage);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'false', { timeout: 8000 });
+    const atRest = await veil(sharedPage).evaluate(
+      (element) => element.querySelectorAll('.kng-drive-pulse').length,
+    );
+    expect(atRest).toBe(0);
+  });
+
+  test('blocks AND marks on the FIRST call, then releases the block with the agent', async () => {
+    // Both halves engage on the very first call. Neither may lag it: a click
+    // in that window races the agent for the page, and a page that stops
+    // accepting clicks with nothing on screen explaining it is worse than a
+    // brief mark. An earlier cut had both waiting for the second burst, which
+    // left a whole inter-call gap (median 1.6s) unguarded and unexplained.
+    //
+    // They share one envelope, which is a correction. The block briefly
+    // followed the RAW signal instead, on the reasoning that it should be
+    // exact while the mark could linger. Measured cadence killed that: a call
+    // holds the guest ~300ms out of every ~2s, so the raw signal is down for
+    // ~85% of a run and the page was clickable through every gap while the
+    // veil said otherwise. The gaps are the agent thinking about the page it
+    // is working on, so a click there races the next call just as much.
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+    const guest = sharedPage.locator('[data-testid="browser-webview"]');
+    const block = sharedPage.locator('[data-testid="browser-agent-blocking"]');
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
+
+    await expect(block).toHaveAttribute('data-blocking', 'true');
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+    expect(await guest.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+
+    // The gap between calls: the burst has ended but the run has not. BOTH
+    // stay engaged, because the agent is thinking about this page and will
+    // call again. This is the assertion that was red against the raw-signal
+    // version, and it is the reported bug.
+    await releaseDrive(sharedPage);
+    await sharedPage.waitForTimeout(900);
+    await expect(block).toHaveAttribute('data-blocking', 'true');
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+    expect(await guest.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+  });
+
+  test('swallows the pointer while driving, and gives it back afterwards', async () => {
+    // Blocking the mouse is a correctness fix, not just honesty about the
+    // veil. A click into the page is a gesture away from the guarded element,
+    // so the focus guard disarms and `restoreTarget` goes null - while main is
+    // still unconditionally preventDefaulting every keyDown at the guest. The
+    // user's typing then reached neither the page nor the terminal and was
+    // dropped in silence. With the pointer swallowed that state is
+    // unreachable.
+    //
+    // Both halves are asserted: the guest's OWN event capture has to go too,
+    // because a `<webview>` does not reliably honour CSS stacking and a scrim
+    // on top of it is not enough on its own.
+    //
+    // And the ANNOUNCEMENT layer must never take the pointer. It sits above
+    // the blocking layer, so if it ever captured, it would keep swallowing
+    // clicks through its 500ms fade after the block had already let go.
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+    const guest = sharedPage.locator('[data-testid="browser-webview"]');
+    const block = sharedPage.locator('[data-testid="browser-agent-blocking"]');
+    expect(await guest.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('auto');
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true', { timeout: 4000 });
+
+    expect(await block.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('auto');
+    expect(await veil(sharedPage).evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+    expect(await guest.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+
+    // And it is given back: a pane left inert after the run would be a far
+    // worse bug than the one this fixes.
+    await releaseDrive(sharedPage);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'false', { timeout: 8000 });
+    expect(await guest.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('auto');
+    expect(await block.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('none');
+  });
+
+  test('releases immediately when the user interrupts the agent', async () => {
+    // Reported from live use: cancelling mid-drive left the cue up. Waiting
+    // out the link window is always wrong here - it exists to bridge the model
+    // THINKING between two calls, and an interrupted agent is not thinking.
+    // With the pointer swallowed it also means the user is locked out of their
+    // own browser for seconds after pressing stop.
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+    await oneCall(sharedPage);
+    await oneCall(sharedPage);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+
+    // The interrupt: the agent stops and the TUI waits on the user. No
+    // `emitAgentInput(false)` here on purpose - main's own 400ms debounce has
+    // not even run yet, which is exactly the window being closed.
+    const releasedWithin = await sharedPage.evaluate((sessionId) => {
+      const element = document.querySelector('[data-testid="browser-agent-driving"]');
+      if (!element) throw new Error('veil element not found');
+      const startedAt = performance.now();
+      return new Promise<number>((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (element.getAttribute('data-driving') === 'false') {
+            observer.disconnect();
+            resolve(performance.now() - startedAt);
+          }
+        });
+        observer.observe(element, { attributes: true, attributeFilter: ['data-driving'] });
+        setTimeout(() => { observer.disconnect(); resolve(Number.POSITIVE_INFINITY); }, 3000);
+        window.__mockFireActivity?.(sessionId, 'idle', null);
+      });
+    }, SESSION_ID);
+
+    // Generous against CI scheduling, and still an order of magnitude under
+    // the 5s link window this is bypassing.
+    expect(releasedWithin).toBeLessThan(600);
+    expect(await sharedPage.locator('[data-testid="browser-webview"]')
+      .evaluate((element) => getComputedStyle(element).pointerEvents)).toBe('auto');
+
+    // And the FADE is short too, which is a separate thing from the state
+    // flip and is what "it still feels like it releases slowly" turned out to
+    // be: the pointer was already back while the veil spent half a second
+    // telling the user not to touch a page they could touch.
+    const fadeMs = await veil(sharedPage).evaluate(
+      (element) => parseFloat(getComputedStyle(element).transitionDuration) * 1000,
+    );
+    expect(fadeMs).toBeLessThanOrEqual(150);
+
+    await releaseDrive(sharedPage);
+  });
+
+  test('a run that winds down on its own keeps the slow fade', async () => {
+    // The converse, and the reason the exit is asymmetric rather than just
+    // faster. Nobody pressed anything here: the link window expired. A snap
+    // would read as the veil being abruptly gone rather than as an ending.
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+    await oneCall(sharedPage);
+    await oneCall(sharedPage);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+
+    await releaseDrive(sharedPage);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'false', { timeout: 8000 });
+
+    const fadeMs = await veil(sharedPage).evaluate(
+      (element) => parseFloat(getComputedStyle(element).transitionDuration) * 1000,
+    );
+    expect(fadeMs).toBe(500);
   });
 
   test('a drive for a DIFFERENT guest never marks this pane', async () => {
     // One window can host several panes; marking the wrong one sends the user
     // looking for a problem that is not theirs.
     await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
 
     await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId + 1, true), GUEST_ID);
 
-    await sharedPage.waitForTimeout(300);
-    await expect(sharedPage.locator('[data-testid="browser-agent-driving"]')).toHaveCount(0);
+    // Past the sustained threshold, so a leaked signal would have painted.
+    await sharedPage.waitForTimeout(1900);
+    await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'false');
   });
 });
 
 /**
- * The OTHER half of "the focus move is SHOWN, not hidden": the terminal side
- * of the split, in TaskDetailBody. The badge above lives inside BrowserPane
- * and is asserted there; this is the sibling assertion for the dimmed
- * terminal wrapper and the accented right-panel border that ride the same
- * `agentDrivingBrowser` flag one level up the tree.
+ * The split row's own half of the signal, in TaskDetailBody: the accent border
+ * on the pane, and the terminal that must NOT be touched.
+ *
+ * The terminal used to fade to 40% for the length of a drive. That was pointed
+ * at the wrong pane: main reroutes every keystroke back into this terminal, so
+ * it is the half that still works, and fading it while the inert half stayed
+ * bright said the opposite. The border rides the same shaped envelope as the
+ * pane's veil, so the two cannot drift apart.
  */
-test.describe('an agent drive dims the terminal side of the split', () => {
+test.describe('an agent drive marks the pane, not the terminal', () => {
   // Scoped to THIS task's own dialog, not a bare page-wide query: this file's
   // other describe block opens a second task-detail window (Victim Task) with
   // its own running session, which renders its own identically-testid'd dim
@@ -544,36 +854,56 @@ test.describe('an agent drive dims the terminal side of the split', () => {
     return page.locator('[data-testid="task-detail-dialog"]').filter({ hasText: 'Guard Task' }).first();
   }
 
-  test('dims the terminal wrapper and accents the right-panel border while driving, then reverts', async () => {
+  test('accents the right-panel border while driving, then reverts', async () => {
     await openPaneWithGuest(sharedPage);
 
-    const terminalDim = guardDialog(sharedPage).locator('[data-testid="task-detail-terminal-dim"]');
     const rightPanel = guardDialog(sharedPage).locator('[data-testid="task-detail-right-panel"]');
-    await expect(terminalDim).toHaveClass(/opacity-100/);
-    await expect(rightPanel).toHaveClass(/border-edge/);
+    await expect(rightPanel).toHaveClass(/border-edge/, { timeout: 8000 });
 
+    // A single held burst, so it opens on the sustained threshold rather than
+    // on a second call.
     await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
-    await expect(terminalDim).toHaveClass(/opacity-40/);
-    await expect(rightPanel).toHaveClass(/border-accent/);
+    await expect(rightPanel).toHaveClass(/border-accent/, { timeout: 4000 });
 
+    // The run closes `AGENT_DRIVE_VEIL_LINK_MS` (5s) after the burst ends, so
+    // this has to outlast Playwright's 5s default or it races the product.
     await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID);
-    await expect(terminalDim).toHaveClass(/opacity-100/);
-    await expect(rightPanel).toHaveClass(/border-edge/);
+    await expect(rightPanel).toHaveClass(/border-edge/, { timeout: 8000 });
   });
 
-  test('a drive for a DIFFERENT guest never dims this task\'s terminal', async () => {
+  test('leaves the terminal at full opacity throughout', async () => {
+    // Red-green against the old treatment: this reads opacity-40 the moment
+    // the dim comes back. The terminal keeps receiving the user's keystrokes
+    // during a drive, so fading it is describing the wrong half of the split.
+    await openPaneWithGuest(sharedPage);
+    await sharedPage
+      .evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID)
+      .catch(() => {});
+    const terminal = guardDialog(sharedPage).locator('[data-testid="task-detail-terminal-dim"]');
+
+    const before = await terminal.evaluate((element) => getComputedStyle(element).opacity);
+    expect(before).toBe('1');
+
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true), GUEST_ID);
+    await expect(guardDialog(sharedPage).locator('[data-testid="task-detail-right-panel"]'))
+      .toHaveClass(/border-accent/, { timeout: 4000 });
+
+    const during = await terminal.evaluate((element) => getComputedStyle(element).opacity);
+    expect(during).toBe('1');
+    await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, false), GUEST_ID);
+  });
+
+  test('a drive for a DIFFERENT guest never accents this task\'s border', async () => {
     await openPaneWithGuest(sharedPage);
 
     await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId + 1, true), GUEST_ID);
 
     // Intentional fixed wait, not a poll: cannot poll for non-occurrence (the
-    // wrapper already reads opacity-100 before any signal fires, so a poll for
+    // border already reads border-edge before any signal fires, so a poll for
     // that value would return immediately and prove nothing about a delayed
-    // dim). 300ms mirrors the sibling "different guest" checks above in this
-    // file.
-    await sharedPage.waitForTimeout(300);
-    await expect(guardDialog(sharedPage).locator('[data-testid="task-detail-terminal-dim"]'))
-      .toHaveClass(/opacity-100/);
+    // accent). Past the sustained threshold, so a leaked signal would have
+    // painted by now.
+    await sharedPage.waitForTimeout(1900);
     await expect(guardDialog(sharedPage).locator('[data-testid="task-detail-right-panel"]'))
       .toHaveClass(/border-edge/);
   });

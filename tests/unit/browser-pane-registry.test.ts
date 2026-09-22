@@ -30,6 +30,12 @@ import { webContents } from 'electron';
 import { detachDebugger, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
 import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { BrowserPaneRegistry, type RegisterSurfaceInput } from '../../src/main/browser/browser-pane-registry';
+import {
+  getViewportOverride,
+  rememberViewportOverride,
+  resetViewportOverrideStore,
+  type ViewportOverrideRecord,
+} from '../../src/main/browser/viewport-override-store';
 
 interface FakeGuest {
   id: number;
@@ -54,10 +60,11 @@ const REGISTER_A: RegisterSurfaceInput = { handle: 'pane_aaaaaaaa', ownerSession
 const REGISTER_B: RegisterSurfaceInput = { handle: 'pane_bbbbbbbb', ownerSessionId: 'sess-b', taskId: 'task-2', projectId: 'proj-1', webContentsId: 22, url: null };
 /** A pane in a DIFFERENT project, for the cross-project isolation cases. */
 const REGISTER_C: RegisterSurfaceInput = { handle: 'pane_cccccccc', ownerSessionId: 'sess-c', taskId: 'task-3', projectId: 'proj-2', webContentsId: 33, url: 'http://127.0.0.1:8099/admin' };
-/** A lane main stood up when task-1's window closed. */
-const HANDOFF_LANE: RegisterSurfaceInput = { handle: 'lane_11111111', ownerSessionId: 'sess-a', taskId: 'task-1', projectId: 'proj-1', webContentsId: 44, url: 'http://localhost:4200', kind: 'lane', handoff: true };
-/** A lane task-1's agent asked for with `isolated: true`. */
-const ISOLATED_LANE: RegisterSurfaceInput = { handle: 'lane_22222222', ownerSessionId: 'sess-a', taskId: 'task-1', projectId: 'proj-1', webContentsId: 55, url: 'http://localhost:4200', kind: 'lane' };
+/** The OFFSCREEN form of task-1's one surface, stood up when its window closed. */
+const OFFSCREEN_SURFACE: RegisterSurfaceInput = { handle: 'lane_11111111', ownerSessionId: 'sess-a', taskId: 'task-1', projectId: 'proj-1', webContentsId: 44, url: 'http://localhost:4200', kind: 'lane' };
+/** A SECOND offscreen surface for task-1. The lane manager refuses to create
+ *  one, so this exists only to pin what the resolver does if it ever sees two. */
+const SECOND_OFFSCREEN_SURFACE: RegisterSurfaceInput = { handle: 'lane_22222222', ownerSessionId: 'sess-a', taskId: 'task-1', projectId: 'proj-1', webContentsId: 55, url: 'http://localhost:4200', kind: 'lane' };
 
 describe('BrowserPaneRegistry', () => {
   let registry: BrowserPaneRegistry;
@@ -66,6 +73,7 @@ describe('BrowserPaneRegistry', () => {
     vi.clearAllMocks();
     vi.mocked(isDebuggerAttached).mockReturnValue(false);
     registry = new BrowserPaneRegistry();
+    resetViewportOverrideStore();
   });
 
   it('registers and gets a pane', () => {
@@ -74,7 +82,7 @@ describe('BrowserPaneRegistry', () => {
     expect(registry.get('pane_aaaaaaaa')?.taskId).toBe('task-1');
     expect(registry.get('pane_aaaaaaaa')?.ownerSessionId).toBe('sess-a');
     expect(registry.get('pane_aaaaaaaa')?.url).toBe('http://localhost:4200');
-    expect(registry.get('pane_aaaaaaaa')).toMatchObject({ kind: 'pane', handoff: false });
+    expect(registry.get('pane_aaaaaaaa')).toMatchObject({ kind: 'pane' });
   });
 
   /**
@@ -92,7 +100,7 @@ describe('BrowserPaneRegistry', () => {
     });
 
     it('does NOT fire for a lane registration (offscreen driver plumbing, not a user pane)', () => {
-      registry.register(ISOLATED_LANE);
+      registry.register(SECOND_OFFSCREEN_SURFACE);
       expect(vi.mocked(trackFeatureUsed)).not.toHaveBeenCalled();
     });
 
@@ -115,6 +123,58 @@ describe('BrowserPaneRegistry', () => {
   });
 
   /**
+   * `unregister()` also drops the guest's viewport-override-store entry
+   * (`forgetViewportOverride(entry.webContentsId)` in `forget()`), so the
+   * override map does not grow one dead entry per pane the user closes and
+   * reopens over a long session. The line runs on every unregister call in
+   * this whole suite; nothing asserted its effect before this.
+   */
+  describe('unregister forgets the guest viewport-override entry', () => {
+    function overrideRecordFor(sessionId: string | null): ViewportOverrideRecord {
+      return {
+        sessionId,
+        mechanism: 'device-emulation',
+        requested: { width: 1920, height: 1080 },
+        measured: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+        zoomBefore: 1,
+        appliedAt: new Date().toISOString(),
+      };
+    }
+
+    it('drops the override for the guest unregistered by handle', () => {
+      registry.register(REGISTER_A);
+      rememberViewportOverride(REGISTER_A.webContentsId, overrideRecordFor('sess-a'));
+      expect(getViewportOverride(REGISTER_A.webContentsId)).not.toBeNull();
+
+      registry.unregister('pane_aaaaaaaa');
+
+      expect(getViewportOverride(REGISTER_A.webContentsId)).toBeNull();
+    });
+
+    it('drops the override for the guest unregistered by webContentsId', () => {
+      registry.register(REGISTER_B);
+      rememberViewportOverride(REGISTER_B.webContentsId, overrideRecordFor('sess-b'));
+
+      registry.unregisterByWebContentsId(REGISTER_B.webContentsId);
+
+      expect(getViewportOverride(REGISTER_B.webContentsId)).toBeNull();
+    });
+
+    it('leaves a different guest override untouched', () => {
+      registry.register(REGISTER_A);
+      registry.register(REGISTER_B);
+      rememberViewportOverride(REGISTER_A.webContentsId, overrideRecordFor('sess-a'));
+      rememberViewportOverride(REGISTER_B.webContentsId, overrideRecordFor('sess-b'));
+
+      registry.unregister('pane_aaaaaaaa');
+
+      expect(getViewportOverride(REGISTER_A.webContentsId)).toBeNull();
+      expect(getViewportOverride(REGISTER_B.webContentsId)).not.toBeNull();
+    });
+  });
+
+  /**
    * Where a surface is on the user's screen is the agent's only way to know
    * whether the user can SEE what it is doing. The renderer is the only side
    * that knows, so the registry records what it is told and defaults sanely.
@@ -122,7 +182,7 @@ describe('BrowserPaneRegistry', () => {
   describe('visibility', () => {
     it('defaults a pane to showing and a lane to offscreen', () => {
       registry.register(REGISTER_A);
-      registry.register(ISOLATED_LANE);
+      registry.register(SECOND_OFFSCREEN_SURFACE);
       expect(registry.get('pane_aaaaaaaa')?.visibility).toBe('showing');
       expect(registry.get('lane_22222222')?.visibility).toBe('offscreen');
     });
@@ -199,8 +259,8 @@ describe('BrowserPaneRegistry', () => {
     });
 
     it('keeps a lane_ handle verbatim', () => {
-      expect(registry.register(HANDOFF_LANE).sessionId).toBe('lane_11111111');
-      expect(registry.get('lane_11111111')).toMatchObject({ kind: 'lane', handoff: true, ownerSessionId: 'sess-a' });
+      expect(registry.register(OFFSCREEN_SURFACE).sessionId).toBe('lane_11111111');
+      expect(registry.get('lane_11111111')).toMatchObject({ kind: 'lane', ownerSessionId: 'sess-a' });
     });
   });
 
@@ -447,14 +507,15 @@ describe('BrowserPaneRegistry', () => {
   });
 
   /**
-   * A hand-off lane and the returning visible pane briefly coexist, and an
-   * agent may hold an isolated lane beside the shared pane. Rank decides,
-   * deterministically: pane, then hand-off lane, then isolated lane.
+   * A task has ONE surface, so in practice the resolver sees one entry. The
+   * rank still decides the window where a task holds both: the returning
+   * visible pane registers, and only THEN does that registration reclaim the
+   * offscreen form of the same surface. The pane has to win that window, or an
+   * implicit call refuses `multiple-panes` mid-reclaim.
    */
   describe('resolveTarget (rank by kind)', () => {
-    it('prefers the visible pane over every lane', () => {
-      registry.register(HANDOFF_LANE);
-      registry.register(ISOLATED_LANE);
+    it('prefers the visible pane over the offscreen surface it is replacing', () => {
+      registry.register(OFFSCREEN_SURFACE);
       registry.register(REGISTER_A);
       const implicit = registry.resolveTarget({ projectId: 'proj-1', callerTaskId: 'task-1' });
       expect(implicit.ok && implicit.entry.sessionId).toBe('pane_aaaaaaaa');
@@ -462,28 +523,22 @@ describe('BrowserPaneRegistry', () => {
       expect(explicit.ok && explicit.entry.sessionId).toBe('pane_aaaaaaaa');
     });
 
-    it('prefers the hand-off lane once the pane is gone', () => {
-      registry.register(HANDOFF_LANE);
-      registry.register(ISOLATED_LANE);
-      const implicit = registry.resolveTarget({ projectId: 'proj-1', callerTaskId: 'task-1' });
-      expect(implicit.ok && implicit.entry.sessionId).toBe('lane_11111111');
-      const explicit = registry.resolveTarget({ taskId: 'task-1', projectId: 'proj-1' });
-      expect(explicit.ok && explicit.entry.sessionId).toBe('lane_11111111');
-    });
-
-    it('falls back to a lone isolated lane', () => {
-      registry.register(ISOLATED_LANE);
+    it('falls back to the offscreen surface when there is no pane', () => {
+      registry.register(OFFSCREEN_SURFACE);
       const result = registry.resolveTarget({ projectId: 'proj-1', callerTaskId: 'task-1' });
-      expect(result.ok && result.entry.sessionId).toBe('lane_22222222');
+      expect(result.ok && result.entry.sessionId).toBe('lane_11111111');
     });
 
     it('refuses two surfaces of the same rank and lists their handles', () => {
-      registry.register(ISOLATED_LANE);
-      registry.register({ ...ISOLATED_LANE, handle: 'lane_33333333', webContentsId: 66 });
+      // Unreachable through the lane manager, which refuses a second surface
+      // per task. Pinned anyway: the resolver must never pick arbitrarily
+      // between two equal candidates, whatever put them there.
+      registry.register(SECOND_OFFSCREEN_SURFACE);
+      registry.register({ ...SECOND_OFFSCREEN_SURFACE, handle: 'lane_33333333', webContentsId: 66 });
       const implicit = registry.resolveTarget({ projectId: 'proj-1', callerTaskId: 'task-1' });
       expect(implicit).toMatchObject({ ok: false, kind: 'multiple-panes' });
       expect(implicit.ok === false && implicit.candidates).toHaveLength(2);
-      expect(implicit.ok === false && implicit.detail).toContain('lane_22222222 (isolated lane)');
+      expect(implicit.ok === false && implicit.detail).toContain('lane_22222222 (offscreen surface)');
       const explicit = registry.resolveTarget({ taskId: 'task-1', projectId: 'proj-1' });
       expect(explicit).toMatchObject({ ok: false, kind: 'multiple-panes' });
     });
@@ -521,7 +576,7 @@ describe('BrowserPaneRegistry', () => {
     });
 
     it('words each reason for the agent', () => {
-      registry.register(HANDOFF_LANE);
+      registry.register(OFFSCREEN_SURFACE);
       registry.unregister('lane_11111111', 'lane-destroyed');
       const lane = registry.resolveTarget({ sessionId: 'lane_11111111', projectId: 'proj-1' });
       expect(lane.ok === false && lane.detail).toContain('the lane was closed');
@@ -718,7 +773,7 @@ describe('BrowserPaneRegistry', () => {
     it('does NOT accept a live LANE, and resolves once the visible pane registers', async () => {
       // The cold open path pushes a visible pane and waits for it; the hand-off
       // lane standing in for that pane is what the pane's arrival stands down.
-      registry.register(HANDOFF_LANE);
+      registry.register(OFFSCREEN_SURFACE);
       seedGuests(fakeGuest(44), fakeGuest(11));
       await expect(
         registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1' }, 20),

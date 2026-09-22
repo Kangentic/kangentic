@@ -5,14 +5,32 @@ import { browserPartitionForTask } from '../../shared/browser-partition';
 import { syncJarFromIdentity } from './jar-seeder';
 
 /**
- * Browser LANES: an isolated, offscreen browser surface per caller.
+ * Browser LANES: the OFFSCREEN form of a task's one browser surface.
  *
- * The problem: several agents working under one task all resolved to that task's
- * single Browser pane and drove it at once, interleaving navigations, clicks and
- * screenshots while each believed it had exclusive control. Serializing the
- * drive (see `guest-drive-queue.ts`) stops the commands interleaving, but it
- * cannot stop caller A navigating away from the page caller B is midway through
- * verifying. Only separate surfaces do that.
+ * A task has exactly one browser surface. It is normally the visible `<webview>`
+ * pane; a lane is what that surface falls back to when no pane can be mounted -
+ * the user closed the task window, or the project is backgrounded and the board
+ * layer renders only the open project's tasks. The agent never chooses a lane
+ * and cannot ask for one.
+ *
+ * ## Why an agent cannot ask for one
+ *
+ * It could until 2026-09-21, through `kangentic_browser_open_pane { isolated:
+ * true }`, and the argument for that was concurrency: several agents under one
+ * task resolving to the same pane and interleaving navigations. It was removed
+ * because the concurrency was never real and the cost was. Parallel callers
+ * already contend for a single guest and are serialized by `guest-drive-queue`,
+ * so four lanes bought a queue with four heads rather than four workers. Against
+ * that: a lane sets no `browserGuestTasks` entry (only `BrowserPane.tsx` does,
+ * on the guest's `dom-ready`), so nothing in the UI said one existed, the user
+ * could not close it, and every supervision guard built for the pane - the veil,
+ * the ring, the label, the pointer block - lives on the pane and reached none of
+ * it. An agent completed a whole verification run in a lane with no browser
+ * anywhere on screen. See `docs/embedded-browser.md`.
+ *
+ * What replaces it: the offscreen surface is now pushed to the renderer, so the
+ * card globe and the header pill light up for it exactly as they do for a pane,
+ * and opening the Browser pill converts it back into a visible pane.
  *
  * ## Why offscreen, and why that is safe here
  *
@@ -79,13 +97,16 @@ import { syncJarFromIdentity } from './jar-seeder';
 export const LANE_FRAME_RATE = 10;
 
 /**
- * Most lanes one task may hold at once.
+ * The viewport a lane starts at, and the one `kangentic_browser_set_viewport`
+ * restores it to on reset.
  *
- * Bounded for the same reason `MAX_COMMAND_TERMINALS` is: each costs a renderer
- * process, and an agent that retries a failing open would otherwise walk the
- * count up until something else breaks.
+ * A desktop default, because a lane exists to verify the user's dev server and
+ * a narrow one would silently put every check in a mobile breakpoint. These are
+ * the numbers the page actually lays out against, measured: an offscreen window
+ * has no frame, so `innerWidth` reads 1280x800 here.
  */
-export const MAX_LANES_PER_TASK = 4;
+export const DEFAULT_LANE_WIDTH = 1280;
+export const DEFAULT_LANE_HEIGHT = 800;
 
 /**
  * How long a lane may go untouched before it is reclaimed.
@@ -104,17 +125,6 @@ interface LaneRecord {
   ownerSessionId: string | null;
   window: BrowserWindow;
   lastUsedAt: number;
-  /**
-   * True when main created this lane automatically to keep an agent's browser
-   * alive after the user closed the task window (see `browser-lane-handoff.ts`),
-   * rather than the agent asking for isolation.
-   *
-   * The distinction is load-bearing: a hand-off lane stands down as soon as the
-   * user's own pane comes back, because two surfaces for one task would make
-   * every implicit call ambiguous. A lane the agent deliberately requested is
-   * its working surface and must never be closed out from under it.
-   */
-  handoff: boolean;
 }
 
 const lanes = new Map<string, LaneRecord>();
@@ -146,14 +156,48 @@ export function isLaneId(sessionId: string): boolean {
   return sessionId.startsWith(LANE_ID_PREFIX);
 }
 
-export function laneCountForTask(taskId: string): number {
-  let count = 0;
-  for (const lane of lanes.values()) if (lane.taskId === taskId) count += 1;
-  return count;
+/** The task's offscreen surface, or null. At most one, by construction. */
+export function laneIdForTask(taskId: string): string | null {
+  for (const lane of lanes.values()) if (lane.taskId === taskId) return lane.laneId;
+  return null;
 }
 
-export function laneIdsForTask(taskId: string): string[] {
-  return [...lanes.values()].filter((lane) => lane.taskId === taskId).map((lane) => lane.laneId);
+/** True when this task's one surface is currently offscreen. */
+export function hasLaneForTask(taskId: string): boolean {
+  return laneIdForTask(taskId) !== null;
+}
+
+/**
+ * Every task currently holding an offscreen surface.
+ *
+ * Read by the renderer push, which is what makes a lane VISIBLE in the UI: the
+ * card globe and the task-detail Browser pill light up from it. Without that
+ * push a lane is unseeable and unclosable, which is the bug that ended isolated
+ * lanes (see the module docblock).
+ */
+export function laneTaskIds(): string[] {
+  return [...new Set([...lanes.values()].map((lane) => lane.taskId))];
+}
+
+/**
+ * Called after any change to the set of offscreen surfaces.
+ *
+ * Injected rather than imported: this module is constructed in unit tests with
+ * no window plumbing, and a null listener makes the push inert. Same shape as
+ * `setViewportOverrideSender`.
+ */
+let laneChangeListener: (() => void) | null = null;
+
+export function setLaneChangeListener(listener: (() => void) | null): void {
+  laneChangeListener = listener;
+}
+
+function announceLaneChange(): void {
+  try {
+    laneChangeListener?.();
+  } catch (error) {
+    console.warn('[browser-lane] lane-change listener failed:', error);
+  }
 }
 
 /**
@@ -163,8 +207,8 @@ export function laneIdsForTask(taskId: string): string[] {
  * `loadURL` resolves on load and rejects on failure, but a dev server that
  * accepts the connection and never responds leaves it pending forever. That is
  * the normal state of a build in progress, so an unbounded load here would hang
- * `kangentic_browser_open_pane { isolated: true }` with no way for the agent to
- * recover, and strand the fire-and-forget hand-off path silently.
+ * `kangentic_browser_open_pane`'s offscreen fallback with no way for the agent
+ * to recover, and strand the fire-and-forget hand-off path silently.
  *
  * Not imported from the driver: `browser-pane-driver.ts` imports `touchLane`
  * from this module, so reaching back for `navigateGuest` would close an import
@@ -203,8 +247,6 @@ export interface OpenLaneInput {
   /** The caller's session, used only to scope cleanup. */
   ownerSessionId?: string;
   url: string;
-  /** Created by the pane hand-off rather than requested by the agent. */
-  handoff?: boolean;
 }
 
 export type OpenLaneResult =
@@ -226,15 +268,21 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   // processes nothing is using. Opportunistic on purpose - see destroyIdleLanes.
   destroyIdleLanes(LANE_IDLE_RECLAIM_MS);
 
-  if (laneCountForTask(input.taskId) >= MAX_LANES_PER_TASK) {
+  // ONE surface per task, enforced here rather than trusted to callers.
+  //
+  // Both callers check first (the hand-off through `hasLaneForTask`, the opener
+  // by returning the existing surface), so this refusal is a structural
+  // guarantee rather than a path anything reaches. It is what makes "open the
+  // Browser pill and the surface becomes visible" well defined: with two
+  // offscreen surfaces there is no answer to which one the pane becomes.
+  const existingLaneId = laneIdForTask(input.taskId);
+  if (existingLaneId) {
     return {
       ok: false,
-      kind: 'lane-limit',
+      kind: 'surface-exists',
       detail:
-        `This task already holds ${MAX_LANES_PER_TASK} browser lanes, which is the limit. ` +
-        'If you opened one earlier, reuse it by passing its sessionId rather than opening another: ' +
-        `${laneIdsForTask(input.taskId).join(', ')}. ` +
-        'Otherwise close one with kangentic_browser_close_pane.',
+        `This task already has a browser surface (${existingLaneId}). A task has exactly one. ` +
+        'Drive it by passing that handle as sessionId, or omit sessionId and it resolves by default.',
     };
   }
 
@@ -277,8 +325,17 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
 
   const window = new BrowserWindow({
     show: false,
-    width: 1280,
-    height: 800,
+    // Says the two numbers below are the VIEWPORT rather than the outer
+    // window. For an OFFSCREEN window that is already true - measured on
+    // Electron 41, a lane built at 1280x800 reported `innerWidth` 1280x800
+    // with and without this flag, because there is no frame to subtract - so
+    // this changes no behavior today. It is here because `setViewport` resizes
+    // a lane with `setContentSize`, and having the constructor and the resize
+    // state the same units is what stops the two drifting if a lane ever stops
+    // being offscreen.
+    useContentSize: true,
+    width: DEFAULT_LANE_WIDTH,
+    height: DEFAULT_LANE_HEIGHT,
     webPreferences: {
       offscreen: true,
       partition,
@@ -301,7 +358,6 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     ownerSessionId: input.ownerSessionId ?? null,
     window,
     lastUsedAt: Date.now(),
-    handoff: input.handoff === true,
   };
   lanes.set(laneId, record);
 
@@ -309,6 +365,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   guest.once('destroyed', () => {
     lanes.delete(laneId);
     browserPaneRegistry.unregisterByWebContentsId(guest.id);
+    announceLaneChange();
   });
 
   try {
@@ -342,15 +399,32 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     webContentsId: guest.id,
     url: input.url,
     kind: 'lane',
-    handoff: input.handoff === true,
   });
 
+  // Only now: the surface is real, registered and driveable, so the card globe
+  // and the Browser pill light up for something that exists.
+  announceLaneChange();
   return { ok: true, laneId, webContents: guest };
 }
 
 export function touchLane(sessionId: string): void {
   const lane = lanes.get(sessionId);
   if (lane) lane.lastUsedAt = Date.now();
+}
+
+/**
+ * The offscreen window backing a lane, for the one caller that must resize it.
+ *
+ * Exported rather than letting callers reach for
+ * `BrowserWindow.fromWebContents(guest)`, which is wrong here in a way that
+ * would not show up until it did: for a `<webview>` guest that call resolves
+ * the HOST window, so a mis-dispatched pane would resize the user's main
+ * Kangentic window. Going through the `lanes` map can only ever return a lane.
+ */
+export function laneWindow(laneId: string): BrowserWindow | null {
+  const lane = lanes.get(laneId);
+  if (!lane || lane.window.isDestroyed()) return null;
+  return lane.window;
 }
 
 export function destroyLane(laneId: string): boolean {
@@ -361,6 +435,7 @@ export function destroyLane(laneId: string): boolean {
   // so the default reason would point an investigation at the wrong process.
   browserPaneRegistry.unregister(laneId, 'lane-destroyed');
   if (!lane.window.isDestroyed()) lane.window.destroy();
+  announceLaneChange();
   return true;
 }
 
@@ -381,26 +456,25 @@ export function destroyLanesForSession(sessionId: string): number {
   return destroyed;
 }
 
-/** True when this task already has a hand-off lane standing in for its pane. */
-export function hasHandoffLaneForTask(taskId: string): boolean {
-  for (const lane of lanes.values()) {
-    if (lane.taskId === taskId && lane.handoff) return true;
-  }
-  return false;
-}
-
 /**
- * Destroy only the AUTO-CREATED hand-off lanes for a task.
+ * Destroy the task's offscreen surface, because its visible pane is back.
  *
- * Called when the user's own pane comes back. Never touches a lane the agent
- * asked for with `isolated: true`: that is its working surface, and closing it
- * because a human opened an unrelated pane would be the same class of bug this
- * whole task is about.
+ * This is the RECLAIM: a task has one surface, so the moment a pane registers
+ * for this task the offscreen form of that surface stops being the answer and
+ * goes away. Two surfaces would make every implicit call ambiguous
+ * (`multiple-panes`), and the visible one is always the better answer because
+ * the user can see it.
+ *
+ * Mechanically a re-create rather than a move: a `webContents` cannot migrate
+ * from a `BrowserWindow` into a `<webview>` tag, so the pane mounts fresh at
+ * the offscreen surface's current URL and this destroys the old one. The
+ * agent's old handle then answers `surface-gone` naming the replacement, which
+ * is the same compromise `pop_out` and `dock` already make.
  */
-export function destroyHandoffLanesForTask(taskId: string): number {
+export function destroyLanesForTask(taskId: string): number {
   let destroyed = 0;
   for (const lane of [...lanes.values()]) {
-    if (lane.taskId !== taskId || !lane.handoff) continue;
+    if (lane.taskId !== taskId) continue;
     if (destroyLane(lane.laneId)) destroyed += 1;
   }
   return destroyed;
@@ -466,4 +540,5 @@ export function destroyAllLanes(): void {
 export function resetLanesForTests(): void {
   lanes.clear();
   laneSweepGeneration = 0;
+  laneChangeListener = null;
 }

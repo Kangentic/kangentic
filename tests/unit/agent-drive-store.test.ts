@@ -4,7 +4,7 @@
  *
  * This store has no direct unit coverage today; its Pattern E HMR pinning is
  * asserted by tests/unit/hmr-resync.test.ts, and the CONSUMING behavior (the
- * pane's "Agent typing here" badge) is covered end to end by
+ * pane's "Agent is driving" veil) is covered end to end by
  * tests/ui/browser-pane-agent-input-focus.spec.ts. Neither exercises the
  * store's own reducer contract directly: that setAgentDriving toggles
  * membership per session id, tracks multiple sessions independently, and -

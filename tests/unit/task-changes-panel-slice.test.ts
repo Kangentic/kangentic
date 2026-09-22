@@ -352,6 +352,134 @@ describe('toggleBrowserOpen', () => {
 });
 
 // ---------------------------------------------------------------------------
+// setBrowserOffscreenTasks
+// ---------------------------------------------------------------------------
+
+describe('setBrowserOffscreenTasks', () => {
+  it('starts with an empty offscreen set', () => {
+    const { getState } = createTestStore();
+    expect(getState().browserOffscreenTasks.size).toBe(0);
+  });
+
+  it('replaces the set on a genuine membership change', () => {
+    const { actions, getState } = createTestStore();
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+
+    expect(getState().browserOffscreenTasks).not.toBe(before);
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-2']));
+  });
+
+  it('keeps the SAME Set reference when a push repeats the current membership', () => {
+    // Every card on the board subscribes to this set, so a fresh reference on
+    // an unchanged push would re-render the whole board every time a lane is
+    // touched. This is the guard the coverage gap was about: deleting it
+    // (always doing `set({ browserOffscreenTasks: new Set(taskIds) })`) makes
+    // this assertion fail, because `afterFirstPush` would then be a distinct
+    // object from the state read after the second, identical push.
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const afterFirstPush = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+
+    expect(getState().browserOffscreenTasks).toBe(afterFirstPush);
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-2']));
+  });
+
+  it('treats a reordered but membership-identical push as unchanged', () => {
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-2', 'task-1']);
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+  });
+
+  it('replaces the set on a genuine membership change even when the pushed length matches', () => {
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-3']);
+
+    expect(getState().browserOffscreenTasks).not.toBe(before);
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-3']));
+  });
+
+  it('a duplicate entry can fool the size-based guard into an equal-membership match', () => {
+    // Pinning the real behavior, not the intended one: the guard compares
+    // current.size to taskIds.length, so a push that drops one member but
+    // duplicates another to the same length reads as unchanged and is
+    // silently skipped. Main always pushes the whole real set with no
+    // duplicates (see the field comment), so this path is not expected to be
+    // hit in production, but a future change to the guard's shape should be a
+    // deliberate decision against this pinned case, not a silent regression.
+    const { actions, getState } = createTestStore();
+    actions.setBrowserOffscreenTasks(['task-1', 'task-2']);
+    const before = getState().browserOffscreenTasks;
+
+    actions.setBrowserOffscreenTasks(['task-1', 'task-1']);
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+    expect(getState().browserOffscreenTasks.has('task-2')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadBrowserOffscreenTasks
+// ---------------------------------------------------------------------------
+
+describe('loadBrowserOffscreenTasks', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("applies main's pushed offscreen surfaces through setBrowserOffscreenTasks", async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        browser: {
+          getOffscreenSurfaces: vi.fn().mockResolvedValue(['task-1', 'task-2']),
+        },
+      },
+    });
+    const { actions, getState } = createTestStore();
+
+    await actions.loadBrowserOffscreenTasks();
+
+    expect(getState().browserOffscreenTasks).toEqual(new Set(['task-1', 'task-2']));
+  });
+
+  it('leaves state untouched when the bridge method is missing (a Vite full reload before the preload bridge re-injects)', async () => {
+    vi.stubGlobal('window', { electronAPI: {} });
+    const { actions, getState } = createTestStore();
+    const before = getState().browserOffscreenTasks;
+
+    await actions.loadBrowserOffscreenTasks();
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+  });
+
+  it('swallows a rejected read and leaves state untouched', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        browser: {
+          getOffscreenSurfaces: vi.fn().mockRejectedValue(new Error('ipc unavailable')),
+        },
+      },
+    });
+    const { actions, getState } = createTestStore();
+    const before = getState().browserOffscreenTasks;
+
+    await actions.loadBrowserOffscreenTasks();
+
+    expect(getState().browserOffscreenTasks).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setChangesScope
 // ---------------------------------------------------------------------------
 

@@ -428,6 +428,49 @@ export const IPC = {
   // on the host. The pane restores the user's focus if it moved.
   // See `.claude/rules/agent-driven-focus.md`.
   BROWSER_AGENT_INPUT: 'browser:agentInput',
+  // Main -> renderer: an agent set (or cleared) the viewport a Browser pane
+  // lays out against. The pane cannot see this for itself - an override is a
+  // CDP-session property main owns, and the guest's own size never changes -
+  // so without the push the user's page silently renders at a width nothing on
+  // screen accounts for. The pane shows it as a chip with a reset control,
+  // which is also the user's escape hatch when the agent that set it is gone.
+  BROWSER_VIEWPORT_OVERRIDE: 'browser:viewportOverride',
+  // Renderer -> main: the user cleared a pane's viewport override from that
+  // chip. Separate from the agent's own reset so the user is never waiting on
+  // an agent to give their pane back.
+  BROWSER_VIEWPORT_CLEAR: 'browser:viewportClear',
+  // Renderer -> main: the `<webview>` element's own size in CSS pixels.
+  // Main cannot measure it (its window is the whole app, several times the
+  // pane), and it is what a requested viewport is fitted against, so without
+  // this report a fit computes a zoom of 1 and leaves the page cropped.
+  BROWSER_PANE_WIDGET_SIZE: 'browser:paneWidgetSize',
+  // Renderer -> main: what override (if any) this guest is already under.
+  // A pane that mounts AFTER the override was set - a pop-out, or a re-register
+  // - missed the push, so it asks once on registration rather than showing
+  // nothing.
+  BROWSER_VIEWPORT_GET: 'browser:viewportGet',
+  // Main -> renderer: which tasks currently hold their one browser surface in
+  // its OFFSCREEN form. The whole set on every change, not a delta, because a
+  // renderer that missed one push would otherwise stay wrong forever.
+  //
+  // This is what makes an offscreen surface visible at all. The card globe and
+  // the task-detail Browser pill both read `browserGuestTasks`, which is
+  // written in exactly one place - `BrowserPane.tsx`, on the `<webview>`'s
+  // `dom-ready` - so a main-process offscreen `BrowserWindow` set nothing and
+  // the user had no way to know one existed, let alone close it. An agent
+  // completed a whole verification run in one with no browser anywhere on
+  // screen, which is what ended agent-requested lanes entirely.
+  BROWSER_OFFSCREEN_SURFACES: 'browser:offscreenSurfaces',
+  // Renderer -> main: the same set, asked for once on mount and after an HMR
+  // update. A push-only channel leaves a reloaded renderer blank until the next
+  // change, and an offscreen surface can sit unchanged for the whole session.
+  BROWSER_OFFSCREEN_SURFACES_GET: 'browser:offscreenSurfacesGet',
+  // Renderer -> main: the user's "Close browser" on a task whose surface is
+  // OFFSCREEN. There is no guest in `browserGuestTasks` to retire and no pane
+  // to unmount, so the ordinary close path is a silent no-op for it - which
+  // would leave a control that says Close and does nothing. Main destroys the
+  // offscreen window directly.
+  BROWSER_OFFSCREEN_CLOSE: 'browser:offscreenClose',
   // Main -> renderer: a file download started from a Browser pane has finished.
   // The pane saves silently to the OS Downloads folder (Chrome's default), so
   // this is what stops an agent-triggered download being invisible.

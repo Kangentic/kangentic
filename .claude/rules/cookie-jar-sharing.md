@@ -40,7 +40,11 @@ per-task keying prevents; and a second, ad-hoc cookie-copy path would let that i
 
 - **Test:** `tests/unit/cookie-jar-sharing.test.ts` scans `src/**` (whitespace-insensitively, so a
   line-wrapped `.cookies\n.set(` is still caught) and fails on any `.cookies.set(` / `.cookies.get(`
-  outside the three allowlisted files without a `// cookie-copy-ok:` marker. It also asserts that
+  outside the three allowlisted files without a `// cookie-copy-ok: <reason>` marker. The marker is
+  read per CALL SITE through the shared reader (`tests/unit/helpers/opt-out-marker.ts`), on the
+  line or in the comment block directly above it. It used to be read per FILE, on a bare
+  `includes`, so one marker anywhere waived every cookie call in that file and a marker with no
+  reason waived it just as well. It also asserts that
   `cookie-seed.ts` defines `isLocalCookieDomain` and that both `copyCookies` and the jar-seeder
   write-back reference it, so the localhost exclusion cannot be silently removed. Runs in CI via
   `npm run test:unit`.

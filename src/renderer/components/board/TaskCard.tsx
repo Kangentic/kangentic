@@ -91,10 +91,14 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   );
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
   const displayState = useTaskProgress(task.id, sessionId);
-  // A Browser pane guest is running for this task, in ANY state (showing, hidden
-  // behind the terminal, or parked in a closed window). Parked is the one state
-  // with no pill anywhere on screen, which is why the card carries this.
-  const browserAlive = useSessionStore((s) => s.browserGuestTasks.has(task.id));
+  // A browser is running for this task, in ANY state: showing, hidden behind
+  // the terminal, parked in a closed window, or OFFSCREEN (main's fallback
+  // when no pane can mount). The last two have no pill anywhere on screen,
+  // which is why the card carries this - an offscreen surface with no globe is
+  // a browser the user cannot know about, let alone close.
+  const browserAlive = useSessionStore(
+    (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
+  );
 
   const {
     attributes,

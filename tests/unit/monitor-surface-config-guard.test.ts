@@ -28,6 +28,17 @@ const sessionsOnActivityMock = vi.fn();
 const configSetMock = vi.fn();
 const configGetMock = vi.fn();
 const configGetGlobalMock = vi.fn();
+// This window never mounts App.tsx, so it is the ONLY thing that seeds and
+// subscribes to the offscreen-surfaces set for a task detail hosted here (see
+// src/renderer/pop-out/surfaces/monitor-surface.tsx's own comment on the
+// call). Before these were added, calling this mock's getState() with no
+// override at all threw `loadBrowserOffscreenTasks is not a function`
+// straight out of bootstrap() - both tests below failed before they reached
+// their own subject.
+const onOffscreenSurfacesMock = vi.fn();
+const syncSessionsMock = vi.fn().mockResolvedValue(undefined);
+const loadBrowserOffscreenTasksMock = vi.fn().mockResolvedValue(undefined);
+const setBrowserOffscreenTasksMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
@@ -39,11 +50,18 @@ const configGetGlobalMock = vi.fn();
       onChanged: monitorOnChangedMock,
     },
     sessions: { onActivity: sessionsOnActivityMock },
+    browser: { onOffscreenSurfaces: onOffscreenSurfacesMock },
   },
 };
 
 vi.mock('../../src/renderer/stores/session-store', () => ({
-  useSessionStore: { getState: () => ({ syncSessions: vi.fn().mockResolvedValue(undefined) }) },
+  useSessionStore: {
+    getState: () => ({
+      syncSessions: syncSessionsMock,
+      loadBrowserOffscreenTasks: loadBrowserOffscreenTasksMock,
+      setBrowserOffscreenTasks: setBrowserOffscreenTasksMock,
+    }),
+  },
 }));
 
 // Avoids dragging in the monitor's whole component tree (LazyMonitor,
@@ -83,6 +101,8 @@ describe('monitorSurface bootstrap: config-store subscription guard', () => {
     monitorGetSnapshotMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
     monitorOnChangedMock.mockReturnValue(() => {});
     sessionsOnActivityMock.mockReturnValue(() => {});
+    onOffscreenSurfacesMock.mockReturnValue(() => {});
+    loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
@@ -126,5 +146,76 @@ describe('monitorSurface bootstrap: config-store subscription guard', () => {
     }));
 
     expect(useMonitorStore.getState().view.projectFilter).toEqual(['proj-b']);
+  });
+});
+
+/**
+ * The offscreen-surfaces wiring monitorSurface adds on top of the config
+ * guard above: this window never mounts App.tsx (PopOutMonitorRoot renders a
+ * task detail directly), so it is the ONLY place that seeds and subscribes to
+ * `browserOffscreenTasks` for a task detail hosted here. Its own comment says
+ * so. Nothing before this pinned that bootstrap() and hmrResync() actually
+ * make those calls - the two tests above merely happened to reach past the
+ * call without asserting on it, which is what let it throw silently broken
+ * (see the fixed `useSessionStore` mock above: it lacked both methods).
+ */
+describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
+  let controller: AbortController;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    monitorSubscribeMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
+    monitorUnsubscribeMock.mockResolvedValue(undefined);
+    monitorGetSnapshotMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
+    monitorOnChangedMock.mockReturnValue(() => {});
+    sessionsOnActivityMock.mockReturnValue(() => {});
+    onOffscreenSurfacesMock.mockReturnValue(() => {});
+    loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    configSetMock.mockResolvedValue(undefined);
+    resetStores();
+    controller = new AbortController();
+  });
+
+  afterEach(() => {
+    controller.abort();
+  });
+
+  it('reads the offscreen-surfaces set on mount, for a surface that predates this window', () => {
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+
+    expect(loadBrowserOffscreenTasksMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribes to the push and forwards every update to setBrowserOffscreenTasks', () => {
+    let pushedCallback: ((taskIds: string[]) => void) | undefined;
+    onOffscreenSurfacesMock.mockImplementation((callback: (taskIds: string[]) => void) => {
+      pushedCallback = callback;
+      return vi.fn();
+    });
+
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+
+    expect(onOffscreenSurfacesMock).toHaveBeenCalledTimes(1);
+    expect(pushedCallback).toBeTypeOf('function');
+
+    pushedCallback?.(['task-a', 'task-b']);
+    expect(setBrowserOffscreenTasksMock).toHaveBeenCalledWith(['task-a', 'task-b']);
+  });
+
+  it('unsubscribes from the push when the bootstrap signal aborts', () => {
+    const unsubscribe = vi.fn();
+    onOffscreenSurfacesMock.mockReturnValue(unsubscribe);
+
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+    expect(unsubscribe).not.toHaveBeenCalled();
+
+    controller.abort();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('hmrResync re-reads the offscreen-surfaces set, so a Fast Refresh does not leave a hosted pill dark', () => {
+    monitorSurface.hmrResync?.();
+
+    expect(loadBrowserOffscreenTasksMock).toHaveBeenCalledTimes(1);
   });
 });

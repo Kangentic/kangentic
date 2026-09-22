@@ -292,6 +292,12 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // that hosts a terminal must declare this channel too.
       IPC.SESSION_PTY_RESIZED,
       IPC.TASK_SPAWN_PROGRESS,
+      // A hosted task detail's Browser pill lights its alive dot from the set of
+      // tasks holding their one browser surface OFFSCREEN, and only main can see
+      // those. Without this channel the pill in THIS window reads dark for a
+      // browser that exists - which is the invisibility this whole mechanism was
+      // built to remove, reappearing in one host.
+      IPC.BROWSER_OFFSCREEN_SURFACES,
     ],
   },
 };

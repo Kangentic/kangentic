@@ -146,6 +146,7 @@ export function TaskDetailWindow({
   // same whether the board mounted it for the open project or the Agent Monitor
   // mounted it for a task in another one.
   const {
+    projectId: hostProjectId,
     projectPath,
     swimlanes,
     shortcuts,
@@ -189,16 +190,25 @@ export function TaskDetailWindow({
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
   const browserOpen = useSessionStore((s) => s.browserOpenTasks.has(task.id));
   const toggleBrowserOpen = useSessionStore((s) => s.toggleBrowserOpen);
-  // A Browser pane guest exists for this task (showing, hidden, or parked), and
+  // A browser exists for this task (showing, hidden, parked, or offscreen), and
   // whether an agent is driving it right now: the pill's alive dot and the
   // kebab's "Close browser" read these. Close is the user's discard, distinct
   // from the pill's hide; see components/browser/close-browser.ts.
-  const browserAlive = useSessionStore((s) => s.browserGuestTasks.has(task.id));
+  const browserAlive = useSessionStore(
+    (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
+  );
   const browserSessionId = useSessionStore((s) => s._sessionByTaskId.get(task.id)?.id ?? null);
   const browserDriving = useIsAgentDrivingSession(browserSessionId);
+  // The TASK's project, not the open board's, for the same reason
+  // `TaskDetailBody` derives `paneProjectId` that way: a retained window's
+  // project is backgrounded while the host context reports whatever board is
+  // now open, and closing this task's browser must not be resolved against a
+  // different project. Forwarded explicitly per
+  // `.claude/rules/project-scoped-ipc.md`.
+  const browserProjectId = retainedProjectId ?? hostProjectId;
   const handleCloseBrowser = useCallback(() => {
-    void closeBrowserForTask(task.id);
-  }, [task.id]);
+    void closeBrowserForTask(task.id, browserProjectId);
+  }, [task.id, browserProjectId]);
 
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);

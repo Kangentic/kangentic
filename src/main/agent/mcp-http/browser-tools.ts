@@ -10,9 +10,11 @@ import {
 } from '../../browser/browser-pane-driver';
 import {
   browserPaneRegistry,
+  type BrowserPaneEntry,
   type ResolveTargetSelector,
 } from '../../browser/browser-pane-registry';
 import { openPaneForCallerTask, closePanes } from '../../browser/browser-pane-opener';
+import { popOutPaneForCallerTask, dockPaneForCallerTask } from '../../browser/browser-pane-detach';
 import type { ResolvedBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import { detectDevServerError, describeDevServerError, type DevServerError } from '../../browser/dev-server-error';
 import {
@@ -21,18 +23,33 @@ import {
   dispatchKeyEvent,
   dispatchKeypress,
   dragFromTo,
+  dropFilesOnSelector,
+  getDialogEntries,
+  getNetworkEntries,
   getOuterHtml,
   getBoundingBox,
   getConsoleEntries,
   getLayoutMetrics,
+  hoverSelector,
   queryAllElements,
   runtimeEvaluate,
+  scrollBy,
+  selectOptionOnSelector,
+  setDialogResponse,
   typeText,
 } from '../../browser/cdp/cdp';
 import {
   captureScreenshotWithBudget,
   captureElementClip,
 } from '../../browser/cdp/screenshot';
+import {
+  applyViewport,
+  clearViewport,
+  MAX_VIEWPORT_DIMENSION,
+  MIN_VIEWPORT_DIMENSION,
+  WINDOW_ANCHORS,
+  type ApplyViewportOutcome,
+} from '../../browser/viewport-override';
 import { driverToolResult, screenshotToolResult, errorToolResult } from './tool-result';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 
@@ -56,9 +73,9 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
  */
 
 const SESSION_DESC =
-  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your task\'s current surface. Must be in your own project. Omit to use your own task\'s surface (its visible pane first, then a hand-off lane, then an isolated lane); a caller with no task falls back to the single pane open in the project. This is NOT a Kangentic agent session id.';
+  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your task\'s current surface. Must be in your own project. Omit to use your own task\'s one surface (its visible pane, or the offscreen form of it); a caller with no task falls back to the single pane open in the project. This is NOT a Kangentic agent session id.';
 const TASK_DESC =
-  "Optional Kangentic taskId whose Browser surface to target (its visible pane first, then a lane). An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own task's surface.";
+  "Optional Kangentic taskId whose Browser surface to target. An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own task's surface.";
 
 const TARGET_SHAPE = {
   sessionId: z.string().optional().describe(SESSION_DESC),
@@ -118,6 +135,12 @@ function clampNumber(value: number | undefined, defaultValue: number, max: numbe
 /** How long caller-authored JavaScript may hold the guest before it is abandoned. */
 const EVALUATE_TIMEOUT_MS = 20_000;
 
+/** How long a history move waits for its navigation to commit before the URL
+ *  is read anyway. A same-document back (a hash change) fires no
+ *  `did-navigate` at all, so this bound is the normal path there, not an
+ *  error case. */
+const HISTORY_NAVIGATE_TIMEOUT_MS = 3_000;
+
 /**
  * `runtimeEvaluate`, bounded, in the shape that function already returns.
  *
@@ -164,7 +187,7 @@ export function registerBrowserTools(
     callerSessionId && sessions ? sessions.getSessionTaskId(callerSessionId) : undefined;
 
   // Caller scope is stamped here, not taken from tool arguments, so no tool can
-  // opt out of it. This is the single point that scopes the 13 tools driving
+  // opt out of it. This is the single point that scopes the 20 tools driving
   // through `drive()` below. The two lifecycle tools (open_pane / close_pane)
   // build their own equivalent selector in `browser-pane-opener.ts`, from the
   // same caller identity - see .claude/rules/browser-automation-driver.md.
@@ -180,7 +203,7 @@ export function registerBrowserTools(
   const drive = <Result>(
     capability: BrowserCapability,
     target: TargetArgs,
-    fn: (webContents: WebContents) => Promise<Result>,
+    fn: (webContents: WebContents, entry: BrowserPaneEntry) => Promise<Result>,
     configOverride?: ResolvedBrowserAutomationConfig,
   ): Promise<DriverResult<Result>> =>
     withGuest<Result>(
@@ -193,7 +216,7 @@ export function registerBrowserTools(
     'kangentic_browser_list_panes',
     {
       description:
-        'List the embedded Browser surfaces open in your project: each entry carries its surface handle (`sessionId`, pass it back as sessionId), `ownerSessionId` (the agent session it serves), taskId, kind (pane or lane, with `handoff` for a lane standing in for a closed pane), `visibility` (showing = the user can see it; hidden = the user hid it behind the terminal; parked = the user closed its window; offscreen = a lane; every value is still driveable), current URL, and whether it is alive / debugger-attached. A pane the user CLOSED is not listed: its handle answers `surface-gone` saying the user closed the browser, and kangentic_browser_open_pane opens a fresh one. Use this to discover a handle or taskId to pass to the other kangentic_browser_* tools, or to confirm the user has a dev server loaded. Panes in other projects are excluded by default and cannot be driven from this connection; pass includeOtherProjects to see them too. Returns an empty list when no pane is open.',
+        'List the embedded Browser surfaces open in your project - at most one per task: each entry carries its surface handle (`sessionId`, pass it back as sessionId), `ownerSessionId` (the agent session it serves), taskId, kind (`pane` = a visible pane, `lane` = the offscreen form of the same surface, used when no pane can mount), `visibility` (showing = the user can see it; hidden = the user hid it behind the terminal; parked = the user closed its window; offscreen = a lane; every value is still driveable), current URL, and whether it is alive / debugger-attached. A pane the user CLOSED is not listed: its handle answers `surface-gone` saying the user closed the browser, and kangentic_browser_open_pane opens a fresh one. Use this to discover a handle or taskId to pass to the other kangentic_browser_* tools, or to confirm the user has a dev server loaded. Panes in other projects are excluded by default and cannot be driven from this connection; pass includeOtherProjects to see them too. Returns an empty list when no pane is open.',
       inputSchema: z.object({
         includeOtherProjects: z
           .boolean()
@@ -236,7 +259,7 @@ export function registerBrowserTools(
     'kangentic_browser_open_pane',
     {
       description:
-        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can then drive it with the other kangentic_browser_* tools. Use this instead of asking the user to open the Browser pill. Opens the task's detail window if it is not already open. Returns the pane once it is registered and driveable, so the very next call can act on it; `pane.sessionId` is its surface handle. Only ever targets your own task; there is no way to open a pane for another task or project. Calling it again with a different url navigates the existing pane rather than reopening it, and if the user had hidden the pane or closed its window, it is shown again: the same tab, nothing reloads.",
+        "Open the user's VISIBLE embedded Browser pane for YOUR OWN task and load a URL, so you can then drive it with the other kangentic_browser_* tools. Use this instead of asking the user to open the Browser pill. Opens the task's detail window if it is not already open. Returns the surface once it is registered and driveable, so the very next call can act on it; `pane.sessionId` is its handle. A task has exactly ONE browser surface: there is no argument for a second one, and no way to open a pane for another task or project. Calling it again with a different url navigates that surface rather than opening another, and if the user had hidden the pane or closed its window, it is shown again: the same tab, nothing reloads. If your project is not the one currently open in Kangentic, no pane can be mounted, so the surface comes up OFFSCREEN instead and the response says `offscreen: true` - it is fully driveable, the user can see it exists on the task card, and it turns back into a visible pane by itself as soon as one can mount.",
       inputSchema: z.object({
         url: z
           .string()
@@ -244,22 +267,15 @@ export function registerBrowserTools(
           .describe(
             "Absolute http(s) URL to load, e.g. http://localhost:5173. Omit to reuse the task's saved Browser URL, or the project default. If neither exists, pass one - a pane with no URL registers nothing and cannot be driven.",
           ),
-        isolated: z
-          .boolean()
-          .optional()
-          .describe(
-            'Open a private browser lane of your own instead of the task\'s shared pane. Use this when several agents are working on one task at the same time, so you do not fight over one viewport. The response returns a laneId (also `pane.sessionId`) - pass it as `sessionId` on EVERY later kangentic_browser_* call, or you will silently fall back to the shared pane. A lane is offscreen: it does not disturb the user\'s pane and cannot take their keyboard focus.',
-          ),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ url, isolated }) => {
+    async ({ url }) => {
       const result = await openPaneForCallerTask({
         projectId,
         callerSessionId,
         callerTaskId,
         url,
-        isolated,
         // Opening always loads a URL, so this is a navigation-tier action:
         // "Allow navigation" off in Settings disables this tool too.
         capability: 'navigate',
@@ -682,10 +698,10 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_keypress',
     {
-      description: "Send a key or chord to the task's Browser pane (e.g. Enter, Escape, Tab, Ctrl+a, ArrowDown). Single printable characters are typed.",
+      description: "Send ONE key or chord to the task's Browser pane. Single printable characters are typed. Named keys: Enter, Escape, Tab, Backspace, Delete, Space, Home, End, PageUp, PageDown, ArrowUp, ArrowDown, ArrowLeft, ArrowRight - anything else named is refused with unknown-key rather than guessed. Modifiers are joined with +, e.g. Ctrl+a or Ctrl+Shift+P. This takes a SINGLE combo, not a sequence: \"ArrowDown ArrowDown\" is not valid, so call it again for each press. The key is DELIVERED to the page, but the browser default action is not performed: PageDown and End reach a page that handles them itself and do NOT scroll the document. Use kangentic_browser_scroll to scroll.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
-        keys: z.string().describe('Key or chord, e.g. "Enter", "Escape", "Ctrl+Shift+P", "ArrowDown".'),
+        keys: z.string().describe('One key or chord, e.g. "Enter", "PageDown", "Ctrl+Shift+P". Not a sequence - one press per call.'),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
@@ -721,6 +737,368 @@ export function registerBrowserTools(
       if (result.ok && 'error' in result.data) {
         return errorToolResult({ kind: 'selector-not-found', detail: 'Drag source or target selector did not match.' });
       }
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_hover',
+    {
+      description:
+        "Move the pointer over an element in the task's Browser pane, without clicking. Use this to open a hover menu, show a tooltip, or reveal a control that only appears on hover, then screenshot or query what appeared. kangentic_browser_click already hovers before it presses, so this is for VERIFYING hover state rather than a step before clicking.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        selector: z.string().describe('CSS selector of the element to hover. Scrolled into view first.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, selector }) => {
+      const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
+        const ok = await hoverSelector(webContents, selector);
+        return ok ? { ok: true } : { error: 'selector-not-found' as const };
+      });
+      if (result.ok && 'error' in result.data) {
+        return errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` });
+      }
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_scroll',
+    {
+      description:
+        "Scroll the page in the task's Browser pane by a wheel delta, the way a real scroll wheel does. Positive deltaY scrolls DOWN. Pass a selector to scroll a specific scrollable element (a panel, a list) instead of the page behind it. This is the way to reach content below the fold: keypress only moves a line at a time, and kangentic_browser_eval is usually turned off.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        deltaY: z.number().int().min(-50000).max(50000).optional().describe('Vertical scroll in CSS pixels. Positive scrolls down. Default 0.'),
+        deltaX: z.number().int().min(-50000).max(50000).optional().describe('Horizontal scroll in CSS pixels. Positive scrolls right. Default 0.'),
+        selector: z.string().optional().describe('CSS selector of a scrollable element to scroll. Omit to scroll the page.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, deltaX, deltaY, selector }) => {
+      if (!deltaX && !deltaY) {
+        return errorToolResult({
+          kind: 'invalid-scroll',
+          detail: 'Pass deltaY (or deltaX) - a scroll of zero would do nothing. Positive deltaY scrolls down.',
+        });
+      }
+      const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
+        const ok = await scrollBy(webContents, { selector, deltaX, deltaY });
+        if (!ok) return { error: 'selector-not-found' as const };
+        // Report where the page ended up, not what was asked for: a scroll
+        // past the end of the document silently does less than requested, and
+        // an agent that believes it moved 5000px reads the wrong element next.
+        const metrics = await getLayoutMetrics(webContents);
+        return { ok: true, viewport: metrics ? { width: metrics.viewportWidth, height: metrics.viewportHeight } : null };
+      });
+      if (result.ok && 'error' in result.data) {
+        return errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` });
+      }
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_select_option',
+    {
+      description:
+        "Choose an option in a native <select> dropdown in the task's Browser pane. Clicking cannot do this: the list a <select> opens is drawn by the operating system outside the page, so a synthesized click reaches the control and has nothing to aim at. Identify the option by value, by its visible label, or by index. Fires input and change, so framework bindings react exactly as they do for a real choice.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        selector: z.string().describe('CSS selector of the <select> element.'),
+        value: z.string().optional().describe('The option\'s value attribute.'),
+        label: z.string().optional().describe('The option\'s visible text, matched after trimming.'),
+        index: z.number().int().min(0).optional().describe('Zero-based option index.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, selector, value, label, index }) => {
+      if (value === undefined && label === undefined && index === undefined) {
+        return errorToolResult({
+          kind: 'missing-target',
+          detail: 'Pass one of value, label or index to say which option to choose.',
+        });
+      }
+      const result = await drive('interact', { sessionId, taskId }, async (webContents) =>
+        selectOptionOnSelector(webContents, selector, { value, label, index }));
+      if (result.ok && !result.data.ok) {
+        const reason = result.data.reason;
+        return errorToolResult({
+          kind: reason === 'not-a-select' ? 'not-a-select' : reason === 'no-match' ? 'no-match' : 'selector-not-found',
+          detail:
+            reason === 'not-a-select'
+              ? `${selector} matched an element that is not a <select>. A custom dropdown built from divs is ordinary UI - use kangentic_browser_click on the control and then on the option.`
+              : reason === 'no-match'
+                ? `${selector} is a <select>, but no option matched. Read its options with kangentic_browser_query_all on "${selector} option" and pass one of their values.`
+                : `No element matched ${selector}.`,
+        });
+      }
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_drop_files',
+    {
+      description:
+        "Drop real files onto an element in the task's Browser pane, exactly as dragging them out of the file manager would. The paths are absolute paths on this machine, and the page receives genuine File objects through dataTransfer.files. This is the one thing page script cannot fake, so it is the only way to test a drop zone or a file input end to end.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        selector: z.string().describe('CSS selector of the drop target.'),
+        paths: z.array(z.string()).min(1).max(20).describe('Absolute file paths on this machine.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, selector, paths }) => {
+      const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
+        const ok = await dropFilesOnSelector(webContents, selector, paths);
+        return ok ? { ok: true, dropped: paths.length } : { error: 'selector-not-found' as const };
+      });
+      if (result.ok && 'error' in result.data) {
+        return errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` });
+      }
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_history',
+    {
+      description:
+        "Go back or forward in the task's Browser pane history, the way the pane's own arrows do. Returns the URL it landed on. Refuses when there is nothing to go back or forward to, rather than silently doing nothing.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        direction: z.enum(['back', 'forward']).describe('Which way to move through history.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, direction }) => {
+      const result = await drive('navigate', { sessionId, taskId }, async (webContents) => {
+        const history = webContents.navigationHistory;
+        const canMove = direction === 'back' ? history.canGoBack() : history.canGoForward();
+        if (!canMove) return { error: 'no-history' as const };
+        if (direction === 'back') history.goBack();
+        else history.goForward();
+        // The navigation is asynchronous, so the URL is read after it commits
+        // rather than immediately - reporting the pre-navigation URL would be
+        // the echoed-not-measured mistake the viewport work exists to avoid.
+        await new Promise((resolve) => {
+          const done = (): void => { webContents.off('did-navigate', done); resolve(null); };
+          webContents.once('did-navigate', done);
+          setTimeout(done, HISTORY_NAVIGATE_TIMEOUT_MS);
+        });
+        return { ok: true, url: webContents.getURL() };
+      });
+      if (result.ok && 'error' in result.data) {
+        return errorToolResult({
+          kind: 'no-history',
+          detail: `There is nothing to go ${direction} to in this pane's history.`,
+        });
+      }
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_network',
+    {
+      description:
+        "List the network requests the task's Browser pane has made, newest last: method, URL, resource type, HTTP status, failure text and duration. Use it to answer whether an API call actually fired and what it returned - the console only shows what the page chose to log. A request still in flight is listed with a null status rather than hidden, because a dev server that accepted the connection and went quiet is usually the answer you are looking for.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        limit: z.number().int().positive().max(300).optional().describe('Most recent N requests (default 50).'),
+        urlContains: z.string().optional().describe('Only requests whose URL contains this substring, e.g. "/api/".'),
+        failedOnly: z.boolean().optional().describe('Only requests that failed or returned status >= 400.'),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, limit, urlContains, failedOnly }) => {
+      const result = await drive('observe', { sessionId, taskId }, async (webContents) => {
+        let entries = getNetworkEntries(webContents);
+        if (urlContains) entries = entries.filter((entry) => entry.url.includes(urlContains));
+        if (failedOnly) {
+          entries = entries.filter((entry) => entry.errorText !== null || (entry.status ?? 0) >= 400);
+        }
+        const tail = entries.slice(-(limit ?? 50));
+        return { requests: tail, returned: tail.length, total: entries.length };
+      });
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_handle_dialog',
+    {
+      description:
+        "Decide how the page's JavaScript dialogs (alert, confirm, prompt, beforeunload) are answered, and read the ones already seen. Arm this BEFORE the action that triggers the dialog - a dialog blocks the page while it is open, so there is no moment afterwards in which a tool call could answer it. By default every dialog is DISMISSED (Cancel) and recorded, so a confirm() can never wedge your pane; call this with accept true to get through one. Note that prompt() is not implemented in this runtime - it throws in the page instead of opening a dialog - so promptText only matters for a page that reaches one some other way. The response lists the dialogs this pane has raised, with the text they showed.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        accept: z.boolean().optional().describe('True to press OK, false to Cancel. Default false.'),
+        promptText: z.string().optional().describe('Text to enter for a prompt(). Only used when accept is true.'),
+        persist: z.boolean().optional().describe('True to answer every later dialog this way. Default false: the arm is consumed by the next dialog, then reverts to dismiss.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, accept, promptText, persist }) => {
+      const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
+        const armed = { accept: accept === true, promptText, once: persist !== true };
+        setDialogResponse(webContents, armed);
+        return { armed, seen: getDialogEntries(webContents) };
+      });
+      return driverToolResult(result);
+    },
+  );
+
+  // ── Viewport ──────────────────────────────────────────────────────────
+  server.registerTool(
+    'kangentic_browser_set_viewport',
+    {
+      description:
+        "Set the viewport the task's Browser surface lays out against, so you can verify a responsive layout at a real desktop width instead of guessing from CSS. A docked pane is only as wide as the task window leaves it, which is usually below every desktop breakpoint. Pass width and height in CSS pixels; the response reports the viewport you actually GOT, measured from the page. `exact` tolerates 2px, so a requested 1080 reported as 1079 with `exact: true` is a correct result, not a clamp - the fit rounds to whole pixels. `exact: false` means a real shortfall, and `note` says what caused it. On an offscreen lane or a popped-out window this resizes the real surface, un-maximizing it first if it has to. On a docked pane it overrides the viewport in place, which is the option that KEEPS YOUR PAGE: no reload, sessionStorage and in-memory state survive, and your surface handle stays valid. The pane is zoomed out to fit, so the user sees the whole layout you asked for rather than a corner of it, and your screenshots still come back at full resolution. Pass `reset: true` to put both the viewport and the zoom back. An override survives navigation and lasts until you reset it, your session ends, or the user clears it from the pane.",
+      inputSchema: z.object({
+        ...TARGET_SHAPE,
+        width: z
+          .number()
+          .int()
+          .min(MIN_VIEWPORT_DIMENSION)
+          .max(MAX_VIEWPORT_DIMENSION)
+          .optional()
+          .describe('Viewport width in CSS pixels, e.g. 1920. Omit to keep the current width.'),
+        height: z
+          .number()
+          .int()
+          .min(MIN_VIEWPORT_DIMENSION)
+          .max(MAX_VIEWPORT_DIMENSION)
+          .optional()
+          .describe('Viewport height in CSS pixels, e.g. 1080. Omit to keep the current height.'),
+        deviceScaleFactor: z
+          .number()
+          .min(0)
+          .max(4)
+          .optional()
+          .describe(
+            'Device pixel ratio for the emulated viewport. 0 (the default) keeps the display\'s own, which is what you want unless you are testing hidpi assets. Note 2 quadruples screenshot bytes and will push a wide capture out to a file.',
+          ),
+        zoom: z
+          .number()
+          .min(0.25)
+          .max(5)
+          .optional()
+          .describe(
+            'Page zoom factor, the same one the pane\'s zoom pill shows. Omit it and a docked pane is zoomed to FIT the width and height above, which is almost always what you want. Pass 1 to render 1:1 instead, which crops a wide layout to the pane but is the sharpest capture. The width and height mean the same thing either way: the layout is always the size you asked for.',
+          ),
+        position: z
+          .enum(WINDOW_ANCHORS)
+          .optional()
+          .describe(
+            'Where to put a DETACHED window on its display, as a nine-point anchor: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right. Use this with width and height for a window snap: half the display width plus `left` docks it to the left half of the monitor the window is on. Ignored with an explanation on a docked pane (it has no position of its own - pop it out first) and on a lane (offscreen).',
+          ),
+        reset: z
+          .boolean()
+          .optional()
+          .describe('Drop the viewport override and return the surface to its natural size. Ignores width and height.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, taskId, width, height, deviceScaleFactor, zoom, position, reset }) => {
+      // Validated here as well as in zod, because a value that reaches the
+      // guest as NaN or a fraction becomes a compositor surface rather than an
+      // error, and the failure then looks like a broken page.
+      for (const [name, value] of [['width', width], ['height', height]] as const) {
+        if (value === undefined) continue;
+        if (!Number.isFinite(value) || value < MIN_VIEWPORT_DIMENSION || value > MAX_VIEWPORT_DIMENSION) {
+          return errorToolResult({
+            kind: 'invalid-viewport',
+            detail: `${name} must be a whole number of CSS pixels between ${MIN_VIEWPORT_DIMENSION} and ${MAX_VIEWPORT_DIMENSION}. Got ${String(value)}.`,
+          });
+        }
+      }
+
+      const result = await drive<ApplyViewportOutcome>(
+        'interact',
+        { sessionId, taskId },
+        (webContents, entry) =>
+          reset === true
+            ? clearViewport(webContents, entry)
+            : applyViewport(
+                webContents,
+                entry,
+                { width, height, deviceScaleFactor, zoom, position },
+                callerSessionId ?? null,
+              ),
+      );
+      return driverToolResult(result);
+    },
+  );
+
+  // ── Detach / dock ─────────────────────────────────────────────────────
+  server.registerTool(
+    'kangentic_browser_pop_out',
+    {
+      description:
+        "Detach YOUR OWN task's Browser pane into its own OS window, optionally at a given size and position, so you can test against a real desktop viewport with no emulation: 1:1 coordinates and screenshots that are the thing itself. The response carries `display`, the usable size of the monitor the window landed on, so sizing relative to the screen (half the width, full height) takes no extra call. Pass width and height in CSS pixels, or maximized. IMPORTANT: this MOVES the page, which RELOADS it - sessionStorage and in-memory state are lost and your current surface handle dies, so use the sessionId this returns from now on. Cookies and localStorage carry over. If you are midway through a signed-in flow, use kangentic_browser_set_viewport instead; it changes the viewport in place and keeps the page. Returns only once the new window's pane is driveable. Does not take the user's keyboard focus. Put it back with kangentic_browser_dock.",
+      inputSchema: z.object({
+        width: z
+          .number()
+          .int()
+          .min(MIN_VIEWPORT_DIMENSION)
+          .max(MAX_VIEWPORT_DIMENSION)
+          .optional()
+          .describe('Requested viewport width in CSS pixels. The window is capped by the physical display, and the response reports what the page actually got.'),
+        height: z
+          .number()
+          .int()
+          .min(MIN_VIEWPORT_DIMENSION)
+          .max(MAX_VIEWPORT_DIMENSION)
+          .optional()
+          .describe('Requested viewport height in CSS pixels. Same capping and reporting as width.'),
+        maximized: z.boolean().optional().describe('Open the window maximized instead of at a given size.'),
+        position: z
+          .enum(WINDOW_ANCHORS)
+          .optional()
+          .describe(
+            'Where to place the window on its display: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right. Combine with width and height for a snap, e.g. half the display width plus `left`.',
+          ),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ width, height, maximized, position }) => {
+      const result = await popOutPaneForCallerTask({
+        projectId,
+        callerSessionId,
+        callerTaskId,
+        width,
+        height,
+        maximized,
+        position,
+        // Detaching reloads the page at its URL, so it is a navigation-tier
+        // action for the same reason opening a pane is: "Allow navigation" off
+        // disables this tool too.
+        capability: 'navigate',
+        config: getAutomationConfig(),
+      });
+      return driverToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'kangentic_browser_dock',
+    {
+      description:
+        "Put YOUR OWN task's detached Browser window back into the task, undoing kangentic_browser_pop_out. Like detaching, this MOVES the page and therefore RELOADS it: sessionStorage and in-memory state are lost and the detached window's handle dies, so use the sessionId this returns from now on. Returns only once the docked pane is driveable again. Fails with not-detached when the pane is already in the task window.",
+      inputSchema: z.object({}),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async () => {
+      const result = await dockPaneForCallerTask({
+        projectId,
+        callerSessionId,
+        callerTaskId,
+        capability: 'navigate',
+        config: getAutomationConfig(),
+      });
       return driverToolResult(result);
     },
   );

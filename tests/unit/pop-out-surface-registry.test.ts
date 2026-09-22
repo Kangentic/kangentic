@@ -90,6 +90,41 @@ describe('pop-out surface registry', () => {
     expect(offenders, `Invalid pop-out surface channel declarations:\n${offenders.join('\n')}`).toEqual([]);
   });
 
+  /**
+   * A pop-out renderer gets a main push ONLY if its surface declares the
+   * channel (`broadcast` -> `windowsForChannel`), and it never mounts App.tsx,
+   * so it has none of App's subscriptions either. Both halves have to be
+   * present or the window silently shows stale state.
+   *
+   * The monitor surface is the case that bit: `PopOutMonitorRoot` mounts
+   * `MonitorDetailLayer`, so a task detail - and its Browser pill - renders in
+   * that window. The pill's alive dot reads the set of tasks holding their one
+   * browser surface OFFSCREEN, which only main can see. Without the channel the
+   * pill reads dark for a browser that exists, which is the invisibility the
+   * whole offscreen-surface push was built to remove.
+   */
+  it('the monitor surface receives the offscreen-browser set, and seeds it itself', () => {
+    expect(
+      POP_OUT_SURFACES.monitor.channels,
+      'the monitor pop-out hosts task details, so it needs the offscreen-surface push',
+    ).toContain(IPC.BROWSER_OFFSCREEN_SURFACES);
+
+    // The push alone is not enough: an offscreen surface can predate this
+    // window by hours, so the bootstrap reads the set once as well. Checked by
+    // text scan for the same reason the rest of this file is - importing the
+    // surface module pulls the whole React tree in.
+    const source = fs.readFileSync(
+      path.join(__dirname, '../../src/renderer/pop-out/surfaces/monitor-surface.tsx'),
+      'utf8',
+    );
+    expect(source, 'monitor-surface must seed the offscreen set on mount').toContain(
+      'loadBrowserOffscreenTasks',
+    );
+    expect(source, 'monitor-surface must subscribe to the offscreen push').toContain(
+      'onOffscreenSurfaces',
+    );
+  });
+
   it('every PopOutKind has both a shared metadata entry and a renderer registration', () => {
     const sharedKinds = Object.keys(POP_OUT_SURFACES).sort();
 

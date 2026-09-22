@@ -24,13 +24,13 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
 }));
 
 const openLane = vi.fn(async () => ({ ok: true as const, laneId: 'lane_handoff1', webContents: {} }));
-const destroyHandoffLanesForTask = vi.fn(() => 0);
+const destroyLanesForTask = vi.fn(() => 0);
 let handoffLaneExists = false;
 
 vi.mock('../../src/main/browser/browser-lane-manager', () => ({
   openLane: (...args: unknown[]) => openLane(...(args as [])),
-  destroyHandoffLanesForTask: (...args: unknown[]) => destroyHandoffLanesForTask(...(args as [])),
-  hasHandoffLaneForTask: () => handoffLaneExists,
+  destroyLanesForTask: (...args: unknown[]) => destroyLanesForTask(...(args as [])),
+  hasLaneForTask: () => handoffLaneExists,
 }));
 
 let shuttingDown = false;
@@ -63,7 +63,7 @@ let liveTasks = new Set<string>(['task-1']);
 
 beforeEach(() => {
   openLane.mockClear();
-  destroyHandoffLanesForTask.mockClear();
+  destroyLanesForTask.mockClear();
   handoffLaneExists = false;
   shuttingDown = false;
   liveTasks = new Set(['task-1']);
@@ -91,7 +91,6 @@ describe('pane hand-off', () => {
       taskId: 'task-1',
       projectId: 'project-1',
       url: 'http://localhost:4200',
-      handoff: true,
       // The lane is owned by the AGENT session the pane served, not by the
       // pane's handle, so it dies with that agent.
       ownerSessionId: 'session-1',
@@ -190,17 +189,17 @@ describe('pane hand-off', () => {
   });
 });
 
-describe('standing down', () => {
-  it('closes the hand-off lane when the user"s own pane comes back', () => {
+describe('reclaim', () => {
+  it('destroys the task"s offscreen surface when its visible pane comes back', () => {
     browserPaneRegistry.register(pane({ webContentsId: 9 }));
-    expect(destroyHandoffLanesForTask).toHaveBeenCalledWith('task-1');
+    expect(destroyLanesForTask).toHaveBeenCalledWith('task-1');
   });
 
-  it('does not stand down when a LANE registers', () => {
-    // Otherwise an agent opening its own isolated lane would tear down the
-    // hand-off lane serving a different purpose.
-    destroyHandoffLanesForTask.mockClear();
+  it('does not reclaim when a LANE registers', () => {
+    // The offscreen surface registering is the surface arriving, not a pane
+    // replacing it. Reclaiming here would destroy the thing that just opened.
+    destroyLanesForTask.mockClear();
     browserPaneRegistry.register(pane({ handle: 'lane_xyz', kind: 'lane', webContentsId: 11 }));
-    expect(destroyHandoffLanesForTask).not.toHaveBeenCalled();
+    expect(destroyLanesForTask).not.toHaveBeenCalled();
   });
 });

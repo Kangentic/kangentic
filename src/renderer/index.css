@@ -594,6 +594,37 @@
 }
 
 
+/* The agent-drive cue's breath, on the Browser pane's inset ring and the dot in
+   its label.
+
+   MOTION IS THE PRIMARY SIGNAL HERE, not decoration on top of the veil. A
+   static tint has no baseline to compare against: reported from a live drive
+   as "on a white background the dim isn't coming through", and it was in fact
+   applied - the viewer simply cannot tell a 22%-veiled white page from a page
+   that is grey, because they never see the two side by side. Motion needs no
+   baseline.
+
+   The RING carries it rather than the 6px dot alone. The activity marks learned
+   this the expensive way: blinking a 2.7px element reads as no motion at all, so
+   the thing that moves has to be big enough to notice. The ring is the page's
+   whole perimeter and sits over no content, so it can move without making
+   anything harder to read.
+
+   1400ms is the activity marks' shared period, so a driving pane breathes in
+   lockstep with every other "something is working" indicator on screen rather
+   than introducing a fourth cadence. Opacity only, which Chromium composites:
+   a non-composited animation stops producing frames while the main thread is
+   blocked, and an agent driving the pane is exactly when it is blocked. */
+.kng-drive-pulse {
+  animation: drive-pulse 1400ms ease-in-out infinite;
+}
+
+@keyframes drive-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+
 /* Brief brightness + scale pulse for live-updating values */
 @keyframes value-update {
   0%   { filter: brightness(1); transform: scale(1); }
@@ -724,6 +755,14 @@
   }
 
   .animate-pulse-subtle::before {
+    animation: none;
+  }
+
+  /* The drive cue stops dead and rests at full strength, so the ring and the
+     dot stay visible rather than freezing mid-breath. The label and the veil
+     carry the state on their own; the run-based timing that keeps the cue from
+     churning is scheduling rather than animation and is unaffected. */
+  .kng-drive-pulse {
     animation: none;
   }
 

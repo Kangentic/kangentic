@@ -9,6 +9,10 @@ import { isErrorReportingActive } from '../analytics/error-reporting';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 
+/** Extra grace past the debounce before a bounds save counts as the user's
+ *  again, once an agent resize has finished. See `suppressBoundsSave`. */
+const BOUNDS_SAVE_SETTLE_MS = 250;
+
 interface PopOutOpenContext {
   /** MAIN_WINDOW_VITE_DEV_SERVER_URL, or null in a production build. */
   devServerUrl: string | null;
@@ -32,6 +36,11 @@ interface TrackedPopOut {
   params: PopOutParams;
   window: BrowserWindow;
   boundsTimer: ReturnType<typeof setTimeout> | null;
+  /** How many agent-driven resizes are in flight against this window. */
+  agentResizeDepth: number;
+  /** Epoch ms until which a bounds save is still attributed to an agent
+   *  resize that has just finished. See `suppressBoundsSave`. */
+  agentResizeSettledUntil: number;
 }
 
 function isTaskParams(params: PopOutParams): params is PopOutTaskParams {
@@ -62,13 +71,24 @@ export class PopOutWindowManager {
    *  window, no throw) when the kind declares `maxInstances` and that many windows of
    *  it are already live - the IPC handler surfaces that as `false` so the renderer
    *  can tell the user. Throws on an unknown kind, a scope/params mismatch, or if
-   *  called before configure(). */
-  open<K extends PopOutKind>(kind: K, params: PopOutParams<K>): BrowserWindow | null {
+   *  called before configure().
+   *
+   *  `options.focus: false` shows the window without raising it or taking the
+   *  keyboard. That is required, not cosmetic, for an AGENT-initiated open: an
+   *  agent action must never move the user's focus, and a window appearing over
+   *  what someone is typing into is the loudest possible version of that. See
+   *  `.claude/rules/agent-driven-focus.md`. */
+  open<K extends PopOutKind>(
+    kind: K,
+    params: PopOutParams<K>,
+    options: { focus?: boolean } = {},
+  ): BrowserWindow | null {
+    const takeFocus = options.focus !== false;
     const key = popOutInstanceKey(kind, params);
     const existing = this.windows.get(key);
     if (existing && !existing.window.isDestroyed()) {
       if (existing.window.isMinimized()) existing.window.restore();
-      existing.window.focus();
+      if (takeFocus) existing.window.focus();
       return existing.window;
     }
 
@@ -164,8 +184,15 @@ export class PopOutWindowManager {
       // maximized out of the box (un-maximize restores the defaultBounds float,
       // cascade offset included - the constructor bounds are the restore rect).
       if (savedBounds ? savedBounds.maximized : meta.openMaximized) win.maximize();
-      win.show();
-      win.focus();
+      // `showInactive` rather than `show` for an agent-initiated open: it puts
+      // the window on screen without raising it over what the user is doing or
+      // moving the keyboard into it.
+      if (takeFocus) {
+        win.show();
+        win.focus();
+      } else {
+        win.showInactive();
+      }
     };
     win.once('ready-to-show', reveal);
     win.webContents.once('did-finish-load', reveal);
@@ -180,11 +207,24 @@ export class PopOutWindowManager {
       win.loadFile(resolveRendererIndexPath(openContext.viteName), { hash: kind });
     }
 
-    const tracked: TrackedPopOut = { kind, params, window: win, boundsTimer: null };
+    const tracked: TrackedPopOut = {
+      kind,
+      params,
+      window: win,
+      boundsTimer: null,
+      agentResizeDepth: 0,
+      agentResizeSettledUntil: 0,
+    };
     const scheduleBoundsSave = () => {
       if (tracked.boundsTimer) clearTimeout(tracked.boundsTimer);
       tracked.boundsTimer = setTimeout(() => {
         tracked.boundsTimer = null;
+        // Saved bounds are keyed by pop-out KIND, not by instance, so a size an
+        // AGENT asked for would overwrite the size the USER chose, for every
+        // task, invisibly. An agent viewport is a transient testing condition;
+        // only a human dragging the frame is a preference. See
+        // `suppressBoundsSave`.
+        if (tracked.agentResizeDepth > 0 || Date.now() < tracked.agentResizeSettledUntil) return;
         savePopOutBounds(kind, win, openContext.getConfigManager());
       }, BOUNDS_SAVE_DEBOUNCE_MS);
     };
@@ -220,6 +260,39 @@ export class PopOutWindowManager {
   has<K extends PopOutKind>(kind: K, params: PopOutParams<K>): boolean {
     const tracked = this.windows.get(popOutInstanceKey(kind, params));
     return !!tracked && !tracked.window.isDestroyed();
+  }
+
+  /** The live window for one instance, or null. Lets a caller that must act on
+   *  the OS window itself (resizing a detached Browser pane to a requested
+   *  viewport) reach it without a second `new BrowserWindow` site or a
+   *  `fromWebContents` walk that can resolve the wrong window. */
+  windowFor<K extends PopOutKind>(kind: K, params: PopOutParams<K>): BrowserWindow | null {
+    const tracked = this.windows.get(popOutInstanceKey(kind, params));
+    if (!tracked || tracked.window.isDestroyed()) return null;
+    return tracked.window;
+  }
+
+  /**
+   * Mark the resizes that happen until the returned disposer runs as
+   * agent-driven, so they do not become the user's saved window size.
+   *
+   * The settle margin after the disposer matters as much as the flag: the save
+   * is debounced, so the timer armed by the last agent resize fires AFTER the
+   * operation is over and would otherwise persist exactly the size this is
+   * meant to keep out. A later user drag re-arms the timer past the margin and
+   * persists normally.
+   */
+  suppressBoundsSave<K extends PopOutKind>(kind: K, params: PopOutParams<K>): () => void {
+    const tracked = this.windows.get(popOutInstanceKey(kind, params));
+    if (!tracked) return () => {};
+    tracked.agentResizeDepth += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      tracked.agentResizeDepth = Math.max(0, tracked.agentResizeDepth - 1);
+      tracked.agentResizeSettledUntil = Date.now() + BOUNDS_SAVE_DEBOUNCE_MS + BOUNDS_SAVE_SETTLE_MS;
+    };
   }
 
   /** Instance keys of every currently-open (non-destroyed) pop-out window. */

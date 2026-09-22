@@ -6309,6 +6309,53 @@ export interface ElectronAPI {
      */
     onAgentInput: (callback: (webContentsId: number, active: boolean) => void) => () => void;
     /**
+     * An agent set or cleared the viewport this guest lays out against.
+     *
+     * The pane cannot observe this for itself: an override is a property of
+     * main's CDP session with the guest, and the guest's own element never
+     * changes size, so the page simply starts rendering at a width nothing on
+     * screen accounts for. `null` means the override was dropped.
+     *
+     * `webContentsId` identifies WHICH guest, since one window can host several
+     * panes and each must ignore the others'.
+     */
+    onViewportOverride: (
+      callback: (webContentsId: number, override: BrowserViewportOverride | null) => void,
+    ) => () => void;
+    /**
+     * The `<webview>` element's own size in CSS pixels.
+     *
+     * Only this side can measure it. Main's view is the whole app window, and
+     * the pane is one side of a split inside a task-detail window inside it,
+     * so a viewport fitted against main's number comes out unfitted. Reported
+     * on mount and whenever the element resizes (a splitter drag, a window
+     * resize).
+     */
+    setPaneWidgetSize: (webContentsId: number, width: number, height: number) => Promise<void>;
+    /** The override this guest is already under, asked once on registration so
+     *  a pane that mounted after it was set (a pop-out) still shows it. */
+    getViewportOverride: (webContentsId: number) => Promise<BrowserViewportOverride | null>;
+    /** Drop this guest's viewport override, from the pane's own chip. The
+     *  user's escape hatch when the agent that set it has finished. */
+    clearViewportOverride: (webContentsId: number) => Promise<boolean>;
+    /**
+     * Which tasks currently hold their one browser surface OFFSCREEN.
+     *
+     * The whole set on every change, never a delta: a renderer that missed one
+     * push would otherwise stay wrong for the rest of the session. The card
+     * globe and the Browser pill light up from this exactly as they do from
+     * `browserGuestTasks`, which only a real `<webview>` can write.
+     */
+    onOffscreenSurfaces: (callback: (taskIds: string[]) => void) => () => void;
+    /** The same set, asked for on mount and after an HMR update, since an
+     *  offscreen surface can sit unchanged for a whole session and a
+     *  push-only channel would leave a reloaded renderer blank. */
+    getOffscreenSurfaces: () => Promise<string[]>;
+    /** The user's Close, for a task whose surface is offscreen: there is no
+     *  guest to retire and no pane to unmount, so main destroys the offscreen
+     *  window directly. True when something was closed. */
+    closeOffscreenSurface: (taskId: string, projectId?: string | null) => Promise<boolean>;
+    /**
      * A file download started from a Browser pane has finished. The pane saves
      * silently to the OS Downloads folder (what Chrome does), so this push is
      * what stops an agent-triggered download from being invisible.
@@ -6447,6 +6494,27 @@ export interface BrowserPaneRegisterInput {
   url: string | null;
   /** Where the pane is at registration time. Defaults to `showing`. */
   visibility?: BrowserPaneVisibility;
+}
+
+/**
+ * The viewport an agent has imposed on a Browser surface, as the renderer sees
+ * it.
+ *
+ * `measured` is the viewport the PAGE reported after the change settled, and it
+ * is what the pane's chip shows. It can differ from `requested`: a window loses
+ * its frame and the pane's chrome to the viewport and is capped by the display,
+ * and an override composes with the zoom factor. Showing the request would put
+ * a number on screen the page never laid out against.
+ */
+export interface BrowserViewportOverride {
+  /** Which mechanism produced it. `device-emulation` is the only one that can
+   *  leave the pane showing a crop of a larger layout. */
+  mechanism: 'device-emulation' | 'window-resize' | 'lane-resize';
+  requested: { width: number; height: number };
+  measured: { width: number; height: number };
+  deviceScaleFactor: number;
+  /** ISO 8601 UTC. */
+  appliedAt: string;
 }
 
 /** A finished Browser-pane download, reported to the renderer so it can toast. */

@@ -38,6 +38,9 @@ const {
   fakeRegistrySetVisibility,
   fakeRegistrySetPaneClosedHandler,
   fakeRegistrySetPaneRegisteredHandler,
+  fakeRegistryGetByTaskId,
+  fakeRegistryResolveLiveGuest,
+  fakeRegistryList,
   fakeFindLiveSessionByTaskId,
   capturedHandoffDependencies,
 } = vi.hoisted(() => {
@@ -65,6 +68,14 @@ const {
   const fakeRegistrySetVisibility = vi.fn();
   const fakeRegistrySetPaneClosedHandler = vi.fn();
   const fakeRegistrySetPaneRegisteredHandler = vi.fn();
+  // BROWSER_URL_GET now calls offscreenSurfaceUrl (browser-pane-opener.ts),
+  // which reads these two registry methods through liveOffscreenSurface.
+  // Default to "no offscreen surface for this task" so every pre-existing
+  // caller of registerBrowserHandlers keeps its prior (pre-this-branch)
+  // behavior unless a test overrides the return value.
+  const fakeRegistryGetByTaskId = vi.fn(() => [] as unknown[]);
+  const fakeRegistryResolveLiveGuest = vi.fn(() => ({ ok: false as const, kind: 'pane-destroyed', detail: 'not used' }));
+  const fakeRegistryList = vi.fn(() => [] as unknown[]);
   const fakeFindLiveSessionByTaskId = vi.fn<(taskId: string) => boolean>(() => false);
   /** The dependencies the handler wires into the lane hand-off, so its
    *  `hasLiveSession` policy can be exercised directly. */
@@ -83,6 +94,9 @@ const {
     fakeRegistrySetVisibility,
     fakeRegistrySetPaneClosedHandler,
     fakeRegistrySetPaneRegisteredHandler,
+    fakeRegistryGetByTaskId,
+    fakeRegistryResolveLiveGuest,
+    fakeRegistryList,
     fakeFindLiveSessionByTaskId,
     capturedHandoffDependencies,
   };
@@ -150,6 +164,11 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
     // throw at registration time, before it reaches its own subject.
     setPaneClosedHandler: fakeRegistrySetPaneClosedHandler,
     setPaneRegisteredHandler: fakeRegistrySetPaneRegisteredHandler,
+    // BROWSER_URL_GET's offscreen-priority read (browser-pane-opener.ts's
+    // liveOffscreenSurface / paneStatus) calls all three of these.
+    getByTaskId: fakeRegistryGetByTaskId,
+    resolveLiveGuest: fakeRegistryResolveLiveGuest,
+    list: fakeRegistryList,
   },
 }));
 
@@ -735,6 +754,11 @@ describe('BROWSER_URL_GET / SET_TASK / CLEAR_TASK IPC handlers - project-scoped 
     vi.mocked(browserUrlStore.set).mockClear();
     vi.mocked(browserUrlStore.clear).mockClear();
     vi.mocked(browserUrlStore.get).mockReturnValue(null);
+    // Default to "no offscreen surface for this task" so only the two tests
+    // below that deliberately register one see it.
+    fakeRegistryGetByTaskId.mockReset().mockReturnValue([]);
+    fakeRegistryResolveLiveGuest.mockReset();
+    fakeRegistryList.mockReset().mockReturnValue([]);
   });
 
   it('BROWSER_URL_GET: omitted projectId falls back to the ambient current project', async () => {
@@ -766,6 +790,75 @@ describe('BROWSER_URL_GET / SET_TASK / CLEAR_TASK IPC handlers - project-scoped 
     expect(context.configManager.loadProjectOverrides).not.toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH);
     expect(browserUrlStore.get).toHaveBeenCalledWith(URL_OTHER_PROJECT_PATH, 'task-1');
     expect(browserUrlStore.get).not.toHaveBeenCalledWith(URL_CURRENT_PROJECT_PATH, 'task-1');
+  });
+
+  // -------------------------------------------------------------------------
+  // New in this branch: BROWSER_URL_GET prefers a task's live OFFSCREEN
+  // surface (a lane) over the saved sidecar URL. See the handler's own
+  // comment in src/main/ipc/handlers/browser.ts - a pane asking for its URL
+  // while the task's surface is offscreen is a pane about to REPLACE that
+  // surface, and the sidecar cannot know where the agent left it (it is
+  // written by the PANE on its own did-navigate, which an offscreen surface
+  // never fires). browser-pane-opener.test.ts pins the same priority order
+  // at the RECLAIM call site (openPaneForCallerTask); nothing before this
+  // covered that THIS handler's own separate call site (the one a
+  // reopening pane's initial `src` is actually read from) reads the result.
+  // -------------------------------------------------------------------------
+
+  it('BROWSER_URL_GET: a live offscreen surface\'s URL outranks the saved sidecar value', async () => {
+    vi.mocked(browserUrlStore.get).mockReturnValue('http://localhost:3000/stale-sidecar-url');
+    fakeRegistryGetByTaskId.mockReturnValue([
+      {
+        sessionId: 'lane_live0001',
+        ownerSessionId: null,
+        taskId: 'task-1',
+        projectId: URL_CURRENT_PROJECT_ID,
+        webContentsId: 7,
+        url: 'http://localhost:3000/live-offscreen-url',
+        registeredAt: 0,
+        kind: 'lane',
+        widgetSize: null,
+        visibility: 'offscreen',
+      },
+    ]);
+    fakeRegistryResolveLiveGuest.mockReturnValue({ ok: true } as unknown as ReturnType<typeof fakeRegistryResolveLiveGuest>);
+    fakeRegistryList.mockReturnValue([]);
+
+    const context = makeUrlContext();
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    const result = await invokeUrlGet('task-1');
+
+    expect(result).toMatchObject({ taskOverride: 'http://localhost:3000/live-offscreen-url' });
+    // And the priority is scoped to the RESOLVED project, not any project.
+    expect(fakeRegistryGetByTaskId).toHaveBeenCalledWith('task-1', URL_CURRENT_PROJECT_ID);
+  });
+
+  it('BROWSER_URL_GET: falls back to the saved sidecar value when the offscreen entry has no live guest', async () => {
+    vi.mocked(browserUrlStore.get).mockReturnValue('http://localhost:3000/saved-sidecar-url');
+    fakeRegistryGetByTaskId.mockReturnValue([
+      {
+        sessionId: 'lane_dead0001',
+        ownerSessionId: null,
+        taskId: 'task-1',
+        projectId: URL_CURRENT_PROJECT_ID,
+        webContentsId: 7,
+        url: 'http://localhost:3000/dead-offscreen-url',
+        registeredAt: 0,
+        kind: 'lane',
+        widgetSize: null,
+        visibility: 'offscreen',
+      },
+    ]);
+    // The registered entry's guest is gone (self-heals via resolveLiveGuest).
+    fakeRegistryResolveLiveGuest.mockReturnValue({ ok: false, kind: 'pane-destroyed', detail: 'gone' });
+
+    const context = makeUrlContext();
+    registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);
+
+    const result = await invokeUrlGet('task-1');
+
+    expect(result).toMatchObject({ taskOverride: 'http://localhost:3000/saved-sidecar-url' });
   });
 
   it('BROWSER_URL_GET: no project open and no explicit projectId returns nulls without touching the store', async () => {

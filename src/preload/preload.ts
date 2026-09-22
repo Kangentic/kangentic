@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -727,6 +727,29 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BROWSER_AGENT_INPUT, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_AGENT_INPUT, handler);
     },
+    onViewportOverride: (callback) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        webContentsId: number,
+        override: BrowserViewportOverride | null,
+      ) => callback(webContentsId, override);
+      ipcRenderer.on(IPC.BROWSER_VIEWPORT_OVERRIDE, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_VIEWPORT_OVERRIDE, handler);
+    },
+    setPaneWidgetSize: (webContentsId, width, height) =>
+      ipcRenderer.invoke(IPC.BROWSER_PANE_WIDGET_SIZE, webContentsId, width, height),
+    getViewportOverride: (webContentsId) =>
+      ipcRenderer.invoke(IPC.BROWSER_VIEWPORT_GET, webContentsId),
+    clearViewportOverride: (webContentsId) =>
+      ipcRenderer.invoke(IPC.BROWSER_VIEWPORT_CLEAR, webContentsId),
+    onOffscreenSurfaces: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, taskIds: string[]) => callback(taskIds);
+      ipcRenderer.on(IPC.BROWSER_OFFSCREEN_SURFACES, handler);
+      return () => ipcRenderer.removeListener(IPC.BROWSER_OFFSCREEN_SURFACES, handler);
+    },
+    getOffscreenSurfaces: () => ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_SURFACES_GET),
+    closeOffscreenSurface: (taskId, projectId) =>
+      ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_CLOSE, taskId, projectId),
     onDownloadDone: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, download: BrowserDownloadDone) =>
         callback(download);

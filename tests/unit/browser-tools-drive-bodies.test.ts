@@ -11,8 +11,12 @@
  * body against a fake `webContents`, the same pattern
  * `browser-pane-opener.test.ts` uses for the opener.
  *
- * Two behaviors pinned here:
+ * Three behaviors pinned here:
  *
+ * 0. `kangentic_browser_set_viewport` validates its dimensions before reaching
+ *    the guest, and routes `reset` to the clear path rather than the set one.
+ *    The three MECHANISMS it dispatches between are not here: those need a
+ *    window and a CDP session, and live in `browser-viewport-override.test.ts`.
  * 1. `kangentic_browser_wait` now polls with ONE lock acquisition per poll
  *    (rather than one 60s-long drive), and a REFUSAL from any single poll ends
  *    the wait immediately instead of being retried until the deadline. Without
@@ -48,18 +52,27 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 // getOuterHtml drives the `wait` poll body; captureScreenshotWithBudget drives
 // the screenshot body's non-blocked path.
 const getOuterHtml = vi.fn();
+const scrollBy = vi.fn();
+const selectOptionOnSelector = vi.fn();
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
   clickAtCenterOfSelector: vi.fn(),
   dispatchMouseEvent: vi.fn(),
   dispatchKeyEvent: vi.fn(),
   dispatchKeypress: vi.fn(),
   dragFromTo: vi.fn(),
+  dropFilesOnSelector: vi.fn(),
+  getDialogEntries: vi.fn(() => []),
+  getNetworkEntries: vi.fn(() => []),
   getOuterHtml: (...args: unknown[]) => getOuterHtml(...args),
   getBoundingBox: vi.fn(),
   getConsoleEntries: vi.fn(),
   getLayoutMetrics: vi.fn(),
+  hoverSelector: vi.fn(),
   queryAllElements: vi.fn(),
   runtimeEvaluate: vi.fn(),
+  scrollBy: (...args: unknown[]) => scrollBy(...args),
+  selectOptionOnSelector: (...args: unknown[]) => selectOptionOnSelector(...args),
+  setDialogResponse: vi.fn(),
   typeText: vi.fn(),
 }));
 
@@ -82,14 +95,64 @@ vi.mock('../../src/main/browser/dev-server-error', async (importOriginal) => {
 // stubbed-refusal mock every other browser-tools test uses. A test overrides
 // it per-case (mockResolvedValueOnce) to simulate a mid-poll refusal.
 const fakeGuest = {} as never;
+// The body takes (webContents, entry): `set_viewport` picks its mechanism from
+// the entry, so a mock that passes only the guest makes that tool crash rather
+// than dispatch.
+const fakeEntry = {
+  sessionId: 'pane_abc12345',
+  ownerSessionId: 'agent-1',
+  taskId: 'task-1',
+  // Literal rather than CALLER_PROJECT: this initializer runs above that
+  // declaration, so referencing it would be a temporal dead zone error.
+  projectId: 'p1',
+  webContentsId: 7,
+  url: null,
+  kind: 'pane',
+} as never;
 vi.mock('../../src/main/browser/browser-pane-driver', () => ({
-  withGuest: vi.fn(async (_options: unknown, fn: (webContents: unknown) => Promise<unknown>) => ({
+  withGuest: vi.fn(async (
+    _options: unknown,
+    fn: (webContents: unknown, entry: unknown) => Promise<unknown>,
+  ) => ({
     ok: true,
-    data: await fn(fakeGuest),
+    data: await fn(fakeGuest, fakeEntry),
   })),
   validateNavigationUrl: vi.fn((url: string) => ({ ok: true, url })),
   navigateGuest: vi.fn(),
 }));
+
+// The viewport mechanisms have their own file
+// (`browser-viewport-override.test.ts`, which drives the real dispatch). Here
+// they are stubbed so the TOOL's own job - validating, and routing set vs
+// reset - can be asserted without a window or a CDP session.
+const applyViewport = vi.fn(async () => ({
+  mechanism: 'device-emulation' as const,
+  requested: { width: 1920, height: 1080 },
+  viewport: { width: 1920, height: 1080 },
+  deviceScaleFactor: 0,
+  zoom: 1,
+  exact: true,
+  visibleFraction: 1,
+  note: null,
+}));
+const clearViewport = vi.fn(async () => ({
+  mechanism: 'device-emulation' as const,
+  requested: { width: 740, height: 749 },
+  viewport: { width: 740, height: 749 },
+  deviceScaleFactor: 0,
+  zoom: 1,
+  exact: true,
+  visibleFraction: 1,
+  note: null,
+}));
+vi.mock('../../src/main/browser/viewport-override', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/browser/viewport-override')>();
+  return {
+    ...actual,
+    applyViewport: (...args: unknown[]) => applyViewport(...(args as [])),
+    clearViewport: (...args: unknown[]) => clearViewport(...(args as [])),
+  };
+});
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -129,7 +192,7 @@ async function connect() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(withGuest).mockImplementation(async (_options, fn) => ({ ok: true, data: await fn(fakeGuest) }));
+  vi.mocked(withGuest).mockImplementation(async (_options, fn) => ({ ok: true, data: await fn(fakeGuest, fakeEntry) }));
 });
 
 describe('kangentic_browser_wait: per-poll lock, break-on-refusal', () => {
@@ -222,6 +285,97 @@ describe('kangentic_browser_screenshot: dev-server-error short-circuit', () => {
     expect(result.content).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'image', mimeType: 'image/jpeg' })]),
     );
+    await close();
+  });
+});
+
+describe('argument guards that live only in the tool body', () => {
+  // These two refusals are pure argument validation between zod and the
+  // driver, so nothing else in the tree covers them: zod accepts the shape and
+  // the primitive is never reached. Both were verified live once; without a
+  // test a refactor silently turns them into a no-op drive.
+
+  it('scroll refuses a zero delta instead of dispatching a wheel that does nothing', async () => {
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_scroll', arguments: {} });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('invalid-scroll');
+    expect(scrollBy).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('select_option refuses when no option is named, rather than picking one', async () => {
+    // value / label / index are each optional, so zod accepts a call that
+    // identifies nothing. Guessing (the first option, say) would silently
+    // change a form the agent never chose to change.
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_select_option',
+      arguments: { selector: '#country' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('missing-target');
+    expect(selectOptionOnSelector).not.toHaveBeenCalled();
+    await close();
+  });
+});
+
+describe('kangentic_browser_set_viewport: validation and set-vs-reset routing', () => {
+  it('routes a sized call to applyViewport, carrying the caller session as the owner', async () => {
+    const { client, close } = await connect();
+
+    await client.callTool({
+      name: 'kangentic_browser_set_viewport',
+      arguments: { width: 1920, height: 1080, zoom: 0.4 },
+    });
+
+    expect(clearViewport).not.toHaveBeenCalled();
+    expect(applyViewport).toHaveBeenCalledTimes(1);
+    const [, , request] = applyViewport.mock.calls[0] as unknown as [unknown, unknown, Record<string, unknown>];
+    expect(request).toMatchObject({ width: 1920, height: 1080, zoom: 0.4 });
+    await close();
+  });
+
+  it('routes reset to clearViewport and never to the set path', async () => {
+    const { client, close } = await connect();
+
+    await client.callTool({ name: 'kangentic_browser_set_viewport', arguments: { reset: true } });
+
+    expect(clearViewport).toHaveBeenCalledTimes(1);
+    expect(applyViewport).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('reset wins over a width in the same call, rather than doing both', async () => {
+    const { client, close } = await connect();
+
+    await client.callTool({
+      name: 'kangentic_browser_set_viewport',
+      arguments: { reset: true, width: 1920 },
+    });
+
+    expect(clearViewport).toHaveBeenCalledTimes(1);
+    expect(applyViewport).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('refuses an out-of-range dimension without reaching the guest', async () => {
+    // The handler validates as well as zod, because a value that arrives as a
+    // fraction or NaN becomes a compositor surface rather than an error, and
+    // the failure then looks like a broken page rather than a bad argument.
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_set_viewport',
+      arguments: { width: 99999 },
+    });
+
+    expect(applyViewport).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
     await close();
   });
 });

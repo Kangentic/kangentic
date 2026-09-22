@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // A "no toast appeared" assertion written as `expect(toastLocator).toHaveCount(0)`
 // passes against code that raises a toast. `toastCountRightNow` in
@@ -35,8 +36,13 @@ const UI_TEST_DIR = path.join(REPO_ROOT, 'tests/ui');
 const TOAST_ZERO_COUNT =
   /(?:getByTestId\(\s*['"]toast['"]\s*\)|\[data-testid=["']toast["']\]|[A-Za-z_$]*[Tt]oast[A-Za-z_$]*)[^\n]*\.toHaveCount\(\s*0\s*\)/;
 
-/** Per-line opt-out for a site that has a reason not to use the helper. */
-const OPT_OUT = /toast-count-ok:/;
+/**
+ * Per-line opt-out for a site that has a reason not to use the helper, read
+ * through the shared reader (`helpers/opt-out-marker.ts`). That replaced a
+ * private "this line or the one above" rule, which could not see a reason that
+ * wrapped onto a second line and accepted a bare `toast-count-ok:` with none.
+ */
+const OPT_OUT = 'toast-count-ok';
 
 function uiTestFiles(): string[] {
   return fs
@@ -53,8 +59,7 @@ describe('toast negative assertions do not use a retrying matcher', () => {
       const lines = fs.readFileSync(file, 'utf-8').split('\n');
       lines.forEach((line, index) => {
         if (!TOAST_ZERO_COUNT.test(line)) return;
-        const previous = index > 0 ? lines[index - 1] : '';
-        if (OPT_OUT.test(line) || OPT_OUT.test(previous)) return;
+        if (hasOptOutMarker(lines, index, OPT_OUT)) return;
         offenders.push(`${path.relative(REPO_ROOT, file)}:${index + 1}: ${line.trim()}`);
       });
     }
@@ -64,7 +69,8 @@ describe('toast negative assertions do not use a retrying matcher', () => {
       'A toast auto-dismisses inside the expect-retry window, so toHaveCount(0) passes\n'
         + 'against code that raised one. Use `toastCountRightNow` from tests/ui/helpers.ts:\n'
         + '  expect(await toastCountRightNow(page)).toBe(0);\n'
-        + 'Opt out on the line (or the line above) with `// toast-count-ok: <reason>`.\n\n'
+        + `Opt out on the line, or in the comment block directly above it, with\n`
+        + `\`// ${OPT_OUT}: <reason>\` - the reason is required.\n\n`
         + `Offending sites:\n${offenders.join('\n')}`,
     ).toEqual([]);
   });
@@ -96,10 +102,18 @@ describe('toast negative assertions do not use a retrying matcher', () => {
     }
   });
 
-  it('honors the opt-out marker', () => {
-    const line = `await expect(page.getByTestId('toast')).toHaveCount(0); // toast-count-ok: fake clock frozen`;
-    expect(TOAST_ZERO_COUNT.test(line)).toBe(true);
-    expect(OPT_OUT.test(line)).toBe(true);
+  it('honors the opt-out marker, and only with a reason', () => {
+    const offence = `await expect(page.getByTestId('toast')).toHaveCount(0);`;
+    expect(TOAST_ZERO_COUNT.test(offence)).toBe(true);
+    expect(hasOptOutMarker([`${offence} // ${OPT_OUT}: fake clock frozen`], 0, OPT_OUT)).toBe(true);
+    // A bare marker used to waive the line; now it marks nothing.
+    expect(hasOptOutMarker([`${offence} // ${OPT_OUT}:`], 0, OPT_OUT)).toBe(false);
+    // And a reason that wraps is seen, which the old line-above rule missed.
+    expect(hasOptOutMarker([
+      `// ${OPT_OUT}: the clock is frozen for this spec, so the toast cannot`,
+      '// dismiss inside the retry window.',
+      offence,
+    ], 2, OPT_OUT)).toBe(true);
   });
 
   it('scans a non-empty set of spec files', () => {

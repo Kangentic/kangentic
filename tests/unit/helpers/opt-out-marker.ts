@@ -14,7 +14,7 @@
  * the reason rather than the marker, and the failure message then said to add a
  * marker that was already there.
  *
- * Three association rules survive here, because three genuinely different code
+ * Four association rules survive here, because four genuinely different code
  * shapes need them. Pick by shape, not by taste, and the call site then says
  * which it chose:
  *
@@ -23,6 +23,8 @@
  *   - `hasJsxOptOutMarker` for a JSX element, whose opening tag can span many
  *     lines, so the marker may sit above an attribute list rather than adjacent
  *     to the matched line.
+ *   - `hasLineOnlyOptOutMarker` where one line can hold several violations, so
+ *     reaching into the comment block above would waive the wrong one.
  *   - `hasFileScopedOptOut` when a violation cannot be resolved to one line at
  *     all, which is true only where the real exemption lives on an ancestor the
  *     scan cannot see statically.
@@ -31,11 +33,11 @@
  * not mark anything, which is the one property `guarded-sync-writes.test.ts`
  * already enforced and is now uniform.
  *
- * Ten markers read through here. Four still do not: `popover-width-ok` is
- * line-only by design (see `popover-inflow-menu.test.ts`), and
- * `archived-filter-ok`, `agent-focus-ok`, and `cookie-copy-ok` keep the private
- * readers this module exists to replace. Migrating those three needs nothing
- * from here but the import.
+ * Which markers read through here is not written down, because a hand-kept
+ * census drifts: the one that used to sit here said "four still do not" and had
+ * already missed `toast-count-ok`. `opt-out-marker.test.ts` asks the tree
+ * instead, failing any `tests/unit` scan that names a marker without importing
+ * this module.
  */
 
 /**
@@ -55,7 +57,17 @@ const MARKER_WALK_CAP = 60;
  * follow code on the same line as a trailing comment.
  *
  * The colon plus a non-space character is what rejects a bare marker with no
- * reason. The opener is what rejects PROSE that quotes a marker rather than
+ * reason. That non-space has to be found WITHOUT crossing a newline, which is
+ * why the two inner gaps are horizontal-only (`[^\S\r\n]*`) rather than `\s*`.
+ * A plain `\s*` reads the same on a single line and silently gives the reason
+ * requirement away under `hasFileScopedOptOut`, which matches whole file text:
+ * there `\s*` eats the line break and the next line's first character counts as
+ * the reason, so a bare marker is honoured in every file that has anything at
+ * all after it. Measured, not reasoned about: `// example-ok:\n` alone was
+ * correctly rejected, which is what the unit fixture used, while
+ * `// example-ok:\nconst b = 2;` was accepted.
+ *
+ * The opener is what rejects PROSE that quotes a marker rather than
  * using one, and that half is not theoretical. The comment above the
  * `whatsNewEvaluated` declaration in
  * `src/renderer/hooks/useWhatsNewOnLaunch.ts` reads "deliberately not a
@@ -66,7 +78,8 @@ const MARKER_WALK_CAP = 60;
  */
 function markerPattern(markerName: string): RegExp {
   const escaped = markerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:^|\\s)(?://|\\{/\\*+|/\\*+|\\*+)\\s*${escaped}:\\s*\\S`);
+  const horizontalGap = '[^\\S\\r\\n]*';
+  return new RegExp(`(?:^|\\s)(?://|\\{/\\*+|/\\*+|\\*+)${horizontalGap}${escaped}:${horizontalGap}\\S`);
 }
 
 /**
@@ -84,6 +97,28 @@ export function hasOptOutMarker(lines: string[], lineIndex: number, markerName: 
     if (!/^(\/\/|\/\*|\*)/.test(trimmed)) return false;
   }
   return false;
+}
+
+/**
+ * The marker is on the line itself and nowhere else. No walk at all, which is
+ * the point rather than an omission: where ONE line can carry several
+ * violations, a marker in the comment block above cannot say which of them it
+ * waives, so it would waive all of them. `popover-inflow-menu.test.ts`'s
+ * trigger-width read is the case, and a file there legitimately holds several.
+ *
+ * Reach for this only with that justification. It is the weakest of the four at
+ * saying WHY a site is exempt, because a one-line reason is all it has room
+ * for. What it still buys over a hand-rolled `line.includes('name-ok:')` is the
+ * two properties every rule here shares: the reason is required, and a marker
+ * has to open a comment, so prose quoting one does not count.
+ *
+ * It takes `(lines, lineIndex)` and reads exactly one of them. That is
+ * deliberate, not a copy-paste leftover: all three line rules share a signature,
+ * so a scan changes its association rule by changing the function name and
+ * nothing else. Do not narrow it to `(line, markerName)`.
+ */
+export function hasLineOnlyOptOutMarker(lines: string[], lineIndex: number, markerName: string): boolean {
+  return markerPattern(markerName).test(lines[lineIndex] ?? '');
 }
 
 /**

@@ -1263,7 +1263,7 @@ These **shipped** tools let an agent drive the embedded **Browser pane** of a ta
 
 Targeting is scoped to the connection's own project (the `<projectId>` segment of the MCP URL). Every **driving** tool (navigate, observe, interact, eval) takes an optional `sessionId` or `taskId`. `sessionId` is a **browser surface handle** (`pane_<8hex>` for a visible pane, `lane_<8hex>` for an offscreen lane), as returned by `kangentic_browser_open_pane` and `kangentic_browser_list_panes`; it is not a Kangentic agent session id. A handle names exactly one guest webContents (one tab) for its whole life: registering the same guest again (a `/clear` rotates the owning session) keeps it, and a new guest always gets a new one, so a handle can never silently retarget to a different tab. When the tab behind a handle is gone, the call fails with `surface-gone`, which says why it went (the task window was closed, the lane was closed, the tab was destroyed), how long ago, that per-tab state (`sessionStorage`, in-memory app state) did not carry over while cookies and `localStorage` did, and names the task's current surface to use instead. A value that was never a handle (an agent session id, say) is refused as `no-pane-open` with the same pointer. Either target must name a surface in the caller's project; one in another project is refused with the `foreign-project` error kind.
 
-Omit both and the implicit default is **own-task-only** for a caller bound to a task: it resolves among that task's surfaces, ranked visible pane first, then a hand-off lane, then an isolated lane, and refuses `multiple-panes` (with candidates) when two share the best rank or `no-pane-open` when the task has none. It never falls through to another task's pane, however many are open in the project; that fall-through was observed navigating a sibling task's logged-in app to an identity-provider URL. Only a caller with no task (a human-driven client, a Command Terminal, or the two-segment `.kangentic/mcp-config.json` URL) uses the project-wide rule: a surface its own session owns, then the single pane open in the project, else `multiple-panes` with candidates. An explicit `taskId` ranks the same way. `kangentic_browser_list_panes` lists the surfaces you can drive.
+Omit both and the implicit default is **own-task-only** for a caller bound to a task: it resolves among that task's surfaces, ranked visible pane first, then the offscreen form of it, and refuses `multiple-panes` (with candidates) when two share the best rank or `no-pane-open` when the task has none. It never falls through to another task's pane, however many are open in the project; that fall-through was observed navigating a sibling task's logged-in app to an identity-provider URL. Only a caller with no task (a human-driven client, a Command Terminal, or the two-segment `.kangentic/mcp-config.json` URL) uses the project-wide rule: a surface its own session owns, then the single pane open in the project, else `multiple-panes` with candidates. An explicit `taskId` ranks the same way. `kangentic_browser_list_panes` lists the surfaces you can drive.
 
 No tool in the family takes a `project` argument, so there is no way to *drive* another project's pane. Two tools sit outside the driving rule above, both deliberately:
 
@@ -1272,12 +1272,13 @@ No tool in the family takes a `project` argument, so there is no way to *drive* 
 
 Gating: the global **Agent Browser** settings tab controls the family, read live per request. `browserAutomation.enabled` is the master switch: when off, the entire `kangentic_browser_*` family is not registered, so the tools never appear in `tools/list` and the instructions omit their guidance section (they would be unusable anyway, and advertising them is wasted context). When `enabled` is on, the sub-capability gates apply: `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). With `enabled` on, each tool returns an actionable `{ kind, detail }` error when one of those sub-capabilities is gated off, when no driveable pane exists (`no-pane-open`), when the named pane belongs to another project (`foreign-project`), or when the window holding the pane is minimized and therefore composites no frames (`pane-not-rendering`). Screenshots have a further constraint: a window that is hidden or fully occluded also stops compositing, and Electron cannot report that to the main process, so `pane-not-rendering` does not catch it. Those captures instead fail after a short bound with a `driver-error` telling the user to bring the window to the front. Non-pixel tools (`query_dom`, `click`, `type`, and the rest) are unaffected and keep working against a backgrounded pane.
 
-Tool categories (16 tools):
+Tool categories (26 tools):
 - **Discovery:** `kangentic_browser_list_panes` - list the Browser panes open in your project and their URLs. Each entry carries `sameProject` and `driveable`, and the response reports `otherProjectPaneCount` / `unknownProjectPaneCount` so an empty list is never mistaken for an idle machine. Pass `includeOtherProjects: true` to also list other projects' panes, which are visible but not driveable
 - **Lifecycle:** `kangentic_browser_open_pane`, `kangentic_browser_close_pane` - open and put away panes (below)
-- **Navigate:** `kangentic_browser_navigate` - point the pane at an http(s) URL
-- **Observe:** `kangentic_browser_screenshot`, `kangentic_browser_screenshot_element`, `kangentic_browser_query_dom`, `kangentic_browser_query_all`, `kangentic_browser_bounding_box`, `kangentic_browser_console`, `kangentic_browser_wait`
-- **Interact:** `kangentic_browser_click`, `kangentic_browser_type`, `kangentic_browser_keypress`, `kangentic_browser_drag`
+- **Navigate:** `kangentic_browser_navigate` - point the pane at an http(s) URL; `kangentic_browser_history` - go back or forward
+- **Observe:** `kangentic_browser_screenshot`, `kangentic_browser_screenshot_element`, `kangentic_browser_query_dom`, `kangentic_browser_query_all`, `kangentic_browser_bounding_box`, `kangentic_browser_console`, `kangentic_browser_network`, `kangentic_browser_wait`
+- **Interact:** `kangentic_browser_click`, `kangentic_browser_hover`, `kangentic_browser_type`, `kangentic_browser_keypress`, `kangentic_browser_scroll`, `kangentic_browser_drag`, `kangentic_browser_select_option`, `kangentic_browser_drop_files`, `kangentic_browser_handle_dialog`
+- **Viewport:** `kangentic_browser_set_viewport` - render at a chosen width and height; `kangentic_browser_pop_out`, `kangentic_browser_dock` - move the pane between the task window and its own OS window. See [Choosing a viewport](#choosing-a-viewport)
 - **Eval:** `kangentic_browser_eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
 
 ### kangentic_browser_open_pane
@@ -1287,7 +1288,10 @@ Tool categories (16 tools):
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | string | No | Absolute http(s) URL to load. Falls back to the task's saved Browser URL, then the project default. |
-| `isolated` | boolean | No | Open a private offscreen LANE instead of the user's visible pane, and return its handle. Pass that handle back as `sessionId` on every later call, or the drive falls back to the shared pane and the isolation silently does nothing. See [Isolated browser lanes](#isolated-browser-lanes). |
+
+That is the whole input. A task has exactly one browser surface, so there is nothing to choose:
+see [One browser surface per task](#one-browser-surface-per-task) for the `isolated` argument that
+used to be here and why it was removed.
 
 The URL is part of the same call by necessity: a pane with no URL renders the empty state and registers no `<webview>` guest, so it is invisible to `list_panes`, `navigate`, `screenshot`, and every other tool in the family. An open-without-navigate would strand the agent in a state nothing can act on. When no `url` is passed and neither fallback exists, the tool fails with `no-url` rather than opening an unusable pane.
 
@@ -1299,7 +1303,8 @@ Behavior worth knowing:
 - **It shows a hidden pane again.** A pane the user hid with the Browser pill (held) or whose window the user closed while the agent was live (parked) is still registered and driveable, so the call takes the warm path, and it also asks the renderer to show the pane and un-park the window: the same guest and tab, nothing reloads, and the window it raises is agent-stamped so its terminal never takes the user's keyboard. Only `close_pane` discards.
 - **The pane it returns carries `visibility`**, the same field [`kangentic_browser_list_panes`](#kangentic_browser_list_panes) reports (`showing` / `hidden` / `parked`, or `offscreen` for a lane). Every value is driveable; it tells you whether the user can currently see what you are doing. On a warm call this is a snapshot taken BEFORE the re-surface push is applied, so a pane that was hidden or parked can still report that here even though it is being shown. Call `list_panes` afterwards if you need the settled value.
 - **It carries the `navigate` capability tier**, since it always loads a URL. Turning off "Allow navigation" in the Agent Browser settings therefore disables this tool too. The tier is checked before anything happens, so a gated-off call never opens a window or seeds a URL first.
-- Refusals it can return besides the shared ones: `no-caller-task` (the connection is not bound to a task, e.g. a Command Terminal), `project-not-open` (the caller's project is not the one currently open in Kangentic, so no window can be mounted for its tasks), `browser-pane-disabled` (the project has the Browser pane turned off), `task-not-found`, `no-url`, `app-not-ready` (Kangentic is still starting, or its window is gone - also reachable from `close_pane`), and `url-seed-failed` (the URL could not be persisted before the pane was opened).
+- **A backgrounded project gets the surface OFFSCREEN rather than a refusal.** The board window layer renders only the open project's tasks, so no pane can mount for a backgrounded one. The response then carries `offscreen: true` and a `laneId`; the surface is fully driveable, the user sees it exists on the task card, and it becomes a real pane the moment one can mount. This replaced a `project-not-open` refusal that composed with the `no-pane-open` hint into a loop.
+- Refusals it can return besides the shared ones: `no-caller-task` (the connection is not bound to a task, e.g. a Command Terminal), `browser-pane-disabled` (the project has the Browser pane turned off), `task-not-found`, `no-url` (no `url` passed and no fallback readable - for a backgrounded project neither fallback can be read at all, so pass one), `surface-opening` (the task's surface is still loading its first page; retry), `surface-exists` (a second surface for one task, which the callers prevent), `app-not-ready` (Kangentic is still starting, or its window is gone - also reachable from `close_pane`), and `url-seed-failed` (the URL could not be persisted before the pane was opened).
 
 ### kangentic_browser_close_pane
 
@@ -1362,31 +1367,62 @@ menu, which is how a hidden or parked pane is closed). The user's hide never doe
 guest's memory back; the agent's next call gets `surface-gone: the user closed the browser` with
 the `open_pane` hint, and reopening is allowed.
 
-### Isolated browser lanes
+### One browser surface per task
 
-`kangentic_browser_open_pane` accepts `isolated: true`, which opens a private browser LANE instead of
-the task's shared pane and returns a `laneId` (the lane's surface handle, also `pane.sessionId`).
-Pass that handle back as `sessionId` on every later `kangentic_browser_*` call - forget it and the
-call falls back to the task's visible pane, which undoes the isolation (an isolated lane ranks last
-in the implicit default; two isolated lanes with no handle given refuse `multiple-panes`). Use a
-lane whenever several agents work on one task at the same time: without one they all resolve to the
-same pane and interleave navigations, clicks and screenshots while each believes it has exclusive
-control.
+A task has exactly ONE browser surface. It is normally the visible `<webview>` pane; when no pane
+can be mounted it comes up OFFSCREEN instead, as a main-process `BrowserWindow` whose handle is a
+`lane_` id. Both forms answer to the same tools and the same handle rules. There is no argument for
+a second surface, and none for choosing the offscreen form.
 
-A lane is offscreen. It does not appear on screen, does not disturb the pane the user is looking at,
-and cannot take their keyboard focus. It shares the task's cookie jar, so it inherits
-whatever the user is already signed into. Lanes are capped per task; past the cap `open_pane` returns
-`lane-limit` and names the lanes to reuse. A lane whose first URL does not load within the load
-deadline returns `lane-load-failed` and is destroyed rather than left half-open, so a dev server that
-is still starting reads as a retryable failure instead of a hang. Close one with
-`kangentic_browser_close_pane`, which destroys lanes directly. A lane is also destroyed when the
-session that opened it ends, when it goes idle, when the app's main window closes, and on app quit -
-so forgetting to close one leaks nothing. An `open_pane` that races one of those teardowns returns
-`lane-swept` rather than a handle. Retry once: a sweep from a closed window is over by then, but a
-quitting app keeps refusing.
+`kangentic_browser_open_pane` took an `isolated: true` argument until 2026-09-21, and it is gone.
+The case for it was concurrency: several agents under one task would otherwise resolve to the same
+pane and interleave navigations, clicks and screenshots while each believed it had exclusive
+control. That concurrency was never real - parallel callers already contend for a single guest and
+are serialized by the drive queue, so four lanes bought a queue with four heads rather than four
+workers. The cost was real. An offscreen surface sets no entry in the renderer map the card globe
+and the Browser pill read (written only on a `<webview>`'s `dom-ready`), so nothing in the UI said
+one existed, the user could not close it, and every supervision guard built for the pane - the
+veil, the accent ring, the label, the pointer block - reached none of it. Reported from live use: a
+user closed the Browser pane, and the agent completed a whole verification run in a lane with no
+browser anywhere on screen.
 
-`kangentic_browser_list_panes` reports each surface's `kind` (and `handoff` for a lane standing in
-for a closed pane) so an agent can tell its own lane from the task's shared pane.
+What replaces it:
+
+- **The offscreen form is a FALLBACK, not a choice.** `open_pane` opens the visible pane whenever
+  one can mount. It falls back to offscreen only when the caller's project is not the one currently
+  open in Kangentic, because the board window layer renders only the open project's tasks and no
+  window can be mounted for a backgrounded one. The response then carries `offscreen: true` and a
+  `laneId`, so an agent can say the user is not watching rather than reporting a browser they
+  cannot see. The fallback stays because removing it recreates a dead end: every drive returns
+  `no-pane-open`, whose hint says to call `open_pane`, which used to refuse `project-not-open`.
+- **The offscreen surface is visible in the UI.** Main pushes the set of tasks holding one to the
+  renderer, so the task card's globe and the task-detail Browser pill light up for it exactly as
+  they do for a pane, and the task menu's "Close browser" destroys it.
+- **Opening the Browser pill RECLAIMS it.** The pane mounts at the offscreen surface's current URL
+  (read from the live guest, not from the saved sidecar, which only a pane ever writes), and the
+  pane's registration destroys the offscreen one. Mechanically a re-create rather than a move: a
+  `webContents` cannot migrate from a `BrowserWindow` into a `<webview>` tag, so the page reloads
+  and `sessionStorage` is lost. Cookies and localStorage survive (same partition). The agent's old
+  handle answers `surface-gone` naming the replacement, which is the same compromise `pop_out` and
+  `dock` already make.
+- **A second surface for one task is refused** (`surface-exists`, naming the one that exists).
+  Both callers check first, so this is a structural guarantee rather than a path an agent reaches.
+  The reachable neighbour is `surface-opening`: a surface enters its bookkeeping before it loads
+  its first URL and registers only after, so for up to the load deadline it is neither driveable
+  nor absent. That answer says to retry, rather than naming a handle whose every drive would
+  answer `no-pane-open`.
+
+The rest of the offscreen surface's behaviour is unchanged. It shares the task's cookie jar, so it
+inherits whatever the user is already signed into. One whose first URL does not load within the
+load deadline returns `lane-load-failed` and is destroyed rather than left half-open, so a dev
+server that is still starting reads as a retryable failure instead of a hang. It is destroyed when
+the session that opened it ends, when it goes idle, when the app's main window closes, and on app
+quit, so forgetting about one leaks nothing. An `open_pane` that races one of those teardowns
+returns `lane-swept` rather than a handle: retry once, since a sweep from a closed window is over by
+then but a quitting app keeps refusing.
+
+`kangentic_browser_list_panes` reports each surface's `kind` (`pane` or `lane`) so an agent can tell
+which form its task's surface is currently in.
 
 `kangentic_browser_screenshot` additionally returns `dev-server-error` when the dev server is showing
 a build-error overlay. Without it the tool returns a faithful picture of a full-screen red overlay,
@@ -1399,7 +1435,10 @@ Drives against one pane are SERIALIZED. Only one runs at a time per guest, so tw
 pane get slow-but-correct behavior instead of interleaved clicks, keystrokes and navigations. A
 drive that cannot get its turn within 30s returns `pane-busy` rather than hanging. Serialization
 fixes interleaving, not intent: it cannot stop another agent navigating away from the page you were
-midway through verifying, so concurrent workers should take their own panes rather than share one.
+midway through verifying. There is no longer a way to take a separate surface, deliberately - see
+"One browser surface per task" above for why the separate-surface answer was worse than the
+problem. Concurrent workers on one task share the queue and should coordinate rather than assume
+exclusive control.
 
 The capability gate (`capabilityGate` in `src/main/browser/browser-pane-driver.ts`, the single source of the tier rules) adds four more: `automation-disabled` when the master switch is off, and `interaction-disabled` / `navigation-disabled` / `eval-disabled` for the tool's own tier. `automation-disabled` is reachable even though the family is not registered while the master switch is off, because the policy is read live per request: a switch flipped mid-session refuses the next call rather than waiting for a reconnect.
 
@@ -1411,7 +1450,7 @@ List the Browser surfaces open in your project, so you can discover a surface ha
 |-----------|------|----------|-------------|
 | `includeOtherProjects` | boolean | No | Also list panes in other projects. They are listed for visibility only and cannot be driven from this connection. Default false. |
 
-Returns `{ automationEnabled, projectId, panes, otherProjectPaneCount, unknownProjectPaneCount }`. Each surface carries its handle (`sessionId`, the value to pass back), `ownerSessionId` (the agent session it serves), `taskId`, `kind` (`pane` or `lane`) with `handoff` for a lane standing in for a closed pane, `visibility` (`showing`: the user can see it; `hidden`: the user hid it behind the terminal with the Browser pill; `parked`: the user closed its window; `offscreen`: a lane. Every value is still driveable; this says whether the user can see what you do, not whether you may act), `webContentsId`, current URL, liveness / debugger-attached state, plus `sameProject` and `driveable`. The two counts are why an empty `panes` list is never mistaken for an idle machine. A pane the user CLOSED (the pane's red "Close browser" button or the task menu's item of the same name) is not listed at all: its handle answers `surface-gone` saying the user closed the browser, and `open_pane` opens a fresh one.
+Returns `{ automationEnabled, projectId, panes, otherProjectPaneCount, unknownProjectPaneCount }`. Each surface carries its handle (`sessionId`, the value to pass back), `ownerSessionId` (the agent session it serves), `taskId`, `kind` (`pane` for the visible pane, `lane` for the offscreen form of the same one surface), `visibility` (`showing`: the user can see it; `hidden`: the user hid it behind the terminal with the Browser pill; `parked`: the user closed its window; `offscreen`: a lane. Every value is still driveable; this says whether the user can see what you do, not whether you may act), `webContentsId`, current URL, liveness / debugger-attached state, plus `sameProject` and `driveable`. The two counts are why an empty `panes` list is never mistaken for an idle machine. A pane the user CLOSED (the pane's red "Close browser" button or the task menu's item of the same name) is not listed at all: its handle answers `surface-gone` saying the user closed the browser, and `open_pane` opens a fresh one.
 
 ### kangentic_browser_navigate
 
@@ -1577,6 +1616,197 @@ Drag from one element to another: mouse press, move in steps, release. Capabilit
 | `steps` | number | No | Intermediate move steps. Default 10, max 60. Raise it for libraries that need several move events to register a drag. |
 
 Returns `{ ok: true }`. Error mode: `selector-not-found`, which covers either selector failing to match.
+
+### kangentic_browser_hover
+
+Move the pointer over an element without pressing, so a hover menu opens, a tooltip appears, or a hover-revealed control renders. Capability tier: `interact`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `selector` | string | Yes | CSS selector of the element to hover. Scrolled into view first. |
+
+Returns `{ ok: true }`. Error mode: `selector-not-found`.
+
+`kangentic_browser_click` already sends a `mouseMoved` before its press, so this is not a step you need before clicking. It exists for VERIFYING hover state, which was previously unreachable: there was no way to open a hover menu and then screenshot it.
+
+### kangentic_browser_scroll
+
+Scroll the page, or one scrollable element, by a wheel delta. Capability tier: `interact`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `deltaY` | number | No | Vertical scroll in CSS pixels. Positive scrolls down. |
+| `deltaX` | number | No | Horizontal scroll in CSS pixels. Positive scrolls right. |
+| `selector` | string | No | A scrollable element to scroll instead of the page. |
+
+Returns `{ ok: true, viewport }`, the viewport measured after the scroll. Error modes: `invalid-scroll` (both deltas zero or omitted, which would do nothing) and `selector-not-found`.
+
+This is how you reach content below the fold, and the only way. Measured against a live guest: `kangentic_browser_keypress` delivers PageDown to the page WITHOUT the browser's default action, so two of them left `scrollY` at 0, and `kangentic_browser_eval` (`window.scrollBy`) is gated off by default. Before this tool the family had no scroll at all.
+
+Note where the wheel is aimed. With no `selector` it is dispatched at the viewport CENTRE, so a scrollable element sitting under that point scrolls instead of the page - which is the same rule a real wheel follows, and it bit during this tool's own verification. Pass a `selector` when you mean a particular scroller, or aim at a non-scrollable element when you mean the page. The event is a real `mouseWheel`, so momentum, scroll-snap and `scroll` listeners all behave as they do for a user.
+
+### kangentic_browser_select_option
+
+Choose an option in a native `<select>`. Capability tier: `interact`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `selector` | string | Yes | CSS selector of the `<select>`. |
+| `value` | string | No | The option's `value` attribute. |
+| `label` | string | No | The option's visible text, matched after trimming. |
+| `index` | number | No | Zero-based option index. |
+
+Pass exactly one of `value` / `label` / `index`. Returns `{ ok: true, value }` with the value that ended up selected. Error modes: `missing-target` (none of the three given), `selector-not-found`, `not-a-select` (the selector matched something else), and `no-match` (it is a `<select>` but no option matched; the detail says to read the options with `query_all` on `"<selector> option"`).
+
+Clicking cannot do this, which is why it needs its own tool: the list a `<select>` opens is drawn by the operating system outside the page, so a synthesized press reaches the control and then has nothing to aim at. A custom dropdown built from divs is ordinary UI and wants `click` instead. The tool fires `input` and `change`, so framework bindings react exactly as they do for a real choice.
+
+### kangentic_browser_drop_files
+
+Drop real files onto an element, exactly as dragging them out of the file manager would. Capability tier: `interact`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `selector` | string | Yes | CSS selector of the drop target. |
+| `paths` | string[] | Yes | Absolute file paths on this machine, 1 to 20. |
+
+Returns `{ ok: true, dropped }`. Error mode: `selector-not-found`.
+
+The page receives genuine `File` objects through `dataTransfer.files`, each backed by its real path. That is the one hop page script cannot fake - a `new File()` built in the page has no path - so this is the only way to test a drop zone or a file input end to end.
+
+### kangentic_browser_history
+
+Go back or forward in the pane's history, the way its own arrows do. Capability tier: `navigate`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `direction` | string | Yes | `back` or `forward`. |
+
+Returns `{ ok: true, url }`, read after the navigation commits rather than before it. Error mode: `no-history`, which refuses rather than silently doing nothing when there is nowhere to go.
+
+### kangentic_browser_network
+
+List the requests the page has made. Capability tier: `observe`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `limit` | number | No | Most recent N requests. Default 50, max 300. |
+| `urlContains` | string | No | Only requests whose URL contains this substring, e.g. `/api/`. |
+| `failedOnly` | boolean | No | Only requests that failed or returned status >= 400. |
+
+Returns `{ requests, returned, total }`. Each request carries `method`, `url`, `resourceType`, `status`, `errorText` and `durationMs`.
+
+The console only shows what the page chose to log, so "did that POST fire, and what did it return" was previously unanswerable. A request still IN FLIGHT is listed with a null status rather than hidden: a dev server that accepted the connection and went quiet is usually the answer you are looking for, and omitting it would make the list say the page finished loading when it did not. The ring holds the last 300 settled requests per CDP session.
+
+### kangentic_browser_handle_dialog
+
+Decide how the page's JavaScript dialogs are answered, and read the ones already seen. Capability tier: `interact`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `accept` | boolean | No | True to press OK, false to Cancel. Default false. |
+| `promptText` | string | No | Text to enter for a `prompt()`. Only used when `accept` is true. |
+| `persist` | boolean | No | True to answer every later dialog this way. Default false: the arm is consumed by the next dialog, then reverts to dismiss. |
+
+Returns `{ armed, seen }` - what the next dialog will get, and every dialog this pane has raised with its type, message and how it was answered.
+
+**Arm it BEFORE the action that triggers the dialog.** A dialog blocks the renderer while it is open, so there is no moment afterwards in which a tool call could answer it - the call itself would hang. An agent that wants to get through a `confirm()` calls this with `accept: true`, then clicks.
+
+**Every dialog is answered whether you call this or not**, and that is what stops a pane wedging. Kangentic enables the CDP `Page` domain, which moves dialogs off Chromium's own UI and onto the debugger; a dialog nobody answers would then block the page with nothing on screen for the user to dismiss, and every later call would queue behind it until the drive lock timed out. The default is DISMISS, which is the safe direction for all four types: cancel a `confirm`, decline a `prompt`, stay on the page for a `beforeunload`.
+
+Enabling `Page` is only half of it. Measured on Electron 41, Electron's own dialog delegate still fires alongside the CDP route, so both ran: the page took the CDP answer and carried on while a native box stayed on screen whose buttons then did nothing, because the answer had already been given. The guest is therefore created with `disableDialogs: true`, which is what actually removes the duplicate. `prompt()` is a separate case: Electron does not implement it, so it throws in the page instead of opening a dialog, and `promptText` is unreachable for a `<webview>` guest. It stays in the API because the CDP path handles it correctly if a future runtime delivers one.
+
+### Choosing a viewport
+
+A docked pane is only as wide as the task window's split leaves it, which in practice is a few hundred CSS pixels below every desktop breakpoint. An agent verifying a responsive layout there measures the mobile rendering and reports it as the desktop one, so three tools exist to choose the viewport deliberately. They are not interchangeable, and the difference that matters is what each costs the page:
+
+| Mechanism | Viewport control | Page state | Surface handle |
+|-----------|------------------|------------|----------------|
+| `set_viewport` on a docked pane (device emulation) | Exact width and height, any value, including larger than the physical screen | Preserved. No reload; `sessionStorage`, in-memory state, scroll and auth all survive | Unchanged |
+| `set_viewport`'s `zoom`, on any surface | Renders larger or smaller. Does not change the requested layout size: the override is scaled to compensate | Preserved | Unchanged |
+| `set_viewport` on an offscreen surface or an already-detached window | Real pixels, capped by the display for a window, uncapped offscreen | Preserved, because nothing moves | Unchanged |
+| `pop_out` / `dock` (the move itself) | Not a viewport control, a relocation | **Lost.** Fresh `<webview>`, the page reloads, `sessionStorage` gone. Cookies and localStorage survive, since the jar is keyed by task | **New.** The old handle answers `surface-gone` naming the replacement |
+
+So the context-preserving route to any resolution is `set_viewport` on the surface you already hold, and it is the one to reach for mid-flow. `pop_out` buys real OS pixels and a window the user can drag, and charges the page's in-memory state for it.
+
+**Asking for a size zooms the pane to fit it.** Emulation changes the layout viewport without changing the widget, so a 1920px layout in a 740px pane would show only its left third while the pane's chip claimed 1920 - the number and the picture disagreeing. So a docked pane is zoomed out to fit, and the user sees the whole layout. Pass `zoom: 1` to opt out and get the 1:1 crop instead.
+
+Three measured facts make that work, and none is obvious:
+
+- **Zoom multiplies an override.** A page lays out at override divided by zoom, so a 1920px override at zoom 0.4 produced a 4800px layout. The override is therefore pre-scaled by the zoom, which puts the requested number back in `innerWidth`.
+- **The fit would otherwise shrink your screenshots.** At the fit zoom the emulated surface is only 740x416, and a capture of it is unreadable. `deviceScaleFactor` is raised to 1/zoom to compensate, and the capture came back at 1920x1079. As a bonus `devicePixelRatio` is `deviceScaleFactor x zoom`, so it lands back on 1.0 and the page does not believe it is on a hidpi display.
+- **`scale` is deliberately never sent.** Chromium's own fit-to-widget scaling is the one configuration where CDP mouse coordinates stop matching `DOM.getBoxModel`: measured at `scale: 0.385`, a click on a box-model centroid landed on `<html>` instead of the target and still reported success. The zoom-based fit above is what replaces it, and a click still lands under it.
+
+Two smaller behaviours worth knowing:
+
+- **A maximized window is un-maximized before it is resized.** `setContentSize` is silently ignored while a window is maximized or full screen, so an agent that popped out maximized and then asked for half the size got the same bounds back twice. Asking for a specific size is taken as a request to leave that state.
+- **A window resize CONVERGES rather than correcting once.** Measured live: a 1280x720 request came back 1203x601, and the next request came back 1203x601 again, because `unmaximize()` animates and discards a same-tick `setContentSize`. The resize now measures, asks for the shortfall and measures again, up to three passes, and reports whatever it reached.
+- **A window is kept on its display, and can be placed on it.** `setContentSize` keeps the top-left and grows right and down, so a window part-way across a multi-monitor desktop and sized to the full work area runs onto the next screen. It is pulled back inside after every resize, and `position` places it deliberately. The bound is `getDisplayMatching(...).workArea`, re-read per call, so an ultrawide gets its real width, a laptop beside an external is bounded by whichever screen holds the window, and different scale factors are handled.
+- **The measurement is `innerWidth`, not the content box.** `Page.getLayoutMetrics` reports `clientWidth`, which has the scrollbar removed, so a 1920 request measured 1905 on any scrolling page and `exact` went false for a reason that was not a clamp.
+
+### kangentic_browser_set_viewport
+
+Set the viewport a Browser surface lays out against, and report the one it actually got. Capability tier: `interact`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | No | Target a surface by its handle. |
+| `taskId` | string | No | Target a surface by task. |
+| `width` | number | No | Viewport width in CSS pixels, 128 to 8192. Omit to keep the current width. |
+| `height` | number | No | Viewport height in CSS pixels, 128 to 8192. Omit to keep the current height. |
+| `deviceScaleFactor` | number | No | Device pixel ratio, 0 to 4. Default 0, meaning keep the display's own. 2 quadruples screenshot bytes and will push a wide capture out to a file. |
+| `zoom` | number | No | Page zoom factor, the same one the pane's zoom pill shows. Omitted, a docked pane is zoomed to fit the requested size. Pass 1 for a 1:1 crop instead. |
+| `position` | string | No | Where to put a DETACHED window on its display: `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left`, `bottom`, `bottom-right`. With `width` and `height` this is a window snap: half the display width plus `left` docks it to the left half. Ignored with an explanation on a docked pane and on a lane. |
+| `reset` | boolean | No | Drop the override, restore the zoom the fit changed, and return the surface to its natural size. Ignores `width` and `height`. |
+
+Returns `{ mechanism, requested, viewport, deviceScaleFactor, zoom, exact, visibleFraction, note }`. `viewport` is **measured from the page** after the change settles, never the request echoed back, and `exact` is false when the two differ: a window loses its frame and the pane's own chrome to the viewport and is capped by the display, a lane can be clamped, and an override composes with whatever zoom is set. `mechanism` names which of the three paths ran (`device-emulation`, `window-resize`, `lane-resize`), chosen from the surface rather than from an argument.
+
+Behavior worth knowing:
+
+- **An override outlives the call.** It is CDP-session scoped, not document scoped, so it survives a navigation. It ends on `reset: true`, when the agent's session ends, when the user clears it from the pane's viewport chip, or when the pane closes.
+- **`reset` restores the zoom the fit changed, and only that.** The value is captured on the first override, so a pane the agent never sized keeps the user's zoom untouched and a user who re-zoomed mid-drive is not overridden by a stale reading.
+- Error modes beyond the shared set: `invalid-viewport` for a dimension outside the range, and `driver-error` when the surface's window has gone (a lane reclaimed, a detached window closed mid-call).
+
+### kangentic_browser_pop_out
+
+Detach the **caller's own** task Browser pane into its own OS window, optionally at a given size. Capability tier: `navigate`, since the move reloads the page at its URL. Takes no `sessionId` / `taskId`, for the same reason `open_pane` does not.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `width` | number | No | Requested viewport width in CSS pixels. Capped by the physical display; the response reports what the page got. |
+| `height` | number | No | Requested viewport height in CSS pixels. Same capping and reporting. |
+| `maximized` | boolean | No | Open the window maximized instead of at a given size. |
+| `position` | string | No | Where to place the window on its display, as the nine-point anchor `set_viewport` takes. |
+
+Returns `{ moved, pane, sessionId, viewport?, note }`. **Use the returned `sessionId` from then on:** the window mounts a fresh `<webview>`, so the previous handle is dead and answers `surface-gone`. Like `open_pane`, it returns only once the new pane is registered and driveable, bounded at 20s (`detach-timeout` past that).
+
+Called when a window is already open, it resizes that window rather than opening a second one, and reports `moved: false`.
+
+Two behaviors worth knowing:
+
+- **It does not take the user's keyboard focus.** The window is shown inactive, per `.claude/rules/agent-driven-focus.md`: an agent action never moves focus.
+- **A size it applies is not saved as the user's.** Pop-out bounds persist per surface KIND rather than per task, so persisting an agent's testing viewport would overwrite the window size the user chose, for every task. A later resize by the user persists normally.
+
+Other refusals: `no-caller-task`, `no-pane-open` (open a pane first), `detach-failed`.
+
+### kangentic_browser_dock
+
+Put the caller's detached Browser window back into the task, undoing `kangentic_browser_pop_out`. Capability tier: `navigate`. Takes no parameters.
+
+Returns the same shape as `pop_out`. Docking moves the page too, so it reloads and mints another new handle: use the `sessionId` this returns. Error mode beyond the shared set: `not-detached` when the pane is already in the task window.
 
 ### kangentic_browser_eval
 

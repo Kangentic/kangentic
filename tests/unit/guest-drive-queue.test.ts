@@ -86,9 +86,12 @@ describe('withGuestDriveLock', () => {
 
     const error = await rejection;
     expect(error).toBeInstanceOf(GuestBusyError);
-    // The refusal names the escape hatch, since retrying a wedged pane forever
-    // is not something the calling agent can recover from on its own.
-    expect((error as Error).message).toMatch(/isolated: true/);
+    // The refusal says what the agent can actually do, and must not name an
+    // escape hatch that no longer exists. It used to offer `isolated: true`;
+    // a task now has exactly one browser surface, so following that advice
+    // would get a zod schema error rather than a second pane.
+    expect((error as Error).message).toMatch(/Retry/);
+    expect((error as Error).message).not.toMatch(/isolated/);
     void stuck;
   });
 

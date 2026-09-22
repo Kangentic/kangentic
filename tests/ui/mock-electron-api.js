@@ -78,6 +78,15 @@
   let browserPaneOpenSubscribers = [];
   let browserPaneCloseSubscribers = [];
   let browserAgentInputSubscribers = [];
+  // Viewport overrides an agent imposed, keyed by guest webContentsId, plus the
+  // pane subscribers that render them as the toolbar chip.
+  let browserViewportSubscribers = [];
+  let browserViewportSeed = {};
+  // Tasks whose one browser surface is currently OFFSCREEN. Only main can see
+  // these (an offscreen BrowserWindow has no renderer to register itself), so
+  // the UI tier drives them through the emit/seed helpers below.
+  let browserOffscreenSubscribers = [];
+  let browserOffscreenSeed = [];
   let browserDownloadSubscribers = [];
   let browserUserKeySubscribers = [];
   // Guest mouse back/forward presses forwarded from main. A real guest
@@ -4613,6 +4622,58 @@
           if (index >= 0) browserAgentInputSubscribers.splice(index, 1);
         };
       },
+      // Main -> renderer "an agent set this guest's viewport" push, behind the
+      // pane's viewport chip. Driven from a test via
+      // window.__mockBrowser.emitViewportOverride(webContentsId, override|null).
+      onViewportOverride: function (callback) {
+        browserViewportSubscribers.push(callback);
+        return function () {
+          const index = browserViewportSubscribers.indexOf(callback);
+          if (index >= 0) browserViewportSubscribers.splice(index, 1);
+        };
+      },
+      // The pane element's measured size, which only the renderer can know.
+      setPaneWidgetSize: function (webContentsId, width, height) {
+        browserPaneCalls.push({ type: 'widget-size', webContentsId: webContentsId, width: width, height: height });
+        return Promise.resolve();
+      },
+      // What the pane asks on registration, for an override set before it
+      // mounted. Tests seed it via window.__mockBrowser.seedViewportOverride().
+      getViewportOverride: function (webContentsId) {
+        return Promise.resolve(browserViewportSeed[webContentsId] || null);
+      },
+      clearViewportOverride: function (webContentsId) {
+        browserPaneCalls.push({ type: 'viewport-clear', webContentsId: webContentsId });
+        delete browserViewportSeed[webContentsId];
+        browserViewportSubscribers.forEach(function (callback) { callback(webContentsId, null); });
+        return Promise.resolve(true);
+      },
+      // Main -> renderer "these tasks hold their surface offscreen" push, which
+      // is what lights the card globe and the Browser pill for a surface no
+      // <webview> backs. Driven via
+      // window.__mockBrowser.emitOffscreenSurfaces([taskId, ...]).
+      onOffscreenSurfaces: function (callback) {
+        browserOffscreenSubscribers.push(callback);
+        return function () {
+          const index = browserOffscreenSubscribers.indexOf(callback);
+          if (index >= 0) browserOffscreenSubscribers.splice(index, 1);
+        };
+      },
+      // The mount-time read, for a surface that was already offscreen before
+      // this renderer existed. Seeded via
+      // window.__mockBrowser.seedOffscreenSurfaces([taskId, ...]).
+      getOffscreenSurfaces: function () {
+        return Promise.resolve(browserOffscreenSeed.slice());
+      },
+      closeOffscreenSurface: function (taskId, projectId) {
+        browserPaneCalls.push({ type: 'offscreen-close', taskId: taskId, projectId: projectId ?? null });
+        const index = browserOffscreenSeed.indexOf(taskId);
+        if (index < 0) return Promise.resolve(false);
+        browserOffscreenSeed.splice(index, 1);
+        const next = browserOffscreenSeed.slice();
+        browserOffscreenSubscribers.slice().forEach(function (callback) { callback(next); });
+        return Promise.resolve(true);
+      },
       // Main -> renderer "a pane download finished" push, behind the toast.
       // Driven via window.__mockBrowser.emitDownloadDone({fileName, filePath, state}).
       onDownloadDone: function (callback) {
@@ -4745,6 +4806,31 @@
       browserAgentInputSubscribers.slice().forEach(function (callback) {
         callback(webContentsId, active);
       });
+    },
+    /** Fire main's "an agent set this guest's viewport" push. Pass null to
+     *  clear it. Only the pane whose guest id matches should react. */
+    emitViewportOverride: function (webContentsId, override) {
+      browserViewportSubscribers.slice().forEach(function (callback) {
+        callback(webContentsId, override);
+      });
+    },
+    /** Seed an override so a pane that mounts LATER finds one on registration,
+     *  which is the pop-out case the push alone cannot cover. */
+    seedViewportOverride: function (webContentsId, override) {
+      browserViewportSeed[webContentsId] = override;
+    },
+    /** Fire main's "these tasks hold their surface offscreen" push. Pass the
+     *  WHOLE set, as main does: an empty array means none. */
+    emitOffscreenSurfaces: function (taskIds) {
+      browserOffscreenSeed = taskIds.slice();
+      browserOffscreenSubscribers.slice().forEach(function (callback) {
+        callback(taskIds.slice());
+      });
+    },
+    /** Seed the set a renderer reads on mount, for a surface that was already
+     *  offscreen before this renderer existed (a reload, or an HMR update). */
+    seedOffscreenSurfaces: function (taskIds) {
+      browserOffscreenSeed = taskIds.slice();
     },
     /** Fire main's "a pane download finished" push. */
     emitDownloadDone: function (download) {

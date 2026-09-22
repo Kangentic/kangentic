@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hasJsxOptOutMarker } from './helpers/opt-out-marker';
+import { hasJsxOptOutMarker, hasLineOnlyOptOutMarker } from './helpers/opt-out-marker';
 
 // Guards the combobox-clipping regression: a scrollable menu rendered IN FLOW as
 // `absolute top-full ...` is confined to its nearest clipping ancestor, because
@@ -132,15 +132,18 @@ const HOOK_DEFINITION_FILE = path.join(RENDERER_DIR, 'hooks', 'usePopoverPositio
 
 const TRIGGER_WIDTH_READ = 'getBoundingClientRect().width';
 /**
- * Deliberately NOT read through helpers/opt-out-marker.ts, and the only marker
- * in the repo that is not. Its rule is line-only on purpose: what it waives is a
- * single `getBoundingClientRect().width` read, and a file may hold several, so a
+ * Line-only on purpose: what it waives is a single
+ * `getBoundingClientRect().width` read, and a file may hold several, so a
  * marker that reached into the comment block above would waive the wrong one.
- * The trade is that this marker alone still accepts a bare `popover-width-ok:`
- * with no reason. Converting it means teaching the shared reader a line-only
- * mode, which is worth doing only if a second marker ever wants one.
+ *
+ * That association rule is right, but it used to be the reason this marker kept
+ * a private `line.includes(...)` reader, which was a non-sequitur: line-only and
+ * shared are independent. `hasLineOnlyOptOutMarker` is the degenerate walk, so
+ * the association is unchanged while the marker picks up the two properties the
+ * other rules have - a reason is required, and a marker has to open a comment,
+ * so prose quoting one no longer counts as taking it.
  */
-const WIDTH_OPT_OUT_MARKER = 'popover-width-ok:';
+const WIDTH_OPT_OUT_MARKER = 'popover-width-ok';
 
 /**
  * Line indexes where a file that calls `usePopoverPosition` measures a trigger
@@ -161,9 +164,10 @@ const WIDTH_OPT_OUT_MARKER = 'popover-width-ok:';
 function triggerWidthReadLineIndexes(fileText: string): number[] {
   if (!fileText.includes(HOOK_CALL)) return [];
   const offenders: number[] = [];
-  fileText.split('\n').forEach((line, lineIndex) => {
+  const lines = fileText.split('\n');
+  lines.forEach((line, lineIndex) => {
     if (!line.includes(TRIGGER_WIDTH_READ)) return;
-    if (line.includes(WIDTH_OPT_OUT_MARKER)) return;
+    if (hasLineOnlyOptOutMarker(lines, lineIndex, WIDTH_OPT_OUT_MARKER)) return;
     offenders.push(lineIndex);
   });
   return offenders;
@@ -422,7 +426,7 @@ describe('trigger-width matching goes through usePopoverPosition', () => {
       triggerWidthReadOffenders,
       `These files call usePopoverPosition AND read a trigger width themselves. Measured in a later layout effect and passed through style.width, that width lands one commit after the hook has already measured and placed the menu, so the first open per mount is positioned against an inflated shrink-to-fit width.\n`
         + `Pass { matchTriggerWidth: true } to the hook instead (it writes the width before it measures) and delete the measurement - see src/renderer/components/dialogs/Combobox.tsx.\n`
-        + `If the read is genuinely not sizing the popover, add a "${WIDTH_OPT_OUT_MARKER} <reason>" comment on the line.\n\n`
+        + `If the read is genuinely not sizing the popover, add a "// ${WIDTH_OPT_OUT_MARKER}: <reason>" comment on the line itself - the reason is required, and this marker is read line-only, so a comment above waives nothing.\n\n`
         + triggerWidthReadOffenders.join('\n'),
     ).toEqual([]);
   });
@@ -449,8 +453,22 @@ describe('trigger-width matching goes through usePopoverPosition', () => {
 
     // The marker waives the line.
     const waived = [...preFix];
-    waived[6] = `${waived[6]} // ${WIDTH_OPT_OUT_MARKER} sizes a sibling, not the popover`;
+    waived[6] = `${waived[6]} // ${WIDTH_OPT_OUT_MARKER}: sizes a sibling, not the popover`;
     expect(triggerWidthReadLineIndexes(waived.join('\n'))).toEqual([]);
+
+    // A bare marker does not. This marker accepted one until it moved onto the
+    // shared reader, which is the whole gain here: the association rule is the
+    // same line-only one, but an unexplained waiver is no longer a waiver.
+    const bare = [...preFix];
+    bare[6] = `${bare[6]} // ${WIDTH_OPT_OUT_MARKER}:`;
+    expect(triggerWidthReadLineIndexes(bare.join('\n'))).toEqual([6]);
+
+    // Neither does a comment ABOVE the line, which is what line-only means and
+    // is why this marker does not use the block-climbing rule: one line here
+    // can hold several width reads, and a marker above could not say which.
+    const above = [...preFix];
+    above.splice(6, 0, `      // ${WIDTH_OPT_OUT_MARKER}: sizes a sibling, not the popover`);
+    expect(triggerWidthReadLineIndexes(above.join('\n'))).toEqual([7]);
   });
 
   it('sizes the popover before it measures it', () => {
