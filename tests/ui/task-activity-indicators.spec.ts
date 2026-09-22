@@ -290,7 +290,7 @@ test.describe('Task Activity Indicators', () => {
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     });
 
-    test('usage dashboard shows live token and cost tiles when usage exists', async () => {
+    test('usage dashboard layers live session COST, and reads tokens from the turn ledger', async () => {
       // The old status-bar usage strip was replaced by the dashboard; the live
       // KPI layering reads the same in-memory sessionUsage. Self-cleaning for
       // the shared page: closes the dashboard before finishing.
@@ -315,9 +315,16 @@ test.describe('Task Activity Indicators', () => {
 
       const tokens = page.locator('[data-testid="kpi-tokens"]');
       const cost = page.locator('[data-testid="kpi-cost-value"]');
-      await expect(tokens).toContainText('1.5k', { timeout: 10000 });
-      await expect(tokens).toContainText('1k in / 500 out');
-      await expect(cost).toContainText('$0.01');
+      // Cost still layers the running session's in-memory reading on top of
+      // the ledger (minus what the ledger already holds for it), which is the
+      // whole reason the client-side overlay exists.
+      await expect(cost).toContainText('$0.01', { timeout: 10000 });
+      // Tokens do NOT. The live session's `contextWindow` totals are a
+      // snapshot of how full its context is right now, not tokens it consumed,
+      // so the tile reads the per-turn ledger instead: the mock's 60k fresh
+      // input + 20k output, NOT the session's 1k/500 context occupancy.
+      await expect(tokens).toContainText('80k');
+      await expect(tokens).toContainText('60k in / 20k out');
 
       await page.locator('[data-testid="stats-close"]').click();
       await page.locator('[data-testid="stats-page"]').waitFor({ state: 'hidden', timeout: 5000 });

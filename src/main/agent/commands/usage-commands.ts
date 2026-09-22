@@ -21,14 +21,21 @@ function formatUsageMessage(stats: UsageDashboardStats): string {
   const scopeLabel = stats.scope.kind === 'all' ? 'all projects' : 'project';
   const lines = [
     `Usage stats (${PERIOD_LABELS[stats.period]}, ${scopeLabel}):`,
-    `  Tokens: ${formatTokens(kpis.totalInputTokens)} input + ${formatTokens(kpis.totalOutputTokens)} output = ${formatTokens(kpis.totalTokens)} total (finalized sessions; in-flight sessions are excluded until they finalize)`,
-    `  Cost: $${kpis.totalCostUsd.toFixed(4)}${kpis.costKnown ? '' : ' (no agent reported cost in this range)'}`,
+    // Four disjoint token types, the same split `claude_code.token.usage`
+    // reports. NOT `totalInputTokens`/`totalTokens`, which are context-window
+    // snapshots summed across sessions rather than tokens consumed.
+    `  Tokens (main thread): ${formatTokens(kpis.turnInputTokens)} fresh input + ${formatTokens(kpis.turnOutputTokens)} output, ${formatTokens(kpis.cacheCreationTokens)} cache write, ${formatTokens(kpis.cacheReadTokens)} cache read`,
+    `  Cost: $${kpis.totalCostUsd.toFixed(4)} (API-equivalent list price, not billed)${kpis.costKnown ? '' : ' - no agent reported cost in this range'}`,
   ];
   if (kpis.burnRateTokensPerHour !== null) {
     const usdPart = kpis.burnRateUsdPerHour !== null
-      ? `$${kpis.burnRateUsdPerHour.toFixed(2)}/hr (approx, API-equivalent) - `
+      ? `$${kpis.burnRateUsdPerHour.toFixed(2)}/hr - `
       : '';
-    lines.push(`  Burn rate: ${usdPart}${formatTokens(Math.round(kpis.burnRateTokensPerHour))} tokens/hr`);
+    lines.push(`  Burn rate over the whole range, idle included: ${usdPart}${formatTokens(Math.round(kpis.burnRateTokensPerHour))} tokens/hr`);
+  }
+  if (kpis.activeSessionsCovered > 0) {
+    const avgActiveMs = Math.round(kpis.activeMs / kpis.activeSessionsCovered);
+    lines.push(`  Active time: ${formatTokens(Math.round(kpis.activeMs / 60_000))} min total, ${Math.round(avgActiveMs / 60_000)} min avg over ${kpis.activeSessionsCovered} session(s) with activity tracking`);
   }
   lines.push(
     `  Sessions: ${kpis.sessionCount} - Tool calls: ${formatTokens(kpis.toolCallCount)} - Compactions: ${kpis.compactionCount}`,

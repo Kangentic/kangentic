@@ -1,5 +1,13 @@
 import { useMemo } from 'react';
-import type { CostSeriesPoint, TokenSeriesPoint, UsageDashboardStats } from '../../../shared/types';
+import type {
+  CostSeriesPoint,
+  SessionStatus,
+  TokenSeriesPoint,
+  UsageDashboardStats,
+  UsageKpis,
+  UsageStatsScopeKind,
+} from '../../../shared/types';
+import { isLiveSessionStatus } from '../../../shared/session-liveness';
 import { useUsageDashboardStore, type UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { agentShortName } from '../../utils/agent-display-name';
 
@@ -255,6 +263,137 @@ export function formatBucketLabel(bucketStartMs: number, bucketSizeMs: number): 
     return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/**
+ * What the Cost tile shows. The live overlay carries each running session's
+ * CUMULATIVE reading, and the 45s metrics timer has already upserted that same
+ * reading into the ledger, so the ledger's own share of those sessions comes
+ * off before the overlay goes on. Without the subtraction every running
+ * session is counted twice and the tile floats above the by-model / by-agent /
+ * by-effort breakdowns, which get no overlay at all.
+ *
+ * The 'live' period is the exception: its window is the trailing two hours, so
+ * the in-memory numbers ARE the answer and the ledger does not enter.
+ */
+export function resolveDisplayCost(input: {
+  isLivePeriod: boolean;
+  ledgerCostUsd: number;
+  liveLedgerBaselineCostUsd: number;
+  liveOverlayCostUsd: number;
+}): number {
+  if (input.isLivePeriod) return input.liveOverlayCostUsd;
+  return input.ledgerCostUsd - input.liveLedgerBaselineCostUsd + input.liveOverlayCostUsd;
+}
+
+/** The four token types the Tokens tile reports, kept DISJOINT. */
+export interface TokenBuckets {
+  freshInputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  /** False when the range has no per-turn rows at all: the tile reads "-",
+   *  which is not the same claim as zero tokens. */
+  hasTokens: boolean;
+}
+
+/**
+ * Split the KPI payload into the four token types, the same split
+ * `claude_code.token.usage` reports (a `type` of input / output / cacheRead /
+ * cacheCreation) and the same one ccusage columns.
+ *
+ * Disjoint on purpose, and NOT rolled up into one total. OTel's GenAI
+ * convention folds cache into input; Claude Code's own metric and ccusage keep
+ * them apart, which is what `conversation_turn_usage` already stores and what
+ * the cache-hit-rate denominator below assumes. A combined total would also be
+ * dominated by cache read, which is an order of magnitude larger than fresh
+ * traffic and priced completely differently.
+ *
+ * These come from the turn ledger, never from `usage_history`'s token columns:
+ * those are status-line `context_window` totals, which Claude Code 2.1.132+
+ * reports as CURRENT CONTEXT OCCUPANCY. Summing them across sessions produced
+ * the old "1333.7M tokens", which is the sum of each session's last context
+ * size and is not a token count.
+ */
+export function resolveTokenBuckets(kpis: UsageKpis | null): TokenBuckets {
+  const freshInputTokens = kpis?.turnInputTokens ?? 0;
+  const outputTokens = kpis?.turnOutputTokens ?? 0;
+  const cacheCreationTokens = kpis?.cacheCreationTokens ?? 0;
+  const cacheReadTokens = kpis?.cacheReadTokens ?? 0;
+  return {
+    freshInputTokens,
+    outputTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    hasTokens: freshInputTokens + outputTokens + cacheCreationTokens + cacheReadTokens > 0,
+  };
+}
+
+/**
+ * Cache-read share of all input, the cache hit rate ccusage reports:
+ * `cache_read / (cache_read + cache_creation + uncached_input)`. Null when the
+ * range has no input at all, which the tile renders as "-" rather than 0%.
+ *
+ * The denominator is why {@link resolveTokenBuckets} keeps the types disjoint:
+ * a cache-inclusive "input" would double-count its own cache terms here.
+ */
+export function resolveCacheReadShare(buckets: TokenBuckets): number | null {
+  const denominator = buckets.cacheReadTokens + buckets.cacheCreationTokens + buckets.freshInputTokens;
+  return denominator > 0 ? buckets.cacheReadTokens / denominator : null;
+}
+
+/**
+ * Average ACTIVE time per session, or null when the interval ledger does not
+ * reach this range.
+ *
+ * The denominator is that ledger's OWN session count, never the Sessions
+ * tile's: per-interval recording shipped later than the usage ledger, so the
+ * two cover different session populations and mixing them under-reports every
+ * historical range. Null rather than 0 keeps "not measured" distinct from
+ * "measured as nothing".
+ */
+export function resolveAvgActiveMs(activeMs: number, activeSessionsCovered: number): number | null {
+  return activeSessionsCovered > 0 ? activeMs / activeSessionsCovered : null;
+}
+
+/**
+ * The session ids the live usage overlay may include: live status only, scoped
+ * to the viewed project.
+ *
+ * Status-filtered deliberately. `sessionUsage` retains suspended and exited
+ * sessions (it is reconciled against main's usage cache, which holds a session
+ * until it leaves the registry), and each carries its full cumulative cost, so
+ * an unfiltered overlay adds sessions the ledger has already finalized. The
+ * set also has to match what main puts in `liveSessions`, since that is what
+ * `liveLedgerBaseline` is measured over.
+ *
+ * Transient sessions are excluded for that second reason, not the first.
+ * `buildLiveSessionRows` in `ipc/handlers/usage-stats.ts` skips them, so main
+ * never measures a baseline for one - while `getUsageCache` does NOT filter
+ * them, so a running Command Terminal does sit in `sessionUsage`. Including it
+ * here would add cost the ledger has no row for and the baseline cannot
+ * subtract, putting the Cost tile back above the by-model / by-agent /
+ * by-effort breakdowns, which is the discrepancy this whole path exists to
+ * close.
+ */
+export function selectLiveSessionIds(
+  sessions: ReadonlyArray<{
+    id: string;
+    projectId: string;
+    status: SessionStatus;
+    transient?: boolean;
+  }>,
+  options: { includeLive: boolean; scopeKind: UsageStatsScopeKind; effectiveProjectId: string | null },
+): Set<string> {
+  if (!options.includeLive) return new Set<string>();
+  const scopedToProject = options.scopeKind === 'project' && options.effectiveProjectId !== null;
+  return new Set(
+    sessions
+      .filter((session) => isLiveSessionStatus(session.status))
+      .filter((session) => session.transient !== true)
+      .filter((session) => !scopedToProject || session.projectId === options.effectiveProjectId)
+      .map((session) => session.id),
+  );
 }
 
 export interface StatsDerivedData {

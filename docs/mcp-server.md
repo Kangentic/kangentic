@@ -413,8 +413,8 @@ read it there.
 ### kangentic_get_usage_stats
 
 Aggregated agent-usage statistics for one project or rolled up across every registered
-project: tokens in/out, cost, burn rate ($/hr approximate + tokens/hr), sessions, tool
-calls, line churn, compactions, and by-model / by-agent / by-effort / by-subagent-type
+project: the four token types, cost, burn rate ($/hr + tokens/hr), sessions, tool
+calls, line churn, compactions, active time, and by-model / by-agent / by-effort / by-subagent-type
 breakdowns (a null effort means the agent default; a session that switches effort
 mid-run attributes all its usage to the last-applied value). This is the same data the
 in-app usage dashboard shows, over the same time ranges.
@@ -439,14 +439,30 @@ Codex or Gemini range reports an empty breakdown that otherwise reads as a measu
 ("nothing fanned out") when it is really a blind spot. The list is derived from which
 adapters declare the capability, not from agent names in the reporting layer.
 
-Reads the durable usage ledgers (`usage_history` per-session totals and
-`conversation_turn_usage` per-turn time series), so totals survive task and session
-deletion. Usage from in-flight sessions is excluded until they finalize. Two token
-semantics coexist by design and never reconcile: KPI token totals are per-session
-context-window snapshots, while the time series carries true per-turn tokens. The $/hr
-burn rate allocates each session's reported cost across its turns proportionally by
-token share - API-equivalent and approximate; subscription sessions reporting $0 count
-tokens but no cost.
+Reads the durable usage ledgers (`usage_history` per-session cost and
+`conversation_turn_usage` per-turn tokens), so totals survive task and session deletion.
+Usage from in-flight sessions is excluded until they finalize.
+
+Tokens are reported as four DISJOINT types - fresh input, output, cache write, cache
+read - which is the split `claude_code.token.usage` reports and the one ccusage columns.
+There is no combined total: cache read is an order of magnitude larger than fresh
+traffic and priced completely differently, so one number would be dominated by the
+cheapest component. Token coverage starts at `earliestTurnMs`, which is LATER than the
+cost ledger's start on any install that predates per-turn capture, and the CLI prunes
+the transcripts that would backfill it. `usage_history`'s own token columns are not used
+for these figures: they are `context_window` totals, which Claude Code 2.1.132+ reports
+as current context occupancy rather than consumption.
+
+Cost is API-equivalent list price, not what a subscription was billed, and is stored as
+per-leg deltas so a resumed conversation is not counted once per `--resume`. Both burn
+rate lines divide the same elapsed hours into the number the corresponding field
+reports, so `$/hr x range hours` reproduces `totalCostUsd`. Subscription sessions
+reporting $0 count tokens but no cost.
+
+`activeMs` and `activeSessionsCovered` are agent-working time from the activity-interval
+ledger, matching `claude_code.active_time.total`. The pair travels together because the
+interval ledger covers fewer sessions than `sessionCount` does: dividing by the larger
+count would mix two ledgers.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

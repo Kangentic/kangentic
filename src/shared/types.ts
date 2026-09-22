@@ -1876,6 +1876,26 @@ export interface UsageKpis {
   compactionCount: number;
   totalDurationMs: number;
   /**
+   * Milliseconds the agent was actually WORKING in this window, from the
+   * activity-interval ledger, and how many sessions that ledger covers here.
+   *
+   * These two travel together because they are the numerator and denominator
+   * of one average. `sessionCount` above counts `usage_history` rows, which is
+   * a different and larger population: per-interval recording shipped later,
+   * so dividing `activeMs` by `sessionCount` would mix two ledgers and
+   * under-report every historical range.
+   *
+   * Active means agent-working, not session-open. `totalDurationMs` above is
+   * the agent's own wall clock, which counts every hour a session sat idle;
+   * measured on the dogfooding install, active time is 39% of it. This is the
+   * metric Claude Code publishes as `claude_code.active_time.total`.
+   *
+   * `activeSessionsCovered` of 0 means the ledger reaches none of this range,
+   * which the UI reports as "not covered" rather than as zero activity.
+   */
+  activeMs: number;
+  activeSessionsCovered: number;
+  /**
    * Turn-derived totals (conversation_turn_usage; true per-turn tokens).
    *
    * MAIN THREAD ONLY. These four, and both chart series, count the driver's
@@ -1907,11 +1927,23 @@ export interface UsageKpis {
    *  already inside the four `subagent*` totals above. Zero for an agent that
    *  forbids nesting (Gemini) or reports no depth. */
   subagentNestedCount: number;
-  /** Tokens per hour over the effective window (turn-derived); null when no turn data. */
+  /** Main-thread turn tokens over the whole selected range, idle time
+   *  included. Null for a range with no sessions. */
   burnRateTokensPerHour: number | null;
-  /** Dollars per hour via proportional allocation of each session's reported
-   *  cost across its turns by token share. API-equivalent and approximate;
-   *  null when no cost or no turn data is available. */
+  /**
+   * Ledger cost over that SAME range, so `rate x range hours` reproduces
+   * `totalCostUsd` and the two lines describe one window.
+   *
+   * It used to divide turn-ALLOCATED cost (each session's cost spread across
+   * its turns by token share) by the range, which covers only the span the
+   * turn ledger reaches - about 29% of lifetime cost on the dogfooding
+   * install - while the Cost tile showed the full ledger. Dividing one tile by
+   * the other implied two different window lengths. That allocation is still
+   * the right input for the per-bucket burn CHART, which needs cost attributed
+   * to a timestamp; it is wrong for a headline rate beside a full-range total.
+   *
+   * API-equivalent list price. Null when no session or no cost is in range.
+   */
   burnRateUsdPerHour: number | null;
 }
 
@@ -1985,7 +2017,7 @@ export interface EffortUsageBreakdown {
 
 /** Per-project sub-totals for the app-wide rollup's comparison table. All
  *  fields fold out of the rows already read for the range (zero extra
- *  queries); ratios (cost share, blended $/Mtok, avg session) are derived
+ *  queries); ratios (cost share, avg active time) are derived
  *  client-side from these. */
 export interface ProjectUsageSummary {
   projectId: string;
@@ -1999,6 +2031,11 @@ export interface ProjectUsageSummary {
   linesRemoved: number;
   filesChanged: number;
   totalDurationMs: number;
+  /** Active (agent-working) ms in range, and the sessions the interval ledger
+   *  covers. Same pair and same reason as on `UsageKpis`: the average is over
+   *  `activeSessionsCovered`, never over `sessionCount`. */
+  activeMs: number;
+  activeSessionsCovered: number;
   /** Most recent session start in range (epoch ms); null when no sessions. */
   lastActiveMs: number | null;
   /** Dominant agent by tokens in range; null when none recorded. */
@@ -2081,6 +2118,38 @@ export interface UsageDashboardStats {
    * name outside the adapters.
    */
   subagentBlindAgents: string[];
+  /**
+   * What this window's ledger ALREADY holds for the sessions the renderer is
+   * about to layer its in-memory live overlay on top of.
+   *
+   * The Cost and Tokens tiles add `useLiveUsageAggregate` to the ledger totals
+   * for instant reactivity. But a running session is upserted into
+   * `usage_history` every 45s by the metrics timer, so the ledger already
+   * carries it: adding the overlay on top counted it twice, which is why the
+   * Cost tile floated $758 above the by-model / by-agent / by-effort
+   * breakdowns, none of which get an overlay. The renderer subtracts this
+   * first, so the overlay contributes only the not-yet-snapshotted delta and
+   * the tile equals the breakdown sum whenever nothing is running.
+   *
+   * Zero when no live session is in scope, and when the range is a day drill
+   * or custom window (those pass no live sessions at all).
+   *
+   * Cost only: the token tiles read the per-turn ledger, which is written at
+   * index time rather than live, so there is no token overlay to correct.
+   */
+  liveLedgerBaseline: { costUsd: number };
+  /**
+   * Oldest timestamp in the per-turn ledger across the scoped projects, or
+   * null when no project has turn rows.
+   *
+   * The token and cost ledgers do not start at the same time. `usage_history`
+   * reaches back to the install's first session; per-turn capture shipped
+   * later, and the CLI prunes the transcripts that would let us backfill it.
+   * So when `rangeStartMs` is earlier than this, the token figures cover a
+   * genuinely shorter span than the cost beside them, and the UI says so
+   * rather than letting a June-onward number read as a March-onward one.
+   */
+  earliestTurnMs: number | null;
   /** Present only for scope.kind === 'all'. */
   perProject?: ProjectUsageSummary[];
   /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
