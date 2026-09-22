@@ -426,6 +426,11 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
     expect(columnsBeforeMigration).not.toContain('cumulative_cost_usd');
     expect(columnsBeforeMigration).not.toContain('cumulative_duration_ms');
 
+    const indexesBeforeMigration = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'usage_history'",
+    ).all() as Array<{ name: string }>).map((row) => row.name);
+    expect(indexesBeforeMigration).not.toContain('idx_usage_history_conversation');
+
     runProjectMigrations(db);
 
     const columnsAfterMigration = (db.pragma('table_info(usage_history)') as ColumnInfo[]).map((column) => column.name);
@@ -433,10 +438,10 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
     expect(columnsAfterMigration).toContain('cumulative_cost_usd');
     expect(columnsAfterMigration).toContain('cumulative_duration_ms');
 
-    const indexes = (db.prepare(
+    const indexesAfterMigration = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'usage_history'",
     ).all() as Array<{ name: string }>).map((row) => row.name);
-    expect(indexes).toContain('idx_usage_history_conversation');
+    expect(indexesAfterMigration).toContain('idx_usage_history_conversation');
   });
 
   it('preserves the pre-migration raw reading in cumulative_cost_usd and cumulative_duration_ms', () => {
@@ -454,7 +459,7 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
     expect(row.cumulative_duration_ms).toBe(5000);
   });
 
-  it('rewrites a multi-leg conversation so total_cost_usd sums to the LAST cumulative reading, not the sum of readings', () => {
+  it('rewrites a multi-leg conversation so total_cost_usd and total_duration_ms sum to the LAST cumulative reading, not the sum of readings', () => {
     insertTask('task-lineage-multileg-1');
     insertSession('session-lineage-leg-1', 'task-lineage-multileg-1', 'conv-multileg-1', '2026-01-01T00:00:00.000Z');
     insertSession('session-lineage-leg-2', 'task-lineage-multileg-1', 'conv-multileg-1', '2026-01-01T01:00:00.000Z');
@@ -462,31 +467,51 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
 
     // Cumulative-per-conversation readings as the agent reports them: each
     // leg's reading already includes everything the earlier legs spent.
-    insertLegacyUsageHistoryRow('usage-lineage-leg-1', 'session-lineage-leg-1', '2026-01-01T00:00:00.000Z', 10, null);
-    insertLegacyUsageHistoryRow('usage-lineage-leg-2', 'session-lineage-leg-2', '2026-01-01T01:00:00.000Z', 25, null);
-    insertLegacyUsageHistoryRow('usage-lineage-leg-3', 'session-lineage-leg-3', '2026-01-01T02:00:00.000Z', 42.5, null);
+    insertLegacyUsageHistoryRow('usage-lineage-leg-1', 'session-lineage-leg-1', '2026-01-01T00:00:00.000Z', 10, 1000);
+    insertLegacyUsageHistoryRow('usage-lineage-leg-2', 'session-lineage-leg-2', '2026-01-01T01:00:00.000Z', 25, 2500);
+    insertLegacyUsageHistoryRow('usage-lineage-leg-3', 'session-lineage-leg-3', '2026-01-01T02:00:00.000Z', 42.5, 4250);
 
     runProjectMigrations(db);
 
     const rows = db.prepare(`
-      SELECT session_record_id, total_cost_usd FROM usage_history
+      SELECT session_record_id, total_cost_usd, total_duration_ms, cumulative_cost_usd FROM usage_history
        WHERE session_record_id IN (?, ?, ?)
        ORDER BY session_started_at ASC
     `).all('session-lineage-leg-1', 'session-lineage-leg-2', 'session-lineage-leg-3') as Array<{
       session_record_id: string;
       total_cost_usd: number;
+      total_duration_ms: number | null;
+      cumulative_cost_usd: number | null;
     }>;
 
-    // Each leg's delta against the highest PRIOR reading of the same lineage.
+    // cumulative_cost_usd carries the raw reading untouched - only
+    // total_cost_usd becomes the delta. Leg 2 is where the two diverge
+    // (cumulative 25 vs. delta 15), which pins requirement 2 at the point
+    // where it is actually observable.
+    expect(rows[0].cumulative_cost_usd).toBe(10);
+    expect(rows[1].cumulative_cost_usd).toBe(25);
+    expect(rows[2].cumulative_cost_usd).toBe(42.5);
+
+    // Each leg's cost delta against the highest PRIOR reading of the lineage.
     expect(rows[0].total_cost_usd).toBe(10);
     expect(rows[1].total_cost_usd).toBe(15);
     expect(rows[2].total_cost_usd).toBe(17.5);
 
-    const summedDeltas = rows.reduce((runningTotal, row) => runningTotal + row.total_cost_usd, 0);
+    // Same delta shape for duration - LINEAGE_DELTA_SET_SQL rewrites both
+    // columns from the same lineage, and only the cost half was covered
+    // above.
+    expect(rows[0].total_duration_ms).toBe(1000);
+    expect(rows[1].total_duration_ms).toBe(1500);
+    expect(rows[2].total_duration_ms).toBe(1750);
+
+    const summedCostDeltas = rows.reduce((runningTotal, row) => runningTotal + row.total_cost_usd, 0);
+    const summedDurationDeltas = rows.reduce((runningTotal, row) => runningTotal + (row.total_duration_ms ?? 0), 0);
     // The bug this migration fixes: summing the raw cumulative readings would
-    // give 10 + 25 + 42.5 = 77.5. The per-leg deltas must sum to the LAST
-    // reading of the lineage instead.
-    expect(summedDeltas).toBe(42.5);
+    // give 10 + 25 + 42.5 = 77.5 (cost) and 1000 + 2500 + 4250 = 7750
+    // (duration). The per-leg deltas must sum to the LAST reading of the
+    // lineage instead.
+    expect(summedCostDeltas).toBe(42.5);
+    expect(summedDurationDeltas).toBe(4250);
   });
 
   it('leaves conversation_id NULL and total_cost_usd unchanged for a row whose sessions row is gone', () => {
