@@ -225,4 +225,31 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
     expect(notifier.mock.calls[0][0]).toContain('because the disk is full');
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    'constructor',
+    'toString',
+    'hasOwnProperty',
+    '__proto__',
+  ])(
+    'falls back to the pre-cause sentence for the Object.prototype-shaped errno %s, rather than resolving an inherited member',
+    (code) => {
+      // CAUSE_CLAUSE_BY_ERRNO is a Map for exactly this reason: an errno that happens to
+      // name an Object.prototype member must MISS, not resolve to an inherited value. A
+      // plain object literal with bracket access (`{ ... }[code]`) would resolve
+      // `code: 'constructor'` to the Object constructor function and `code: '__proto__'`
+      // to Object.prototype - both truthy, so the `?? ''` fallback would never fire, and
+      // the template literal would stringify whichever one it got straight into the
+      // user's message (e.g. "...data folderfunction Object() { [native code] }. ...").
+      // Asserting full equality against LEGACY_SENTENCE (not just a substring) is what
+      // catches that splice: a `.toContain('Changes apply to this session')` check would
+      // still pass with garbage prepended to it.
+      const notifier = vi.fn();
+      setSyncWriteFailureNotifier(notifier);
+
+      reportSyncWriteFailure(errnoError(code, `${code}: something, write`), 'config');
+
+      expect(notifier).toHaveBeenCalledWith(LEGACY_SENTENCE);
+    },
+  );
 });

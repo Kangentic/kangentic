@@ -17,7 +17,7 @@
  * suppress the very toast the next case asserts.
  */
 import { test, expect } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { launchPage, createProject, toastCountRightNow } from './helpers';
 import type { Page } from '@playwright/test';
 
 const FAILURE_TOAST = 'This setting did not save';
@@ -129,9 +129,13 @@ test.describe('settings write failure toast', () => {
       await initScript.click();
       await initScript.type('npm install', { delay: 20 });
       // Still nothing: the draft has not been committed, so no write has been attempted.
+      // Counted RIGHT NOW rather than with toHaveCount(0): a 12s toast dies inside the
+      // expect-retry window, so a retrying zero-check would also pass against 11 toasts.
       await page.waitForTimeout(400);
-      await expect(failureToasts(page)).toHaveCount(0);
+      expect(await toastCountRightNow(page, FAILURE_TOAST)).toBe(0);
 
+      // The positive half, and the reason the zero above means anything: the blur DOES
+      // write, so "no toast while typing" is a boundary rather than a dead field.
       await initScript.blur();
       await expect(failureToasts(page)).toHaveCount(1, { timeout: 5000 });
     } finally {
@@ -178,8 +182,15 @@ test.describe('settings write failure toast', () => {
 
       await page.getByTestId('setting-row-skipBoardConfigConfirm').click();
 
-      await page.waitForTimeout(500);
-      await expect(failureToasts(page)).toHaveCount(0);
+      // Assert the write LANDED before asserting no toast. Without this the case passes
+      // just as well when the click did nothing at all, which is the failure mode
+      // toastCountRightNow's docblock warns about: "no toast" and "nothing happened"
+      // are the same observation until something proves the path ran.
+      await expect
+        .poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).skipBoardConfigConfirm))
+        .toBe(true);
+
+      expect(await toastCountRightNow(page, FAILURE_TOAST)).toBe(0);
     } finally {
       await browser.close();
     }
