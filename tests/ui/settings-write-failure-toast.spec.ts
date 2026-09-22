@@ -61,6 +61,11 @@ test.describe('settings write failure toast', () => {
       // not silence it. This is the regression the cooldown could reintroduce: a plain
       // timer would let one setting's toast swallow the next setting's failure, which
       // is the same silence this whole feature exists to remove.
+      //
+      // It lives on Performance now, not Board, so this crosses a tab. Keeping the
+      // same two keys matters more than staying on one tab: the pair is chosen to be
+      // two distinct top-level keys, which is the whole point of the assertion.
+      await openTab(page, 'Performance');
       await page.getByTestId('setting-row-animationsEnabled').click();
       await expect(failureToasts(page)).toHaveCount(2, { timeout: 5000 });
     } finally {
