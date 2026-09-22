@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.43.0] - 2026-09-22
+
+### Features
+- Agent viewport control, one surface per task, and seven new browser tools (6a779291)
+- Recover from a GPU process that kills the app, and record what failed (fb05224a)
+- Implement the Agent Idle toast (55d195ae)
+- Seven scenes for the docs figures, and an escape message for the host (b052fc86)
+- Ship the scene poster set as a versioned release asset (d0a0c0f2)
+
+### Fixes
+- Stop counting a resumed conversation once per resume (032060b1)
+- Clear the low-memory toast when host commit headroom recovers (07e068d8)
+- Name why a config write failed, and report a settings write that did not land (4c503a22)
+- Stop filing three un-actionable updater conditions (0e182bcd)
+- Pin each reporting file's own role address, and correct the boundary funnel claim (389b1928)
+- Make a truncated Sentry stack visible, and forward diff-boundary errors (4298f8c8)
+- Stop toast cards swallowing clicks on the UI beneath them (fd903ee1)
+- Send the Escape cases through the frame's own keyboard (9ee4fc4e)
+- Reap Qwen worktree trust entries on worktree removal (7208cf13)
+- The Send tooltip named Ctrl/Cmd+Enter, but Enter is what sends (06935fa7)
+- Note the heartbeat-forced budget in the stability-window bypass (df39a7d9)
+
+### Other
+- Cover the new reader methods and the token-coverage notice (4558e3a3)
+- Also pin the duration half of the lineage delta (e69bd583)
+- Cover the usage_history lineage backfill and fill the demo fixture (28d0d170)
+- Pin that a failed createSession releases its session id (e9308a19)
+- Load and release the model workers on demand (739cb02f)
+- Pin the commit-ceiling reader and the main memory block (8f790db4)
+- Split the Command Terminal and activity-mark essays out of CLAUDE.md (7eda6982)
+- Finish the no-op to throws correction (cdbc0945)
+- Say what disableHardwareAcceleration actually does (99623390)
+- Follow the Animations row to the Performance tab (71448044)
+- Cover the run-uptime, config and WebGL edges of the GPU recovery path (8714a48e)
+- Poll cross-frame focus before Escape in the dialog-close smoke test (cfb259fb)
+- Cover SettingTextInput's unfocused resync and its committedRef update (b00d19c1)
+- Count toasts right now, and pin the prototype-shaped errno fallback (dad51871)
+- Pin the settings commit boundary and the per-setting toast bucket (e07696b3)
+- Name both of initUpdater's platform branches (5650e91f)
+- Count the dismissed toast without a retrying matcher (9025ae76)
+- Pin the read-only latch across a window rebuild (f878f8dc)
+- Pin DiffErrorBoundary's Sentry forwarding (420bc8b4)
+- Let auto mode make the Sentry calls /sentry and /release already do (45ef6efe)
+- Use security@kangentic.com as the vulnerability fallback contact (5ac07c51)
+- The notification-toast scene no longer calls the idle toast unimplemented (a256f248)
+- Cover the two shared values the idle toast introduced (c667808a)
+- Cover the notification-click branches openTaskFromNotification split (016b8ef1)
+- Pin handleSave to its single wrapped call site (1059fb53)
+- Pin the saveBoardProfiles boolean contract and the toast exit fallback (e3afc853)
+- Assert the two new scenes show what their alts claim (272e90ce)
+- Drive the two unexercised opt-out markers from source fixtures (2b142f9b)
+- Build every docs link from one base URL (aa300ef7)
+- Qualify the never-a-user-decision claim for Grok (189efa93)
+- Pin removeWorktreeTrust's never-throws contract on a corrupt read (b5104766)
+- Note the heartbeat-forced budget in the watchdog section body (636e50a3)
+- Name timing constants instead of restating their values (f7fde955)
+- Cover the rig's CAPTURE_THEMES guard by importing it (f5085bff)
+- List npm run demo:posters beside the other demo commands (b9e15fe4)
+
 ## [v0.42.0] - 2026-09-19
 
 ### Features

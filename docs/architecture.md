@@ -641,9 +641,17 @@ folder and one manifest entry. See `.claude/rules/automation-adapters.md` for th
 | `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
 | `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |
 
-The retired `send_command`, `kill_session`, `create_worktree`, `cleanup_worktree` and `create_pr`
-types are gone, rows and all: each was a no-op or a duplicate of the move path. A hand-written
-`kangentic.json` naming one is warned and skipped rather than rejected.
+The retired types are `kill_session`, `create_worktree` and `cleanup_worktree`
+(`RETIRED_ACTION_TYPES`). They are gone, rows and all: each was a no-op or a duplicate of the move
+path. A hand-written `kangentic.json` naming one is warned and skipped rather than rejected.
+`create_pr` survives only in the `ActionType` union and has no adapter and no migration case, so it
+takes the same warn-and-skip path without being named in that list.
+
+`send_command` is NOT retired. It is read as an alias for `send_message`, and its `command` field as
+an alias for `message`, by the board-config reader (`apply-automations.ts`), the MCP and command
+paths, and the legacy-action migration alike, so a hand-written file that predates the rename still
+opens. Neither alias is written back. See
+[Configuration](configuration.md#column-automations).
 
 Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}` and `{{trigger}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
 
