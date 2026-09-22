@@ -19,6 +19,7 @@ declare global {
         | { type: 'unregister'; webContentsId: number }
         | { type: 'user-close'; webContentsId: number }
         | { type: 'visibility'; webContentsId: number; visibility: string }
+        | { type: 'widget-size'; webContentsId: number; width: number; height: number }
         | { type: 'viewport-clear'; webContentsId: number }
         | { type: 'offscreen-close'; taskId: string; projectId: string | null }
       >;

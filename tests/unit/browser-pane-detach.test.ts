@@ -101,7 +101,7 @@ beforeEach(() => {
   resolveLiveGuest.mockReturnValue({ ok: true });
   popOutOpen.mockReturnValue({ maximize: vi.fn() });
   // withGuest runs the readiness probe body, as the real one does.
-  withGuest.mockImplementation(async (_options: unknown, fn: (wc: unknown, e: unknown) => Promise<unknown>) => ({
+  withGuest.mockImplementation(async (_options: unknown, fn: (webContents: unknown, entry: unknown) => Promise<unknown>) => ({
     ok: true,
     data: await fn({ id: 9 }, { sessionId: 'pane_new', kind: 'pane', taskId: TASK, projectId: PROJECT }),
   }));

@@ -60,6 +60,13 @@ const setPosition = vi.fn();
 /** Where the window under test currently sits, for the overhang cases. */
 let windowBounds = { x: 0, y: 0, width: 1280, height: 800 };
 
+/**
+ * `electronWebContents.fromId`, for the release-on-session-end tests.
+ * Defaults to null (no live guest) so every test that does not seed a guest
+ * behaves exactly as before this was made configurable.
+ */
+const webContentsFromId = vi.fn((_id: number): unknown => null);
+
 vi.mock('electron', () => ({
   screen: {
     getDisplayMatching: () => ({
@@ -86,7 +93,7 @@ vi.mock('electron', () => ({
       setFullScreen: (...args: unknown[]) => setFullScreen(...(args as [])),
     }),
   },
-  webContents: { fromId: vi.fn(() => null) },
+  webContents: { fromId: (...args: unknown[]) => webContentsFromId(...(args as [number])) },
 }));
 
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
@@ -115,8 +122,16 @@ import {
   applyViewport,
   clearViewport,
   resolveMechanism,
+  releaseViewportOverride,
+  releaseViewportOverridesForSession,
 } from '../../src/main/browser/viewport-override';
-import { resetViewportOverrideStore, getViewportOverride } from '../../src/main/browser/viewport-override-store';
+import {
+  resetViewportOverrideStore,
+  getViewportOverride,
+  rememberViewportOverride,
+  setViewportOverrideSender,
+  type ViewportOverrideRecord,
+} from '../../src/main/browser/viewport-override-store';
 import type { BrowserPaneEntry } from '../../src/main/browser/browser-pane-registry';
 
 function entryOf(overrides: Partial<BrowserPaneEntry> = {}): BrowserPaneEntry {
@@ -254,6 +269,10 @@ beforeEach(() => {
   suppressBoundsSave.mockReturnValue(releaseBoundsSave);
   setDeviceMetrics.mockResolvedValue(true);
   clearDeviceMetrics.mockResolvedValue(true);
+  getDeviceMetrics.mockReturnValue(null);
+  webContentsFromId.mockReset();
+  webContentsFromId.mockReturnValue(null);
+  setViewportOverrideSender(null);
 });
 
 afterEach(() => {
@@ -1074,5 +1093,78 @@ describe('a surface whose window has gone refuses rather than resizing nothing',
     await expect(
       applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080 }, 'agent-1'),
     ).rejects.toThrow(/refused/);
+  });
+});
+
+/**
+ * `releaseViewportOverridesForSession` / `releaseViewportOverride` are the only
+ * cleanup path for a viewport override left on a docked PANE when its agent
+ * session ends (a lane dies with its window; a pane outlives the agent). They
+ * are reached from `session-lifecycle.ts`'s fire-and-forget call on session
+ * exit/suspend, and `releaseViewportOverride` alone from the
+ * `BROWSER_VIEWPORT_CLEAR` IPC handler (the user's own "take my pane back").
+ *
+ * Neither function was exercised anywhere in this suite before: making
+ * `releaseViewportOverridesForSession` a no-op turned no assertion red.
+ */
+describe('releasing a pane viewport override when its owning agent session ends', () => {
+  let pushSpy: ReturnType<typeof vi.fn>;
+
+  function overrideRecordFor(sessionId: string | null): ViewportOverrideRecord {
+    return {
+      sessionId,
+      mechanism: 'device-emulation',
+      requested: { width: 1920, height: 1080 },
+      measured: { width: 1920, height: 1080 },
+      deviceScaleFactor: 1,
+      zoomBefore: 1,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  beforeEach(() => {
+    pushSpy = vi.fn();
+    setViewportOverrideSender(pushSpy);
+  });
+
+  it('clears the CDP override, forgets the store entry, and pushes null to the renderer', async () => {
+    const guest = guestOf();
+    webContentsFromId.mockReturnValue(guest);
+    getDeviceMetrics.mockReturnValue({ width: 1920, height: 1080 });
+    rememberViewportOverride(42, overrideRecordFor('agent-1'));
+
+    await releaseViewportOverridesForSession('agent-1');
+
+    expect(clearDeviceMetrics).toHaveBeenCalledWith(guest);
+    expect(getViewportOverride(42)).toBeNull();
+    expect(pushSpy).toHaveBeenCalledWith(guest, null);
+  });
+
+  it('touches only the overrides owned by the named session, not every override in the store', async () => {
+    const guestA = guestOf();
+    const guestB = { ...guestOf(), id: 43 };
+    webContentsFromId.mockImplementation((id: number) => (id === 42 ? guestA : id === 43 ? guestB : null));
+    getDeviceMetrics.mockReturnValue({ width: 1920, height: 1080 });
+    rememberViewportOverride(42, overrideRecordFor('agent-1'));
+    rememberViewportOverride(43, overrideRecordFor('agent-2'));
+
+    await releaseViewportOverridesForSession('agent-1');
+
+    expect(getViewportOverride(42)).toBeNull();
+    expect(getViewportOverride(43)).not.toBeNull();
+    expect(clearDeviceMetrics).toHaveBeenCalledTimes(1);
+    expect(clearDeviceMetrics).toHaveBeenCalledWith(guestA);
+  });
+
+  it('releaseViewportOverride, the direct IPC-clear path, does the same cleanup given the guest alone', async () => {
+    const guest = guestOf();
+    getDeviceMetrics.mockReturnValue({ width: 1920, height: 1080 });
+    rememberViewportOverride(42, overrideRecordFor('agent-1'));
+
+    await releaseViewportOverride(guest);
+
+    expect(clearDeviceMetrics).toHaveBeenCalledWith(guest);
+    expect(getViewportOverride(42)).toBeNull();
+    expect(pushSpy).toHaveBeenCalledWith(guest, null);
   });
 });

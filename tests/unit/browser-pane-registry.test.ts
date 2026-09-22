@@ -30,6 +30,12 @@ import { webContents } from 'electron';
 import { detachDebugger, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
 import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { BrowserPaneRegistry, type RegisterSurfaceInput } from '../../src/main/browser/browser-pane-registry';
+import {
+  getViewportOverride,
+  rememberViewportOverride,
+  resetViewportOverrideStore,
+  type ViewportOverrideRecord,
+} from '../../src/main/browser/viewport-override-store';
 
 interface FakeGuest {
   id: number;
@@ -67,6 +73,7 @@ describe('BrowserPaneRegistry', () => {
     vi.clearAllMocks();
     vi.mocked(isDebuggerAttached).mockReturnValue(false);
     registry = new BrowserPaneRegistry();
+    resetViewportOverrideStore();
   });
 
   it('registers and gets a pane', () => {
@@ -113,6 +120,58 @@ describe('BrowserPaneRegistry', () => {
     registry.unregisterByWebContentsId(22);
     expect(registry.get('pane_bbbbbbbb')).toBeUndefined();
     expect(registry.size).toBe(0);
+  });
+
+  /**
+   * `unregister()` also drops the guest's viewport-override-store entry
+   * (`forgetViewportOverride(entry.webContentsId)` in `forget()`), so the
+   * override map does not grow one dead entry per pane the user closes and
+   * reopens over a long session. The line runs on every unregister call in
+   * this whole suite; nothing asserted its effect before this.
+   */
+  describe('unregister forgets the guest viewport-override entry', () => {
+    function overrideRecordFor(sessionId: string | null): ViewportOverrideRecord {
+      return {
+        sessionId,
+        mechanism: 'device-emulation',
+        requested: { width: 1920, height: 1080 },
+        measured: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+        zoomBefore: 1,
+        appliedAt: new Date().toISOString(),
+      };
+    }
+
+    it('drops the override for the guest unregistered by handle', () => {
+      registry.register(REGISTER_A);
+      rememberViewportOverride(REGISTER_A.webContentsId, overrideRecordFor('sess-a'));
+      expect(getViewportOverride(REGISTER_A.webContentsId)).not.toBeNull();
+
+      registry.unregister('pane_aaaaaaaa');
+
+      expect(getViewportOverride(REGISTER_A.webContentsId)).toBeNull();
+    });
+
+    it('drops the override for the guest unregistered by webContentsId', () => {
+      registry.register(REGISTER_B);
+      rememberViewportOverride(REGISTER_B.webContentsId, overrideRecordFor('sess-b'));
+
+      registry.unregisterByWebContentsId(REGISTER_B.webContentsId);
+
+      expect(getViewportOverride(REGISTER_B.webContentsId)).toBeNull();
+    });
+
+    it('leaves a different guest override untouched', () => {
+      registry.register(REGISTER_A);
+      registry.register(REGISTER_B);
+      rememberViewportOverride(REGISTER_A.webContentsId, overrideRecordFor('sess-a'));
+      rememberViewportOverride(REGISTER_B.webContentsId, overrideRecordFor('sess-b'));
+
+      registry.unregister('pane_aaaaaaaa');
+
+      expect(getViewportOverride(REGISTER_A.webContentsId)).toBeNull();
+      expect(getViewportOverride(REGISTER_B.webContentsId)).not.toBeNull();
+    });
   });
 
   /**

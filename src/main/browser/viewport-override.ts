@@ -173,14 +173,6 @@ async function readViewport(webContents: WebContents): Promise<ViewportSize | nu
 }
 
 /**
- * The zoom factor that makes a requested viewport fit the widget it is being
- * rendered into, and 1 when it already fits.
- *
- * Both axes, because fitting the width alone still leaves the bottom of the
- * layout off-screen. Clamped to the same floor the user's own Ctrl+wheel
- * obeys: past that the page is unreadable and a scroll is the better answer.
- */
-/**
  * The size of the real widget a pane is rendered into, in CSS pixels.
  *
  * Takes the renderer's report (`entry.widgetSize`) and falls back to the host
@@ -200,6 +192,14 @@ function paneWidgetSize(webContents: WebContents, entry: BrowserPaneEntry): View
   return { width, height };
 }
 
+/**
+ * The zoom factor that makes a requested viewport fit the widget it is being
+ * rendered into, and 1 when it already fits.
+ *
+ * Both axes, because fitting the width alone still leaves the bottom of the
+ * layout off-screen. Clamped to the same floor the user's own Ctrl+wheel
+ * obeys: past that the page is unreadable and a scroll is the better answer.
+ */
 function fitZoomFor(target: ViewportSize, widget: ViewportSize): number {
   const byWidth = widget.width / target.width;
   const byHeight = widget.height / target.height;
@@ -459,21 +459,6 @@ function displayWorkArea(webContents: WebContents): ViewportSize | null {
 }
 
 /**
- * Move a window back inside the display it is on, after a resize.
- *
- * `setContentSize` keeps the window's TOP-LEFT and grows right and down, so a
- * window sitting part-way across the desktop and sized to the full work area
- * runs off the edge of its monitor and onto the next. Sizing it correctly is
- * only half of "make it full screen on this monitor"; the other half is where
- * it starts.
- *
- * Clamping rather than always snapping to the origin: a window that still fits
- * where the user put it stays put, and only one that would overhang is pulled
- * back. A window as large as the work area has exactly one position that fits,
- * which is the origin, so "full screen" lands top-left without that being a
- * special case.
- */
-/**
  * Place a window at an anchor on its display's work area.
  *
  * Work area, so "top" is under the taskbar rather than behind it, and the
@@ -513,15 +498,6 @@ function positionWindowAt(window: BrowserWindow, anchor: WindowAnchor): void {
 }
 
 /**
- * Shrink a window whose OUTER bounds overflow its display.
- *
- * The size clamp upstream caps the requested VIEWPORT, which is the content
- * box: the frame is added on top of it, so asking for a viewport the height of
- * the work area produces a window taller than the screen. Clamping the
- * viewport cannot see that, because the frame is not known until the window
- * has been laid out. Measured after the fact and taken off the content.
- */
-/**
  * The largest viewport this window can have on its current display.
  *
  * The work area minus everything between it and the page: the window frame
@@ -551,6 +527,15 @@ function reachableViewport(window: BrowserWindow, measured: ViewportSize): Viewp
   }
 }
 
+/**
+ * Shrink a window whose OUTER bounds overflow its display.
+ *
+ * The size clamp upstream caps the requested VIEWPORT, which is the content
+ * box: the frame is added on top of it, so asking for a viewport the height of
+ * the work area produces a window taller than the screen. Clamping the
+ * viewport cannot see that, because the frame is not known until the window
+ * has been laid out. Measured after the fact and taken off the content.
+ */
 function shrinkToFitDisplay(window: BrowserWindow): void {
   try {
     if (window.isDestroyed()) return;
@@ -569,6 +554,21 @@ function shrinkToFitDisplay(window: BrowserWindow): void {
   }
 }
 
+/**
+ * Move a window back inside the display it is on, after a resize.
+ *
+ * `setContentSize` keeps the window's TOP-LEFT and grows right and down, so a
+ * window sitting part-way across the desktop and sized to the full work area
+ * runs off the edge of its monitor and onto the next. Sizing it correctly is
+ * only half of "make it full screen on this monitor"; the other half is where
+ * it starts.
+ *
+ * Clamping rather than always snapping to the origin: a window that still fits
+ * where the user put it stays put, and only one that would overhang is pulled
+ * back. A window as large as the work area has exactly one position that fits,
+ * which is the origin, so "full screen" lands top-left without that being a
+ * special case.
+ */
 function keepWithinDisplay(window: BrowserWindow): void {
   try {
     if (window.isDestroyed()) return;
