@@ -503,9 +503,31 @@ export const IPC = {
   UPDATE_CHECK: 'updater:check',
   UPDATE_INSTALL: 'updater:install',
   UPDATE_DOWNLOADED: 'updater:downloaded',
+  // Push: this install cannot update itself and never will until the user acts
+  // on it - today that is only the macOS read-only-volume case, DESKTOP-1A.
+  // Carries the user-facing message to toast, composed in main and latched
+  // there for the app's lifetime (`notifyReadOnlyVolume` in src/main/updater.ts),
+  // so a condition every 4-hour check rediscovers still toasts once.
+  // Main window only (the updater's own window reference, not broadcast), for
+  // the reason CONFIG_WRITE_FAILED gives above: ToastContainer is mounted in
+  // AppLayout alone, so a pop-out window has no toast host to deliver this to.
+  // Every OTHER updater failure stays silent by design - see the error handler.
+  UPDATE_BLOCKED: 'updater:blocked',
 
   // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
   HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
+  HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
+
+  // How this launch is rendering, and whether the user still needs telling
+  // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)
+  //
+  // An invoke, not a push, unlike HOST_MEMORY_PRESSURE above. That one is
+  // driven by a periodic sampler, so it never fires during boot and never has
+  // to prove the renderer is listening. This is decided once, while the
+  // renderer may still be parsing its bundle, and a send with no listener
+  // registered is dropped silently - with the escalation record already
+  // cleared, so nothing would ever resend it. The renderer pulls instead.
+  GPU_HEALTH_STATUS: 'gpuHealth:status',
 
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',
@@ -523,6 +545,9 @@ export const IPC = {
 
   // Conversation-memory semantic-layer status (Smart-mode palette UI).
   MEMORY_STATUS: 'memory:status',
+  // Spawn + init the embedding worker ahead of the first Smart query (Quick
+  // Find open); fire-and-forget, embeds nothing.
+  MEMORY_PREWARM: 'memory:prewarm',
   // Purge the current project's conversation index and re-run the backfill sweep
   // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',

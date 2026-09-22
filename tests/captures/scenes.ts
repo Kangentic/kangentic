@@ -24,7 +24,7 @@
  * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
  * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { PROJECT_CONTOSO, SESSION_MIDDLEWARE, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET } from './helpers/demo-dataset';
+import { PROJECT_CONTOSO, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -76,8 +76,14 @@ export interface DemoState {
   config?: Record<string, unknown>;
   /** Patches merged by id into the sample install's task rows (live or archived). */
   tasks?: Array<{ id: string } & Record<string, unknown>>;
-  /** Per-session activity state, written to the mock's `activityCache`. */
-  sessions?: Record<string, { activity?: 'thinking' | 'idle' | 'permission' }>;
+  /**
+   * Per-session patches on rows the sample install seeds. `activity` is written to the mock's
+   * `activityCache`; `status` is written onto the session row, which is where the board reads a
+   * queued or paused card from (`SessionDisplayState`). Both are patches rather than dataset rows
+   * because the sample install has one suspended session and no queued one, and adding either
+   * would change every docs figure already placed.
+   */
+  sessions?: Record<string, { activity?: 'thinking' | 'idle' | 'permission'; status?: 'running' | 'suspended' | 'queued' }>;
   /** `window.__mock*` globals the mock reads (diff fixtures, monitor rows, branch summary, ...). */
   seeds?: Record<string, unknown>;
   /** Synthetic clicks dispatched after the board renders and before the frame is revealed. */
@@ -300,11 +306,14 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string }> = {
   git: { ready: '[data-testid="setting-row-git.worktreesEnabled"]', alt: 'Settings on the Git tab: worktrees on or off, automatic cleanup, the default base branch, files and a script for each new worktree, and how often PRs and the remote are refreshed.' },
   browser: { ready: '[data-testid="setting-row-browser.enabled"]', alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.' },
   shortcuts: { ready: '[data-testid="add-shortcut"]', alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add Shortcut and Presets controls.' },
-  board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel, the status bar, and animations.' },
+  board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.' },
   task: { ready: '[data-testid="setting-row-cardDensity"]', alt: 'Settings on the Task tab: card density, card preview, ticket numbers, and a switch for each pill the context bar shows.' },
   changes: { ready: '[data-testid="setting-row-diffViewMode"]', alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.' },
   terminal: { ready: '[data-testid="setting-row-terminal.shell"]', alt: 'Settings on the Terminal tab: the shell, the font size and family, the cursor style, backspace behavior, and the terminal colors.' },
   behavior: { ready: '[data-testid="setting-row-agent.maxConcurrentSessions"]', alt: 'Settings on the Behavior tab: the concurrent session cap, what happens when it is reached, idle focus and timeout, auto-resume, and how windows dismiss and restore.' },
+  // The callout under Graphics acceleration only renders on an install Kangentic downgraded
+  // itself, so the alt describes the two switches a normal install shows and not that line.
+  performance: { ready: '[data-testid="setting-row-graphicsAccelerationEnabled"]', alt: 'Settings on the Performance tab: switches for graphics acceleration and for animations.' },
   hotkeys: { ready: '[data-testid="hotkeys-tab"]', alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.' },
   notifications: { ready: '[data-testid="setting-row-notifications.onAgentIdle"]', alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.' },
   dictation: { ready: '[data-testid="setting-row-dictation.enabled"]', alt: 'Settings on the Dictation tab: the voice dictation toggle, the language, the live and refinement models, punctuation, push-to-talk, and auto-submit.' },
@@ -346,6 +355,25 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The welcome screen on first launch: the Kangentic mark, an Open a project button, a line reporting the git and agent CLIs it found with a Show setup control, and three notes on what opening a project does.',
     ready: '[data-testid="welcome-open-project"]',
   },
+  'welcome-setup': {
+    name: 'welcome-setup',
+    reach: 'state',
+    description: 'The welcome screen with the setup list open on a not-installed row and a not-signed-in one, for the Installation and Troubleshooting pages. The default welcome scene reports everything found, so the rows those pages describe never appear there. No click: the screen opens the list itself when anything is missing or signed out, which is exactly the state seeded here.',
+    alt: 'The welcome screen with its setup list open: a line asking the reader to sign in to Gemini CLI, git and two agent CLIs found with their versions, Gemini CLI marked Not signed in, and three more agents marked Not installed beside an Install link.',
+    install: 'empty',
+    // Replaces the dataset's own overrides whole (boot.js assigns a scene's seeds after the seed
+    // script has set them), so this map is the entire agent report, not a patch on it.
+    seeds: {
+      __mockAgentListOverrides: {
+        claude: { version: '2.1.270' },
+        codex: { found: true, path: '/usr/local/bin/codex', version: '0.141.0' },
+        gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0', authenticated: false },
+        opencode: { found: false, path: null, version: null },
+      },
+    },
+    ready: '#welcome-setup-panel',
+    focus: '#welcome-setup-panel',
+  },
 
   // ---------------------------------------------------------------- the board
   board: {
@@ -377,6 +405,67 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The terminal panel on its Activity tab: a timeline of tool calls across every running session, each line stamped with its time, its session, and the tool, with a filter above it.',
     ready: '[data-testid="activity-filter"]',
     steps: [{ click: '[data-testid="terminal-activity-tab"]', waitFor: '[data-testid="activity-filter"]' }],
+  },
+  'session-states': {
+    name: 'session-states',
+    reach: 'boot',
+    description: 'The contoso-web board with a paused card in Planning and a queued one in Code Review, for the Session Persistence page. The sample install has neither: its one suspended session is in online-boutique and nothing is queued. Both are row patches, not dataset rows, so every other figure is unchanged.',
+    alt: 'The contoso-web board with two agents stopped: the Onboarding empty states card in Planning reads Paused, the Add rate limiting card in Code Review reads Queued, and the status bar counts six agents with one of them queued.',
+    // Both columns are in frame at 1600px. Merge is not, which is why the paused card is not the
+    // Vite 8 task: its card passed every check and sat off the right edge of the figure.
+    //
+    // Neither session has a clock either: the seed arms one only for an `activity` of thinking,
+    // and these two are permission and idle, so flipping their status starts no timer.
+    sessions: {
+      [SESSION_EMPTY_STATES]: { status: 'suspended' },
+      [SESSION_RATE_LIMIT]: { status: 'queued' },
+    },
+    ready: '[data-task-id="task-cw-empty-states"]',
+    steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
+  },
+  'activity-overlay': {
+    name: 'activity-overlay',
+    reach: 'state',
+    description: 'The board with the activity-engine debug overlay switched on over the working sessions, for the Activity Detection page, which explains the classifier with a diagram alone today. The snapshot it draws is derived from each session\'s own seeded events; see activityStatsFor in demo-dataset.ts.',
+    alt: 'The Activity Engine Debugger open over the board: a panel per session naming its state, how long since its last signal, its pending tools, subagents and background shells, whether a turn is active, a log of recent transitions, and a timeline.',
+    // `developer` is an OPTIONAL AppConfig block with no DEFAULT_CONFIG entry, so it is supplied
+    // whole here; boot.js assigns a scene's config with a shallow Object.assign.
+    config: { developer: { activityDebugOverlay: true } },
+    ready: '[data-testid="activity-debug-overlay"]',
+    focus: '[data-testid="activity-debug-overlay"]',
+  },
+  'notification-toast': {
+    name: 'notification-toast',
+    reach: 'state',
+    description: 'An in-app toast over the board, for the Notifications page, which can otherwise show only the announcement banner because an OS notification cannot appear in a browser. This is the session-ended toast, which the app raises off the exit push seeded below. The idle toast the Notifications tab also offers is edge-triggered off an activity TRANSITION, and a scene can seed only a static activity value into the mock cache, so there is still no push here for it to fire on.',
+    alt: 'The board with an in-app toast in its bottom right corner, reporting that the session for Integration test coverage ended with exit code 0, and carrying a control to dismiss it.',
+    // The app raises this itself off the exit push, gated on notifications.toasts.onAgentCrash;
+    // the scene seeds the push, never the toast store.
+    seeds: { __mockInitialExit: { sessionId: SESSION_INTEGRATION, exitCode: 0, projectId: PROJECT_CONTOSO } },
+    // `notifications` is nested, and boot.js assigns a scene's config with a shallow
+    // Object.assign, so the block replaces the default WHOLE. Every field here is
+    // DEFAULT_CONFIG.notifications verbatim except `durationSeconds`, which is the one thing the
+    // scene is changing: a toast the frame is read after would otherwise be gone. 30 is the
+    // maximum the Notifications tab's own input accepts (min 1, max 30), so this is a value a
+    // visitor could set, not one only a scene can reach.
+    config: {
+      notifications: {
+        desktop: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true },
+        toasts: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true, durationSeconds: 30, maxCount: 5 },
+        cooldownSeconds: 10,
+      },
+    },
+    ready: '[data-testid="toast"]',
+    focus: '[data-testid="toast"]',
+  },
+  'board-config-change': {
+    name: 'board-config-change',
+    reach: 'state',
+    description: 'The board config reconciliation dialog, raised the way the desktop raises it: the seeded kangentic.json watch push, which App.tsx turns into a pending config change. Nothing in the demo draws the dialog itself.',
+    alt: 'A dialog over the board headed Board configuration changed: it reports changes detected in kangentic.json and asks whether to apply the updated board configuration, with a checkbox to always apply automatically and Dismiss and Apply buttons.',
+    seeds: { __mockBoardConfigChanged: PROJECT_CONTOSO },
+    ready: '[data-testid="config-change-dialog"]',
+    focus: '[data-testid="config-change-dialog"]',
   },
   announcements: {
     name: 'announcements',
@@ -534,7 +623,15 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'The Agent Monitor in its table layout. The layout IS persisted (config.monitor.layout), so it is config plus the same open click.',
     alt: 'The Agent Monitor in table layout: summary tiles for idle, active, and paused sessions, then one row per session grouped by project, with columns for task, column, agent, model, effort, permission, runtime, and context.',
-    config: { monitor: { layout: 'table' } },
+    // Spelled whole, because a scene's nested config block REPLACES the default rather than
+    // merging into it. `layout` is the only field this scene is changing; the other six were
+    // undefined here until the registry test started checking the shape.
+    config: {
+      monitor: {
+        layout: 'table', groupBy: 'project', sort: 'longest-running', liveOnly: false,
+        projectFilter: [], stateFilter: [], textFilter: '',
+      },
+    },
     ready: '[data-testid="monitor-table-row"]',
     steps: [{ click: '[data-testid="agent-monitor-button"]', waitFor: '[data-testid="monitor-page"]' }],
   },
@@ -621,12 +718,58 @@ export const SCENES: Record<string, SceneDefinition> = {
   'edit-columns': {
     name: 'edit-columns',
     reach: 'boot',
-    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column. Its automations pane is the column-automations figure too, though the sample install configures none for this column, so both slots read Add automation.',
+    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column, as the sample install leaves it: no automation configured, so both slots read Add automation. The column-automation scene is the configured counterpart.',
     alt: 'The Column Manager dialog with the Code Review column selected: its name, icon, and color, the agent that starts when a task enters it, and the automation slots for entering and leaving the column.',
     ready: '[data-testid="board-manager-dialog"]',
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
   },
+  // ---------------------------------------------------------------- column workflow
+  // An automation and a handed-off context are per-scene seeds, never dataset rows: an automation
+  // draws a glyph in the BOARD column header (AutomationGlyph), so seeding one into the sample
+  // install would change every docs figure already placed and every poster in the release zip.
+  // The two ids below go through demoLaneId, which the registry test resolves against the install.
+  'column-automation': {
+    name: 'column-automation',
+    reach: 'boot',
+    description: 'The Column Manager on Code Review with a Send message automation configured on enter, for the Workflows page and the Workflow Automation showcase. The sample install configures none, so this is a scene seed.',
+    alt: 'The Column Manager on the Code Review column: its name, icon and color, the agent that starts when a task enters, and an Automations pane holding one Send message row on enter with the message it sends, edit and delete controls, and its switch on.',
+    seeds: {
+      __mockAutomations: [
+        {
+          swimlane_id: demoLaneId(PROJECT_CONTOSO, 'review'),
+          name: 'Ask for a review pass',
+          type: 'send_message',
+          trigger: 'enter',
+          config: { message: 'Review the diff against main and fix anything you would block a pull request on.', mode: 'immediate' },
+        },
+      ],
+    },
+    ready: '[data-testid="column-automation-row"]',
+    focus: '[data-testid="board-manager-dialog"]',
+    steps: [{ click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
+  },
+  'column-handoff': {
+    name: 'column-handoff',
+    reach: 'boot',
+    description: 'The Column Manager\'s All columns table with handoff context on for Code Review, for the Handoff Context showcase. Every lane in the sample install has it off, so this is a scene seed. The TABLE, not the column form: in the form the toggle sits 996px down a 1000px frame, so the figure would show everything except its own subject.',
+    alt: 'The Column Manager on its All columns table: a row per column carrying the agent that starts there, the model, effort and permissions it uses, a handoff switch, the session it runs in, and what runs on enter and on exit. Handoff is on for Code Review alone.',
+    seeds: {
+      __mockSwimlanePatches: { [demoLaneId(PROJECT_CONTOSO, 'review')]: { handoff_context: true } },
+    },
+    // `[aria-selected="true"]`, not the bare testid: ColumnRail renders the All columns tab button
+    // unconditionally as soon as the dialog mounts, so the bare selector resolves the instant step
+    // one opens the dialog. Both the step's wait and the frame's gate would then be satisfied
+    // before the click that switches the view, and the figure could be shot on the column form.
+    // `aria-selected` is the only thing on that button that tracks which view is showing.
+    ready: '[data-testid="board-manager-tab-all"][aria-selected="true"]',
+    focus: '[data-testid="board-manager-dialog"]',
+    steps: [
+      { click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' },
+      { click: '[data-testid="board-manager-tab-all"]', waitFor: '[data-testid="board-manager-tab-all"][aria-selected="true"]' },
+    ],
+  },
+
   'completed-tasks': {
     name: 'completed-tasks',
     reach: 'boot',

@@ -14,7 +14,17 @@
   // Column automations. Nothing is seeded: a fresh board has none, which is
   // what the app now does too (the seeded actions that used to become them were
   // each a no-op or a duplicate of the fallback spawn).
+  //
+  // A demo scene seeds rows through `window.__mockAutomations`, hydrated LAZILY
+  // on the first `automations.list()` rather than here. The web build injects
+  // the mock BEFORE demo/boot.js assigns a scene's seeds (demo/index.html names
+  // the five-script order), so a module-scope read of the global would always
+  // see nothing. Every other demo seed is read the same way, inside the API
+  // function; `__mockBoardProfiles` below is the module-scope exception, and it
+  // works only because a Playwright spec sets it via addInitScript.
   let automations = [];
+  let automationsHydrated = false;
+  let swimlanePatchesHydrated = false;
   // Run records. Seedable through `__mockPreConfigure` so a spec can read run
   // history (`runsForTask`) without executing anything; `runAgain` appends to it.
   let automationRuns = [];
@@ -28,6 +38,11 @@
   // sessions.getMessageTrails() serves; __mockFireMessageTrail writes it too
   // so a re-sync after the push sees the same trail main would report.
   let messageTrailCache = {};
+  // sessionId -> ActivityStatsSnapshot, what sessions.getActivityStats() serves
+  // for the Developer tab's activity debug overlay. Seeded via
+  // __mockPreConfigure; empty here, so a session with no snapshot keeps the
+  // production "session unknown" answer.
+  let activityStatsCache = {};
   let eventCache = {};
   let summaryCache = {};
   let currentProjectId = null;
@@ -297,6 +312,56 @@
     windowMaximized: false,
   }, window.__mockConfigOverrides || {});
 
+  // Graphics recovery test hook (Sentry DESKTOP-18/DESKTOP-W): main can write
+  // graphicsAccelerationEnabled: false during whenReady AFTER this renderer's
+  // first config read, which is exactly the race App.tsx's own re-read
+  // (useConfigStore.getState().loadConfig() inside the notice handler) exists
+  // to close. Arm with window.__mockGraphicsAccelerationWriteLandsAfterBoot
+  // (set before load, alongside a config seeded with the STALE pre-write
+  // value): the first STALE_CALL_BUDGET config.get()/getGlobal() calls each
+  // report the seeded value untouched, and every call after that reports
+  // main's real write (graphicsAccelerationEnabled: false,
+  // graphicsAccelerationOffBy: 'app'), mirroring configManager.save() in
+  // src/main/index.ts's whenReady block.
+  //
+  // The budget is 4, not 1, because two OTHER things call loadConfig() during
+  // boot with nothing to do with the GPU notice, and each is doubled by
+  // React.StrictMode (src/renderer/index.tsx), which runs every mount effect
+  // twice in this dev-server-backed tier:
+  //   1. App.tsx's own top-level `loadConfig()` call (the boot read itself).
+  //   2. useProjectSwitchEffect's mount-time reload (its null-branch with no
+  //      project open, or its cold-path branch with one - either way, this
+  //      fires once per mount).
+  // That is 2 sources x 2 StrictMode passes = 4 incidental calls, all
+  // dispatched synchronously in the same tick and settled before the GPU
+  // notice's chain can reach its own inner loadConfig() call (behind two
+  // extra microtask hops through readStatus().catch().then()). Empirically
+  // confirmed via console instrumentation: with the notice's own re-read
+  // removed, calls stop at exactly 4 (all stale); with it present, a genuine
+  // 5th call lands after (corrected). Only the FIRST StrictMode pass's
+  // readStatus() call ever produces a notice - it consumes
+  // window.__mockGpuNoticePending on read, so the second pass's call is a
+  // silent no-op - which is why the notice contributes exactly one extra
+  // call rather than two.
+  //
+  // A spec exercising this must also pass `omitProject: true` and seed
+  // `onboardedProjectIds` to a defined array (see graphics-recovery.spec.ts):
+  // with a project seeded, useProjectSwitchEffect's cold path re-fires a
+  // SECOND time once the project resolves (consuming budget beyond this
+  // fixed accounting), and App.tsx's one-time onboardedProjectIds backfill
+  // fires its own incidental updateConfig() otherwise.
+  var GRAPHICS_ACCELERATION_STALE_CALL_BUDGET = 4;
+  var graphicsAccelerationGetCallCount = 0;
+  var graphicsAccelerationGetGlobalCallCount = 0;
+  function withStaleGraphicsAccelerationOverride(effectiveConfig, callCount) {
+    if (!window.__mockGraphicsAccelerationWriteLandsAfterBoot) return effectiveConfig;
+    if (callCount <= GRAPHICS_ACCELERATION_STALE_CALL_BUDGET) return effectiveConfig;
+    return Object.assign({}, effectiveConfig, {
+      graphicsAccelerationEnabled: false,
+      graphicsAccelerationOffBy: 'app',
+    });
+  }
+
   function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       var r = (Math.random() * 16) | 0;
@@ -465,6 +530,32 @@
 
   function noop() {}
 
+  // What config.set / setProjectOverrides / setProjectOverridesByPath resolve with.
+  // Defaults to a write that reached disk; a test forces the failure path by setting
+  // window.__mockConfigSetPersisted = false, which is what the settings panel's
+  // "This setting did not save" toast keys off (Sentry DESKTOP-1C). Read per call,
+  // not captured once, so a test can flip it mid-run to simulate a disk recovering.
+  // Note the real ConfigManager.save() updates its in-memory config even when the
+  // write fails, so the mock deliberately still applies the partial before returning
+  // persisted: false.
+  function configSetResult() {
+    return { persisted: window.__mockConfigSetPersisted !== false };
+  }
+
+  // A REJECTED write is a different failure from one that degraded: the real
+  // project-scoped handlers throw for an unknown or unopened project, and the settings
+  // panel reports that separately (with no data-folder clause).
+  //
+  // Called BEFORE the mock applies the partial, because the real handlers throw their
+  // precondition before ever reaching ConfigManager - nothing is written on that path.
+  // Rejecting after the mutation would leave mock state a rejected real write never
+  // produces, which is a trap for any later test that asserts on state after a reject.
+  function rejectConfigSetIfConfigured() {
+    if (window.__mockConfigSetRejects) {
+      throw new Error(String(window.__mockConfigSetRejects));
+    }
+  }
+
   // Board Profiles live in kangentic.json, not the DB, so the mock keeps them
   // in a plain module-scope array. Declared here (alongside noop) rather than
   // beside the boardConfig object, whose neighbouring `state` bindings belong to
@@ -473,9 +564,50 @@
     ? JSON.parse(JSON.stringify(window.__mockBoardProfiles))
     : [];
 
+  /**
+   * Copy `window.__mockAutomations` into the live array, once. Called from
+   * `automations.list()` rather than at module scope, so a demo scene's seed
+   * (assigned after this file runs) is still picked up. After the first call the
+   * array is the mock's own state again, so `replaceForColumn` behaves normally.
+   */
+  function hydrateSeededAutomations() {
+    if (automationsHydrated) return;
+    automationsHydrated = true;
+    if (!Array.isArray(window.__mockAutomations)) return;
+    window.__mockAutomations.forEach(function (row, index) {
+      automations.push(Object.assign(
+        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, created_at: now(), updated_at: now() },
+        row,
+        { config: Object.assign({}, row.config) },
+      ));
+    });
+  }
+
+  /**
+   * Apply `window.__mockSwimlanePatches` ({ swimlaneId: Partial<Swimlane> }) to
+   * the seeded columns, once, for the same load-order reason as the automations
+   * above. A column field the sample install fixes for every lane
+   * (`handoff_context`) is a per-scene patch rather than a dataset change,
+   * because changing the dataset would move every docs figure already placed.
+   */
+  function hydrateSeededSwimlanePatches() {
+    if (swimlanePatchesHydrated) return;
+    swimlanePatchesHydrated = true;
+    var patches = window.__mockSwimlanePatches;
+    if (!patches || typeof patches !== 'object') return;
+    Object.keys(patches).forEach(function (swimlaneId) {
+      var lane = swimlanes.find(function (row) { return row.id === swimlaneId; });
+      if (lane) Object.assign(lane, patches[swimlaneId]);
+    });
+  }
+
   // Test override conventions consumed below (set via addInitScript before this mock loads):
   //   - window.__mockBoardProfiles: pre-seeded BoardProfile[] for boardConfig.getBoardProfiles()
   //   - window.__mockAgentListOverrides: per-agent override of agents.list() entries
+  //   - window.__mockAutomations: pre-seeded automation rows, hydrated on first automations.list()
+  //   - window.__mockSwimlanePatches: per-column field overrides, applied on first swimlanes.list()
+  //   - window.__mockInitialExit: one session-exit push fired when sessions.onExit registers
+  //   - window.__mockBoardConfigChanged: a projectId pushed when boardConfig.onChanged registers
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
   //   - window.__mockDefaultAgentOverride: default_agent for the next project created
   //     via projects.create() or projects.openByPath(); cleared after first use
@@ -491,12 +623,30 @@
     listeners.forEach(function (fn) { fn(info); });
   };
 
+  // Update-blocked test hooks (Sentry DESKTOP-1A), same eager pattern as the
+  // update-downloaded hooks above. Main latches this push, so a spec that
+  // wants the "already toasted" case fires once and asserts on the toast
+  // count rather than expecting the mock to deduplicate.
+  window.__mockUpdateBlockedListeners = [];
+  window.__mockFireUpdateBlocked = function (message) {
+    var listeners = window.__mockUpdateBlockedListeners.slice();
+    listeners.forEach(function (fn) { fn(message); });
+  };
+
   // Host memory pressure test hooks (Sentry DESKTOP-16), same eager pattern
   // as the update-downloaded hooks above: `__mockFireHostMemoryPressure`
   // exists before any renderer subscriber has registered.
   window.__mockHostMemoryPressureListeners = [];
   window.__mockFireHostMemoryPressure = function (event) {
     var listeners = window.__mockHostMemoryPressureListeners.slice();
+    listeners.forEach(function (fn) { fn(event); });
+  };
+
+  // Host memory recovery test hooks (Sentry DESKTOP-16): the clear-side edge
+  // for the pressure push above, same eager pattern.
+  window.__mockHostMemoryRecoveryListeners = [];
+  window.__mockFireHostMemoryRecovery = function (event) {
+    var listeners = window.__mockHostMemoryRecoveryListeners.slice();
     listeners.forEach(function (fn) { fn(event); });
   };
 
@@ -1254,8 +1404,25 @@
           tasks: withAttachmentCounts(sorted.slice(0, boundedLimit)),
         };
       },
-      onAutoMoved: function () {
-        return noop;
+      onAutoMoved: function (callback) {
+        // Tests fire this via
+        // window.__mockFireTaskAutoMoved(taskId, targetSwimlaneId, taskTitle, projectId).
+        if (!window.__mockTaskAutoMovedListeners) window.__mockTaskAutoMovedListeners = [];
+        window.__mockTaskAutoMovedListeners.push(callback);
+        if (!window.__mockFireTaskAutoMoved) {
+          window.__mockFireTaskAutoMoved = function (taskId, targetSwimlaneId, taskTitle, projectId) {
+            var listeners = (window.__mockTaskAutoMovedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(taskId, targetSwimlaneId, taskTitle, projectId); });
+          };
+        }
+        // A REAL unsubscribe, matching the preload bridge: App.tsx pushes this
+        // onto its cleanups array, and a noop would leave the unmounted
+        // renderer's listener attached across an HMR re-subscribe.
+        return function () {
+          var listeners = window.__mockTaskAutoMovedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       onSpawnBlocked: function (callback) {
         // Tests fire this via window.__mockFireTaskSpawnBlocked(taskId, title, message, projectId).
@@ -1661,6 +1828,7 @@
 
     swimlanes: {
       list: async function () {
+        hydrateSeededSwimlanePatches();
         // A row that carries a projectId belongs to that project only (the real DB is per
         // project); a row without one stays global, so single-project specs are unchanged.
         return swimlanes.filter(function (s) {
@@ -1769,6 +1937,7 @@
 
     automations: {
       list: async function () {
+        hydrateSeededAutomations();
         // A sorted COPY: the store holds what this returns, and handing out the
         // live array would let a renderer mutation reach the mock's state.
         return automations
@@ -2033,6 +2202,25 @@
             for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, exitCode, projectId, intentional); }
           };
         }
+        // A demo scene reaches an in-app toast by seeding the PUSH that raises
+        // it, never the toast store: App.tsx's own subscription decides, gated
+        // on notifications.toasts.onAgentCrash, exactly as on the desktop.
+        // Fired once, on the first registration, because a scene is data and
+        // has no way to call a function.
+        if (window.__mockInitialExit && !window.__mockInitialExitFired) {
+          window.__mockInitialExitFired = true;
+          var exitSeed = window.__mockInitialExit;
+          // Deferred a task, so the callback this call is installing receives it.
+          // It reaches THAT callback only, where real main broadcasts SESSION_EXIT
+          // to every listener on the channel. Enough for the scenes that seed it
+          // (App.tsx is the sole subscriber when the toast scene boots), but a
+          // scene that opened a Command Terminal first would have its own
+          // onExit registration consume the one-shot and App.tsx would see
+          // nothing. Fan out over __mockExitListeners if that scene ever exists.
+          window.setTimeout(function () {
+            callback(exitSeed.sessionId, exitSeed.exitCode || 0, exitSeed.projectId || null, false);
+          }, 0);
+        }
         return function () {
           var listeners = window.__mockExitListeners || [];
           var idx = listeners.indexOf(callback);
@@ -2125,10 +2313,13 @@
         // assert on reason content, so an empty record is fine.
         return {};
       },
-      getActivityStats: async function (/* sessionId */) {
-        // Debug overlay only; UI tests rarely need this. Return null
-        // to mirror "session unknown" path.
-        return null;
+      getActivityStats: async function (sessionId) {
+        // Debug overlay only; UI tests rarely need this. Returning null
+        // mirrors the production "session unknown" path, which is also what a
+        // session with no seeded snapshot gets. The web build seeds
+        // `activityStatsCache` from the sample install so the overlay has
+        // something real to draw; see demo-dataset.ts.
+        return activityStatsCache[sessionId] || null;
       },
       onActivity: function (callback) {
         // Tests can fire this via
@@ -2552,15 +2743,18 @@
       get: async function () {
         // Return effective config: global merged with current project's overrides
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
-        if (currentProject && projectConfigs[currentProject.path]) {
-          return deepMerge(config, projectConfigs[currentProject.path]);
-        }
-        return config;
+        graphicsAccelerationGetCallCount++;
+        var effective = (currentProject && projectConfigs[currentProject.path])
+          ? deepMerge(config, projectConfigs[currentProject.path])
+          : config;
+        return withStaleGraphicsAccelerationOverride(effective, graphicsAccelerationGetCallCount);
       },
       getGlobal: async function () {
-        return config;
+        graphicsAccelerationGetGlobalCallCount++;
+        return withStaleGraphicsAccelerationOverride(config, graphicsAccelerationGetGlobalCallCount);
       },
       set: async function (partial) {
+        rejectConfigSetIfConfigured();
         config = deepMerge(config, partial);
         // hotkeyOverrides is a dictionary-style map (CONFIG_DICTIONARY_PATHS in
         // config-manager.ts): the real save REPLACES it wholesale so a deleted
@@ -2590,6 +2784,7 @@
         if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
           config.terminal.colors = Object.assign({}, partial.terminal.colors);
         }
+        return configSetResult();
       },
       // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
       // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject + commandTerminalWorkspace + terminal.colors).
@@ -2619,16 +2814,20 @@
         return null;
       },
       setProjectOverrides: async function (overrides) {
+        rejectConfigSetIfConfigured();
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
         if (currentProject) {
           projectConfigs[currentProject.path] = overrides;
         }
+        return configSetResult();
       },
       getProjectOverridesByPath: async function (projectPath) {
         return projectConfigs[projectPath] || null;
       },
       setProjectOverridesByPath: async function (projectPath, overrides) {
+        rejectConfigSetIfConfigured();
         projectConfigs[projectPath] = overrides;
+        return configSetResult();
       },
       syncDefaultToProjects: async function () {
         return 0;
@@ -3927,10 +4126,32 @@
       exists: async function () { return false; },
       export: async function () {},
       apply: async function (/* projectId */) { return []; },
-      onChanged: function (/* callback(projectId) */) { return noop; },
+      onChanged: function (callback) {
+        // The push main sends when kangentic.json changes on disk. A demo scene
+        // seeds the projectId through `window.__mockBoardConfigChanged` and this
+        // fires it once, on the first registration, so the app raises its own
+        // reconciliation dialog rather than the demo drawing one. Same shape as
+        // the seeded activity push in sessions.onActivity above.
+        if (window.__mockBoardConfigChanged && !window.__mockBoardConfigChangedFired) {
+          window.__mockBoardConfigChangedFired = true;
+          var projectId = window.__mockBoardConfigChanged;
+          window.setTimeout(function () { callback(projectId); }, 0);
+        }
+        return noop;
+      },
       onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
       getBoardProfiles: async function () { return mockBoardProfiles; },
-      setBoardProfiles: async function (profiles) { mockBoardProfiles = profiles; },
+      // window.__mockBoardProfilesSaveError makes the write reject, for a spec
+      // covering the failure path. It throws BEFORE assigning, deliberately:
+      // board-store's catch reloads via getBoardProfiles() before it toasts, so
+      // the last good array has to survive or the spec fails on a second,
+      // different error instead of the one under test.
+      setBoardProfiles: async function (profiles) {
+        if (window.__mockBoardProfilesSaveError) {
+          throw new Error(String(window.__mockBoardProfilesSaveError));
+        }
+        mockBoardProfiles = profiles;
+      },
       onBoardProfilesChanged: function (/* callback(projectId) */) { return noop; },
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
@@ -3957,6 +4178,17 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onUpdateBlocked: function (callback) {
+        // Fired via `window.__mockFireUpdateBlocked('<sentence>')`; the
+        // listener array and the fire hook are installed eagerly at
+        // mock-bootstrap time (see top of file), not lazily here.
+        window.__mockUpdateBlockedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockUpdateBlockedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
     },
 
     hostMemory: {
@@ -3967,6 +4199,36 @@
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
+      },
+      onRecovery: function (callback) {
+        window.__mockHostMemoryRecoveryListeners.push(callback);
+        return function () {
+          var listeners = window.__mockHostMemoryRecoveryListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+    },
+
+    // noticePending is consumed on read, like the real handler, so a spec
+    // asserting the toast fires exactly once gets main's real behaviour.
+    // Arm with window.__mockGpuNoticePending / __mockGpuSoftwareRendering
+    // before load.
+    gpuHealth: {
+      readStatus: function () {
+        // Test hook: simulate the invoke itself rejecting (a stale preload, a
+        // handler throw). Set window.__mockGpuHealthReadStatusRejects = true
+        // before load. App.tsx guards this call with .catch, so the only
+        // observable effect should be "no toast, otherwise a normal boot".
+        if (window.__mockGpuHealthReadStatusRejects === true) {
+          return Promise.reject(new Error('mock gpuHealth.readStatus rejection'));
+        }
+        var noticePending = window.__mockGpuNoticePending === true;
+        window.__mockGpuNoticePending = false;
+        return Promise.resolve({
+          softwareRendering: window.__mockGpuSoftwareRendering === true,
+          noticePending: noticePending,
+        });
       },
     },
 
@@ -4204,6 +4466,17 @@
 
     memory: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
+      // Fire-and-forget worker warm-up on a Smart-mode Quick Find open. Recorded
+      // (one timestamp per call) so a UI test can assert it fires at least once
+      // per open, never in keyword mode, and no further as the user types. Not
+      // an exact count: StrictMode double-invokes the mount effect, and the
+      // second send is a no-op against the worker's memoized init.
+      prewarm: function () {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockMemoryPrewarmCalls) window.__mockMemoryPrewarmCalls = [];
+          window.__mockMemoryPrewarmCalls.push(Date.now());
+        }
+      },
       rebuildIndex: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
@@ -4669,6 +4942,7 @@
       backlogTasks: backlogTasks,
       activityCache: activityCache,
       messageTrailCache: messageTrailCache,
+      activityStatsCache: activityStatsCache,
       eventCache: eventCache,
       summaryCache: summaryCache,
       projectConfigs: projectConfigs,

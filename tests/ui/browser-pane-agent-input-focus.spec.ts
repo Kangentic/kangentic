@@ -426,6 +426,42 @@ test.describe('agent input focus guard', () => {
     await expect(noteInput).toHaveValue('typo');
   });
 
+  test('the user pressing plain Enter in the note input DOES send', async () => {
+    // The converse of the case above, and the only positive proof in the tree
+    // that the note input's own Enter reaches handleSend. Everything else about
+    // Enter here is a negative: a document-level Ctrl+Enter no-op and a
+    // Shift+Enter no-op, both in browser-pane-shortcuts.spec.ts.
+    //
+    // It is what the Send button's "(Enter)" tooltip promises, and what
+    // `submitTextTarget` relies on when dictation commits the field by
+    // dispatching a bare Enter with no ctrlKey or metaKey. Requiring a modifier
+    // in that onKeyDown turns this red, which is the point.
+    //
+    // This one leaves the error strip showing, and the case above asserts the
+    // strip is absent. Order between them still does not matter: the file's
+    // beforeEach reloads the app with a full page.goto, so no DOM state carries
+    // from one test into the next.
+    await openPaneWithGuest(sharedPage);
+    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
+    await noteInput.click();
+    await noteInput.fill('send me');
+
+    // Asserted HERE rather than in a copy test of its own, so the tooltip and
+    // the key it names are pinned by one test. They shipped disagreeing for the
+    // whole life of the feature: the tooltip read "(Ctrl/Cmd+Enter)", left over
+    // from a document-level listener removed in 15076930.
+    await expect(sharedPage.locator('[data-testid="browser-send"]'))
+      .toHaveAttribute('title', 'Send to agent (Enter)');
+
+    await sharedPage.keyboard.press('Enter');
+
+    // `openPaneWithGuest` registers a webview stub, so handleSend gets past its
+    // own `if (!webview || !overlay) return` guard and then fails for want of a
+    // real guest to capture, reporting it in the strip. The strip APPEARING is
+    // what proves Send ran.
+    await expect(sharedPage.locator('[data-testid="browser-send-error"]')).toBeVisible();
+  });
+
   test('does not route a keystroke for a different guest', async () => {
     await openPaneWithGuest(sharedPage);
     await installVictimInput(sharedPage);

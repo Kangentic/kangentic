@@ -23,6 +23,9 @@ import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
+import { resolveIdleToast } from './utils/idle-toast';
+import { resolveGpuNotice } from './utils/gpu-notice';
+import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { describeAutomationFailure } from '../shared/automation-describe';
@@ -139,9 +142,66 @@ export function App() {
     });
 
     // Host memory pressure (Sentry DESKTOP-16): a rare, edge-triggered push
-    // from main's sampler - see stores/host-memory-store.ts.
-    const cleanupHostMemoryListener = window.electronAPI.hostMemory?.onPressure((event) => {
+    // from main's sampler - see stores/host-memory-store.ts. The recovery
+    // push is the clear-side edge; its payload carries a sample but the
+    // store deliberately discards it (nothing displays a recovery reading).
+    const cleanupHostMemoryPressureListener = window.electronAPI.hostMemory?.onPressure((event) => {
       useHostMemoryStore.getState().receivePressureEvent(event);
+    });
+    const cleanupHostMemoryRecoveryListener = window.electronAPI.hostMemory?.onRecovery(() => {
+      useHostMemoryStore.getState().receiveRecovery();
+    });
+
+    // Graphics state (Sentry DESKTOP-18/DESKTOP-W). PULLED, not pushed: main
+    // decides both facts during boot, possibly before this renderer could
+    // have registered a listener, and a dropped push would lose the notice
+    // for good because the record behind it is already cleared. Reading
+    // consumes `noticePending`, so this never re-toasts on a reload.
+    void window.electronAPI.gpuHealth?.readStatus().catch((error) => {
+      // Swallowed, not reported: this is the ONE call in the bootstrap that a
+      // user who never has a graphics problem still makes, and an unhandled
+      // rejection here would surface as a renderer error for all of them if
+      // the channel ever went missing (a stale preload, a handler throw).
+      // Nothing downstream needs it - no status means hardware, as today.
+      console.warn('[GPU-HEALTH] Could not read graphics status:', error);
+      return null;
+    }).then((status) => {
+      if (!status) return;
+      // Arrives asynchronously, so a terminal that mounts before this lands
+      // will attempt WebGL once and arm a retry. Harmless (the attach path
+      // already handles a refused context) and not worth a synchronous boot
+      // hop to avoid, but it does mean the skip below is an optimisation for
+      // later mounts rather than a hard guarantee for the first one.
+      setSoftwareRenderingActive(status.softwareRendering);
+      const notice = resolveGpuNotice(status);
+      if (!notice) return;
+      // Main wrote graphicsAccelerationEnabled: false during whenReady, which may
+      // have landed after this renderer read config. Re-read it, or Settings >
+      // Performance shows "On" for the rest of a session that is demonstrably
+      // running without acceleration - the exact lying control this design
+      // dropped the tri-state to avoid.
+      void useConfigStore.getState().loadConfig();
+      useToastStore.getState().addToast({
+        message: notice.message,
+        variant: 'warning',
+        // Never auto-dismisses: the app stays degraded until the user acts,
+        // and a 4-second toast about why their app vanished is worse than
+        // none at all.
+        duration: 0,
+        action: {
+          label: 'Performance settings',
+          onClick: () => {
+            useConfigStore.getState().setLastSettingsTab('performance');
+            useConfigStore.getState().setSettingsOpen(true);
+          },
+        },
+      });
+    }).catch((error) => {
+      // The .catch above guards only the invoke. A throw from anything in the
+      // handler body would land here as an unhandled rejection that `void`
+      // hides from the reader but Electron still reports, so it gets the same
+      // swallow: nothing downstream of this chain needs it to have succeeded.
+      console.warn('[GPU-HEALTH] Could not apply graphics status:', error);
     });
 
     // Announcements: hydrate the active list (the first poll may have landed
@@ -175,7 +235,8 @@ export function App() {
       cleanupListChanged?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
-      cleanupHostMemoryListener?.();
+      cleanupHostMemoryPressureListener?.();
+      cleanupHostMemoryRecoveryListener?.();
       cleanupAnnouncementsChanged?.();
       cleanupOffscreenSurfaces?.();
     };
@@ -223,10 +284,10 @@ export function App() {
     // Session changed (queued, running, suspended) - push full Session object
     if (sessions.onStatus) {
       cleanups.push(sessions.onStatus((sessionId, session) => {
-        // Deferred through the coalescer: held during an active board drag so
-        // a spawning session's status flip doesn't re-render a sortable card
-        // mid-drag. Wrapped whole so the (currently side-effect-free) write and
-        // auto-name scheduling stay in arrival order with the other handlers.
+        // Routed through the coalescer, which runs the thunk synchronously today
+        // (the board-drag hold was removed - see enqueueSessionUpdate's docblock).
+        // Wrapped whole so the (currently side-effect-free) write and auto-name
+        // scheduling stay in arrival order with the other handlers.
         enqueueSessionUpdate(() => {
           // Mid-session conversation fork (e.g. Claude /clear): the live
           // session's agent id is null until first capture (that flip stays
@@ -271,7 +332,9 @@ export function App() {
       }));
     }
 
-    // Notification helpers -- shared by idle, exit, and auto-move handlers.
+    // Desktop-notification helpers, now used only by the spawn-stall and
+    // auto-move handlers: the idle and exit desktop notifications moved to main
+    // (src/main/notifications/desktop-notifier.ts), which owns their cooldown.
     const notificationCooldowns = new Map<string, number>();
 
     async function shouldNotify(key: string, sessionProjectId: string): Promise<boolean> {
@@ -293,6 +356,39 @@ export function App() {
       notificationCooldowns.set(key, Date.now());
       window.electronAPI.notifications.show({ title, body, projectId: notifyProjectId, taskId: notifyTaskId });
       window.electronAPI.window.flashFrame(true);
+    }
+
+    /**
+     * Open a task's detail because the user acted on a notification about it -
+     * an OS notification click, or the Open action on an idle toast. Both mean
+     * the same thing, so they share one path.
+     *
+     * The current project is re-read here rather than captured by the caller: a
+     * toast stays up for `durationSeconds`, and the user can switch projects
+     * before clicking it.
+     */
+    function openTaskFromNotification(notifyProjectId: string, notifyTaskId: string) {
+      // The Command Terminal layer is top-layered over the board, so opening a
+      // task detail underneath it leaves the user looking at a terminal they did
+      // not ask for. A cross-project click closes the layer anyway (close-on-
+      // project-switch); this covers the same-project case. Every PTY stays alive.
+      //
+      // The toast caller can hit this while the user is PRESENT and typing in a
+      // Command Terminal, which the OS-click caller cannot. Hiding it anyway is
+      // deliberate: clicking Open names a task, and a detail window opening
+      // behind the layer is the worse outcome. The layer reopens on Ctrl+Shift+P
+      // with every terminal reattached.
+      useSessionStore.getState().requestHideCommandBar();
+      // agent-focus-ok: acting on a notification is the user asking for this task,
+      // so the detail it opens SHOULD take focus. The OS-click path arrives over an
+      // IPC push like the agent's does, which is why the origin is stated here
+      // rather than inferred. See .claude/rules/agent-driven-focus.md.
+      if (useProjectStore.getState().currentProject?.id === notifyProjectId) {
+        useSessionStore.getState().setDetailTaskId(notifyTaskId);
+      } else {
+        useSessionStore.getState().setPendingOpenTaskId(notifyTaskId);
+        useProjectStore.getState().openProject(notifyProjectId);
+      }
     }
 
     // Spawn-stall watcher: when a task sits in a "preparing" spawn-progress
@@ -537,10 +633,12 @@ export function App() {
     // but only run auto-focus for current project.
     if (sessions.onActivity) {
       cleanups.push(sessions.onActivity((sessionId, state, reason, projectId) => {
-        // Deferred whole through the coalescer (held during an active board
-        // drag). The auto-focus effect reads getState() AFTER updateActivity,
-        // so the write and its reads must stay atomic - deferring the body as
-        // one thunk preserves that read-after-write.
+        // Routed whole through the coalescer. It runs the thunk synchronously
+        // today (the board-drag hold was removed - see enqueueSessionUpdate's
+        // docblock for why), so this is about ATOMICITY, not deferral: the
+        // auto-focus and toast blocks below read getState() AFTER
+        // updateActivity, and passing the body as one thunk keeps that
+        // read-after-write intact if a hold is ever reintroduced.
         enqueueSessionUpdate(() => {
           // Read the prior state BEFORE the write: this channel now also carries
           // a reason-only refresh (same state, moved reason kind), and auto-focus
@@ -559,6 +657,25 @@ export function App() {
           const config = useConfigStore.getState().config;
           const sessionStore = useSessionStore.getState();
 
+          // Which sessions already have their terminal on another surface. EVERY
+          // owner source, not just this renderer's windows: a detail hosted in the
+          // detached monitor has no tab here either, and making it the active tab is
+          // how the panel ends up selecting a session it renders nothing for. A
+          // phone streaming the terminal is an owner for the same reason, and is the
+          // one source `derivePanelSessions` treats as optional - omit it and the
+          // suppression `resolveIdleToast` documents silently does not happen.
+          //
+          // Hoisted out of the auto-focus branch because the idle toast below reads
+          // it too. One computation, so the two cannot disagree about what the user
+          // can actually see.
+          const ownedSessionIds = derivePanelSessions({
+            sessions: sessionStore.sessions,
+            currentProjectId: activeProjectId ?? null,
+            dialogSessionIds: sessionStore.dialogSessionIds,
+            remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
+            mobileTerminalStreamedSessionIds: sessionStore.mobileTerminalStreamedSessionIds,
+          }).owned;
+
           // Auto-focus: switch the bottom panel to the most recently idle session
           // (only for current project sessions). Treat 'permission' like 'idle'
           // for focus rules - the agent is paused, the user should see it.
@@ -572,20 +689,47 @@ export function App() {
               newState: state,
               previousState,
               currentActiveSessionId: sessionStore.activeSessionId,
-              // Both owner sources, not just this renderer's windows: a detail hosted in
-              // the detached monitor has no tab here either, and making it the active tab
-              // is how the panel ends up selecting a session it renders nothing for.
-              ownedSessionIds: derivePanelSessions({
-                sessions: sessionStore.sessions,
-                currentProjectId: activeProjectId ?? null,
-                dialogSessionIds: sessionStore.dialogSessionIds,
-                remoteDetailTaskIds: sessionStore.remoteDetailTaskIds,
-              }).owned,
+              ownedSessionIds,
               sessionActivity: sessionStore.sessionActivity,
               sessions: projectSessions,
             });
             if (target !== null) {
               sessionStore.setActiveSession(target);
+            }
+          }
+
+          // In-app toast for a session that stopped and is waiting on the user.
+          // The desktop half of this same event is owned by main (see below) and
+          // fires on the opposite condition - when the user is AWAY. This covers
+          // the case that one skips: the user is here, on this project, but is not
+          // looking at this particular agent.
+          const toastSession = sessionStore.sessions.find((s) => s.id === sessionId);
+          if (toastSession) {
+            const toastTask = useBoardStore.getState().tasks.find((t) => t.id === toastSession.taskId);
+            const idleToast = resolveIdleToast({
+              state,
+              previousState,
+              enabled: config.notifications.toasts.onAgentIdle,
+              // Strict, unlike `isCurrentProject` above, which is permissive when
+              // either id is missing. Matches the exit and idle-timeout handlers:
+              // a toast has to name a task on the board the user is looking at.
+              isCurrentProject: Boolean(activeProjectId) && toastSession.projectId === activeProjectId,
+              transient: Boolean(toastSession.transient),
+              ownedByDetailSurface: ownedSessionIds.has(sessionId),
+              taskTitle: toastTask?.title,
+              sessionIdShort: sessionId.slice(0, 8),
+            });
+            if (idleToast) {
+              const openProjectId = toastSession.projectId;
+              const openTaskId = toastSession.taskId;
+              useToastStore.getState().addToast({
+                message: idleToast.message,
+                variant: idleToast.variant,
+                // No board row means nothing to open, so the toast stays informational.
+                action: idleToast.hasTask
+                  ? { label: 'Open', onClick: () => { openTaskFromNotification(openProjectId, openTaskId); } }
+                  : undefined,
+              });
             }
           }
 
@@ -653,25 +797,16 @@ export function App() {
             .catch(() => {});
           return;
         }
-        // The Command Terminal layer is top-layered over the board, so opening a
-        // task detail underneath it leaves the user looking at a terminal they did
-        // not ask for. A cross-project click closes the layer anyway (close-on-
-        // project-switch); this covers the same-project case. Every PTY stays alive.
-        // Also the path the DETACHED monitor takes: its row click routes through
-        // main and re-emits here, so pop-out and in-app behave identically.
-        useSessionStore.getState().requestHideCommandBar();
-        // agent-focus-ok: a notification click is the user asking for this task,
-        // so the detail it opens SHOULD take focus. It arrives over an IPC push
-        // like the agent's does, which is why the origin is stated here rather
-        // than inferred. See .claude/rules/agent-driven-focus.md.
-        if (taskId && alreadyActive) {
-          useSessionStore.getState().setDetailTaskId(taskId);
-        } else {
-          if (taskId) {
-            useSessionStore.getState().setPendingOpenTaskId(taskId);
-          }
+        // A click carrying no task can still only mean "go to that project".
+        if (!taskId) {
+          useSessionStore.getState().requestHideCommandBar();
           useProjectStore.getState().openProject(projectId);
+          return;
         }
+        // Shared with the idle toast's Open action. Also the path the DETACHED
+        // monitor takes: its row click routes through main and re-emits here, so
+        // pop-out and in-app behave identically.
+        openTaskFromNotification(projectId, taskId);
       }));
     }
 
@@ -779,6 +914,23 @@ export function App() {
           message,
           variant: 'error',
           duration: 12000,
+        });
+      }));
+    }
+
+    // This install cannot update itself until the user moves it - DESKTOP-1A,
+    // the macOS read-only-volume case. Main composes the whole sentence and
+    // latches it for the app's lifetime, so this toasts verbatim, same as
+    // onWriteFailed above. Persistent rather than timed: unlike a failed write,
+    // this does not resolve on its own, and the updater already uses a
+    // persistent toast for the other thing the user has to act on (see
+    // updater-store's no-release-notes branch).
+    if (window.electronAPI?.updater?.onUpdateBlocked) {
+      cleanups.push(window.electronAPI.updater.onUpdateBlocked((message) => {
+        useToastStore.getState().addToast({
+          message,
+          variant: 'warning',
+          duration: 0,
         });
       }));
     }
@@ -903,7 +1055,13 @@ export function App() {
         }
 
         const notifyConfig = useConfigStore.getState().config.notifications;
-        if (notifyConfig.toasts.onPlanComplete) {
+        // Active project only, like every other toast (exit, idle, idle-timeout,
+        // spawn-stall). An auto-move on a BACKGROUND project used to toast here
+        // unconditionally, naming a task on a board the user is not looking at -
+        // and the desktop notification below fires for exactly that case, so the
+        // one event raised both alerts at once.
+        const isActiveProjectMove = !autoMoveProjectId || autoMoveProjectId === activeProjectId;
+        if (isActiveProjectMove && notifyConfig.toasts.onPlanComplete) {
           useToastStore.getState().addToast({
             message: `Plan complete. Moved "${taskTitle}" to next column`,
             variant: 'success',
@@ -1067,5 +1225,10 @@ if (import.meta.env.DEV) {
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,
+    // Not IPC-backed like the rest, but exposed for the same reason: without it
+    // a UI test cannot raise an arbitrary toast and has to borrow whichever push
+    // happens to toast verbatim (`config:writeFailed`), which drags unrelated
+    // setup into a test about toasts.
+    toast: useToastStore,
   };
 }

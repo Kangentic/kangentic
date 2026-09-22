@@ -23,6 +23,7 @@ function ConfigChangeDialog({ projectId, onConfirm, onCancel }: {
 
   return (
     <ConfirmDialog
+      testId="config-change-dialog"
       title="Board configuration changed"
       message={message}
       confirmLabel="Apply"

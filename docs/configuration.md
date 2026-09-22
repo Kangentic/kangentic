@@ -23,22 +23,49 @@ degrade differently. Global `save()` already updated its in-memory config before
 write, so it keeps serving the change for the rest of the session even though the write failed.
 `saveProjectOverrides()` holds no cache: a failed project-override write leaves
 `.kangentic/config.json` with its previous contents, so the change is lost rather than merely
-unpersisted, and a later read serves the old value until a write to that project succeeds. Either
-way, the user is told once per failing write source via the `config:writeFailed` push (below),
-latched in `src/main/config/write-failure-notice.ts` until a later write to that source succeeds.
+unpersisted, and a later read serves the old value until a write to that project succeeds.
+
+The user is told about it twice, by two mechanisms that answer different questions.
+
+The machine-level condition goes out once per failing write source via the `config:writeFailed`
+push (below), latched in `src/main/config/write-failure-notice.ts` until a later write to that
+source succeeds. Its message names the cause where the errno identifies one: a full disk, a
+missing permission, a read-only volume, or an unavailable drive. An errno with no mapped cause
+falls back to the plain "could not write to its data folder" sentence rather than guessing.
+
+That notice is not enough on its own, because the busiest writer of source `config` is the 500 ms
+window-bounds debounce, so it is usually spent on a window move. Every settings change afterwards
+would be silent for the rest of the session. So `config:set`, `config:setProject` and
+`config:setProjectByPath` also resolve `{ persisted }`, and the settings panel
+(`AppSettingsPanel.tsx`) raises its own "This setting did not save" toast when a write the user
+just asked for did not land. That check lives in the panel rather than the IPC handler because
+those channels also carry window layouts, model caches and announcement dismissals, none of which
+is a user gesture. It is collapsed per setting, keyed by the leaf dot-path it writes
+(`git.initScript`), on a 60 second cooldown. The bucket has to be the leaf rather than the
+top-level key, or a failed `git.worktreesEnabled` would silence `git.initScript` failing moments
+later, which is the silence the per-setting bucket exists to remove.
+
+One gesture can still be several writes, which is what the cooldown is for. Number fields commit
+on every keystroke (typing `120` writes `1`, then `12`, then `120`), the Theme tab commits on
+every arrow key, and the CLI path and remote-execution fields stay per-keystroke deliberately.
+Settings TEXT fields do not: they use `SettingTextInput` (`settings/shared.tsx`), which commits on
+blur, Enter, or unmount rather than per character. A settings write is not cheap - one `config:set`
+is a synchronous whole-file write in main plus a `config:get` + `config:getGlobal` round trip plus
+a runtime re-apply - so a 40-character path used to pay all of that 40 times.
 
 ## Settings Panel
 
 The panel uses a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **Settings Panel** - opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs are grouped by category (`SETTINGS_TABS` in `settings-tabs.ts`): the `'project'` group (General, Theme, Agent, Git, Browser, Shortcuts) is per-project settings, hidden when no project is open; the `'system'` group (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) is shared settings that apply across all projects and remain fully usable with no project open. The system group is further split into sidebar tiers (`tier` on each tab): Core (Board through Notifications, unlabeled - the default group), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer); order within each group is curated by frequency/concept rather than alphabetical, since the search bar already covers fast lookup-by-name. The Task tab holds task-presentation settings that used to live under Board (Card Density, Ticket Numbers) and Terminal (the whole Context Bar section), grouping controls that describe how an individual task presents itself rather than board layout or terminal cosmetics; Board keeps `columnWidth` and board-level Config Sync/Window settings, and Terminal keeps shell/font/cursor/colors. Terminal is global-only (shell, font, cursor style, colors): shell in particular was never reliably project-scoped at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project is currently focused - `src/main/pty/session-manager.ts`), so a background project's spawn/resume could silently pick up the wrong shell. See `.claude/rules/settings-tab-scope.md` for why a setting's tab must match its persistence scope. Within the project group, General saves `project.location` to the project record in the global index database via a "Change..." button that re-points the project after its folder is moved or renamed, preserving tasks and history which are keyed by project id; Theme saves `theme`, `themeFollowsSystem`, `themeLight`, and `themeDark` to `.kangentic/config.json`; Agent, Git, and Browser also save to `.kangentic/config.json`; Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`). The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox), the agent CLI used for new sessions in this project, along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. When the selected agent declares remote-execution support (today: OpenCode only), the Agent tab also shows an Execution mode row right below the CLI Path row, letting the project run that agent locally (the default) or attach to a server it declares support for - see [Remote Execution](#remote-execution) below; an agent without the capability shows none of these rows. The system-group tabs save to the global config. When no project is open, only the system tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `themeFollowsSystem`, `themeLight`, `themeDark`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl`, `importSources`, and `agent.execution` (a remote server's working directory is specific to the project it was configured for) is stored per-project and is never cloned into a new project.
+- **Settings Panel** - opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs are grouped by category (`SETTINGS_TABS` in `settings-tabs.ts`): the `'project'` group (General, Theme, Agent, Git, Browser, Shortcuts) is per-project settings, hidden when no project is open; the `'system'` group (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) is shared settings that apply across all projects and remain fully usable with no project open. The system group is further split into sidebar tiers (`tier` on each tab): Core (Board through Notifications, unlabeled - the default group), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer); order within each group is curated by frequency/concept rather than alphabetical, since the search bar already covers fast lookup-by-name. The Task tab holds task-presentation settings that used to live under Board (Card Density, Ticket Numbers) and Terminal (the whole Context Bar section), grouping controls that describe how an individual task presents itself rather than board layout or terminal cosmetics; Board keeps `columnWidth` and board-level Config Sync/Window settings, and Terminal keeps shell/font/cursor/colors. Terminal is global-only (shell, font, cursor style, colors): shell in particular was never reliably project-scoped at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project is currently focused - `src/main/pty/session-manager.ts`), so a background project's spawn/resume could silently pick up the wrong shell. See `.claude/rules/settings-tab-scope.md` for why a setting's tab must match its persistence scope. Within the project group, General saves `project.location` to the project record in the global index database via a "Change..." button that re-points the project after its folder is moved or renamed, preserving tasks and history which are keyed by project id; Theme saves `theme`, `themeFollowsSystem`, `themeLight`, and `themeDark` to `.kangentic/config.json`; Agent, Git, and Browser also save to `.kangentic/config.json`; Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`). The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox), the agent CLI used for new sessions in this project, along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. When the selected agent declares remote-execution support (today: OpenCode only), the Agent tab also shows an Execution mode row right below the CLI Path row, letting the project run that agent locally (the default) or attach to a server it declares support for - see [Remote Execution](#remote-execution) below; an agent without the capability shows none of these rows. The system-group tabs save to the global config. When no project is open, only the system tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `themeFollowsSystem`, `themeLight`, `themeDark`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl`, `importSources`, and `agent.execution` (a remote server's working directory is specific to the project it was configured for) is stored per-project and is never cloned into a new project.
 
 ### App-Only Settings
 
 These settings appear only in App Settings and cannot be overridden per-project:
 
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
-- `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`, `diffViewMode`
+- `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`,
+  `graphicsAccelerationEnabled`, `graphicsAccelerationOffBy`, `diffViewMode`
 - `cardDensity`, `cardPreview`, `showTaskNumbers` (Task tab)
 - `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffWrapLines`, `diffUseInlineWhenNarrow`, `diffFileSort`, `diffFlatList`
 - `monitor` (the Agent Monitor's own toolbar controls, not a Settings-panel entry)
@@ -90,8 +117,10 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `columnWidth` | `'narrow'` \| `'default'` \| `'wide'` | `'default'` | Width of board columns. Global-only. |
 | `showTaskNumbers` | boolean | `true` | Show each task's `#N` (`display_id`) as a muted badge in the board card header. On by default; matches the number shown in the task detail header. Global-only. |
 | `terminalPanelVisible` | boolean | `true` | Show the terminal panel below the board. Global-only. |
-| `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Global-only. |
+| `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Edited in Settings > Performance, not Board: it toggles `.no-motion` on `<html>`, so it was never board chrome. Global-only. |
 | `statusBarVisible` | boolean | `true` | Show the status bar at the bottom of the window. Global-only. |
+| `graphicsAccelerationEnabled` | boolean | `true` | Chromium hardware rendering for the app window and terminals, toggled in Settings > Performance. The default matches what every install already does, since the app has never set a GPU switch. Set to `false` automatically, once, when the previous run was killed by repeated GPU-process failures (Sentry DESKTOP-18/DESKTOP-W): that launch starts with `--disable-gpu` and `--in-process-gpu`, which makes Chromium's `IntentionallyCrashBrowserForUnusableGpuProcess` unreachable. Never set back to `true` by the app. A plain boolean rather than a tri-state: an "automatic" that resolved to software would leave the control reading Automatic while acceleration was off. Global-only. |
+| `graphicsAccelerationOffBy` | `'app'` \| `'user'` \| `null` | `null` | Who last turned `graphicsAccelerationEnabled` off. Exists so a later GPU failure never rewrites a choice the user made, and so the Settings callout explaining the downgrade shows only when the app was the one that turned it off. Global-only. |
 | `diffViewMode` | `'split'` \| `'inline'` | `'split'` | Default layout for Git file diffs in the Changes panel (`split` = side by side, `inline` = unified). The in-diff toggle and the Changes settings tab write this same key, so the choice sticks. Global-only. |
 | `diffDefaultScope` | `'working'` \| `'staged'` \| `'branch'` | `'working'` | Which changes a freshly opened Changes panel shows: `working` (uncommitted edits vs the index), `staged` (index vs HEAD), or `branch` (the whole branch vs its base). The in-panel scope control overrides it per session. Global-only. |
 | `diffIgnoreWhitespace` | boolean | `false` | Hide whitespace-only changes in the diff to filter reformatting noise. The in-diff toggle and the Changes tab write this key. Global-only. |
@@ -322,17 +351,17 @@ something is listening on.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when agent goes idle on non-visible project |
+| `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when an agent finishes its turn or needs permission. Suppressed only while the window is focused AND that session's project is the open one, so an unfocused window still alerts on the open project |
 | `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error |
 | `notifications.desktop.onPlanComplete` | boolean | `true` | Desktop notification when plan completes and task auto-moves |
 | `notifications.desktop.onSpawnStalled` | boolean | `true` | Desktop notification when a task spawn stays in a preparing phase (worktree/git queue) past the stall threshold (~8s) |
-| `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when agent goes idle |
+| `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when an agent finishes its turn or needs permission, on the open project. Skipped while that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it |
 | `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when a session exits (error or clean); the `notifications.desktop.onAgentCrash` row fires on error exits only |
-| `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when plan completes |
+| `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when a plan completes and its task auto-moves, on the open project |
 | `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast (with a Cancel action) when a task spawn stalls past the threshold while preparing |
 | `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |
-| `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications per session |
+| `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications of the same kind for one session. Idle and crash have separate buckets, so a crash is never suppressed by a recent idle alert |
 
 ### contextBar.*
 
@@ -400,8 +429,16 @@ the two: a hold dictates, and a tap under `NAVIGATION_TAP_MS` instead navigates 
 pane's history. See `docs/embedded-browser.md` decisions 21 and 24 for the target rules in full.
 Global-only (App Settings only; no per-project override).
 Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
-an OpenAI-compatible endpoint. The first six keys below are settings-panel rows; the rest are
-config-only (driven by the Mode preset + Live/Refinement model dropdowns).
+an OpenAI-compatible endpoint. The engines live in the `kangentic-dictation` utility process, which
+is sized to its use: while dictation is enabled it keeps only the small live (streaming) model
+resident, the accurate model loads on the first press and overlaps the utterance, and a worker that
+has loaded it is recycled 30 minutes after its last session (a process exit is what gives the
+model's memory reservation back) and comes back live-only. On Windows, a worker whose memory has
+grown past 1.5 GB of commit is recycled at the next two-minute gap instead, since the models grow
+with use and a heavy user never leaves a half-hour gap; that shorter window reads a commit figure
+Electron reports on Windows only, so macOS and Linux always use the half-hour one. Turning
+dictation off releases the worker at once. The first six keys below are settings-panel rows; the
+rest are config-only (driven by the Mode preset + Live/Refinement model dropdowns).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -428,9 +465,9 @@ The Memory tab hosts conversation search + recall - a local index over agent con
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `memory.indexingEnabled` | boolean | `true` | Index agent conversation transcripts locally for search and recall. Off: no indexing runs, no conversation hits appear in Quick Find or `kangentic_search`, and the embed worker never starts. All local and keyless. |
-| `memory.semanticEnabled` | boolean | `false` | Enable the semantic (embedding) layer on top of lexical search. Turning it on triggers a one-time local model download (the selected `memory.embeddingModel`) and background embedding of the index. Runs in an Electron utilityProcess (transformers.js on onnxruntime-node; execution provider set by `memory.acceleration`); vector search via the sqlite-vec extension. Lexical FTS5 search works regardless; when the model or extension is unavailable, Smart search transparently falls back to lexical. |
+| `memory.semanticEnabled` | boolean | `false` | Enable the semantic (embedding) layer on top of lexical search. Turning it on triggers a one-time local model download (the selected `memory.embeddingModel`) and background embedding of the index. Runs in an Electron utilityProcess (transformers.js on onnxruntime-node; execution provider set by `memory.acceleration`); vector search via the sqlite-vec extension. The worker stays resident while the index has chunks to embed, is released 30 minutes after the last query or batch once no project has work pending (on Windows, two minutes once its memory has grown past 1.5 GB of commit, which sustained index drains do; the commit figure behind that shorter window is Windows-only, so macOS and Linux always use the half-hour one), and is re-spawned on demand (a Smart-mode Quick Find open warms it ahead of the first keystroke; a query or new index work spawns it outright). Lexical FTS5 search works regardless; when the model or extension is unavailable, or a query's budget runs out while the worker is still starting, Smart search transparently falls back to lexical. |
 | `memory.embeddingModel` | string | `'bge-base'` | Which local embedding model powers semantic search, chosen by quality in the Memory tab's "Search quality" dropdown. Options (see `src/shared/embedding-models.ts`), all from the bge-*-en-v1.5 family: `bge-small` (Balanced, 384d, ~34 MB), `bge-base` (Accurate, 768d, ~110 MB), `bge-large` (Best accuracy, 1024d, ~337 MB). All ONNX/q8, keyless, offline, CLS-pooled with the same retrieval query prefix - only size/dimensions/accuracy scale between tiers. The dropdown shows the quality word; the concrete model name + size + download state show in the status card below it. Switching re-embeds the index in the background; a dimension change (e.g. to `bge-large`) recreates the vector table. |
-| `memory.acceleration` | `'auto' \| 'gpu' \| 'cpu'` | `'auto'` | Which hardware the embedding model runs on, set in the Memory tab's "Hardware acceleration" dropdown. `auto` (default) and `gpu` prefer a GPU execution provider (DirectML on Windows, WebGPU elsewhere) and fall back to CPU if it fails to initialize; `cpu` forces the universal path. Offloading to an idle GPU keeps the CPU free for the agents when many run at once. The active backend ("DirectML (GPU)", "CPU", ...) is shown in the status card. All local and keyless. |
+| `memory.acceleration` | `'auto' \| 'gpu' \| 'cpu'` | `'auto'` | Which hardware the embedding model runs on, set in the Memory tab's "Model acceleration" dropdown (renamed from "Hardware acceleration" once Settings > Performance gained a "Graphics acceleration" row, since two settings a user would read as the same thing is worse than one longer label). `auto` (default) and `gpu` prefer a GPU execution provider (DirectML on Windows, WebGPU elsewhere) and fall back to CPU if it fails to initialize; `cpu` forces the universal path. Offloading to an idle GPU keeps the CPU free for the agents when many run at once. The active backend ("DirectML (GPU)", "CPU", ...) is shown in the status card. All local and keyless. |
 
 Relevance filtering is automatic, with no user-facing threshold. These
 sentence-embedding models are anisotropic: unrelated text does not score ~0, it
@@ -469,7 +506,7 @@ The Mobile Devices tab hosts the desktop half of the mobile companion app's pair
 
 **Tab layout:** below the master switch the tab is two peer sections, **Relay** (where this desktop connects) and **Mobile** (which phones may use it). Each is a gated control area followed by an ungated documentation link. `Relay` is a section heading only, never also a row label inside itself. The Mobile section is named for the device rather than the ceremony: "Pairing" over a `Pair a device` button and a `Paired Devices` list stacked three "pair"s deep.
 
-**Actions (not config keys):** the tab also exposes three settings-registry entries that are UI surfaces, not `AppConfig` keys. **Pair a Device** (registry id `mobileBridge.pairing`) starts the QR pairing ceremony described in [Mobile Bridge](mobile-bridge.md#pairing-ceremony), and **Paired Devices** (registry id `mobileBridge.devices`) lists currently paired phones, identified by key fingerprint, with rename and revoke actions - pairing grants every capability verb uniformly, so there is no per-device capability control. Both live under the Mobile heading, which carries all three ids as its `searchIds`; `Paired Devices` renders as a sub-label rather than a third peer heading. The third entry (registry id `mobileBridge.getApp`) is the Mobile section's documentation tail: a one-line blurb plus a **How to install and pair** button linking to the Kangentic Mobile docs (`https://www.kangentic.com/mobile/`), where the install instructions live so they can change without a desktop release. It is deliberately NOT conditioned on the paired-device list being empty - the target is a docs landing page, so a paired user is most of its audience. The first two are backed by the `mobile:*` IPC channels and the signed device roster (`src/main/mobile-bridge/roster-store.ts`), not persisted in `AppConfig`; the docs tail is purely informational.
+**Actions (not config keys):** the tab also exposes three settings-registry entries that are UI surfaces, not `AppConfig` keys. **Pair a Device** (registry id `mobileBridge.pairing`) starts the QR pairing ceremony described in [Mobile Bridge](mobile-bridge.md#pairing-ceremony), and **Paired Devices** (registry id `mobileBridge.devices`) lists currently paired phones, identified by key fingerprint, with rename and revoke actions - pairing grants every capability verb uniformly, so there is no per-device capability control. Both live under the Mobile heading, which carries all three ids as its `searchIds`; `Paired Devices` renders as a sub-label rather than a third peer heading. The third entry (registry id `mobileBridge.getApp`) is the Mobile section's documentation tail: a one-line blurb plus a **How to install and pair** button linking to the Kangentic Mobile docs (`https://kangentic.com/mobile/`), where the install instructions live so they can change without a desktop release. It is deliberately NOT conditioned on the paired-device list being empty - the target is a docs landing page, so a paired user is most of its audience. The first two are backed by the `mobile:*` IPC channels and the signed device roster (`src/main/mobile-bridge/roster-store.ts`), not persisted in `AppConfig`; the docs tail is purely informational.
 
 ### Privacy
 
@@ -735,14 +772,14 @@ Config files written by hand (without `id` fields on columns) are treated as add
 |---------|---------|
 | `config:get` | Get effective config (global + project merged) |
 | `config:getGlobal` | Get global config only (no project overrides) |
-| `config:set` | Update global config (partial merge) |
+| `config:set` | Update global config (partial merge); resolves `{ persisted }` |
 | `config:setSync` | Update global config synchronously (used on window close to persist the workspace layout) |
 | `config:getProject` | Get project-level overrides for current project |
-| `config:setProject` | Update project-level overrides for current project |
+| `config:setProject` | Update project-level overrides for current project; resolves `{ persisted }` |
 | `config:getProjectByPath` | Get project-level overrides by project path |
-| `config:setProjectByPath` | Update project-level overrides by project path |
+| `config:setProjectByPath` | Update project-level overrides by project path; resolves `{ persisted }` |
 | `config:syncDefaultToProjects` | Sync changed default values to all existing projects (deep merge) |
-| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, at most once per failing source until a later write to that source succeeds |
+| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, naming the cause where the errno gives one, at most once per failing source until a later write to that source succeeds |
 | `boardConfig:exists` | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |

@@ -3000,6 +3000,31 @@ export interface AppConfig {
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
   statusBarVisible: boolean;
+  /**
+   * Chromium hardware rendering for the app window and terminals.
+   *
+   * A plain boolean, never a tri-state. An "automatic" that silently resolved
+   * to software would leave the control reading Automatic while acceleration
+   * was off, which is a control that lies about its own state. The value
+   * always matches what the app is actually doing, and the recovery path in
+   * index.ts SETS it to false rather than shadowing it. Being genuinely
+   * binary, it renders as a toggle like every other boolean here, including
+   * `animationsEnabled` beside it in the same tab.
+   *
+   * Read synchronously at module scope, before app.whenReady(), because
+   * app.disableHardwareAcceleration() only works before ready.
+   */
+  graphicsAccelerationEnabled: boolean;
+  /**
+   * Who last turned `graphicsAccelerationEnabled` off, or null while it is on.
+   *
+   * The only reason this exists: a later GPU failure must never rewrite a
+   * choice the user made themselves, and the Settings callout explaining the
+   * downgrade must show for our 'off' and not for theirs. Everything else
+   * about the incident (the death sequence, counts, timestamps, the adapter)
+   * lives in the Sentry escalation record, which is where it gets read.
+   */
+  graphicsAccelerationOffBy: 'app' | 'user' | null;
   diffViewMode: 'split' | 'inline'; // split = side-by-side, inline = unified
   diffDefaultScope: GitDiffScope; // default scope a freshly opened Changes panel uses
   diffIgnoreWhitespace: boolean; // hide whitespace-only changes in the diff
@@ -3538,6 +3563,20 @@ export type SerializedTileNode =
       sizes: number[];
     };
 
+/**
+ * What a config write reports back. `persisted` is false when the write did not reach
+ * disk - `ConfigManager.save()` / `saveProjectOverrides()` degrade rather than throw
+ * (see `src/main/safe-write.ts`), so without this the renderer could not tell a stored
+ * setting from a dropped one.
+ *
+ * Only the settings panel acts on it, and deliberately so: these channels also carry
+ * window-layout blobs, model caches and announcement dismissals, none of which
+ * represent something a user just asked for. Sentry DESKTOP-1C.
+ */
+export interface ConfigSetResult {
+  persisted: boolean;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   theme: 'dark',
   themeFollowsSystem: false,
@@ -3552,6 +3591,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,
+  // Matches today's behaviour exactly: the app has never set a Chromium GPU
+  // switch, so Electron's own default (hardware on) is what every existing
+  // install already runs. Upgrading changes nothing and needs no migration.
+  graphicsAccelerationEnabled: true,
+  graphicsAccelerationOffBy: null,
   diffViewMode: 'split',
   diffDefaultScope: 'working',
   diffIgnoreWhitespace: false,
@@ -3763,9 +3807,27 @@ export interface HostMemorySample {
 /** Pushed when host commit headroom crosses below the warning threshold (an
  *  edge-triggered, hysteresis-gated event - see `evaluateHostMemoryPressure`).
  *  Not a per-tick heartbeat. */
+/** How this launch is rendering, and whether the user still needs telling. */
+export interface GpuGraphicsStatus {
+  /** True when Chromium was started with --disable-gpu and --in-process-gpu.
+   *  The terminal renderer reads this to stop retrying WebGL forever against
+   *  a context it can never get (src/renderer/utils/terminal-webgl.ts). */
+  softwareRendering: boolean;
+  /** True exactly once, on the launch that recovered from a GPU-fatal run.
+   *  Reading the status consumes it. */
+  noticePending: boolean;
+}
+
 export interface HostMemoryPressureEvent {
   sample: HostMemorySample;
   activeAgentCount: number;
+}
+
+/** Pushed when host commit headroom recovers past the hysteresis line after a
+ *  warning was latched - the clear-side edge for `HostMemoryPressureEvent`.
+ *  Fires once per recovery, never on a healthy tick with no prior warning. */
+export interface HostMemoryRecoveryEvent {
+  sample: HostMemorySample;
 }
 
 // === Backlog ===
@@ -5782,15 +5844,16 @@ export interface ElectronAPI {
   config: {
     get: () => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
-    set: (config: DeepPartial<AppConfig>) => Promise<void>;
+    set: (config: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
      *  path so the final state reaches disk before the renderer tears down (an async
-     *  set() can be dropped mid-teardown). Same merge semantics as set(). */
+     *  set() can be dropped mid-teardown). Same merge semantics as set(). Returns
+     *  nothing on purpose: there is no renderer left to tell. */
     setSync: (config: DeepPartial<AppConfig>) => void;
     getProjectOverrides: () => Promise<DeepPartial<AppConfig> | null>;
-    setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<void>;
+    setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;
-    setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<void>;
+    setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     syncDefaultToProjects: (partial: DeepPartial<AppConfig>) => Promise<number>;
     /** Fires after ANY window's config:set persists (including this one). Bare signal;
      *  re-fetch via config.get()/loadConfig() to pick up the new effective config. Lets
@@ -5936,12 +5999,35 @@ export interface ElectronAPI {
     checkForUpdate: () => Promise<void>;
     installUpdate: () => Promise<void>;
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
+    /**
+     * This install cannot update itself until the user moves it (DESKTOP-1A).
+     * Carries the whole sentence to toast: main composes and latches it, so the
+     * renderer neither formats nor deduplicates. The updater's only other push
+     * is `onUpdateDownloaded`; ordinary update failures stay silent.
+     */
+    onUpdateBlocked: (callback: (message: string) => void) => () => void;
   };
 
   // Host memory pressure (Sentry DESKTOP-16): a push-only notification, no
   // corresponding invoke - main owns the sampler and decides when to fire.
   hostMemory: {
     onPressure: (callback: (event: HostMemoryPressureEvent) => void) => () => void;
+    onRecovery: (callback: (event: HostMemoryRecoveryEvent) => void) => () => void;
+  };
+
+  // Graphics state for THIS launch (Sentry DESKTOP-18/DESKTOP-W).
+  //
+  // A pull, not a push: both facts are decided during boot, before the
+  // renderer can be listening, and the escalation record behind them is
+  // cleared by then. Both travel together rather than `softwareRendering`
+  // coming from config, because on the launch that RECOVERS, main writes the
+  // setting inside whenReady - after createWindow - so a renderer reading
+  // config at boot would race it and see 'on'.
+  //
+  // `noticePending` is consumed by the read, so a renderer reload cannot
+  // re-toast the same incident. `softwareRendering` is not.
+  gpuHealth: {
+    readStatus: () => Promise<GpuGraphicsStatus>;
   };
 
   // Announcements (remote feed; active = filtered for this client in main.
@@ -6317,6 +6403,9 @@ export interface ElectronAPI {
   // Conversation memory (search index) status + proactive surfaces.
   memory: {
     getStatus: () => Promise<MemoryStatus>;
+    /** Spawn + init the embedding worker ahead of the first Smart query, so
+     *  Quick Find's typing time covers the cold start. Fire-and-forget. */
+    prewarm: () => void;
     /** Purge the project's conversation index and re-run the backfill sweep
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */
@@ -6724,6 +6813,18 @@ export interface ProcessMetrics {
   platform: NodeJS.Platform;
   arch: string;
   versions: { kangentic: string; electron: string; node: string; chrome: string };
+  /** The main process's own `process.memoryUsage()`, in bytes: how much of
+   *  its footprint is V8 heap (`heapUsedBytes` of `heapTotalBytes`), Node
+   *  external allocations (`externalBytes`, of which `arrayBuffersBytes` are
+   *  Buffers and ArrayBuffers), against its resident set (`rssBytes`). The
+   *  per-process table below cannot split those apart. */
+  main: {
+    rssBytes: number;
+    heapTotalBytes: number;
+    heapUsedBytes: number;
+    externalBytes: number;
+    arrayBuffersBytes: number;
+  };
   processes: {
     pid: number;
     type: string;

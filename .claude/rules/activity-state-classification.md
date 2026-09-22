@@ -29,9 +29,12 @@ The idle-vs-active bucket has a single source of truth: `src/shared/activity-sta
 
 Legitimate exception: a GRANULAR comparison that distinguishes specific states for an affordance
 (not a bucket) is allowed - e.g. permission-specific message text, or the debug overlay rendering
-each state. Mark such a line with `// activity-state-ok: <reason>` (on the line or the line
-above). The debug overlay/timeline and the unrelated `BrowserTab` cache-clear state machine are
-allowlisted in the test.
+each state. Mark such a line with `// activity-state-ok: <reason>`, on the line itself or anywhere
+in the comment block directly above it, and the reason may wrap. This marker is read by the shared
+reader, `tests/unit/helpers/opt-out-marker.ts`, which also requires the reason: a bare
+`// activity-state-ok:` marks nothing, and neither does prose that quotes the marker, since the
+name has to open a comment. The debug overlay/timeline and the unrelated `BrowserTab` cache-clear
+state machine are allowlisted in the test.
 
 ## Enforcement (self-maintaining)
 

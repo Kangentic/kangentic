@@ -11,8 +11,9 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import * as ts from 'typescript';
 import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
-import { DEMO_SESSIONS, DEMO_TASKS } from '../../tests/captures/helpers/demo-dataset';
+import { DEMO_SESSIONS, DEMO_TASKS, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
@@ -20,6 +21,37 @@ import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settin
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const DEMO_BOOT_PATH = path.join(REPO_ROOT, 'demo/boot.js');
 const DEMO_VITE_CONFIG_PATH = path.join(REPO_ROOT, 'demo/vite.config.mts');
+const SHARED_TYPES_PATH = path.join(REPO_ROOT, 'src/shared/types.ts');
+
+/**
+ * Every top-level member `AppConfig` declares, OPTIONAL ones included.
+ *
+ * `Object.keys(DEFAULT_CONFIG)` is not the same set and using it rejected a legitimate key: an
+ * optional block like `developer` has no runtime default, so a scene that switches on a developer
+ * flag looked like a typo. The point of the check is that the renderer never reads the key, and a
+ * declared member is read; a misspelling still is not.
+ */
+function declaredAppConfigKeys(): Set<string> {
+  const sourceFile = ts.createSourceFile(
+    SHARED_TYPES_PATH,
+    fs.readFileSync(SHARED_TYPES_PATH, 'utf-8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  for (const statement of sourceFile.statements) {
+    if (!ts.isInterfaceDeclaration(statement) || statement.name.text !== 'AppConfig') continue;
+    const names = statement.members
+      .map((member) => member.name)
+      .filter((name): name is ts.Identifier | ts.StringLiteral => name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name)))
+      .map((name) => name.text);
+    if (names.length === 0) break;
+    return new Set(names);
+  }
+  throw new Error(
+    'scene-registry: no top-level `interface AppConfig` with members in src/shared/types.ts. '
+    + 'If it moved or was renamed, update declaredAppConfigKeys() in tests/unit/scene-registry.test.ts.',
+  );
+}
 
 const DEMO_STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
 /** The keys a boot step may carry: a click, typed text, or a held hotkey, each with an optional wait. */
@@ -144,12 +176,79 @@ describe('scene registry', () => {
 
   it('overrides only real config keys', () => {
     // The mock's Object.assign would accept any key and the renderer would never read it.
-    const configKeys = new Set(Object.keys(DEFAULT_CONFIG));
+    const configKeys = declaredAppConfigKeys();
+    // Vacuity guard: a parse that resolved no members would accept every typo.
+    expect(configKeys.size).toBeGreaterThan(Object.keys(DEFAULT_CONFIG).length / 2);
+    for (const key of Object.keys(DEFAULT_CONFIG)) {
+      expect(configKeys.has(key), `AppConfig no longer declares ${key}; declaredAppConfigKeys() is parsing the wrong thing`).toBe(true);
+    }
     for (const scene of scenes) {
       for (const key of Object.keys(scene.config ?? {})) {
         expect(configKeys.has(key), `${scene.name}.config.${key} is not an AppConfig key`).toBe(true);
       }
     }
+  });
+
+  it('spells a nested config block whole, because a scene REPLACES one', () => {
+    // boot.js merges a scene's config with a shallow Object.assign, and so does the mock, so a
+    // nested block a scene names replaces the default's WHOLE. Naming one field of it therefore
+    // leaves every sibling undefined, on settings the scene never meant to touch and that no
+    // frame shows. The key-set check is what makes that loud; the VALUES are the scene's business.
+    //
+    // A block with no populated default (an optional one like `developer`, or a map keyed by
+    // project id like `workspaceByProject`) has no shape to match and is skipped.
+    const defaults = DEFAULT_CONFIG as unknown as Record<string, unknown>;
+    const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
+    let checked = 0;
+    for (const scene of scenes) {
+      for (const [key, override] of Object.entries(scene.config ?? {})) {
+        const fallback = defaults[key];
+        if (!isPlainObject(fallback) || !isPlainObject(override)) continue;
+        if (Object.keys(fallback).length === 0) continue;
+        checked += 1;
+        expect(
+          Object.keys(override).sort(),
+          `${scene.name}.config.${key} replaces the whole block, so it must name every field DEFAULT_CONFIG.${key} has`,
+        ).toEqual(Object.keys(fallback).sort());
+      }
+    }
+    // Vacuity guard: the monitor and notification scenes both replace a populated block.
+    expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  it('seeds column ids the sample install actually has', () => {
+    // A `tasks` or `sessions` patch is checked above; a `__mock*` seed is not, and a typo'd
+    // column id fails SILENTLY in the worst way available: the Column Manager still opens, the
+    // automation slot still reads Add automation, the scene's ready selector still resolves, and
+    // the alt written from that frame is wrong. The ids come from demoLaneId, which the seed
+    // itself uses, so this cannot drift from what the install writes.
+    const laneIds = new Set(demoLaneIds());
+    // Vacuity guard: a formula change that returned nothing, or collided every id into one, would
+    // otherwise leave the loop below asserting against an empty set. The sample install seeds two
+    // projects off DEFAULT_LANES, so the real count is comfortably above this floor; the floor is
+    // deliberately loose so adding or retiring one column does not fail an unrelated test.
+    expect(laneIds.size).toBeGreaterThan(6);
+    let checked = 0;
+    for (const scene of scenes) {
+      const seeds = (scene.seeds ?? {}) as {
+        __mockSwimlanePatches?: Record<string, unknown>;
+        __mockAutomations?: Array<{ swimlane_id?: string }>;
+      };
+      for (const laneId of Object.keys(seeds.__mockSwimlanePatches ?? {})) {
+        checked += 1;
+        expect(laneIds.has(laneId), `${scene.name} patches unknown column ${laneId}`).toBe(true);
+      }
+      for (const automation of seeds.__mockAutomations ?? []) {
+        checked += 1;
+        expect(
+          automation.swimlane_id !== undefined && laneIds.has(automation.swimlane_id),
+          `${scene.name} seeds an automation on unknown column ${String(automation.swimlane_id)}`,
+        ).toBe(true);
+      }
+    }
+    // Vacuity guard: the column-automation and column-handoff scenes both seed one.
+    expect(checked).toBeGreaterThanOrEqual(2);
   });
 
   it('seeds only __mock globals', () => {
@@ -196,6 +295,34 @@ describe('scene registry', () => {
     // The two fields the consumers wait on and report are read by name.
     expect(boot).toContain('scene.ready');
     expect(boot).toContain('scene.focus');
+    // The nested-block shape the build emits, and the guard that reads it. boot.js is a classic
+    // script and cannot import AppConfig, so the two halves only agree by name.
+    const viteConfig = fs.readFileSync(DEMO_VITE_CONFIG_PATH, 'utf-8');
+    expect(viteConfig, 'the build emits the nested config shape').toContain('window.__demoConfigShape =');
+    expect(boot, 'boot.js validates a state= blob against it').toContain('window.__demoConfigShape');
+  });
+
+  it('guards the escape message on markers the renderer still stamps', () => {
+    // boot.js decides "does the app own this Escape" by looking for these in the DOM, mirroring
+    // PopOutWindowFrame's own ladder. A renamed marker would not fail anything: the frame would
+    // simply stop posting, or start posting over an open dialog, and the site's figure would
+    // quietly get the wrong behaviour. Anchored on the renderer so a rename fails here instead.
+    const boot = fs.readFileSync(DEMO_BOOT_PATH, 'utf-8');
+    const markers: Array<{ marker: string; source: string }> = [
+      { marker: 'data-dismissable-layer', source: 'src/renderer/components/dialogs/BaseDialog.tsx' },
+      // The prefix, not the whole JSX attribute: the selector depends on the prefix alone, and
+      // pinning the attribute would fail on a reformat of WindowFrame.tsx rather than a rename.
+      { marker: 'window-frame-', source: 'src/renderer/window-manager/components/WindowFrame.tsx' },
+      { marker: 'xterm-helper-textarea', source: 'src/renderer/utils/terminal-clipboard.ts' },
+    ];
+    for (const { marker, source } of markers) {
+      const rendererSource = fs.readFileSync(path.join(REPO_ROOT, source), 'utf-8');
+      expect(rendererSource, `${source} no longer stamps ${marker}`).toContain(marker);
+    }
+    expect(boot).toContain('[data-dismissable-layer]');
+    expect(boot).toContain('[data-testid^="window-frame-"]');
+    expect(boot).toContain('xterm-helper-textarea');
+    expect(boot, 'the escape message is still posted').toContain('kangentic-demo-escape');
   });
 
   it('is emitted into the demo build as scenes.json', () => {

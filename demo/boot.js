@@ -87,7 +87,23 @@
     Object.keys(state).forEach(function (key) {
       if (STATE_KEYS.indexOf(key) === -1) throw new Error(origin + ' has an unknown key "' + key + '" (allowed: ' + STATE_KEYS.join(', ') + ')');
     });
-    if (state.config !== undefined && !isPlainObject(state.config)) throw new Error(origin + '.config must be an object');
+    if (state.config !== undefined) {
+      if (!isPlainObject(state.config)) throw new Error(origin + '.config must be an object');
+      // A nested block REPLACES the default rather than merging into it: the merge is a shallow
+      // Object.assign here and again in the mock. Naming some of a block's fields therefore leaves
+      // the rest undefined, on settings the frame never shows, which is a figure that is quietly
+      // wrong rather than one that fails. Refuse it instead, and say which fields are missing.
+      var shape = window.__demoConfigShape || {};
+      Object.keys(state.config).forEach(function (key) {
+        var fields = shape[key];
+        var block = state.config[key];
+        if (!fields || !isPlainObject(block)) return;
+        var missing = fields.filter(function (field) { return !Object.prototype.hasOwnProperty.call(block, field); });
+        if (missing.length > 0) {
+          throw new Error(origin + '.config.' + key + ' replaces the whole block, so it must name every field; missing: ' + missing.join(', '));
+        }
+      });
+    }
     if (state.tasks !== undefined) {
       if (!Array.isArray(state.tasks)) throw new Error(origin + '.tasks must be an array');
       state.tasks.forEach(function (task) {
@@ -324,7 +340,17 @@
         });
         Object.keys(effective.sessions).forEach(function (sessionId) {
           var patch = effective.sessions[sessionId];
-          if (patch && patch.activity) state.activityCache[sessionId] = patch.activity;
+          if (!patch) return;
+          if (patch.activity) state.activityCache[sessionId] = patch.activity;
+          // A queued or suspended row is what the board draws its queued and paused cards from
+          // (SessionDisplayState reads the row's status). It is a patch rather than a dataset
+          // row because the sample install has neither on contoso-web, and adding one there
+          // would change every docs figure already placed.
+          if (patch.status) {
+            var row = state.sessions.find(function (session) { return session.id === sessionId; });
+            if (!row) throw new Error('Scene patches session "' + sessionId + '", which the sample install does not contain');
+            row.status = patch.status;
+          }
         });
       });
     }
@@ -396,6 +422,55 @@
     return { x: round(rect.left / width), y: round(rect.top / height), w: round(rect.width / width), h: round(rect.height / height) };
   }
 
+  /**
+   * Tell a host page that Escape reached this frame and the app had nothing of its own to close,
+   * so it can close whatever it is showing the frame in.
+   *
+   * A host cannot do this itself. The frame is cross-origin, and once keyboard focus is inside it
+   * (the renderer's arrival-focus arbiter focuses a mounted terminal, exactly as it does on the
+   * desktop) every keystroke goes to the terminal's textarea; only a real click back on the host
+   * page moves focus out. Nothing in `demo/` takes that focus and nothing here can decline it:
+   * the renderer never branches on being embedded, which is the whole point of the web build.
+   *
+   * The guard ladder is NOT invented here. `src/renderer/pop-out/PopOutWindowFrame.tsx` already
+   * decides "is this Escape mine, or does something in the app own it" for a pop-out window, and
+   * this mirrors it so the frame agrees with the app it is showing. Two deliberate differences:
+   *
+   *  - CAPTURE phase, where the pop-out uses bubble. xterm can consume Escape inside its own key
+   *    pipeline (`enableTerminalClipboard`), so a bubble listener would never see the one case
+   *    that matters. Capture also means the guards below are read while any overlay about to be
+   *    dismissed is still in the DOM, which is the same property the pop-out's comment relies on.
+   *    `event.defaultPrevented` is therefore dropped: nothing has run yet, so it is always false.
+   *  - The xterm helper textarea is EXEMPTED from the focused-text-field guard. It is a textarea,
+   *    so the pop-out's rule would return on it, and it is precisely the case that must post.
+   *
+   * A task window owns the first Escape, as it does on the desktop: on a scene with one open the
+   * visitor presses Escape twice, once to close the window and once to close the host's dialog.
+   */
+  function isEscapeTheAppOwns(event) {
+    var activeElement = document.activeElement;
+    var isHelperTextarea = activeElement && activeElement.classList && activeElement.classList.contains('xterm-helper-textarea');
+    if (!isHelperTextarea && activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) return true;
+    // An open dialog, context menu, or popover owns this Escape.
+    if (document.querySelector('[data-dismissable-layer]')) return true;
+    // A task-detail or Command Terminal window owns it. Both render through `WindowFrame`, which
+    // stamps this id, so one selector covers both layers. NOT the pop-out's "a
+    // [data-window-layer-root] with children" test: in the MAIN window that host always holds the
+    // overlay wrapper, so a child count is 1 with no window open and the guard would swallow
+    // every Escape (measured on the board scene: one child, zero windows).
+    if (document.querySelector('[data-testid^="window-frame-"]')) return true;
+    // Monaco's find widget, which preventDefaults the keys it handles.
+    var target = event.target instanceof HTMLElement ? event.target : null;
+    if (target && target.closest('.find-widget')) return true;
+    return false;
+  }
+
+  window.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    if (isEscapeTheAppOwns(event)) return;
+    notifyParent({ type: 'kangentic-demo-escape', scene: sceneName });
+  }, true);
+
   function markReady() {
     document.documentElement.setAttribute('data-demo-ready', '1');
     document.documentElement.setAttribute('data-demo-scene', sceneName || 'state');
@@ -408,8 +483,11 @@
     var veiled = effective.steps.length > 0;
     if (veiled && root) root.style.visibility = 'hidden';
     // The board is the gate every step waits behind; an empty install never mounts one, so its
-    // gate is the scene's own ready element.
-    var chain = waitForSelector(emptyInstall && scene && scene.ready ? scene.ready : '[data-swimlane-name]', deadline);
+    // gate is the app having rendered at all. It must NOT be the scene's own ready element: on an
+    // empty-install scene whose steps are what REVEAL that element, the chain would wait for what
+    // the first step is there to produce and time out having clicked nothing. Nothing is lost by
+    // the weaker gate, because `scene.ready` is awaited after the steps below either way.
+    var chain = waitForSelector(emptyInstall ? '#root > *' : '[data-swimlane-name]', deadline);
     effective.steps.forEach(function (step) {
       chain = chain.then(function () {
         if (typeof step.press === 'string') {

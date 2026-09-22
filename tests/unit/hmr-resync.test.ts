@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // Ensures every IPC-backed Zustand store is re-synced in the HMR handler.
 //
@@ -163,11 +164,9 @@ describe('HMR store re-sync', () => {
 
         const matchIndex = match.index;
         const lineNumber = source.slice(0, matchIndex).split('\n').length;
-        const sameLine = lines[lineNumber - 1] ?? '';
-        const prevLine = lines[lineNumber - 2] ?? '';
-        // Per-declaration opt-out via `// hmr-safe: <reason>` on the same
-        // line or the line immediately above.
-        if (/\/\/\s*hmr-safe:/.test(sameLine) || /\/\/\s*hmr-safe:/.test(prevLine)) continue;
+        // Per-declaration opt-out via `// hmr-safe: <reason>` on the same line
+        // or in the comment block directly above.
+        if (hasOptOutMarker(lines, lineNumber - 1, 'hmr-safe')) continue;
 
         // Per-variable check: the variable name must appear in at least one
         // dispose callback body (e.g. `data.name = name` or `data[name]`).

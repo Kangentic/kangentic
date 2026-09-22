@@ -27,19 +27,19 @@ describe('evaluateHostMemoryPressure', () => {
   it('does not warn while headroom stays above the threshold', () => {
     const state = createHostMemoryPressureState();
     for (let tick = 0; tick < 10; tick++) {
-      const warned = evaluateHostMemoryPressure(sample({ commitRemainingBytes: 10 * GB }), state, tick * 60_000);
-      expect(warned).toBe(false);
+      const decision = evaluateHostMemoryPressure(sample({ commitRemainingBytes: 10 * GB }), state, tick * 60_000);
+      expect(decision).toBe('none');
     }
   });
 
   it('reproduces the real DESKTOP-16 event: 89.8 GB limit, 2.15 MB remaining', () => {
     const state = createHostMemoryPressureState();
-    const warned = evaluateHostMemoryPressure(
+    const decision = evaluateHostMemoryPressure(
       sample({ commitLimitBytes: 96_432_717_824, commitRemainingBytes: 2_256_896 }),
       state,
       0
     );
-    expect(warned).toBe(true);
+    expect(decision).toBe('pressure');
   });
 
   it('is edge-triggered: 10 consecutive ticks below the line warn exactly once', () => {
@@ -48,35 +48,38 @@ describe('evaluateHostMemoryPressure', () => {
     const results = Array.from({ length: 10 }, (_unused, tick) =>
       evaluateHostMemoryPressure(lowSample, state, tick * 60_000)
     );
-    expect(results.filter(Boolean)).toHaveLength(1);
-    expect(results[0]).toBe(true);
+    expect(results.filter((decision) => decision === 'pressure')).toHaveLength(1);
+    expect(results[0]).toBe('pressure');
   });
 
   it('does not re-arm on a partial recovery (must clear the hysteresis line, not just the threshold)', () => {
     const state = createHostMemoryPressureState();
     const threshold = pressureThreshold(96_432_717_824);
     // First warning.
-    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe(true);
+    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe('pressure');
     // Recovers to just above the threshold but below 2x it (the hysteresis line).
-    evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold * 1.2 }), state, 60_000);
+    // A partial recovery is deliberately NOT reported as recovered: the
+    // hysteresis line is the module's definition of "recovered", not the
+    // threshold, so the toast must not clear here either.
+    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold * 1.2 }), state, 60_000)).toBe('none');
     // Dips back under the threshold - must NOT warn again, since it never cleared hysteresis.
-    const warnedAgain = evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 120_000);
-    expect(warnedAgain).toBe(false);
+    const decisionAgain = evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 120_000);
+    expect(decisionAgain).toBe('none');
   });
 
   it('re-arms once headroom recovers past 2x the threshold, and warns again on the next dip', () => {
     const state = createHostMemoryPressureState();
     const threshold = pressureThreshold(96_432_717_824);
-    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe(true);
+    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe('pressure');
     // Fully recovers past the hysteresis line.
     evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold * 3 }), state, 60_000);
     // Dips back under, long after the minimum interval - should warn again.
-    const warnedAgain = evaluateHostMemoryPressure(
+    const decisionAgain = evaluateHostMemoryPressure(
       sample({ commitRemainingBytes: threshold / 2 }),
       state,
       2 * 60 * 60_000
     );
-    expect(warnedAgain).toBe(true);
+    expect(decisionAgain).toBe('pressure');
   });
 
   it('holds a 30-minute floor between warnings even while oscillating across the line', () => {
@@ -85,49 +88,49 @@ describe('evaluateHostMemoryPressure', () => {
     const below = sample({ commitRemainingBytes: threshold / 2 });
     const recovered = sample({ commitRemainingBytes: threshold * 3 });
 
-    expect(evaluateHostMemoryPressure(below, state, 0)).toBe(true);
+    expect(evaluateHostMemoryPressure(below, state, 0)).toBe('pressure');
     // Oscillate every minute for 20 minutes - each recovery re-arms, each dip
     // is still inside the 30-minute floor, so none of these may warn.
     let anyWarnedInsideFloor = false;
     for (let minute = 1; minute <= 20; minute++) {
       evaluateHostMemoryPressure(recovered, state, minute * 60_000);
-      if (evaluateHostMemoryPressure(below, state, minute * 60_000 + 30_000)) {
+      if (evaluateHostMemoryPressure(below, state, minute * 60_000 + 30_000) === 'pressure') {
         anyWarnedInsideFloor = true;
       }
     }
     expect(anyWarnedInsideFloor).toBe(false);
     // Past the 30-minute floor, a fresh dip may warn again.
     evaluateHostMemoryPressure(recovered, state, 31 * 60_000);
-    expect(evaluateHostMemoryPressure(below, state, 32 * 60_000)).toBe(true);
+    expect(evaluateHostMemoryPressure(below, state, 32 * 60_000)).toBe('pressure');
   });
 
   it('never warns when the platform has no commit reading (macOS/Linux)', () => {
     const state = createHostMemoryPressureState();
-    const warned = evaluateHostMemoryPressure(
+    const decision = evaluateHostMemoryPressure(
       sample({ platform: 'darwin', commitLimitBytes: null, commitRemainingBytes: null }),
       state,
       0
     );
-    expect(warned).toBe(false);
+    expect(decision).toBe('none');
   });
 
   it('never warns and never divides by zero on a degraded zero-limit reading', () => {
     const state = createHostMemoryPressureState();
-    const warned = evaluateHostMemoryPressure(
+    const decision = evaluateHostMemoryPressure(
       sample({ commitLimitBytes: 0, commitRemainingBytes: 0 }),
       state,
       0
     );
-    expect(warned).toBe(false);
+    expect(decision).toBe('none');
   });
 
   it('uses the relative arm on a small machine (8 GB limit -> ~400 MB threshold)', () => {
     const state = createHostMemoryPressureState();
     const limit = 8 * GB;
     // Just above 5% of 8 GB (400 MB) - must not warn.
-    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 0.06 * limit }), state, 0)).toBe(false);
+    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 0.06 * limit }), state, 0)).toBe('none');
     // Just below 5% of 8 GB - must warn.
-    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 0.04 * limit }), state, 60_000)).toBe(true);
+    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 0.04 * limit }), state, 60_000)).toBe('pressure');
   });
 
   it('uses the absolute arm on a large machine (89.8 GB limit -> 2 GB threshold, not 5%)', () => {
@@ -135,9 +138,97 @@ describe('evaluateHostMemoryPressure', () => {
     const limit = 96_432_717_824; // 5% of this is ~4.5 GB, far above the 2 GB absolute floor
     // 3 GB remaining: above the 2 GB absolute floor, so no warning even though
     // it is well under 5% of the limit.
-    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 3 * GB }), state, 0)).toBe(false);
+    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 3 * GB }), state, 0)).toBe('none');
     // 1 GB remaining: below the 2 GB absolute floor.
-    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 1 * GB }), state, 60_000)).toBe(true);
+    expect(evaluateHostMemoryPressure(sample({ commitLimitBytes: limit, commitRemainingBytes: 1 * GB }), state, 60_000)).toBe('pressure');
+  });
+
+  it('reports a healthy first tick from a fresh state as none, not recovered (the cold-boot case)', () => {
+    // createHostMemoryPressureState() seeds armed: true, so a machine that has
+    // never warned must not be reported as "recovered" on its very first
+    // healthy tick above the hysteresis line.
+    const state = createHostMemoryPressureState();
+    const decision = evaluateHostMemoryPressure(sample({ commitRemainingBytes: 10 * GB }), state, 0);
+    expect(decision).toBe('none');
+  });
+
+  it('reports recovered exactly once across 10 consecutive healthy ticks after a warning', () => {
+    const state = createHostMemoryPressureState();
+    const threshold = pressureThreshold(96_432_717_824);
+    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe('pressure');
+
+    const healthy = sample({ commitRemainingBytes: threshold * 3 });
+    const results = Array.from({ length: 10 }, (_unused, tick) =>
+      evaluateHostMemoryPressure(healthy, state, (tick + 1) * 60_000)
+    );
+    expect(results.filter((decision) => decision === 'recovered')).toHaveLength(1);
+    expect(results[0]).toBe('recovered');
+  });
+
+  it('does not report recovered for a partial recovery (grey zone between threshold and the hysteresis line)', () => {
+    const state = createHostMemoryPressureState();
+    const threshold = pressureThreshold(96_432_717_824);
+    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe('pressure');
+    const decision = evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold * 1.2 }), state, 60_000);
+    expect(decision).toBe('none');
+  });
+
+  it('does not report recovered when a dip was blocked by the minimum interval (armed stays true, nothing latched)', () => {
+    const state = createHostMemoryPressureState();
+    const threshold = pressureThreshold(96_432_717_824);
+    const below = sample({ commitRemainingBytes: threshold / 2 });
+    const recovered = sample({ commitRemainingBytes: threshold * 3 });
+
+    expect(evaluateHostMemoryPressure(below, state, 0)).toBe('pressure');
+    // Fully recovers, then dips again inside the 30-minute floor - blocked,
+    // so armed stays true and nothing was (re-)latched.
+    expect(evaluateHostMemoryPressure(recovered, state, 60_000)).toBe('recovered');
+    expect(evaluateHostMemoryPressure(below, state, 5 * 60_000)).toBe('none');
+    // The following healthy tick must not report a spurious recovery: the
+    // dip above never actually latched a new warning.
+    const decision = evaluateHostMemoryPressure(recovered, state, 6 * 60_000);
+    expect(decision).toBe('none');
+  });
+
+  it('never reports recovered for a degraded sample after a warning latches, and leaves the latch untouched', () => {
+    const state = createHostMemoryPressureState();
+    const threshold = pressureThreshold(96_432_717_824);
+
+    // Latches a warning.
+    expect(evaluateHostMemoryPressure(sample({ commitRemainingBytes: threshold / 2 }), state, 0)).toBe('pressure');
+    expect(state.armed).toBe(false);
+    const lastWarnedAtAfterPressure = state.lastWarnedAt;
+
+    // A degraded sample with no commit reading at all must return 'none',
+    // not fabricate a recovery, and must not silently re-arm the latch.
+    const decisionForNoReading = evaluateHostMemoryPressure(
+      sample({ commitLimitBytes: null, commitRemainingBytes: null }),
+      state,
+      60_000
+    );
+    expect(decisionForNoReading).toBe('none');
+    expect(state.armed).toBe(false);
+    expect(state.lastWarnedAt).toBe(lastWarnedAtAfterPressure);
+
+    // Same invariant for a degraded zero-limit reading.
+    const decisionForZeroLimit = evaluateHostMemoryPressure(
+      sample({ commitLimitBytes: 0, commitRemainingBytes: 0 }),
+      state,
+      120_000
+    );
+    expect(decisionForZeroLimit).toBe('none');
+    expect(state.armed).toBe(false);
+    expect(state.lastWarnedAt).toBe(lastWarnedAtAfterPressure);
+
+    // A genuinely recovered sample (at the hysteresis line) still reports
+    // 'recovered': the degraded ticks above must not have permanently
+    // stranded the state machine.
+    const decisionForRecovery = evaluateHostMemoryPressure(
+      sample({ commitRemainingBytes: threshold * 2 }),
+      state,
+      180_000
+    );
+    expect(decisionForRecovery).toBe('recovered');
   });
 });
 
@@ -247,6 +338,7 @@ describe('startHostMemorySampler', () => {
     const dispose = startHostMemorySampler({
       getActiveAgentCount: () => 0,
       onPressure: vi.fn(),
+      onRecovery: vi.fn(),
       onSample,
       intervalMs: 1000,
     });
@@ -284,6 +376,7 @@ describe('startHostMemorySampler', () => {
     const dispose = startHostMemorySampler({
       getActiveAgentCount: () => 1,
       onPressure,
+      onRecovery: vi.fn(),
       onSample,
       intervalMs: 1000,
     });
@@ -300,6 +393,43 @@ describe('startHostMemorySampler', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it('keeps ticking, rather than propagating, when onRecovery throws', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    // Tick 1 crosses below the line (warns); tick 2 crosses back above the
+    // hysteresis line (recovers, and onRecovery throws).
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 1 });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onRecovery = vi.fn().mockImplementation(() => {
+      throw new Error('recovery handler boom');
+    });
+    const onSample = vi.fn();
+
+    const dispose = startHostMemorySampler({
+      getActiveAgentCount: () => 0,
+      onPressure: vi.fn(),
+      onRecovery,
+      onSample,
+      intervalMs: 1000,
+    });
+
+    vi.advanceTimersByTime(1000);
+    expect(onRecovery).not.toHaveBeenCalled();
+
+    // Fully recover past the hysteresis line.
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 50_000_000 });
+    vi.advanceTimersByTime(1000);
+    expect(onRecovery).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    // The interval survives the throw and keeps sampling on the next tick.
+    vi.advanceTimersByTime(1000);
+    expect(onSample).toHaveBeenCalledTimes(3);
+
+    dispose();
+    consoleErrorSpy.mockRestore();
+  });
+
   it('reads getActiveAgentCount only on a pressure crossing and threads its exact value into onPressure', () => {
     vi.useFakeTimers();
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
@@ -311,6 +441,7 @@ describe('startHostMemorySampler', () => {
     const dispose = startHostMemorySampler({
       getActiveAgentCount,
       onPressure,
+      onRecovery: vi.fn(),
       intervalMs: 1000,
     });
 
@@ -336,6 +467,38 @@ describe('startHostMemorySampler', () => {
     dispose();
   });
 
+  it('never reads getActiveAgentCount on a recovery crossing, and threads the sample into onRecovery', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    // Tick 1: below the line, warns.
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 1 });
+    const getActiveAgentCount = vi.fn(() => 7);
+    const onRecovery = vi.fn();
+
+    const dispose = startHostMemorySampler({
+      getActiveAgentCount,
+      onPressure: vi.fn(),
+      onRecovery,
+      intervalMs: 1000,
+    });
+
+    vi.advanceTimersByTime(1000);
+    expect(getActiveAgentCount).toHaveBeenCalledTimes(1);
+
+    // Tick 2: fully recovers past the hysteresis line.
+    stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 100_000_000, swapFree: 50_000_000 });
+    vi.advanceTimersByTime(1000);
+
+    expect(onRecovery).toHaveBeenCalledTimes(1);
+    // Recovery needs no agent count - the read above must not have happened
+    // again for this tick.
+    expect(getActiveAgentCount).toHaveBeenCalledTimes(1);
+    const [sampleArgument] = onRecovery.mock.calls[0];
+    expect(sampleArgument.commitRemainingBytes).toBe(50_000_000 * 1024);
+
+    dispose();
+  });
+
   it('records every tick sample in getLastHostMemorySample(), even a tick with no pressure crossing', () => {
     vi.useFakeTimers();
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
@@ -347,6 +510,7 @@ describe('startHostMemorySampler', () => {
     const dispose = startHostMemorySampler({
       getActiveAgentCount: () => 0,
       onPressure: vi.fn(),
+      onRecovery: vi.fn(),
       intervalMs: 1000,
     });
 
@@ -358,4 +522,3 @@ describe('startHostMemorySampler', () => {
     dispose();
   });
 });
-

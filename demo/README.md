@@ -118,13 +118,40 @@ malformed `state=` renders a full-frame error card, logs the reason, posts
 `{ type: 'kangentic-demo-error', reason }`, and seeds nothing: a page can never caption a scene
 the visitor is not looking at.
 
+One more message goes out, and it is the only one tied to a keystroke.
+`{ type: 'kangentic-demo-escape', scene }` fires when an Escape keydown reaches the frame and the
+app has nothing of its own to close, so a host showing the frame in a dialog can close it. A host
+cannot do this itself: the frame is cross-origin, and the renderer's arrival-focus arbiter focuses
+a mounted terminal exactly as it does on the desktop, so from then on every key goes to the
+terminal's textarea and no listener on the parent page sees one. Nothing in `demo/` takes that
+focus and nothing here declines it, because the renderer never branches on being embedded.
+
+What counts as "the app owns this Escape" is not invented here. `boot.js` mirrors the ladder in
+`src/renderer/pop-out/PopOutWindowFrame.tsx`, which already answers the same question for a pop-out
+window: a focused text field, an open `[data-dismissable-layer]`, an open window frame, or Monaco's
+find widget each keep the key. Two differences, both deliberate. The listener is CAPTURE phase
+where the pop-out's is bubble, because xterm can consume Escape inside its own key pipeline and a
+bubble listener would never see the one case that matters; capture also reads the guards while an
+overlay about to be dismissed is still in the DOM, which is the property the pop-out's own comment
+relies on. And the xterm helper textarea is exempted from the focused-text-field guard, since it is
+a textarea and it is precisely the case that must post.
+
+A window owns the first Escape, as it does on the desktop: on the `task` and `windows-tiled`
+scenes the visitor presses Escape twice, once to close the window and once to close the host's
+dialog. `tests/unit/scene-registry.test.ts` pins each marker `boot.js` looks for against the
+renderer file that stamps it, so a rename fails there rather than quietly changing what the
+site's figures do.
+
 A `DemoState` (also the shape of every registry entry) is:
 
 ```ts
 {
-  config?: Record<string, unknown>;     // merged into window.__mockConfigOverrides; nested objects replace whole
+  config?: Record<string, unknown>;     // merged into window.__mockConfigOverrides; a nested block REPLACES the default
   tasks?: Array<{ id: string } & Record<string, unknown>>;   // patches merged by id into the sample install's rows
-  sessions?: Record<string, { activity?: 'thinking' | 'idle' | 'permission' }>;
+  sessions?: Record<string, {                   // patches on rows the sample install seeds
+    activity?: 'thinking' | 'idle' | 'permission';    // written to the mock's activityCache
+    status?: 'running' | 'suspended' | 'queued';      // written onto the row: a paused or queued card
+  }>;
   seeds?: Record<`__mock${string}`, unknown>;   // window globals the mock reads (diffs, branch summary, ...)
   steps?: Array<                                        // played before the reveal, in order
     | { click: string; waitFor?: string }               // a selector to click
@@ -133,6 +160,13 @@ A `DemoState` (also the shape of every registry entry) is:
   >;
 }
 ```
+
+A nested config block replaces the default rather than merging into it: the merge is a shallow
+`Object.assign` here and again in the mock. So naming one field of `monitor` would leave the other
+six undefined, on settings nothing in the frame shows, which is a figure that is quietly wrong
+rather than one that fails. A partial block is therefore REFUSED with the missing fields named, in
+a scene (`tests/unit/scene-registry.test.ts`) and in a `state=` URL (`validateState`, against the
+shape the build emits as `window.__demoConfigShape`). Spell the block whole.
 
 Example: open the Changes panel on a different file with no registry change.
 
@@ -178,8 +212,14 @@ lists it, with no other file touched. What the catalog holds, and where each com
 
 | Scene | reach | Built from |
 |---|---|---|
-| `welcome` | state | `install: 'empty'`: no project seeded, the boot gate is the scene's own ready element |
+| `welcome` | state | `install: 'empty'`: no project seeded, so the boot gate is the app having rendered at all |
+| `welcome-setup` | state | the same empty install plus `__mockAgentListOverrides`, one agent signed out and several not installed. No click: the screen opens its own setup list whenever anything is missing, which is what the seed produces |
 | `board` | boot | one click on the panel tab for the working middleware session |
+| `session-states` | boot | `sessions` patches: one row to `suspended` (a paused card in Planning), one to `queued` (Code Review). Both columns are in frame at 1600px, which Merge is not |
+| `activity-overlay` | state | `config.developer.activityDebugOverlay`; the snapshot each panel draws is derived from that session's own seeded events by `activityStatsFor` (Activity stats below) |
+| `notification-toast` | state | `__mockInitialExit`, fired once when `sessions.onExit` registers, so App.tsx raises the toast itself; `notifications.toasts.durationSeconds` holds it up |
+| `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
+| `column-automation`, `column-handoff` | boot | the column's edit button, plus `__mockAutomations` and `__mockSwimlanePatches`. Never the dataset: an automation draws a glyph in the BOARD column header, so seeding one there would change every figure already placed |
 | `board-filter`, `activity-tab` | boot | one click each (the Filter button, the panel's Activity tab) |
 | `announcements`, `announcement-dialog` | state, boot | `__mockActiveAnnouncements` seeded from the app's own `announcements.json` (dates dropped, `links` normalized); the dialog is one click on Learn more |
 | `task`, `browser` | state | `workspaceByProject` (a floating window at 0.64 of the frame, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below) |
@@ -640,6 +680,29 @@ A recording made before either timeline existed gets both from
 disk. Same module as the capture script (`scripts/lib/demo-replay-timelines.js`), so a backfilled
 recording and a fresh one agree; no agent, no API credit, and no re-record.
 
+### Activity stats, for the debug overlay
+
+`sessions.getActivityStats` answers null in the mock, which is the production "session unknown"
+path and also the shape of a bridge method that exists and says nothing. Behind the Developer tab's
+activity debug overlay that reads as a feature with no data, so the seed fills it
+(`activityStatsFor` in `demo-dataset.ts`) for every session that has an activity state.
+
+It is DERIVED, never authored. The state, the reason and its current tool, the signal ages, and the
+transition log all come from that session's own seeded `events` and `activity`: the overlay's whole
+job is to explain why the engine reports what it reports, and a panel of invented counters beside a
+real activity pill would be the one thing on this board that does not agree with itself.
+
+Most of the rest has a documented correct value rather than a derived one, which is not a shortcut.
+`compensationCounters` is "in a clean session, all eight fields read 0", and no seeded session has
+had a watchdog fire. `recentPtyChunks` is "empty in production builds where the recorder is
+dead-code-eliminated", which is the build this renderer IS. The background-shell and subagent
+counters are zero because no seeded session runs either.
+
+One field is a placeholder and is named as one rather than faked. `permissionAwaitedToolId` wants
+the tool_use_id a PermissionRequest hook carried, and a recording keeps the agent's BYTES, not its
+hook payloads. Null is what the overlay shows for "not captured"; a plausible id would be an
+invention.
+
 ### The agent's message trail
 
 Card Preview defaults to `agent-latest-message`, so a default install prints the agent's newest
@@ -934,7 +997,7 @@ Two things stay out of reach of a live frame: the Browser pane's REAL guest (a p
 index.html                       the entry, five classic scripts then the module bundle
 stage.html                       the fixed-size host a direct visit lands on
 scenes.json                      the scene list the site reads at build time: name, reach, alt, version
-demo-scenes-<hash>.js            the registry, the app version, the recordings and transcripts index, the guest pages
+demo-scenes-<hash>.js            the registry, the app version, the config shape a state= blob is checked against, the recordings and transcripts index, the guest pages
 demo-boot-<hash>.js              demo/boot.js verbatim
 demo-webview-<hash>.js           demo/webview-shim.js verbatim: the iframe standing in for <webview>
 mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim

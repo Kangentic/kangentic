@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
+import { DOCS_URLS } from '../../../../shared/docs-links';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
 import { formatDate, formatDateTime, formatShortDateTime } from '../../../lib/datetime';
 import { INPUT_CLASS, SectionHeader, Select, SettingToggleRow, useScopedUpdate } from '../shared';
@@ -17,7 +18,7 @@ import { useMobileStore } from '../../../stores/mobile-store';
  *  test, open beta, public release, and the iOS status) can change on the
  *  website without a desktop release. The signup steps for whichever phase is
  *  live belong in the mobile-launch announcement in announcements.json. */
-const MOBILE_DOCS_URL = 'https://www.kangentic.com/mobile/';
+const MOBILE_DOCS_URL = DOCS_URLS.mobile;
 
 /** The relay section's overview: what the relay is, why it exists, the
  *  blind-forwarding guarantee, and a hosted-vs-your-own comparison that routes
@@ -30,7 +31,7 @@ const MOBILE_DOCS_URL = 'https://www.kangentic.com/mobile/';
  *  is asking what the relay does, and can pick a branch from there. The relay
  *  docs are their own top-level section on the site, not a subsection of
  *  Mobile, which is the same split this tab draws between Relay and Mobile. */
-const RELAY_DOCS_URL = 'https://www.kangentic.com/relay/';
+const RELAY_DOCS_URL = DOCS_URLS.relay;
 
 /** The ids each section's heading advertises. Declared once and passed to BOTH
  *  the SectionHeader's `searchIds` and the body's `useAnySettingVisible` gate,

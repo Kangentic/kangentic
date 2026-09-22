@@ -86,7 +86,8 @@ test.describe('OpenCode Agent - Activity Detection', () => {
 
     // PTY-only strategy: with no further mock output after the startup
     // banner, the silence-based detector should land on 'idle' within
-    // a few seconds (10s silence budget is the adapter default).
+    // a few seconds (PtyActivityTracker's PTY_SILENCE_THRESHOLD_MS, which
+    // is global, not a per-adapter default).
     await expect.poll(async () => {
       const activity = await page.evaluate(() => window.electronAPI.sessions.getActivity());
       return Object.values(activity as Record<string, ActivityState>);

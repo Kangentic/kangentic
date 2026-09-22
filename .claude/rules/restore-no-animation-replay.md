@@ -33,7 +33,8 @@ when the same UI is reconstructed or re-pointed by a restore.
   the hook rebaselines silently instead of pulsing, so a context switch does not animate; a live
   in-place change with a stable `resetKey` still pulses. A call that genuinely never re-points
   across a context boundary may opt out with a `// value-pulse-ok: <reason>` marker on the call
-  line or the line above.
+  line or anywhere in the comment block directly above it, so the reason may wrap. The shared
+  reader (`tests/unit/helpers/opt-out-marker.ts`) requires the reason: a bare marker marks nothing.
 - **New animated surfaces follow suit.** Any new entrance keyframe, transition, or change-pulse
   on a surface that can re-mount or re-populate during a project switch / restore must suppress
   itself on the restore path the same way (a per-instance "restored" flag, or a `resetKey`-style

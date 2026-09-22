@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -543,6 +543,11 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
       return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
     },
+    onUpdateBlocked: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+      ipcRenderer.on(IPC.UPDATE_BLOCKED, handler);
+      return () => ipcRenderer.removeListener(IPC.UPDATE_BLOCKED, handler);
+    },
   },
 
   hostMemory: {
@@ -551,6 +556,15 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.HOST_MEMORY_PRESSURE, handler);
       return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_PRESSURE, handler);
     },
+    onRecovery: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryRecoveryEvent) => callback(payload);
+      ipcRenderer.on(IPC.HOST_MEMORY_RECOVERED, handler);
+      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_RECOVERED, handler);
+    },
+  },
+
+  gpuHealth: {
+    readStatus: () => ipcRenderer.invoke(IPC.GPU_HEALTH_STATUS),
   },
 
   announcements: {
@@ -768,6 +782,7 @@ const api: ElectronAPI = {
 
   memory: {
     getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
+    prewarm: () => ipcRenderer.send(IPC.MEMORY_PREWARM),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
   },
 

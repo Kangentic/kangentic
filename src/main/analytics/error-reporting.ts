@@ -120,7 +120,7 @@ export function reportHandledError(
  * Attach the latest host memory sample (Sentry DESKTOP-16) to the persisted
  * Sentry scope, so whatever event fires next - including a native crash,
  * which has no other route into `contexts` - carries it. Deliberately not a
- * `beforeSend` hook: `beforeSend` is already `filterNativeCrashEvent`
+ * `beforeSend` hook: `beforeSend` is already `beforeSendEvent`
  * (below), and tracing/replay are off (see `initErrorReporting`'s doc
  * comment), so there is no transaction for `setMeasurement` to hang on.
  * `setContext` on the ambient scope is the plain route. Composes with
@@ -199,6 +199,60 @@ export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): Erro
 }
 
 /**
+ * The number of stack frames the Sentry SDK keeps. Both halves of the cap are
+ * this number: `@sentry/browser`'s globalHandlers integration sets
+ * `Error.stackTraceLimit = 50` when it installs, and `@sentry/core`'s
+ * `createStackParser` stops parsing at 50 frames and slices to 50 again.
+ */
+export const SENTRY_STACK_FRAME_LIMIT = 50;
+
+/**
+ * Tag an event whose stack hit the SDK's frame cap.
+ *
+ * The parser reads a V8 stack INNERMOST-first and stops at the limit, so the
+ * frames it discards are the OUTER ones: the app code that called into the
+ * library, and the timer or handler the whole thing ran under. An event capped
+ * at exactly 50 therefore reads as a self-contained third-party failure with
+ * `in_app: false` on every frame, when in fact the app frames were cut off.
+ *
+ * That is not hypothetical. Every event on DESKTOP-19 ("Illegal value for
+ * lineNumber") carried exactly 50 monaco-editor frames and no in-app frame,
+ * which is what made it look like a pure upstream bug; the app frame that
+ * actually armed the call had been truncated away. This tag makes the
+ * difference between "no app frames" and "no app frames survived" visible in
+ * the issue stream instead of leaving it to be rediscovered by hand.
+ *
+ * Mutates and returns the event; never drops one.
+ */
+export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
+  const exceptionValues = event.exception?.values;
+  if (!exceptionValues) return event;
+  const hitFrameCap = exceptionValues.some(
+    (exceptionValue) => exceptionValue.stacktrace?.frames?.length === SENTRY_STACK_FRAME_LIMIT
+  );
+  if (!hitFrameCap) return event;
+  event.tags = { ...event.tags, stack_truncated: 'true' };
+  return event;
+}
+
+/**
+ * The actual `beforeSend`. Tags a frame-capped stack, then runs the native
+ * crash filter, which is the only hook that can drop an event.
+ *
+ * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
+ * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
+ * be able to delete telemetry.
+ */
+export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+  try {
+    tagTruncatedStack(event);
+  } catch {
+    // Tagging is diagnostic only; never let it cost us the event.
+  }
+  return filterNativeCrashEvent(event, hint);
+}
+
+/**
  * Initialize Sentry error reporting. Must be called BEFORE app.whenReady(),
  * next to initAnalytics() (the SDK wires its renderer IPC/protocol transport
  * during init).
@@ -215,7 +269,7 @@ export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): Erro
  * an issue is a product judgement about our own code, not a data-privacy rule.
  * See the annotated entries below.
  *
- * NATIVE CRASH EVENTS are the one exception to "filtering lives in
+ * NATIVE CRASH EVENTS are the one FILTERING exception to "filtering lives in
  * `ignoreErrors`", and to the no-beforeSend stance above. `ignoreErrors` is the
  * `eventFiltersIntegration`, which matches only an event's message and its
  * exception type and value. A minidump event has none of those, so the matcher
@@ -223,9 +277,13 @@ export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): Erro
  * says whether the crash was even ours lives in the attached dump, not on the
  * event, and Sentry derives the stack and the image list from that dump only
  * AFTER upload. So this one class is filtered in `beforeSend`
- * (filterNativeCrashEvent, above), which is the only hook that can see the
- * attachment. It is still filtering, not scrubbing: the scrubbing stance is
- * unchanged.
+ * (filterNativeCrashEvent, reached through beforeSendEvent, above), which is the
+ * only hook that can see the attachment. It is still filtering, not scrubbing:
+ * the scrubbing stance is unchanged.
+ *
+ * `beforeSend` does one other thing, and it is not filtering: beforeSendEvent
+ * also TAGS a frame-capped stack (tagTruncatedStack, above). That is annotation
+ * on an event we keep, so it drops nothing and leaves both stances intact.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -252,9 +310,10 @@ export function initErrorReporting(): void {
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
         ),
-      // Native crash events only; see the NATIVE CRASH EVENTS note above for why
-      // this one class cannot go in ignoreErrors below.
-      beforeSend: filterNativeCrashEvent,
+      // Tags a frame-capped stack, then filters native crash events; see the
+      // NATIVE CRASH EVENTS note above for why that one class cannot go in
+      // ignoreErrors below.
+      beforeSend: beforeSendEvent,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data
       // we need removed from events we do keep.

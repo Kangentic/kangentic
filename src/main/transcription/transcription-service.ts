@@ -52,15 +52,31 @@ interface PreparedModels {
  * a real engine object. See engines/transcription-engine.ts for the
  * engine-selection/engine-build split and .claude/rules/dictation-out-of-process.md.
  *
- * Engines are kept WARM (in the worker). Loading a model is expensive (the
- * 631 MB Parakeet ONNX takes seconds), so an engine is loaded once and
- * REUSED across push-to-talk sessions - a press starts instantly instead of
- * paying the load. The renderer pre-warms the selected engine the moment
- * dictation is enabled (and on every model change), so even the first press
- * is instant.
+ * Engines are kept WARM (in the worker), but only as far as they are cheap.
+ * The renderer pre-warms the selected engine the moment dictation is enabled
+ * (and on every model change), which loads the small streaming live model so
+ * the first press streams partials at once. The 631 MB accurate model loads
+ * on the first press itself, overlapped with the utterance (see
+ * engines/hybrid-engine.ts), and is then REUSED across presses - until the
+ * worker has gone IDLE_SHUTDOWN_MS without a request, when DictationClient
+ * recycles it (a process exit is the only thing that gives onnxruntime's
+ * reservation back) and this service warms a fresh live-only one. So a user
+ * who dictated once this morning pays for the live model for the rest of the
+ * day, not for the accurate one. Turning dictation off releases the worker
+ * outright.
  */
 export class TranscriptionService extends EventEmitter {
   private readonly active = new Map<string, ActiveDictation>();
+  /** The config of the last `prewarm(config)`, so a recycled worker can be
+   *  warmed straight back to the live-only baseline. Null once dictation is
+   *  turned off (or this service is disposed), so a late recycle warms nothing. */
+  private warmConfig: DictationConfig | null = null;
+  /** Bumped by every `prewarm()` call (null included) and `dispose()`. A
+   *  prewarm that finds itself stale after its awaits stops before touching
+   *  the worker: a disable landing mid-warm must not spawn a worker after the
+   *  user turned dictation off, and a superseded config must not load a
+   *  second engine. It also decides whose failure is worth reporting. */
+  private prewarmGeneration = 0;
   // In-flight main-side prep (model download, keyed by engineKey) so a
   // prewarm racing the first press (or two near-simultaneous presses) share
   // one download instead of double-fetching the same model file. The
@@ -77,6 +93,13 @@ export class TranscriptionService extends EventEmitter {
       if (this.active.has(dictationSessionId)) {
         this.emit('partial', dictationSessionId, text);
       }
+    });
+    // An idle recycle killed a worker that held the accurate model; bring the
+    // baseline back so the next press still streams partials instantly.
+    // Silent: a failure here would toast half an hour after the last press,
+    // out of any context, and the next press reports its own failure anyway.
+    this.client.on('recycled', () => {
+      if (this.warmConfig) void this.prewarm(this.warmConfig, { silent: true });
     });
   }
 
@@ -133,24 +156,32 @@ export class TranscriptionService extends EventEmitter {
   }
 
   /**
-   * Pre-load the engine for the given config so the next press is instant. A
-   * best-effort background call (errors are swallowed; a download still surfaces
-   * via the popup's model-progress phase). Passing `null` releases every warm
-   * engine (dictation was disabled).
+   * Pre-load the live engine for the given config so the next press streams
+   * partials at once (the accurate model waits for the press itself). A
+   * best-effort background call (errors are swallowed; a download still
+   * surfaces via the popup's model-progress phase, unless `silent`). Passing
+   * `null` (dictation was disabled) releases the worker outright.
    */
-  async prewarm(config: DictationConfig | null): Promise<void> {
+  async prewarm(config: DictationConfig | null, options?: { silent?: boolean }): Promise<void> {
+    const generation = ++this.prewarmGeneration;
     if (!config) {
-      this.client.setWarmHold(false);
-      this.client.disposeWarm();
+      this.warmConfig = null;
+      for (const dictationSessionId of [...this.active.keys()]) {
+        this.cancel(dictationSessionId);
+      }
+      this.client.release();
       return;
     }
-    this.client.setWarmHold(true);
+    this.warmConfig = config;
     let selected: EngineSelection | undefined;
     try {
       const profile = await detectHardware();
       selected = selectEngine(profile, config);
       const engineKey = computeEngineKey(selected, config);
       const prepared = await this.prepareModels(selected, engineKey);
+      // Superseded during the awaits: by a disable (the worker must stay
+      // dead) or by a newer config (whose own prewarm carries the load).
+      if (generation !== this.prewarmGeneration) return;
       await this.client.ensureWarm({
         engineKey,
         selection: selected,
@@ -163,8 +194,12 @@ export class TranscriptionService extends EventEmitter {
       // load, but still surface it via the popup's model-progress phase when
       // we got far enough to know which model to blame (mirrors the
       // pre-split buildAndLoad, whose failure reporting fired the same way
-      // whether the caller was start() or prewarm()).
-      if (selected) this.reportPrepareFailure(selected, error);
+      // whether the caller was start() or prewarm()). Not when this prewarm
+      // was superseded - a release() rejects the request it was waiting on,
+      // and that is the user turning dictation off, not a failure.
+      if (selected && generation === this.prewarmGeneration && !options?.silent) {
+        this.reportPrepareFailure(selected, error);
+      }
     }
   }
 
@@ -396,10 +431,11 @@ export class TranscriptionService extends EventEmitter {
 
   /** Release in-flight sessions and the worker (synchronous-shutdown safe). */
   dispose(): void {
+    this.warmConfig = null;
+    this.prewarmGeneration += 1;
     for (const dictationSessionId of [...this.active.keys()]) {
       this.cancel(dictationSessionId);
     }
-    this.client.setWarmHold(false);
     this.client.dispose();
   }
 }

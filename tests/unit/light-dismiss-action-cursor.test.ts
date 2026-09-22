@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import { hasFileScopedOptOut } from './helpers/opt-out-marker';
 
 /**
  * Light dismiss is a DENYLIST: a clean click on dead space anywhere in the app shell closes
@@ -58,7 +59,7 @@ const PORTAL_PROTECTED_DIRECTORIES = [
 const DENYLIST_MARKERS = ['data-no-dismiss', 'data-task-id', 'data-dismissable-layer'];
 
 /** An opt-out for a site that genuinely cannot dismiss for a reason the scan cannot see. */
-const OPT_OUT_MARKER = 'light-dismiss-ok:';
+const OPT_OUT_MARKER = 'light-dismiss-ok';
 
 interface Offender {
   file: string;
@@ -98,7 +99,12 @@ describe('light dismiss: an action cursor must be excluded from dismissal', () =
       // ANCESTOR covers its whole subtree via `closest()` (that is how Swimlane's header
       // protects its handle), so per-element static ancestry checking is not possible.
       if (DENYLIST_MARKERS.some((marker) => contents.includes(marker))) continue;
-      if (contents.includes(OPT_OUT_MARKER)) continue;
+      // FILE-SCOPED deliberately, and the only scan in this directory that is.
+      // The real exemption usually lives on an ANCESTOR and reaches the element
+      // through `closest()`, which no static walk can follow across components,
+      // so there is no line-level answer to give here. Everything else uses the
+      // line-level readers in the same helper module.
+      if (hasFileScopedOptOut(contents, OPT_OUT_MARKER)) continue;
 
       contents.split('\n').forEach((line, index) => {
         if (!ACTION_CURSOR_PATTERN.test(line)) return;
@@ -112,7 +118,7 @@ describe('light dismiss: an action cursor must be excluded from dismissal', () =
       + 'NOT `pointer`, so light dismiss classifies it as dead space and a click closes a task '
       + 'window instead of acting - and its hover state becomes a promise the click does not '
       + 'keep. Add `data-no-dismiss` to it or an ancestor, or annotate the site with a '
-      + `\`// ${OPT_OUT_MARKER} <reason>\` comment. Offenders:\n`
+      + `\`// ${OPT_OUT_MARKER}: <reason>\` comment. Offenders:\n`
       + offenders.map((offender) => `  ${offender.file}:${offender.line}: ${offender.source}`).join('\n'),
     ).toEqual([]);
   });

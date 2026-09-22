@@ -48,15 +48,25 @@ export const RUN_UPTIME_CHECKPOINT_INTERVAL_MS = 60_000;
 
 export type RunExit = 'clean' | 'failsafe' | 'abrupt';
 
-/** The on-disk shape. `exit` is null until the quit path records one. */
+/** The on-disk shape. `exit` is null until the quit path records one.
+ *
+ *  `at` is the wall-clock moment of THIS write, so the last one on disk is
+ *  the last moment the run was known alive. For a `clean` or `failsafe` exit
+ *  that is the exit itself; for an `abrupt` one it is the final checkpoint,
+ *  which is the only clock an abrupt ending leaves behind. gpu-health.ts's
+ *  report gate uses it to tell "the GPU died as this run ended" from "the GPU
+ *  died once, forty minutes before something unrelated killed it". */
 interface RunRecord {
   uptimeSeconds: number;
   exit: 'clean' | 'failsafe' | null;
+  at?: string;
 }
 
-interface PreviousRun {
+export interface PreviousRun {
   uptimeSeconds: number;
   exit: RunExit;
+  /** Absent on a pre-upgrade record written before `at` existed. */
+  lastAliveAt: string | null;
 }
 
 let runFilePath: string | null = null;
@@ -73,7 +83,8 @@ function readPreviousRun(filePath: string): PreviousRun | null {
     const uptimeSeconds = parsed?.uptimeSeconds;
     if (typeof uptimeSeconds !== 'number' || !Number.isFinite(uptimeSeconds)) return null;
     const exit = parsed?.exit === 'clean' || parsed?.exit === 'failsafe' ? parsed.exit : 'abrupt';
-    return { uptimeSeconds, exit };
+    const lastAliveAt = typeof parsed?.at === 'string' ? parsed.at : null;
+    return { uptimeSeconds, exit, lastAliveAt };
   } catch {
     return null;
   }
@@ -103,6 +114,19 @@ function elapsedSeconds(nowMs: number): number {
 }
 
 /**
+ * Read the previous run's record WITHOUT starting this run's.
+ *
+ * `initRunUptimeTracking` cannot serve this: it runs inside whenReady, and
+ * index.ts's graphics decision has to happen at module scope, because
+ * app.disableHardwareAcceleration() throws once the app is ready. This
+ * is the same pure read, callable earlier, and it touches no module state so
+ * the two cannot interfere.
+ */
+export function peekPreviousRun(filePath: string): PreviousRun | null {
+  return readPreviousRun(filePath);
+}
+
+/**
  * Read the previous run's record, then start this run's. Called once at
  * startup from index.ts with a path under the global config dir. Sync read
  * and write, matching the other startup config reads.
@@ -112,7 +136,7 @@ export function initRunUptimeTracking(filePath: string, startedAtMs: number): vo
   runFilePath = filePath;
   runStartedAt = startedAtMs;
   exitRecorded = false;
-  writeRun({ uptimeSeconds: 0, exit: null });
+  writeRun({ uptimeSeconds: 0, exit: null, at: new Date(startedAtMs).toISOString() });
 }
 
 /**
@@ -122,7 +146,7 @@ export function initRunUptimeTracking(filePath: string, startedAtMs: number): vo
  */
 export function checkpointRunUptime(nowMs: number = Date.now()): void {
   if (runStartedAt === null || exitRecorded) return;
-  writeRun({ uptimeSeconds: elapsedSeconds(nowMs), exit: null });
+  writeRun({ uptimeSeconds: elapsedSeconds(nowMs), exit: null, at: new Date(nowMs).toISOString() });
 }
 
 /**
@@ -134,7 +158,7 @@ export function checkpointRunUptime(nowMs: number = Date.now()): void {
 export function recordRunExit(kind: 'clean' | 'failsafe', nowMs: number = Date.now()): void {
   if (runStartedAt === null) return;
   exitRecorded = true;
-  writeRun({ uptimeSeconds: elapsedSeconds(nowMs), exit: kind });
+  writeRun({ uptimeSeconds: elapsedSeconds(nowMs), exit: kind, at: new Date(nowMs).toISOString() });
 }
 
 /**
@@ -151,6 +175,19 @@ export function previousRunLaunchProps(): Record<string, string | number> {
     lastRunUptime: bucketUptimeSeconds(previousRun.uptimeSeconds),
     lastRunExit: previousRun.exit,
   };
+}
+
+/**
+ * The last moment the PREVIOUS run was known alive, or null on a first run or
+ * a record written before `at` existed.
+ *
+ * Deliberately separate from previousRunLaunchProps: that function's return
+ * value is spread straight into an Aptabase event, and an exact wall-clock
+ * timestamp is not a telemetry property. This one is read locally, by
+ * gpu-health.ts's report gate.
+ */
+export function previousRunLastAliveAt(): string | null {
+  return previousRun?.lastAliveAt ?? null;
 }
 
 /** Bucket a run's uptime so the dashboard reads as a distribution. */

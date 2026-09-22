@@ -14,12 +14,15 @@
  *
  * Every test owns its own page (the built-in fixture), so nothing leaks between cases.
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { SCENES } from '../captures/scenes';
-import { DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, PROJECT_CONTOSO } from '../captures/helpers/demo-dataset';
+import {
+  DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, PROJECT_CONTOSO,
+  SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE,
+} from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
 
@@ -118,6 +121,61 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   monitor: async (page) => {
     await expect(page.locator('[data-testid="monitor-page"]')).toBeVisible();
     await expect(page.locator('[data-testid="monitor-card"]')).toHaveCount(MONITOR_ROW_COUNT);
+  },
+  'column-handoff': async (page) => {
+    // The scene's __mockSwimlanePatches seed only takes effect if hydrateSeededSwimlanePatches
+    // actually finds and patches the Code Review lane; the `ready` selector alone (the tab having
+    // switched) proves nothing about the patch landing. OverviewToggle renders the column page's
+    // own read-only ToggleSwitch, so this is the same aria-checked a visitor would read.
+    const reviewRow = page.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' });
+    await expect(reviewRow.getByRole('switch', { name: 'Hand off context when the agent changes' })).toHaveAttribute('aria-checked', 'true');
+    // Sibling negative: every other lane keeps handoff_context false in the dataset, so this is
+    // what makes the scene's own alt text ("Handoff is on for Code Review alone") falsifiable
+    // rather than the switch simply always reading on.
+    const executingRow = page.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Executing' });
+    await expect(executingRow.getByRole('switch', { name: 'Hand off context when the agent changes' })).toHaveAttribute('aria-checked', 'false');
+  },
+  'session-states': async (page) => {
+    // The scene's `ready` selector (the Onboarding empty states card existing at all) resolves
+    // whether or not demo/boot.js's new session.status patch actually landed: that card is in the
+    // sample install either way. CardStatusBar's own testid is what a visitor reads the state from.
+    const pausedCard = page.locator('[data-task-id="task-cw-empty-states"]');
+    await expect(pausedCard.locator('[data-testid="status-bar"]')).toContainText('Paused');
+    const queuedCard = page.locator('[data-task-id="task-cw-rate-limit"]');
+    await expect(queuedCard.locator('[data-testid="status-bar"]')).toContainText('Queued');
+    // Sibling negative, in the SAME boot rather than a second one: the scene's own click step
+    // targets the middleware session, which the patch does not name and which stays 'running' in
+    // the dataset, so its card keeps the running footer instead of picking up Paused or Queued
+    // from a patch that landed on the wrong row.
+    const middlewareCard = page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`);
+    await expect(middlewareCard.locator('[data-testid="usage-bar"]')).toBeVisible();
+    await expect(middlewareCard.locator('[data-testid="status-bar"]')).toHaveCount(0);
+  },
+  'activity-overlay': async (page) => {
+    const overlay = page.locator('[data-testid="activity-debug-overlay"]');
+    // `ready` only waits for this element to mount, which happens as soon as ANY session in the
+    // project is 'running' - with or without real snapshot data (ActivityDebugOverlayContent
+    // renders on `projectSessionIds.length > 0` alone). If activityStatsCache never populated, or
+    // activityStatsFor threw while the seed built it, the panel falls back to its own "no state"
+    // diagnostic instead of failing the boot, which the ready gate would not catch.
+    await expect(overlay).not.toContainText('Activity engine has no state');
+    // One row per running contoso-web session, proving activityStatsCache was populated for
+    // every one of them and not just enough to dodge the diagnostic above.
+    const runningContosoSessionIds = DEMO_SESSIONS
+      .filter((session) => session.projectId === PROJECT_CONTOSO && session.status === 'running')
+      .map((session) => session.id);
+    for (const sessionId of runningContosoSessionIds) {
+      await expect(overlay.locator(`[data-session-id="${sessionId}"]`)).toBeVisible();
+    }
+    // The derived reason branches, read off one session of each activity kind: activityStatsFor's
+    // three-way switch (permission / thinking-with-tool / idle) drives the pill label straight
+    // from the seeded session, so a wrong branch here means the derivation broke, not the wiring
+    // checked above. currentTool is the seeded session's own last event, not an invented value.
+    const middlewareRow = overlay.locator(`[data-session-id="${SESSION_MIDDLEWARE}"]`);
+    await expect(middlewareRow).toContainText('Thinking');
+    await expect(middlewareRow).toContainText('running Bash');
+    await expect(overlay.locator(`[data-session-id="${SESSION_WEBSOCKET}"]`)).toContainText('Awaiting permission');
+    await expect(overlay.locator(`[data-session-id="${SESSION_RATE_LIMIT}"]`)).toContainText('Idle');
   },
 };
 
@@ -224,6 +282,120 @@ test('the ready message carries the focus rect of a dialog scene, and null for a
   expect(plain.focus).toBeNull();
 });
 
+/** Host the frame in an iframe the site's way and hand back the frame plus a message reader. */
+async function hostFrame(page: Page, sceneName: string): Promise<() => Promise<DemoReadyMessage[]>> {
+  const src = demoUrl({ view: sceneName, embed: '1', still: '1' });
+  await page.setContent(
+    '<script>window.__demoMessages = []; window.addEventListener("message", (event) => { window.__demoMessages.push(event.data); });</script>'
+    + `<iframe id="demo" width="1600" height="1000" style="border:0" src="${src}"></iframe>`,
+  );
+  await expect(page.frameLocator('#demo').locator('html')).toHaveAttribute('data-demo-ready', '1', { timeout: READY_TIMEOUT_MS });
+  return () => page.evaluate(() => (window as { __demoMessages?: DemoReadyMessage[] }).__demoMessages ?? []);
+}
+
+const hasEscape = (messages: DemoReadyMessage[]) => messages.some((message) => message.type === 'kangentic-demo-escape');
+
+/**
+ * Focus an element inside the cross-origin `#demo` iframe and wait for the TOP-LEVEL browsing
+ * context's focus to actually land there before returning.
+ *
+ * `Locator.focus()` calls the element's `focus()` inside the iframe's own renderer, which
+ * updates that document's `activeElement` immediately. But `page.keyboard.press()` at the top
+ * level dispatches through whichever frame the BROWSER PROCESS currently believes is focused,
+ * and for a cross-origin iframe that hand-off is a separate, asynchronous step (an IPC round
+ * trip between renderer processes on Chromium). Pressing Escape right after `.focus()` can race
+ * that hand-off: the key lands on the top-level document (which has no listener) instead of the
+ * iframe, so the dialog never sees it and stays open until Playwright's retry. `document.hasFocus()`,
+ * read from INSIDE the iframe, reflects the browser process's actual routing rather than just the
+ * iframe's local `activeElement`, so polling it (instead of a fixed pad) makes the wait real.
+ */
+async function focusAcrossFrame(locator: Locator): Promise<void> {
+  await locator.focus();
+  await expect
+    .poll(() => locator.evaluate((element) => document.hasFocus() && document.activeElement === element))
+    .toBe(true);
+}
+
+test('Escape posts an escape message when the app has nothing of its own to close', async ({ page }) => {
+  // The case a host cannot handle itself: keyboard focus is inside the cross-origin frame, on the
+  // terminal's textarea, where the renderer's arrival-focus arbiter puts it, so every key goes
+  // there and no listener on the parent page ever sees one.
+  const readMessages = await hostFrame(page, 'board');
+  const textarea = page.frameLocator('#demo').locator('.xterm-helper-textarea').first();
+  await textarea.waitFor({ state: 'attached', timeout: READY_TIMEOUT_MS });
+  await textarea.focus();
+  // The keyboard, not `locator('#demo').press()`: that form focuses the iframe ELEMENT first, so
+  // the keystroke reaches the textarea only by Chromium restoring the frame's previously focused
+  // descendant. That is the one thing this test is proving, so it must not also be the mechanism.
+  await page.keyboard.press('Escape');
+
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+  const escape = (await readMessages()).find((message) => message.type === 'kangentic-demo-escape');
+  expect(escape?.scene).toBe('board');
+});
+
+test('Escape posts nothing while a plain text field is focused, with no dialog or window involved', async ({ page }) => {
+  // The BASE rule the xterm-helper-textarea case above carves its one exemption out of: a focused
+  // INPUT/TEXTAREA/contenteditable blocks the post on its own, with no dialog and no restored
+  // window anywhere in the DOM. The board scene's search field is always mounted (no click needed
+  // to reveal it), which is what keeps this rung 1 rather than accidentally exercising rung 2
+  // ([data-dismissable-layer]) or rung 3 ([data-testid^="window-frame-"]).
+  const readMessages = await hostFrame(page, 'board');
+  const frame = page.frameLocator('#demo');
+  // Pin the isolation: nothing in the DOM could make this pass on rung 2 or 3 instead of rung 1.
+  await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
+  await expect(frame.locator('[data-testid^="window-frame-"]')).toHaveCount(0);
+
+  const searchInput = frame.locator('[data-testid="board-search"]');
+  await searchInput.focus();
+  await page.keyboard.press('Escape');
+  // Fixed wait, not a poll: this is a negative assertion (nothing posted). Polling "is it still
+  // false" would pass the instant it is called, whether or not the guard is even wired up.
+  await page.waitForTimeout(500);
+  expect(hasEscape(await readMessages()), 'a focused text field owns Escape before xterm is ever asked').toBe(false);
+
+  // Positive control, same frame: focusing the terminal's helper textarea (the one exemption)
+  // does post, so the absence above is the base rule firing rather than dead plumbing.
+  const textarea = frame.locator('.xterm-helper-textarea').first();
+  await textarea.waitFor({ state: 'attached', timeout: READY_TIMEOUT_MS });
+  await textarea.focus();
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+});
+
+test('Escape posts nothing while the app owns it, and the app closes its own surface', async ({ page }) => {
+  // Each case settles on the app's OWN visible answer (the surface closing), never on a timer:
+  // that is both the proof the keystroke was processed and the behaviour being asserted. A
+  // second Escape, which this does not press, is what would then reach the host.
+  //
+  // Both cases focus a BUTTON inside the frame and press through the frame's own keyboard, for two
+  // separate reasons. `page.locator('#demo').press()` focuses the iframe ELEMENT, so the key
+  // reaches the frame's content only if Chromium restores the frame's previously focused
+  // descendant: it does on Windows and does NOT on the headless Linux runner, where this read
+  // green locally and red on every CI push. And a button rather than a text field keeps each case
+  // on the rung it is named for, since a focused input would satisfy rung 1 first and the assertion
+  // would hold for the wrong reason (rung 1 has its own test above).
+  const readDialogMessages = await hostFrame(page, 'new-task');
+  const dialog = page.frameLocator('#demo').locator('[data-testid="new-task-dialog"]');
+  await expect(dialog).toBeVisible();
+  await focusAcrossFrame(dialog.getByRole('button', { name: 'Cancel' }));
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  expect(hasEscape(await readDialogMessages()), 'a dialog owns the first Escape').toBe(false);
+
+  // A restored task window owns it the same way, through the [data-testid^="window-frame-"] rung.
+  const readWindowMessages = await hostFrame(page, 'task');
+  const frame = page.frameLocator('#demo');
+  const detail = frame.locator('[data-testid="task-detail-titlebar"]');
+  await expect(detail).toBeVisible();
+  // Pin the isolation the way the rung-1 test does: no dialog is open, so this can only be rung 3.
+  await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
+  await focusAcrossFrame(frame.locator('[data-testid="task-detail-close"]'));
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+  expect(hasEscape(await readWindowMessages()), 'a task window owns the first Escape').toBe(false);
+});
+
 test('embed=1 hides the OS window controls; without it they render', async ({ page }) => {
   await gotoScene(page, { view: 'board', embed: '1', still: '1' });
   await expect(page.locator('[data-testid="window-controls"]')).toBeHidden();
@@ -305,6 +477,27 @@ test('the build carries production semantics: no dev badge, no dev-only store ex
   await expect(page.locator('[data-testid="titlebar-dev-badge"]')).toHaveCount(0);
   const hasDevStores = await page.evaluate(() => '__zustandStores' in window);
   expect(hasDevStores).toBe(false);
+});
+
+test('the emitted config-shape guard omits a block with no populated default', async ({ page }) => {
+  // nestedConfigShape() (demo/vite.config.mts) is what lets boot.js refuse a state= blob naming
+  // only part of a nested config block ("a state= blob naming only part of a nested config block
+  // is refused", above); nothing asserted its SKIP branches actually leave a block out rather than
+  // emitting it empty. Read off the real built asset rather than re-implemented here: the function
+  // is private to the Vite config, and reaching it would need either exporting it (a production
+  // change with no other motivation) or importing dist/demo from the unit tier, which breaks tier
+  // isolation (web-demo-parity.md) - so this lives in the tier that already boots the real build.
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  const shape = await page.evaluate(() => (window as { __demoConfigShape?: Record<string, string[]> }).__demoConfigShape ?? {});
+  // A populated object block is kept, with every field named.
+  expect(Object.keys(shape)).toContain('monitor');
+  expect(shape.monitor).toContain('layout');
+  // A zero-key object default (a project-keyed map with nothing in DEFAULT_CONFIG) is skipped.
+  expect(Object.keys(shape)).not.toContain('workspaceByProject');
+  // A primitive default is skipped.
+  expect(Object.keys(shape)).not.toContain('theme');
+  // A null default is skipped.
+  expect(Object.keys(shape)).not.toContain('commandTerminalWorkspace');
 });
 
 test('the board scene makes no request off the serving origin', async ({ page }) => {
@@ -909,6 +1102,61 @@ test('a state= blob carrying a capture-rig step is refused', async ({ page }) =>
   await gotoScene(page, { state: pressStepBlob, embed: '1', still: '1' });
   await expect(page.locator('[data-testid="demo-error"]')).toHaveCount(0);
   await expect(page.locator('html')).toHaveAttribute('data-demo-scene', 'state');
+});
+
+test('a state= blob naming only part of a nested config block is refused', async ({ page }) => {
+  // The merge is a shallow Object.assign twice over (boot.js into __mockConfigOverrides, then the
+  // mock into its defaults), so a nested block REPLACES the default. A partial block used to boot
+  // fine with its unnamed siblings undefined, which is a figure that is quietly wrong rather than
+  // one that fails. The registry test catches this for SCENES; this is the same guard for the
+  // hand-written state= URL the README points developers at.
+  const partialBlock = encodeState({ config: { monitor: { layout: 'table' } } });
+  await page.goto(demoUrl({ state: partialBlock, embed: '1', still: '1' }));
+  const errorCard = page.locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible();
+  await expect(errorCard).toContainText('must name every field');
+  // Named, so the fix is mechanical rather than a hunt through AppConfig.
+  await expect(errorCard).toContainText('groupBy');
+  await expect(page.locator('html')).not.toHaveAttribute('data-demo-ready');
+
+  // Positive control: the same block spelled whole boots, and so does a flat key on its own.
+  const wholeBlock = encodeState({
+    config: {
+      monitor: {
+        layout: 'table', groupBy: 'project', sort: 'longest-running', liveOnly: false,
+        projectFilter: [], stateFilter: [], textFilter: '',
+      },
+    },
+  });
+  await gotoScene(page, { state: wholeBlock, embed: '1', still: '1' });
+  await expect(page.locator('[data-testid="demo-error"]')).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-demo-scene', 'state');
+});
+
+test('a state= blob patching a session the sample install does not seed throws rather than silently no-op-ing', async ({ page }) => {
+  // Unlike the two refusals above, this is NOT a validateState() check: `sessions` is validated
+  // only for SHAPE up front ("must be an object keyed by session id"), so a bad id sails through
+  // that gate with nothing pushed to `errors`. The "is this id one the sample install seeds" check
+  // happens later, inside applyScene()'s __mockPreConfigure callback, called from the generated
+  // seed script's bare top-level `window.__demoBoot.afterSeed();` (demo/vite.config.mts) with no
+  // try/catch anywhere above it. So the throw is an UNCAUGHT exception, not a caught error: it
+  // never reaches the [data-testid="demo-error"] card path at all, and surfaces only as a
+  // Playwright pageerror.
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => { pageErrors.push(error.message); });
+
+  const unknownSessionBlob = encodeState({ sessions: { 'sess-does-not-exist': { status: 'queued' } } });
+  await page.goto(demoUrl({ state: unknownSessionBlob, embed: '1', still: '1' }));
+  await expect
+    .poll(() => pageErrors.some((message) => message.includes('Scene patches session "sess-does-not-exist", which the sample install does not contain')))
+    .toBe(true);
+
+  // Positive control, same plumbing: patching a session id the sample install DOES seed throws
+  // nothing and boots clean.
+  pageErrors.length = 0;
+  const knownSessionBlob = encodeState({ sessions: { [DEMO_SESSIONS[0].id]: { status: 'queued' } } });
+  await gotoScene(page, { state: knownSessionBlob, embed: '1', still: '1' });
+  expect(pageErrors).toEqual([]);
 });
 
 test('the live task scene fetches its session recording from the serving origin', async ({ page }) => {

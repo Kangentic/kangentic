@@ -281,15 +281,15 @@ from a host's complete mounted set, never accumulated from claim/release - see
 |---------|---------|---------|
 | `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
 | `config:getGlobal` | invoke | Fetch global-only AppConfig (no project overrides) |
-| `config:set` | invoke | Update global config (partial merge) |
-| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down |
+| `config:set` | invoke | Update global config (partial merge). Resolves `ConfigSetResult` (`{ persisted }`), which says whether the write reached disk. Only the settings panel acts on it: this channel also carries window layouts, model caches and announcement dismissals, so a failure here is not necessarily something a user asked for (Sentry DESKTOP-1C) |
+| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down. Puts the same boolean on `event.returnValue`, which the preload bridge discards: there is no renderer left to tell |
 | `config:getProject` | invoke | Fetch project-level config overrides |
-| `config:setProject` | invoke | Update project-level overrides |
+| `config:setProject` | invoke | Update project-level overrides; resolves `ConfigSetResult` |
 | `config:getProjectByPath` | invoke | Fetch project overrides by filesystem path |
-| `config:setProjectByPath` | invoke | Update project overrides by filesystem path |
-| `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs |
+| `config:setProjectByPath` | invoke | Update project overrides by filesystem path; resolves `ConfigSetResult` for a background project as well as the current one |
+| `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs. Returns a bare count rather than `ConfigSetResult`: one click writes one file per project, and the count already excludes the ones that failed |
 | `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` is applied; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
-| `config:writeFailed` | on | Push to the main window only, not broadcast to pop-outs (`ToastContainer` mounts in `AppLayout` alone, so a pop-out has no toast host): a synchronous write to the data directory failed, so the change applies to this session but will not persist. Carries the user-facing message. Latched per failing source in `src/main/config/write-failure-notice.ts`, so it fires at most once until a later write to that source succeeds (Sentry DESKTOP-14/DESKTOP-13) |
+| `config:writeFailed` | on | Push to the main window only, not broadcast to pop-outs (`ToastContainer` mounts in `AppLayout` alone, so a pop-out has no toast host): a synchronous write to the data directory failed, so the change applies to this session but will not persist. Carries the user-facing message, which names the cause when the errno gives one (disk full, no permission, read-only volume, drive unavailable). Latched per failing source in `src/main/config/write-failure-notice.ts`, so it fires at most once until a later write to that source succeeds (Sentry DESKTOP-14/DESKTOP-13, DESKTOP-1C) |
 
 ### Keybindings (1 channel)
 | Channel | Pattern | Purpose |
@@ -450,17 +450,24 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `browser:downloadDone` | push | A download from a guest finished, carrying `{ fileName, filePath, state }` for the toast and its "Show in folder" action (which reuses the existing `shell:showItemInFolder`). Sent to the INITIATING guest's host window, resolved per download rather than captured at install time, since one `Session` serves every pane in a worktree |
 | `browser:guestMouseButton` | push | A guest page's mouse BACK / FORWARD button went down or up, carrying the guest's `webContentsId` and a MAIN-stamped `at`. A guest consumes the mouse outright - measured, one real back press produced 31 events inside the page and ZERO on the host window - so no renderer listener can see the button that push-to-talk and back-navigation both live on. `webContents.on('input-event')` does see it, and reports a true down/up PAIR, which is what makes push-to-HOLD possible rather than a one-shot toggle. The timestamp is stamped in main because the renderer's own clock is congested by the work a press starts (mic permission, engine start, AudioWorklet load: an 80ms timer measured 414ms), which would misfile a tap as a hold |
 
-### Updater (3 channels)
+### Updater (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `updater:check` | invoke | Check for application updates |
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
+| `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
 
-### Host memory pressure (1 channel)
+### Host memory pressure (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
+| `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
+
+### GPU health (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `gpuHealth:status` | invoke | How this launch is rendering, and whether the user still needs telling. Returns `GpuGraphicsStatus` (`{ softwareRendering, noticePending }`) via `ElectronAPI.gpuHealth.readStatus()`. A PULL, unlike its neighbour above: both facts are decided during boot, before the renderer can have registered a listener, and the escalation record behind them is already cleared by then, so a dropped push would lose the notice for good. Reading consumes `noticePending`, so a renderer reload cannot re-toast. See `src/main/diagnostics/gpu-health.ts` (Sentry DESKTOP-18 / DESKTOP-W) |
 
 ### Announcements (4 channels)
 | Channel | Pattern | Purpose |
@@ -482,11 +489,12 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (2 channels)
+### Memory (3 channels)
 Conversation-memory semantic layer (Smart-mode search). See the Memory settings tab.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `memory:status` | invoke | Report the conversation-memory index status for the Smart-mode palette UI. |
+| `memory:prewarm` | on | Spawn + init the embedding worker ahead of the first Smart query (fire-and-forget, embeds nothing). Sent on a Smart-mode Quick Find open: the worker is released once it has gone long enough without a query or pending index work (see `memory.semanticEnabled` in `docs/configuration.md` for the windows), and the typing that follows the open is the window its cold start needs. A no-op when semantic is off, the model is absent, or the worker has crashed past its cap. |
 | `memory:rebuildIndex` | invoke | Purge the current project's conversation index and re-run the backfill sweep (recovery from a corrupt/stale index; Memory settings "Rebuild index"). |
 
 ### Diagnostics (2 channels)
@@ -512,7 +520,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:modelProgress` | on | Push: first-use model download progress |
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
 | `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
-| `transcribe:prewarm` | on | Pre-load the selected engine so the next press is instant; `null` releases the warm engines (fire-and-forget) |
+| `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the accurate model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |
 
 ## Database
 

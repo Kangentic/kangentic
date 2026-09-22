@@ -244,6 +244,8 @@ The diff toolbar's **View options** menu collects the rendering choices as named
 
 The panel persists its expanded/collapsed state, selected file, selected commit, the diff scope, which files you have marked viewed, whether the rail's History section is expanded, and the divider positions across dialog reopens. Those are per-task; the View options above are app-wide.
 
+Each file also remembers where you had scrolled it. Open a file for the first time and it opens centred on its first change; leave it and come back and it returns to where you left off. That memory is per task and per diff scope, and it is held in memory rather than in the database, so it lasts as long as the app is running and a restart puts every file back on its first change.
+
 The whole panel can also detach into its own OS window - click the pop-out icon in its header - not just a single file's diff. Unlike the properties above, this is not preserved through a close: while the window is open the header pill still reads **Hide changes**, but closing the window leaves the panel closed instead of restoring it inline; click **Show changes** again to reopen it.
 
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
@@ -264,10 +266,11 @@ Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools
 | Zoom out | **Ctrl+-** (or **Ctrl+wheel down** inside the page) |
 | Reset zoom to 100% | **Ctrl+0** |
 | Reload page | **F5** or **Ctrl+R** (outside the embedded page) |
+| Send the capture to the agent | **Enter** (with the note field focused) |
 
 Zoom snaps to a Chrome-compatible ladder (25%, 33%, 50%, 67%, 75%, 80%, 90%, 100%, 110%, 125%, 150%, ... up to 500%). Ctrl+wheel zoom inside the webview uses a smoother multiplicative step but stays clamped to the same range. The toolbar shows a zoom pill with the current factor, plus dedicated zoom-out / reset / zoom-in buttons.
 
-Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else.
+Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Send is the exception. Its handler is bound on the note field itself rather than on the pane-scoped listener, so Enter sends only while that field has focus.
 
 ## Backlog
 
@@ -484,7 +487,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -721,7 +724,11 @@ Command Terminals keep running when you hide the layer and when you switch proje
 
 ### Notifications
 
-Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
+Notifications fire when an agent needs attention and you cannot already see it. The two channels cover opposite halves of that, so between them nothing is missed and nothing is said twice.
+
+Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash.
+
+Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 
 The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
 
@@ -753,7 +760,7 @@ Click **Pair a device** to display a QR code; scanning it with the Kangentic mob
 
 The phone is treated as an extension of your own desktop, not a separate integration to configure: pairing grants it full access to every capability the protocol defines (there is no shell, file, or arbitrary-command access in the protocol at all). Paired devices appear in a list below, identified by a key fingerprint you can compare against the phone's own Settings > Devices screen, along with their connection status and paired date. Rename a device from that list, or revoke it - revoking removes it from the desktop's signed roster immediately, and a revoked phone must be paired again from scratch to reconnect. See [Mobile Bridge](mobile-bridge.md) for the underlying protocol, pairing ceremony, and security design.
 
-The Mobile section closes with **How to install and pair**, which opens the [Kangentic Mobile docs](https://www.kangentic.com/mobile/): installing the app, pairing a phone, and push notifications. It is always present, in both directions - it stays usable with the bridge toggle off, since someone who has not installed the app yet is exactly the person who has not enabled the bridge, and it does not disappear once phones are paired, since that link is a docs landing page rather than an install page and you may well be adding a second device. Install instructions live on the website so they stay current between desktop releases; while a store rollout is in progress, the in-app Announcements dialog carries the signup steps for the current phase.
+The Mobile section closes with **How to install and pair**, which opens the [Kangentic Mobile docs](https://kangentic.com/mobile/): installing the app, pairing a phone, and push notifications. It is always present, in both directions - it stays usable with the bridge toggle off, since someone who has not installed the app yet is exactly the person who has not enabled the bridge, and it does not disappear once phones are paired, since that link is a docs landing page rather than an install page and you may well be adding a second device. Install instructions live on the website so they stay current between desktop releases; while a store rollout is in progress, the in-app Announcements dialog carries the signup steps for the current phase.
 
 ### Privacy
 
@@ -792,6 +799,39 @@ Because Claude Code supports `--resume`, conversation context is fully preserved
 
 Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
+## Graphics failures
+
+Chromium renders the app through a separate graphics process. Rarely, that process fails over and
+over. When it
+exhausts every fallback it has, Chromium shuts the whole app down on purpose. There is no crash
+dialog and no warning: the window simply disappears, and it usually does so within seconds of
+launching, so the app can look like it will not start at all.
+
+Kangentic recovers itself. The next launch starts without graphics acceleration, which removes the
+graphics process entirely and takes that shutdown off the table. You get a toast saying so, and
+Settings > Performance shows **Graphics acceleration** switched off, with a note that Kangentic
+turned it off after repeated failures.
+
+What to expect while it is off:
+
+- Terminals render through the slower DOM path instead of WebGL. Long-running agents with heavy
+  output feel less smooth. Everything still works.
+- Animations and the rest of the UI are unaffected.
+- Nothing turns it back on by itself. When you want to try again, switch **Graphics acceleration**
+  back on in Settings > Performance and restart. If the failure returns, the next launch turns it
+  off again.
+
+Kangentic does not diagnose the cause, and deliberately does not guess at one. Across the installs
+seen so far the app itself was never doing anything unusual at the time, and the failures started
+seconds into boot before any agent or terminal existed. A display driver is the usual culprit for
+this class of failure, so updating yours is the first thing worth trying, but the app has no way to
+confirm that from the inside and will not claim it did. If it keeps happening, the local crash
+records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the useful thing to
+attach to a bug report.
+
+Unrelated, despite the similar name: **Model acceleration** in Settings > Memory controls where the
+semantic search model runs, not app rendering. The two are independent.
+
 ## Conversation Memory
 
 Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Memory.
@@ -802,7 +842,7 @@ The structured transcript of each session: user turns, assistant replies, thinki
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Hardware acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 
@@ -831,7 +871,7 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 - The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch. The pill names the branch the checkout is actually on: it is re-read from git whenever you reopen the layer and whenever the checkout moves (an agent running `git checkout` inside the terminal, or your own git usage), so it never keeps claiming a branch the repo has left. Reopening never checks anything out.
 - The terminal's **Changes** panel measures ahead/behind, and diffs its Branch tab, against the project's default base branch, the same base the pill's default names.
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
-- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
+- Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts when they exit or go idle
 - Your terminals are **preserved across project switches**. If you open terminals, switch to another project, and switch back, they are still running. Each project keeps its own terminals, so you can keep ad-hoc work going while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 

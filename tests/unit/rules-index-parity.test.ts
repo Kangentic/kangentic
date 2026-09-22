@@ -47,6 +47,29 @@ describe('rules index parity', () => {
   });
 });
 
+// CLAUDE.md loads into every session, and into every subagent's fixed floor, so its size is a
+// recurring tax rather than a one-time cost. Claude Code warns above 40,000 characters, and the
+// file crossed it at 45,805: two Key Patterns bullets (Command Terminal and activity marks) had
+// grown into 17,276 characters of subsystem prose between them, which is what `.claude/rules/`
+// and `docs/` are for. Nothing stopped that growth, and nothing would stop it recurring, so this
+// pins the budget at the harness's own limit.
+
+const CLAUDE_MD_CHARACTER_BUDGET = 40_000;
+
+describe('CLAUDE.md size budget', () => {
+  it(`stays under ${CLAUDE_MD_CHARACTER_BUDGET} characters`, () => {
+    const characterCount = fs.readFileSync(CLAUDE_MD, 'utf-8').length;
+    expect(
+      characterCount,
+      `CLAUDE.md is ${characterCount} characters, over the ${CLAUDE_MD_CHARACTER_BUDGET} limit `
+      + 'Claude Code warns at. It loads into every session and every subagent floor, so move the '
+      + 'newest weight out rather than raising this number: prescriptive content belongs in a '
+      + 'path-scoped `.claude/rules/*.md` (which loads only with its subsystem), and background, '
+      + 'measurements, and rejected alternatives belong in `docs/`. Leave a pointer line behind.',
+    ).toBeLessThan(CLAUDE_MD_CHARACTER_BUDGET);
+  });
+});
+
 // A rule file with no `paths:` frontmatter loads into every session; a rule file with `paths:`
 // frontmatter loads only when a matching file enters context. CLAUDE.md's "Authoring a rule"
 // section says always-on rules are reserved for a small, deliberate set (currently four) and

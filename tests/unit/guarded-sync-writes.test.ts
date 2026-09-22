@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 // Enforces .claude/rules/guarded-sync-writes.md. A bare fs.writeFileSync/mkdirSync/renameSync
 // in these trees is exactly the shape that let ConfigManager.save() take the app down
@@ -36,7 +37,6 @@ const SCAN_DIRS = [
   'src/main/transcription',
 ];
 const GUARDED_CALLS = new Set(['writeFileSync', 'mkdirSync', 'renameSync']);
-const MARKER = 'sync-write-ok:';
 
 interface SyncWriteCall {
   file: string;
@@ -57,37 +57,14 @@ function isLexicallyInsideTry(node: ts.Node): boolean {
   return false;
 }
 
-/** True when `line` carries the marker AND text follows the colon. The rule requires the reason
- *  to name what depends on the write and where the throw is caught, so a bare `// sync-write-ok:`
- *  buys nothing and must not satisfy the scan: an empty escape hatch is how a genuinely
- *  overlooked write gets waved through. */
-function carriesMarkerWithReason(line: string): boolean {
-  const markerIndex = line.indexOf(MARKER);
-  if (markerIndex === -1) return false;
-  return line.slice(markerIndex + MARKER.length).trim().length > 0;
-}
-
-/** A `// sync-write-ok: <reason>` marker on the call's own line (trailing comment), or as part of
- *  an unbroken run of comment/blank lines immediately above it. Stops at the first line that is
- *  neither blank nor a comment, so a marker for an unrelated, more distant call cannot be
- *  mistaken for covering this one. */
+/** A `// sync-write-ok: <reason>` marker on the call's own line (trailing comment), or in the
+ *  comment block immediately above it. The shared reader (helpers/opt-out-marker.ts) owns both
+ *  the association rule and the requirement that a reason follow the colon: the rule wants the
+ *  reason to name what depends on the write and where the throw is caught, so a bare
+ *  `// sync-write-ok:` buys nothing, and an empty escape hatch is how a genuinely overlooked
+ *  write gets waved through. */
 function hasMarker(sourceLines: string[], lineIndex: number): boolean {
-  if (sourceLines[lineIndex] !== undefined && carriesMarkerWithReason(sourceLines[lineIndex])) return true;
-  let index = lineIndex - 1;
-  while (index >= 0) {
-    const trimmed = sourceLines[index].trim();
-    if (trimmed === '') {
-      index--;
-      continue;
-    }
-    if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
-      if (carriesMarkerWithReason(trimmed)) return true;
-      index--;
-      continue;
-    }
-    break;
-  }
-  return false;
+  return hasOptOutMarker(sourceLines, lineIndex, 'sync-write-ok');
 }
 
 // Takes the source text rather than a path so the detector's own positive path can be driven

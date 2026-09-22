@@ -335,9 +335,11 @@ npm run test:demo
   loop iterates `SCENES`, so a new entry is covered with no test change) and, where it names a
   `focus`, that element is a real region rather than nothing, an empty box, or the whole frame; a
   `driver` scene is refused by name, `scenes.json` is served and matches the registry, the ready
-  message carries a dialog scene's focus rect, `embed=1` hides the window controls, `theme=`
-  applies, an unknown
-  scene shows the error card, the console stays clean, and boot makes no request off the serving
+  message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
+  has nothing of its own to close and stays silent when it does, `embed=1` hides the window
+  controls, `theme=` applies, an unknown
+  scene shows the error card, a `state=` blob naming only part of a nested config block is
+  refused, the console stays clean, and boot makes no request off the serving
   origin
 - **Build required** before running; the `demo` CI job and the Pages deploy both run it on the
   exact bytes they ship

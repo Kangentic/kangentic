@@ -804,7 +804,10 @@ const SnapshotRow = memo(function SnapshotRow({ snapshot, label, pollNow }: { sn
   // ("claude-*" → Claude adapter, "codex-*" → Codex, etc.).
   const modelId = useSessionStore((state) => state.sessionUsage[snapshot.sessionId]?.model.id);
   return (
-    <div className="space-y-2 min-w-0 border border-edge/50 rounded-md p-2.5 bg-surface/30">
+    <div
+      className="space-y-2 min-w-0 border border-edge/50 rounded-md p-2.5 bg-surface/30"
+      data-session-id={snapshot.sessionId}
+    >
       {/* Title on row 1, status pill on row 2 underneath, always left-aligned.
           Layout stays consistent regardless of title length so long board
           names don't push the pill to a right-floated second line. */}
@@ -1119,8 +1122,14 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
   if (snapshot.activity === 'permission') {
     return {
       Icon: Lock,
-      iconClass: 'text-amber-400',
-      pillClasses: 'bg-amber-500/15 text-amber-200 border border-amber-500/25',
+      iconClass: 'text-attention',
+      // The central tokens, not a palette step. `text-amber-200` and `text-green-100` below it
+      // were near-white, which reads on the dark default and vanishes on every LIGHT theme: on
+      // sand and clay the pill label was light ink on a 15 percent tint. Nobody hit it while this
+      // was a developer-only panel; it is a docs figure now. `text-attention` / `text-active` are
+      // the same honey and emerald the board uses for needs-you and working, and the welcome
+      // screen already proves they hold on cream.
+      pillClasses: 'bg-attention/15 text-attention border border-attention/25',
       label: 'Awaiting permission',
     };
   }
@@ -1134,7 +1143,7 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
   }
   // Thinking - icon and trailing text reflect the dominant reason.
   const reason = snapshot.reason;
-  const pill = 'bg-green-500/15 text-green-100 border border-green-500/25';
+  const pill = 'bg-active/15 text-active border border-active/25';
   switch (reason.kind) {
     case 'tool':
       return {
@@ -1164,7 +1173,7 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
     case 'turn-active':
       return {
         Icon: Loader2,
-        iconClass: 'text-green-300 animate-spin',
+        iconClass: 'text-active animate-spin',
         pillClasses: pill,
         label: 'Thinking · turn active',
       };
@@ -1173,14 +1182,14 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
     case 'idle':
       return {
         Icon: Loader2,
-        iconClass: 'text-green-300 animate-spin',
+        iconClass: 'text-active animate-spin',
         pillClasses: pill,
         label: 'Thinking',
       };
     case 'permission':
       return {
         Icon: Lock,
-        iconClass: 'text-amber-300',
+        iconClass: 'text-attention',
         pillClasses: pill,
         label: 'Thinking · awaiting permission',
       };
@@ -1194,9 +1203,9 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
  */
 const ActivityChip = memo(function ActivityChip({ state }: { state: ActivityState }) {
   const color = state === 'thinking'
-    ? 'text-green-300'
+    ? 'text-active'
     : state === 'permission'
-      ? 'text-amber-300'
+      ? 'text-attention'
       : 'text-fg-faint';
   return <span className={`shrink-0 ${color}`}>{state}</span>;
 });
@@ -1222,7 +1231,7 @@ const CounterRow = memo(function CounterRow({ label, value, tooltip }: { label: 
 });
 
 /**
- * Boolean flag row. "yes" is emphasized in amber; "no" is dimmed.
+ * Boolean flag row. "yes" is emphasized in the attention tone; "no" is dimmed.
  */
 const FlagRow = memo(function FlagRow({ label, value, tooltip }: { label: string; value: boolean; tooltip: string }) {
   return (
@@ -1230,7 +1239,7 @@ const FlagRow = memo(function FlagRow({ label, value, tooltip }: { label: string
       <span className="text-fg-faint truncate cursor-help">{label}</span>
       <span
         className={`font-mono tabular-nums shrink-0 ${
-          value ? 'text-amber-300 font-medium' : 'text-fg-disabled'
+          value ? 'text-attention font-medium' : 'text-fg-disabled'
         }`}
       >
         {value ? 'yes' : 'no'}

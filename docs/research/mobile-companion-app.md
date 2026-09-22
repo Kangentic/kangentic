@@ -439,10 +439,13 @@ Desktop / bridge (kangentic board):
   open: notification-CATEGORY alignment between the two sides. Desktop has no category type at
   all, only four config booleans (`onAgentIdle`, `onAgentCrash`, `onPlanComplete`,
   `onSpawnStalled`), of which `DesktopNotifier` fires two - spawn-stall and plan-complete are
-  still renderer-driven over `NOTIFICATION_SHOW`. `onAgentIdle` is a single level-triggered
-  `requiresUserInteraction` gate spanning idle and permission, where the push side splits the
-  same ground into edge-triggered `input-required` and `turn-complete`; the notifier's header
-  comment records that divergence as deliberate.
+  still renderer-driven over `NOTIFICATION_SHOW`. `onAgentIdle` spans idle and permission through
+  `requiresUserInteraction` on both channels, but triggers differently on each: the desktop half
+  is level-triggered (the notifier's header comment records that as deliberate), while the toast
+  half added in 2026-09 is edge-triggered in the renderer, because a toast has no focus gate to
+  hide a repeat behind. The push side splits the same ground again, into edge-triggered
+  `input-required` and `turn-complete`. So one config boolean now drives three trigger
+  disciplines, which is the concrete shape of the category misalignment above.
 - **Bridge Phase 4 (later) - Direct P2P + IPv6 speed upgrade:** WebRTC data channels
   (node-datachannel desktop / react-native-webrtc mobile) with signaling over the existing secure
   channel and DTLS fingerprints pinned at pairing; IPv6-first candidate ordering; opportunistic

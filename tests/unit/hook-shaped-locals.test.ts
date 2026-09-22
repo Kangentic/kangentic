@@ -23,6 +23,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasOptOutMarker } from './helpers/opt-out-marker';
 
 const RENDERER_DIR = path.resolve(__dirname, '../../src/renderer');
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -47,6 +48,39 @@ function collectSourceFiles(dir: string): string[] {
 // A destructure (`const { useX } = ...`) is not matched and has
 // never occurred here; extend the pattern if it does.
 const HOOK_SHAPED_LOCAL = /^[ \t]+(?:const|let)\s+(use[A-Z][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=/gm;
+
+interface HookShapedLocal {
+  file: string;
+  line: number;
+  name: string;
+  suppressed: boolean;
+}
+
+// Takes the source text (plus a label) rather than only a path, so the marker
+// handling can be driven directly over known input below. Without this, the
+// `hook-local-ok` opt-out's positive path (a marker actually suppressing a
+// match) is exercised only if the live tree happens to carry one, which it
+// does not today - a wiring regression here (wrong marker name, wrong line
+// index) would report nothing and the whole suite would still pass.
+function scanSource(fileLabel: string, source: string): HookShapedLocal[] {
+  const pattern = HOOK_SHAPED_LOCAL;
+  const lines = source.split('\n');
+  const found: HookShapedLocal[] = [];
+  pattern.lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const lineNumber = source.slice(0, match.index).split('\n').length;
+    found.push({
+      file: fileLabel,
+      line: lineNumber,
+      name: match[1],
+      // Per-line opt-out for a local that genuinely IS a hook resolved from a
+      // stable binding and has been checked against the probe.
+      suppressed: hasOptOutMarker(lines, lineNumber - 1, 'hook-local-ok'),
+    });
+  }
+  return found;
+}
 
 describe('hook-shaped local variables', () => {
   // The scan below is vacuously green whenever the tree happens to be clean, so
@@ -80,25 +114,12 @@ describe('hook-shaped local variables', () => {
   });
 
   it('no renderer file binds a `use`-prefixed name to a local variable', () => {
-    const pattern = HOOK_SHAPED_LOCAL;
-    const violations: string[] = [];
-
-    for (const file of collectSourceFiles(RENDERER_DIR)) {
-      const source = fs.readFileSync(file, 'utf-8');
-      const lines = source.split('\n');
-      let match;
-      pattern.lastIndex = 0;
-      while ((match = pattern.exec(source)) !== null) {
-        const lineNumber = source.slice(0, match.index).split('\n').length;
-        // Per-line opt-out for a local that genuinely IS a hook resolved from a
-        // stable binding and has been checked against the probe.
-        const sameLine = lines[lineNumber - 1] ?? '';
-        const previousLine = lines[lineNumber - 2] ?? '';
-        if (/\/\/\s*hook-local-ok:/.test(sameLine) || /\/\/\s*hook-local-ok:/.test(previousLine)) continue;
-        const relative = path.relative(REPO_ROOT, file).replace(/\\/g, '/');
-        violations.push(`${relative}:${lineNumber} -> ${match[1]}`);
-      }
-    }
+    const violations = collectSourceFiles(RENDERER_DIR).flatMap((file) => {
+      const relative = path.relative(REPO_ROOT, file).replace(/\\/g, '/');
+      return scanSource(relative, fs.readFileSync(file, 'utf-8'))
+        .filter((local) => !local.suppressed)
+        .map((local) => `${local.file}:${local.line} -> ${local.name}`);
+    });
 
     expect(
       violations,
@@ -108,5 +129,45 @@ describe('hook-shaped local variables', () => {
       + '`layerStore`), or add `// hook-local-ok: <reason>`:\n'
       + violations.map((violation) => `  - ${violation}`).join('\n'),
     ).toEqual([]);
+  });
+});
+
+// The test above can stay green while the `hook-local-ok` opt-out is wired wrong -
+// no live marker exercises its positive path today (see the comment on scanSource).
+// These drive it over known input instead.
+describe('the hook-local-ok opt-out', () => {
+  it('suppresses a marked hook-shaped local', () => {
+    const found = scanSource('probe.tsx', [
+      'function Component() {',
+      '  // hook-local-ok: resolved from a stable binding, checked against the probe.',
+      '  const useThing = resolveStableHook();',
+      '  return null;',
+      '}',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 3, name: 'useThing', suppressed: true }]);
+  });
+
+  it('does not suppress an unmarked hook-shaped local', () => {
+    const found = scanSource('probe.tsx', [
+      'function Component() {',
+      '  const useThing = resolveStableHook();',
+      '  return null;',
+      '}',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 2, name: 'useThing', suppressed: false }]);
+  });
+
+  it('does not suppress a bare marker with no reason after the colon', () => {
+    const found = scanSource('probe.tsx', [
+      'function Component() {',
+      '  // hook-local-ok:',
+      '  const useThing = resolveStableHook();',
+      '  return null;',
+      '}',
+    ].join('\n'));
+
+    expect(found).toEqual([{ file: 'probe.tsx', line: 3, name: 'useThing', suppressed: false }]);
   });
 });

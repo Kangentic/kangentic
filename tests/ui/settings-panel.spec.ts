@@ -123,7 +123,7 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Board tab with width, config sync, and animation settings', async () => {
+  test('shows Board tab with width and config sync settings, and no longer Animations', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Board' }).click();
     await expect(page.locator('text=Column Width')).toBeVisible();
@@ -132,7 +132,21 @@ test.describe('Settings Panel', () => {
     await expect(page.locator('text=Auto-Apply Board Config Changes')).toBeVisible();
     await expect(page.getByText('Terminal Panel', { exact: true })).toBeVisible();
     await expect(page.getByText('Status Bar', { exact: true })).toBeVisible();
-    await expect(page.locator('text=Animations')).toBeVisible();
+    // Animations LEFT for the Performance tab: it toggles .no-motion on <html>,
+    // so it is app-wide rendering and never was board chrome. Asserted absent
+    // here as well as present there, so a half-done move fails on one side.
+    await expect(page.getByTestId('setting-row-animationsEnabled')).toHaveCount(0);
+    await closeSettings();
+  });
+
+  test('shows Performance tab with graphics acceleration and the Animations row moved from Board', async () => {
+    await openSettings();
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Performance' }).click();
+    await expect(page.getByTestId('setting-row-graphicsAccelerationEnabled')).toBeVisible();
+    await expect(page.getByTestId('setting-row-animationsEnabled')).toBeVisible();
+    // The callout is for an install Kangentic downgraded itself. This fixture
+    // is a normal one, so it must stay quiet.
+    await expect(page.getByTestId('graphics-acceleration-notice')).toHaveCount(0);
     await closeSettings();
   });
 

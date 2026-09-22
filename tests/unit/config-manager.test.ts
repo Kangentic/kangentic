@@ -1237,6 +1237,42 @@ describe('Config Manager -- divergent-cache clobber across instances (characteri
   });
 });
 
+describe('Config Manager -- graphicsAccelerationEnabled / graphicsAccelerationOffBy default merge', () => {
+  // Both fields are REQUIRED on AppConfig, defaulting to true / null. The claim
+  // (shared/types.ts's DEFAULT_CONFIG comment) is that upgrading an existing
+  // install changes nothing and needs no migration, because deepMergeConfig
+  // never writes a default over a key that is simply absent from the file.
+  // That is true by construction, but nothing pinned it: resolveGraphicsMode()
+  // in src/main/index.ts compares `=== false`, so a missing key resolving to
+  // `undefined` instead of `true` would still happen to compare correctly -
+  // exactly the kind of accident that breaks silently the day someone writes
+  // `if (!config.graphicsAccelerationEnabled)` instead.
+
+  it('defaults to enabled with no off-by reason when the config file has neither key', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ theme: 'dark' }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    // toBe, not a truthy/falsy check: undefined must fail this.
+    expect(config.graphicsAccelerationEnabled).toBe(true);
+    expect(config.graphicsAccelerationOffBy).toBe(null);
+  });
+
+  it('preserves a persisted app-driven off choice through the default merge', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      graphicsAccelerationEnabled: false,
+      graphicsAccelerationOffBy: 'app',
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.graphicsAccelerationEnabled).toBe(false);
+    expect(config.graphicsAccelerationOffBy).toBe('app');
+  });
+});
+
 describe('Config Manager -- monitor deep-merge (NOT a CONFIG_DICTIONARY_PATHS entry)', () => {
   // 'monitor' is deliberately absent from CONFIG_DICTIONARY_PATHS: it is a typed
   // MonitorView struct (layout/groupBy/sort/liveOnly/projectFilter/stateFilter/

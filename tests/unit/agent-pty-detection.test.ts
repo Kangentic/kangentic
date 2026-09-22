@@ -7,7 +7,8 @@
  *      (so the spinner overlay drops).
  *   2. `adapter.runtime.activity.detectIdle(buffered)` returns true once the
  *      CLI has finished painting its idle prompt (so the activity dot lands
- *      on idle without waiting for the 10s silence timer).
+ *      on idle without waiting for PtyActivityTracker's
+ *      `PTY_SILENCE_THRESHOLD_MS` silence timer).
  *
  * The captured stream is also written to `tests/fixtures/agent-pty/<agent>.bin`
  * so the regexes can be tuned offline against ground-truth output without

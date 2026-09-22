@@ -22,11 +22,13 @@ vi.mock('electron', () => ({
 
 import { DictationClient } from '../../src/main/transcription/dictation-client';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES } from '../../src/main/utility-process/commit-ceiling';
 import type { EngineSelection } from '../../src/main/transcription/engines/engine-selection';
 
-// Mirrors the private IDLE_SHUTDOWN_MS in dictation-client.ts (EmbedClient's
-// shape, not LineCountClient's - dictation holds warm models worth keeping).
-const IDLE_SHUTDOWN_MS = 5 * 60_000;
+// Mirrors the private IDLE_SHUTDOWN_MS in dictation-client.ts: the recycle
+// window for a worker that has served a session (and so holds the accurate
+// model). A prewarm-only worker is never recycled.
+const IDLE_SHUTDOWN_MS = 30 * 60_000;
 // Comfortably past the largest UtilityRestartPolicy backoff step.
 const BACKOFF_CLEAR_MS = 20_000;
 // Past the policy's decay window (5 min).
@@ -51,6 +53,8 @@ interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
   stderr?: EventEmitter;
+  /** Set by the ceiling tests; the real UtilityProcess carries one. */
+  pid?: number;
 }
 
 const forkedChildren: FakeChild[] = [];
@@ -71,6 +75,45 @@ function lastChild(): FakeChild {
 function lastRequestId(child: FakeChild): number {
   const lastCall = child.postMessage.mock.calls[child.postMessage.mock.calls.length - 1];
   return (lastCall[0] as { id: number }).id;
+}
+
+/** Warm the client's worker: ensureWarm + the worker's result. Returns the
+ *  child that served it. */
+async function warm(client: DictationClient): Promise<FakeChild> {
+  const promise = client.ensureWarm(fakeEnsureEngineRequest());
+  const child = lastChild();
+  child.emit('message', { type: 'result', id: lastRequestId(child) });
+  await promise;
+  return child;
+}
+
+/** Create a session on the current worker (which is what makes it load the
+ *  accurate model, and so what makes it worth recycling) and answer it. */
+async function serveSession(client: DictationClient, dictationSessionId = 'dictation-1'): Promise<FakeChild> {
+  const promise = client.createSession({
+    dictationSessionId,
+    ...fakeEnsureEngineRequest(),
+    sessionOptions: { language: 'en', punctuation: true },
+  });
+  const child = lastChild();
+  child.emit('message', { type: 'result', id: lastRequestId(child) });
+  await promise;
+  return child;
+}
+
+/** End the session the worker is serving. The idle recycle never arms while
+ *  a session is open, so a test that expects one must finish the session. */
+async function finishSession(client: DictationClient, child: FakeChild, dictationSessionId = 'dictation-1'): Promise<void> {
+  const promise = client.finalize(dictationSessionId);
+  child.emit('message', { type: 'result', id: lastRequestId(child), text: 'done' });
+  await promise;
+}
+
+/** Serve one complete session (create + finalize) on the current worker. */
+async function serveAndFinish(client: DictationClient): Promise<FakeChild> {
+  const child = await serveSession(client);
+  await finishSession(client, child);
+  return child;
 }
 
 describe('DictationClient', () => {
@@ -353,12 +396,8 @@ describe('DictationClient', () => {
     vi.useFakeTimers();
     try {
       const client = new DictationClient();
-      client.setWarmHold(false);
 
-      const firstPromise = client.ensureWarm(fakeEnsureEngineRequest());
-      const firstChild = lastChild();
-      firstChild.emit('message', { type: 'result', id: lastRequestId(firstChild) });
-      await firstPromise;
+      const firstChild = await serveAndFinish(client);
 
       // Idle recycle: killChild() nulls this.child synchronously. C1's real
       // 'exit' has not fired yet.
@@ -389,12 +428,8 @@ describe('DictationClient', () => {
       const policy = new UtilityRestartPolicy({ service: 'kangentic-dictation', maxCrashes: 3 });
       const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
       const client = new DictationClient(policy);
-      client.setWarmHold(false);
 
-      const firstPromise = client.ensureWarm(fakeEnsureEngineRequest());
-      const firstChild = lastChild();
-      firstChild.emit('message', { type: 'result', id: lastRequestId(firstChild) });
-      await firstPromise;
+      const firstChild = await serveAndFinish(client);
 
       // Idle recycle: killChild() records C1 as the intentional kill and
       // nulls this.child synchronously. C1's own 'exit' has not landed yet.
@@ -425,23 +460,21 @@ describe('DictationClient', () => {
     }
   });
 
-  it('setWarmHold(true) suppresses the idle recycle; releasing it re-arms the timer', async () => {
+  it('never idle-recycles a prewarm-only worker: it holds only the live model and is the always-on baseline', async () => {
     vi.useFakeTimers();
     try {
       const client = new DictationClient();
-      client.setWarmHold(true);
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
 
-      const promise = client.ensureWarm(fakeEnsureEngineRequest());
-      const child = lastChild();
-      child.emit('message', { type: 'result', id: lastRequestId(child) });
-      await promise;
+      const child = await warm(client);
+      // A second prewarm (a model change) is still prewarm-only.
+      await warm(client);
 
-      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
       expect(child.kill).not.toHaveBeenCalled();
-
-      client.setWarmHold(false);
-      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
-      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(recycled).not.toHaveBeenCalled();
+      expect(mockFork).toHaveBeenCalledTimes(1);
 
       client.dispose();
     } finally {
@@ -449,27 +482,250 @@ describe('DictationClient', () => {
     }
   });
 
-  it('recycles the worker after an idle timeout without counting it as a crash', async () => {
+  it('recycles a worker that served a session after IDLE_SHUTDOWN_MS, emits recycled, and does not count it as a crash', async () => {
     vi.useFakeTimers();
     try {
       const client = new DictationClient();
-      client.setWarmHold(false);
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
 
-      const promise = client.ensureWarm(fakeEnsureEngineRequest());
-      const child = lastChild();
-      child.emit('message', { type: 'result', id: lastRequestId(child) });
-      await promise;
+      const child = await warm(client);
+      await serveSession(client);
+      // Every request re-arms: a session finalized just before the window
+      // ends gets a whole new window.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 1);
+      const finalizePromise = client.finalize('dictation-1');
+      child.emit('message', { type: 'result', id: lastRequestId(child), text: 'done' });
+      await finalizePromise;
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 1);
+      expect(child.kill).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(recycled).toHaveBeenCalledTimes(1);
       child.emit('exit');
-
       expect(client.crashed).toBe(false);
 
-      const nextPromise = client.ensureWarm(fakeEnsureEngineRequest());
+      // The replacement spawns on the next request, prewarm-only again.
+      const nextChild = await warm(client);
       expect(mockFork).toHaveBeenCalledTimes(2);
-      const nextChild = lastChild();
-      nextChild.emit('message', { type: 'result', id: lastRequestId(nextChild) });
-      await nextPromise;
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 2);
+      expect(nextChild.kill).not.toHaveBeenCalled();
+      expect(recycled).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('release() kills the worker without emitting recycled, rejects in-flight requests as turned off, and arms no timer against the missing child', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+
+      const child = await warm(client);
+      await serveSession(client);
+      const inFlight = client.ensureWarm(fakeEnsureEngineRequest());
+      const assertion = expect(inFlight).rejects.toThrow('Dictation was turned off');
+
+      client.release();
+
+      await assertion;
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      child.emit('exit');
+      expect(client.crashed).toBe(false);
+
+      // The rejected request's own re-arm found no child; nothing fires.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 2);
+      expect(recycled).not.toHaveBeenCalled();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // Not disposed: the next request spawns afresh.
+      await warm(client);
+      expect(mockFork).toHaveBeenCalledTimes(2);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never fires the idle recycle while a session is open, however long the hold, and arms once the session ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+
+      const child = await serveSession(client);
+      // Frames travel fire-and-forget and never touch the timer: a hold three
+      // windows long must still not be cut down.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(recycled).not.toHaveBeenCalled();
+
+      const finalizePromise = client.finalize('dictation-1');
+      child.emit('message', { type: 'result', id: lastRequestId(child), text: 'done' });
+      await finalizePromise;
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(recycled).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a cancelled session ends for the recycle too', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const child = await serveSession(client);
+      client.cancel('dictation-1');
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a failed createSession does not leak its id in activeSessions, so a later completed session on the same worker can still idle-recycle', async () => {
+    // armIdleShutdown()'s second guard (`activeSessions.size > 0`) returns
+    // early for as long as ANY entry sits in the set. createSession's catch
+    // deletes its own id on a worker-reported failure specifically so a
+    // create that never became a session cannot hold that guard closed
+    // forever. Nothing else clears an individual entry - only killChild()/
+    // onWorkerExit() clear the whole set - so this is the one path a leak
+    // could hide in.
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+
+      const failing = client.createSession({
+        dictationSessionId: 'dictation-fail',
+        ...fakeEnsureEngineRequest(),
+        sessionOptions: { language: 'en', punctuation: true },
+      });
+      const child = lastChild();
+      const failAssertion = expect(failing).rejects.toThrow('boom');
+      child.emit('message', { type: 'error', id: lastRequestId(child), message: 'boom' });
+      await failAssertion;
+
+      // A second, genuinely completed session on the SAME worker (createSession
+      // failing does not kill the child - only a worker exit does that).
+      await serveAndFinish(client);
+
+      // servedSession was set true by the failed attempt too (the worker may
+      // already have started the load the client gave up waiting on), so this
+      // worker is recyclable on its own terms - the only thing that could
+      // still block the arm is a leaked activeSessions entry.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(recycled).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe('commit ceiling', () => {
+    async function serveWithCommit(commitBytes: number | null): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
+      const client = new DictationClient(undefined, { readCommitBytes });
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+      const child = await warm(client);
+      child.pid = 4242;
+      await serveSession(client);
+      await finishSession(client, child);
+      return { client, child, recycled };
+    }
+
+    it('a worker over the ceiling is recycled at the short window', async () => {
+      vi.useFakeTimers();
+      try {
+        const { client, child, recycled } = await serveWithCommit(WORKER_COMMIT_CEILING_BYTES + 1);
+        await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
+        expect(child.kill).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(child.kill).toHaveBeenCalledTimes(1);
+        expect(recycled).toHaveBeenCalledTimes(1);
+        client.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a worker under the ceiling keeps the long window', async () => {
+      vi.useFakeTimers();
+      try {
+        const { client, child } = await serveWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
+        await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 2);
+        expect(child.kill).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - HEAVY_IDLE_SHUTDOWN_MS * 2);
+        expect(child.kill).toHaveBeenCalledTimes(1);
+        client.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a worker exactly at the ceiling keeps the long window - the comparison is strict', async () => {
+      // Existing cases here only ever use ceiling+1 and ceiling-1, so a `>`
+      // flipped to `>=` would pass both of them unnoticed. This pins the
+      // boundary value itself.
+      vi.useFakeTimers();
+      try {
+        const { client, child } = await serveWithCommit(WORKER_COMMIT_CEILING_BYTES);
+        await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 2);
+        expect(child.kill).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - HEAVY_IDLE_SHUTDOWN_MS * 2);
+        expect(child.kill).toHaveBeenCalledTimes(1);
+        client.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a pid missing from the process table keeps the long window', async () => {
+      vi.useFakeTimers();
+      try {
+        const { client, child } = await serveWithCommit(null);
+        await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 2);
+        expect(child.kill).not.toHaveBeenCalled();
+        client.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it('a crash clears the idle timer and the served-session mark, so the replacement prewarm-only worker is not recycled and no phantom recycled fires', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+
+      await serveAndFinish(client);
+      // The timer is armed against C1. C1 crashes...
+      lastChild().emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+
+      // ...and the replacement is prewarm-only.
+      const replacement = await warm(client);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 2);
+
+      expect(replacement.kill).not.toHaveBeenCalled();
+      expect(recycled).not.toHaveBeenCalled();
 
       client.dispose();
     } finally {

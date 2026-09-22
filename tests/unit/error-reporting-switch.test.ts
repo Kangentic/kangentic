@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ErrorEvent } from '@sentry/electron/main';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -59,7 +60,12 @@ vi.mock('electron', () => ({ app: mocks.electronMock.app }));
 vi.mock('@sentry/electron/main', () => mocks.sentryMock);
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: mocks.trackEventSpy }));
 
-import { resolveErrorReportingEnabled } from '../../src/main/analytics/error-reporting';
+import {
+  beforeSendEvent,
+  resolveErrorReportingEnabled,
+  SENTRY_STACK_FRAME_LIMIT,
+  tagTruncatedStack,
+} from '../../src/main/analytics/error-reporting';
 import {
   buildMinidump,
   FFPROBE_MODULES,
@@ -538,6 +544,40 @@ describe('error reporting runtime behavior (module-state gated)', () => {
         module: 'ffprobe',
       });
     });
+
+    it('tags a frame-capped stack through the REAL Sentry.init() wiring, not only via a direct import of beforeSendEvent', async () => {
+      // Every other case in this describe block would stay green even if
+      // initErrorReporting() pointed `beforeSend` back at plain
+      // filterNativeCrashEvent - none of them touch tagging, and
+      // tagTruncatedStack/beforeSendEvent are separate exports nothing here
+      // calls. Going through initAndGetBeforeSend (the function Sentry.init
+      // actually received) is what makes reverting that one line in
+      // initErrorReporting() go red.
+      const beforeSend = await initAndGetBeforeSend();
+
+      const cappedStackEvent = {
+        exception: {
+          values: [
+            {
+              type: 'Error',
+              value: 'Illegal value for lineNumber',
+              stacktrace: {
+                frames: Array.from({ length: SENTRY_STACK_FRAME_LIMIT }, (_unused, index) => ({
+                  filename: 'node_modules/monaco-editor/esm/vs/editor/common/model/textModel.js',
+                  function: `frame${index}`,
+                  in_app: false,
+                })),
+              },
+            },
+          ],
+        },
+      };
+
+      const result = beforeSend(cappedStackEvent, {});
+      const tags = (result as { tags?: Record<string, string> } | null)?.tags;
+
+      expect(tags?.stack_truncated).toBe('true');
+    });
   });
 });
 
@@ -581,5 +621,120 @@ describe('against the installed @sentry/electron source', () => {
     // silent pass-through - see error-reporting.ts's comment on why the GPU
     // filter is scoped to 'abnormal-exit' alone.
     expect(capturedReasons.sort()).toEqual(['abnormal-exit', 'integrity-failure', 'launch-failed']);
+  });
+});
+
+/**
+ * SENTRY_STACK_FRAME_LIMIT is a hand-copied duplicate of the number the SDK
+ * itself enforces, not a value this project controls. A dependency bump that
+ * moves the real cap would leave every other test in this file green - they
+ * all derive their frame counts from our own constant - while the tag it
+ * drives quietly stopped meaning the SDK's actual cap. This reads the
+ * installed source and compares it to the imported constant, rather than
+ * asserting a bare literal 50, so a failure states the coupling instead of
+ * just restating the magic number: it means SENTRY_STACK_FRAME_LIMIT must be
+ * updated to the new upstream number, not that this test is wrong.
+ */
+describe('SENTRY_STACK_FRAME_LIMIT against the installed Sentry SDK source', () => {
+  const requireFromTest = createRequire(import.meta.url);
+
+  it("still matches @sentry/core's STACKTRACE_FRAME_LIMIT, the parser that actually slices the frames array this code counts", () => {
+    const coreEntryDir = path.dirname(requireFromTest.resolve('@sentry/core'));
+    const stacktraceSource = fs.readFileSync(
+      path.join(coreEntryDir, 'utils', 'stacktrace.js'),
+      'utf-8',
+    );
+
+    const limitMatch = /const STACKTRACE_FRAME_LIMIT = (\d+);/.exec(stacktraceSource);
+    expect(limitMatch).not.toBeNull();
+    const installedLimit = Number((limitMatch as RegExpExecArray)[1]);
+
+    expect(installedLimit).toBe(SENTRY_STACK_FRAME_LIMIT);
+  });
+
+  // The other half of the cap, and the lesser one: @sentry/core's parser above
+  // is what actually slices the frames array this code counts, so it is the
+  // load-bearing pin. This one catches an upstream that moved only the capture
+  // depth.
+  it("still matches @sentry/browser's globalHandlers Error.stackTraceLimit", () => {
+    // Derived from the resolved entry's own directory rather than a
+    // hardcoded dev/prod path, so this follows whichever build condition
+    // Node actually selected for @sentry/browser instead of guessing at it.
+    const browserEntryDir = path.dirname(requireFromTest.resolve('@sentry/browser'));
+    const globalHandlersSource = fs.readFileSync(
+      path.join(browserEntryDir, 'integrations', 'globalhandlers.js'),
+      'utf-8',
+    );
+
+    const limitMatch = /Error\.stackTraceLimit = (\d+);/.exec(globalHandlersSource);
+    expect(limitMatch).not.toBeNull();
+    const installedLimit = Number((limitMatch as RegExpExecArray)[1]);
+
+    expect(installedLimit).toBe(SENTRY_STACK_FRAME_LIMIT);
+  });
+});
+
+/**
+ * The SDK parses a V8 stack innermost-first and stops at 50 frames, so an event
+ * that hits the cap has lost its OUTER frames: the app code that called into
+ * the library and the timer it ran under. Such an event reads as a pure
+ * third-party failure with no in-app frame, which is exactly how DESKTOP-19's
+ * six events read. The tag makes "no app frames survived" distinguishable from
+ * "no app frames".
+ */
+describe('tagTruncatedStack', () => {
+  function eventWithFrameCount(frameCount: number): ErrorEvent {
+    return {
+      exception: {
+        values: [
+          {
+            type: 'Error',
+            value: 'Illegal value for lineNumber',
+            stacktrace: {
+              frames: Array.from({ length: frameCount }, (_unused, index) => ({
+                filename: 'node_modules/monaco-editor/esm/vs/editor/common/model/textModel.js',
+                function: `frame${index}`,
+                in_app: false,
+              })),
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  it('tags an event whose stack sits exactly on the SDK frame cap', () => {
+    const tagged = tagTruncatedStack(eventWithFrameCount(SENTRY_STACK_FRAME_LIMIT));
+    expect(tagged.tags?.stack_truncated).toBe('true');
+  });
+
+  it('leaves a shorter stack untagged, so the tag means truncation and not merely "deep"', () => {
+    const tagged = tagTruncatedStack(eventWithFrameCount(SENTRY_STACK_FRAME_LIMIT - 1));
+    expect(tagged.tags?.stack_truncated).toBeUndefined();
+  });
+
+  it('leaves an event with no exception values untouched', () => {
+    const event: ErrorEvent = { message: 'no stack here' };
+    expect(tagTruncatedStack(event).tags?.stack_truncated).toBeUndefined();
+  });
+
+  it('preserves tags the event already carried', () => {
+    const event = eventWithFrameCount(SENTRY_STACK_FRAME_LIMIT);
+    event.tags = { source: 'pty_spawn' };
+    const tagged = tagTruncatedStack(event);
+    expect(tagged.tags?.source).toBe('pty_spawn');
+    expect(tagged.tags?.stack_truncated).toBe('true');
+  });
+
+  it('beforeSendEvent tags a capped stack and still returns the event', () => {
+    const returned = beforeSendEvent(eventWithFrameCount(SENTRY_STACK_FRAME_LIMIT), {});
+    expect(returned).not.toBeNull();
+    expect(returned?.tags?.stack_truncated).toBe('true');
+  });
+
+  it('beforeSendEvent passes an ordinary event through unchanged', () => {
+    const returned = beforeSendEvent(eventWithFrameCount(3), {});
+    expect(returned).not.toBeNull();
+    expect(returned?.tags?.stack_truncated).toBeUndefined();
   });
 });

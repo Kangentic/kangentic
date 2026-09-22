@@ -743,4 +743,118 @@ test.describe('Notification click reopen (App.tsx sibling of the sidebar indicat
       await browser.close();
     }
   });
+
+  // Coverage hole found in review: App.tsx's shared `openTaskFromNotification`
+  // branches on `currentProject.id === notifyProjectId`. The same-project branch
+  // (setDetailTaskId directly) is covered by idle-toast.spec.ts's Open-action
+  // test; this covers the cross-project else branch, which had no test at all.
+  test('a notification click for a task on a different project defers the open instead of setting detail directly', async () => {
+    const { browser, page } = await launchWithState(preConfig());
+    const CROSS_PROJECT_TASK_ID = 'ct-cross-project-task';
+
+    try {
+      // Fire and read back in ONE evaluate call. `openTaskFromNotification`'s
+      // else branch calls setPendingOpenTaskId synchronously and then calls
+      // openProject() without awaiting it - openProject's own first `await`
+      // suspends it before this script's next statement runs, so the
+      // synchronous tail below observes state exactly at the point the two
+      // branches diverge: pendingOpenTaskId armed, detailTaskId untouched. A
+      // later page.evaluate round trip would let openProject's continuation run
+      // first and hide that distinction.
+      const immediate = await page.evaluate(({ projectId, taskId }) => {
+        if (!window.__mockFireNotificationClicked) {
+          throw new Error('window.__mockFireNotificationClicked is not installed by the mock');
+        }
+        window.__mockFireNotificationClicked(projectId, taskId);
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            session?: { getState: () => { _pendingOpenTaskId: string | null; detailTaskId: string | null } };
+          };
+        }).__zustandStores;
+        if (!stores?.session) throw new Error('session store not exposed on __zustandStores');
+        const sessionState = stores.session.getState();
+        return {
+          pendingOpenTaskId: sessionState._pendingOpenTaskId,
+          detailTaskIdRightAfter: sessionState.detailTaskId,
+        };
+      }, { projectId: PROJECT_B_ID, taskId: CROSS_PROJECT_TASK_ID });
+
+      // If the branch is reverted to always call setDetailTaskId, this reads
+      // { pendingOpenTaskId: null, detailTaskIdRightAfter: CROSS_PROJECT_TASK_ID }.
+      expect(immediate.pendingOpenTaskId).toBe(CROSS_PROJECT_TASK_ID);
+      expect(immediate.detailTaskIdRightAfter).toBeNull();
+
+      // End to end: openProject() actually lands the switch...
+      await expect.poll(async () => {
+        return page.evaluate(async () => {
+          const project = await window.electronAPI.projects.getCurrent();
+          return project?.id ?? null;
+        });
+      }, { timeout: 5000 }).toBe(PROJECT_B_ID);
+
+      const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
+      expect(openCalls).toEqual([PROJECT_B_ID]);
+
+      // ...and the parked id is what opens the detail once the switch lands
+      // (useProjectSwitchEffect consuming `_pendingOpenTaskId`), not a second,
+      // independent write.
+      await expect.poll(async () => {
+        return page.evaluate(() => {
+          const stores = (window as unknown as {
+            __zustandStores?: { session?: { getState: () => { detailTaskId: string | null } } };
+          }).__zustandStores;
+          return stores?.session?.getState().detailTaskId ?? null;
+        });
+      }, { timeout: 5000 }).toBe(CROSS_PROJECT_TASK_ID);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Coverage hole found in review: the `!taskId` early return (a click naming a
+  // project but no task) had no test. It must switch the project without ever
+  // touching detailTaskId or pendingOpenTaskId - unlike a re-merge into the
+  // shared openTaskFromNotification path, which would run its cross-project
+  // branch and leave `_pendingOpenTaskId` set instead of null.
+  test('a notification click with no task switches the project without opening any detail', async () => {
+    const { browser, page } = await launchWithState(preConfig());
+
+    try {
+      await page.evaluate(({ projectId, taskId }) => {
+        if (!window.__mockFireNotificationClicked) {
+          throw new Error('window.__mockFireNotificationClicked is not installed by the mock');
+        }
+        // An empty string, not null/undefined: a falsy taskId that still
+        // distinguishes "never called setPendingOpenTaskId" (stays the initial
+        // null) from "called with a falsy value" (becomes '') if this early
+        // return were folded back into openTaskFromNotification's branching.
+        window.__mockFireNotificationClicked(projectId, taskId);
+      }, { projectId: PROJECT_B_ID, taskId: '' });
+
+      await expect.poll(async () => {
+        return page.evaluate(async () => {
+          const project = await window.electronAPI.projects.getCurrent();
+          return project?.id ?? null;
+        });
+      }, { timeout: 5000 }).toBe(PROJECT_B_ID);
+
+      const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
+      expect(openCalls).toEqual([PROJECT_B_ID]);
+
+      const finalState = await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            session?: { getState: () => { _pendingOpenTaskId: string | null; detailTaskId: string | null } };
+          };
+        }).__zustandStores;
+        if (!stores?.session) throw new Error('session store not exposed on __zustandStores');
+        const sessionState = stores.session.getState();
+        return { pendingOpenTaskId: sessionState._pendingOpenTaskId, detailTaskId: sessionState.detailTaskId };
+      });
+      expect(finalState.pendingOpenTaskId).toBeNull();
+      expect(finalState.detailTaskId).toBeNull();
+    } finally {
+      await browser.close();
+    }
+  });
 });

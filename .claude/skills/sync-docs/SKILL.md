@@ -174,7 +174,7 @@ them as a missing-doc gap:
 
 | Structure | Source | Why it is not a docs anchor |
 |-----------|--------|------------------------------|
-| Activity marks | `src/renderer/components/ActivityMark.tsx` (`ACTIVITY_MARK_NAMES`) | The nine glyphs are owned upstream in `@kangentic/branding`; their contract is covered by CLAUDE.md's "Activity marks" section and pinned mechanically by `tests/unit/activity-mark.test.ts`. A `docs/` table would duplicate CLAUDE.md and drift from the upstream package. |
+| Activity marks (`ACTIVITY_MARK_NAMES`) | `src/renderer/components/ActivityMark.tsx` | The nine names are owned upstream in `@kangentic/branding`, so no `docs/` file enumerates them and a table of them would drift from the package. `docs/activity-marks.md` exists but records design history and measurements, deliberately not the name list; the contract is `.claude/rules/activity-marks.md` and the geometry is pinned by `tests/unit/activity-mark.test.ts`. Do not report the missing name table as a gap. |
 
 ### Verification Procedures
 

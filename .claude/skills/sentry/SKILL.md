@@ -90,6 +90,41 @@ issue = affected installs).
 - **Environment tag** separates `development` (forced-on dev/preview runs) from `production`
   (packaged installs). Do not chase dev-only test events (`Kangentic telemetry verification:` is
   the preview rig's own test error).
+- **Exactly 50 frames means the stack is TRUNCATED, not complete.** The SDK caps a parsed stack
+  at 50 (`STACKTRACE_FRAME_LIMIT` in `@sentry/core`, and `Error.stackTraceLimit = 50` set by
+  `@sentry/browser`'s globalHandlers integration). It reads a V8 stack innermost-first and stops
+  there, so the frames it discards are the OUTER ones: the app code that called into the library,
+  and the timer or handler the whole thing ran under. Count the frames before concluding anything.
+  At exactly 50, `in_app: false` on every frame does NOT mean the app is uninvolved, and the
+  outermost frame is "the deepest point still visible", never "where it started". Once the
+  release carrying `tagTruncatedStack` (`src/main/analytics/error-reporting.ts`) ships, a capped
+  event carries a `stack_truncated: 'true'` tag; every event from before it must be counted by
+  hand, and so must any event with no such tag, since its absence is ambiguous until that
+  release is the only one reporting. DESKTOP-19 cost a whole investigation round to this: six
+  events, fifty monaco frames each, no in-app frame, and the app frame that armed the call
+  truncated away.
+- **Read the `context` lines rather than reasoning from function names.** When sourcemaps are
+  uploaded every frame carries `context` (the source line plus surrounding lines). That is
+  authoritative and beats reading `node_modules` locally. Print it for the load-bearing frames:
+  `$event.entries | Where-Object type -eq 'exception'` then each frame's `.context`.
+- **Resolve library frames against the version the RELEASE shipped**, read from `package.json` at
+  that git tag (`git show v0.41.0:package.json`), not from the current tree. A dependency bump
+  between the first-seen release and today silently invalidates every line-number mapping and
+  every prior "could not reproduce" measurement. DESKTOP-19 spans a monaco 0.55.1 -> 0.56.0 bump,
+  which both rules the bump out as the cause and means the 0.55.1 measurement behind the earlier
+  fix no longer describes the shipping code.
+- **Same-timestamp event pairs are not always double reports.** Compare the pair's stacks before
+  dividing the event count: DESKTOP-19's pairs have different outermost frames, so each incident
+  threw twice rather than being reported twice.
+- **The `mechanism` tag is evidence about the SCHEDULER, and it is checkable.**
+  `auto.browser.browserapierrors.setTimeout` means the chain ran inside a real `setTimeout`
+  callback, so enumerate the candidate timers in the implicated subsystem and rule them out one
+  by one. On DESKTOP-19 the obvious suspect (Monaco's background tokenizer) was eliminated from
+  source - it schedules with `runWhenGlobalIdle` and yields with `setTimeout0`, which uses
+  `postMessage` in a renderer - which left exactly one app-owned timer.
+- **A default-off setting can be the missing precondition.** When an issue hits very few installs,
+  check whether the code path needs a non-default setting before concluding it is unreproducible.
+  DESKTOP-19 needs "Collapse Unchanged Regions" on, which defaults to off.
 - **Cross-reference locally:** the same failure usually has a local trail - `.kangentic/logs/`
   (crash JSONs, main console), `kangentic_tail_logs`, and the Aptabase `app_error` /
   `spawn_failed` counts are the volume view of the same signal.
@@ -207,6 +242,22 @@ REACT-NATIVE-* one - issues created before the 2026-08 slug rename keep their ol
 duplicates. Title: `Fix DESKTOP-N: <issue title, trimmed>`. Description: the Sentry link,
 shortId, level, event/affected-install counts, environment + release, the diagnosis, and the
 few stack frames or tags that carry it. Default to To Do; the user decides when it spawns.
+
+Three fields belong in that description because leaving them out is what sends the next
+investigation down a wrong path:
+
+- **The frame count, and whether the stack is truncated** (see Diagnosis). "50 frames, truncated,
+  no app frame survived" and "47 frames, genuinely all third-party" call for completely different
+  work, and the event itself does not say which.
+- **The release-to-dependency-version mapping** for whatever library the stack lands in, read
+  from `package.json` at each affected release's tag. It is what tells the next reader whether a
+  version bump is a suspect or already ruled out.
+- **Whether the event count is distinct incidents or paired reports**, and any non-default setting
+  the path requires.
+
+Never paste a stack frame's raw `file:///` URL or `absPath` into the task: those carry a
+contributor's home directory, and the board is mirrored to a public repo. Cite frames by module
+path and line (`viewModelImpl.js:145`).
 
 **Then assign every issue the task covers.** Creating a board task and leaving the Sentry issue
 unassigned means the next sweep re-derives the whole cross-reference from scratch, which is what

@@ -19,6 +19,7 @@ import {
   applyWebglAttachmentPlan,
   onWebglAttachmentsChanged,
   notifyFontChanged,
+  setSoftwareRenderingActive,
 } from '../../src/renderer/utils/terminal-webgl';
 
 interface FakeAddon {
@@ -437,6 +438,88 @@ describe('attachWebglRenderer', () => {
     expect(callCount()).toBe(2);
     expect(getTerminalRendererReport()['k-empty-schedule'].renderer).toBe('webgl');
     dispose();
+  });
+});
+
+describe('software rendering skip (launched with --disable-gpu --in-process-gpu)', () => {
+  // softwareRenderingActive is module-scope state (Pattern A, preserved across HMR),
+  // so a case that turns it on MUST turn it back off, or every later test in this
+  // module file would silently start seeing the skip path and pass for the wrong
+  // reason.
+  afterEach(() => {
+    setSoftwareRenderingActive(false);
+  });
+
+  it('reports dom immediately, with no failure recorded and no retry armed', () => {
+    setSoftwareRenderingActive(true);
+    const flips: string[] = [];
+    const factory = vi.fn(makeFakeAddon);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-software-rendering', {
+      createAddon: factory,
+      retryDelaysMs: RETRY_DELAYS,
+      onRendererChange: (renderer) => flips.push(renderer),
+    });
+
+    // dispose() runs in a finally: this module's registries are shared,
+    // module-scope state, and a failed assertion here must not leak a live
+    // 'webgl' entry into the budget tests that run later in this file (they
+    // assume a clean countLiveWebgl() at the start of each case).
+    try {
+      expect(flips).toEqual(['dom']);
+      const status = getTerminalRendererReport()['k-software-rendering'];
+      expect(status.renderer).toBe('dom');
+      expect(status.contextLossCount).toBe(0);
+      expect(status.failedAttempts).toBe(0);
+      expect(status.retryArmed).toBe(false);
+      expect(status.suspendedByBudget).toBe(false);
+      // Never asked xterm for a WebGL context at all: there is no GPU process to ask.
+      expect(factory).not.toHaveBeenCalled();
+
+      // No retry timer is armed: advancing time (well past the whole default
+      // schedule, which never gives up) must not touch the status or call the
+      // addon factory. A context that cannot exist is not a context that is
+      // temporarily blocked.
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(500_000);
+      expect(factory).not.toHaveBeenCalled();
+      expect(getTerminalRendererReport()['k-software-rendering']).toEqual(status);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('the returned disposer removes the status entry', () => {
+    setSoftwareRenderingActive(true);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-software-dispose', {
+      createAddon: makeFakeAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    try {
+      expect(getTerminalRendererReport()['k-software-dispose']).toBeDefined();
+    } finally {
+      dispose();
+    }
+
+    expect(getTerminalRendererReport()['k-software-dispose']).toBeUndefined();
+  });
+
+  it('setSoftwareRenderingActive(false) leaves the normal attach path running', () => {
+    // The default: proves the skip above is genuinely conditional on the flag,
+    // not a change that disabled WebGL attachment outright.
+    setSoftwareRenderingActive(false);
+    const factory = vi.fn(makeFakeAddon);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-software-off', {
+      createAddon: factory,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    try {
+      expect(factory).toHaveBeenCalledTimes(1);
+      const status = getTerminalRendererReport()['k-software-off'];
+      expect(status.renderer).toBe('webgl');
+    } finally {
+      dispose();
+    }
   });
 });
 

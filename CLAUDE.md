@@ -97,201 +97,33 @@ won't be found.
   must be visually and behaviourally indistinguishable from a production boot. Patterns A
   through D and their enforcement: `.claude/rules/hmr-patterns.md`.
 - **Command Terminal** - Ctrl+Shift+P opens an ephemeral "transient" session with no DB
-  persistence. It is hosted in a SECOND window-manager layer (`CommandTerminalLayer` +
-  `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail
-  layer: the same engine (`src/renderer/window-manager/`) instantiated twice via
-  `createWindowManagerStore` and distributed through `WindowManagerProvider` context. So the
-  Command Terminal is a movable / resizable / maximizable / snappable WINDOW (top-layered over a
-  slight backdrop blur), and its arrangement persists GLOBALLY (one blob, `AppConfig.commandTerminalWorkspace`,
-  shared across all projects). Multiple terminals can run at once (cap `MAX_COMMAND_TERMINALS`),
-  tiled among themselves via the engine's N-ary tiling: each window owns a durable SLOT id
-  (`slot-1`, `slot-2`, ...) as its `anchor`. The `transientSessions` map in `transient-session-slice.ts`
-  tracks them keyed by `transientKey(projectId, slot)` (`${projectId}::${slot}`); the value carries
-  `projectId` + `slot` so consumers can filter by project. There is no singleton pointer. The map is
-  preserved across HMR via `import.meta.hot.data`; on a hard reload `syncSessions()` best-effort
-  re-pairs surviving transient PTYs to slots. Hiding the layer (Ctrl+Shift+P / Ctrl+Shift+W /
-  backdrop click) keeps every PTY alive in the background; reopening reattaches each slot. A
-  reattach NEVER fetches or checks out: the default-base checkout (plus its dirty-tree stay-put
-  guard) runs on a COLD spawn only, because moving HEAD under a running agent is the class of
-  thing #558 refused. The branch a window shows is a PER-PROJECT fact, not a per-window one
-  (every terminal of a project runs in the same project root and shares one HEAD), so the window
-  keeps no local branch state: the pill reads its map entry's `branch`, and ONE layer bridge
-  (`useTrackHeadBranch` in `CommandTerminalLayer.tsx`) re-derives every entry of the project from
-  live HEAD (`git:worktreeHead`) on mount and on every `git:diffChanged`, mirroring each change to
-  main (`session:setTransientBranch`, last write wins) so the Monitor row and a post-reload adopt
-  agree with the pill. The Changes panel embed passes the effective default base as
-  `baseBranch`, never `"HEAD"`: Working and Staged ignore it, and the Branch tab, the ahead/behind,
-  and the base badge all measure against it. There is
-  NO per-window X/hide button (removed to avoid the task-detail "close this window" confusion). A
-  window's Stop control destroys THAT window's session and closes the window; Stopping the last
-  window hides the layer. The header is responsive (priority-plus via `useHeaderPillOverflow`): only
-  Stop + title + the window controls (kebab, pop-out, maximize) are protected; the
-  pills AND the branch picker fold into the kebab as the window narrows, down to the min width.
-  The divider precedes the window-frame cluster (kebab, THEN divider, THEN pop-out/maximize),
-  mirroring `TaskDetailHeader`'s divider placement: it separates the actions menu from the
-  window-frame controls, wherever that boundary falls. It is NOT a "second-to-last control"
-  rule - this header has no close button, so an untiled terminal legitimately reads
-  kebab | maximize. Each window has full task-detail parity: pop-out
-  (`untileWindow`: the clicked pane floats at its current rect; the survivors STAY DOCKED and keep
-  their absolute widths by shrinking the footprint - no rescale - except a 2-pane group fully
-  dissolves so both float), and a min-pane-width floor on tiling (seam-drag clamp in
-  `TileSplitter` + a footprint grow on spawn). Both behaviors live in the shared engine, so
-  task-detail windows get them too. The title bar hosts TWO adjacent, purpose-built buttons
-  instead of one overloaded control: a plain open/close TOGGLE (`useCommandBar().open`/`close`,
-  `TitleBar.tsx`'s `quick-session-button`) that never spawns a terminal, so there is always a
-  discoverable one-click way to hide the layer even when a window is maximized over the backdrop;
-  and, rendered only while the layer is open, a "New terminal" button positioned to its LEFT
-  (`quick-session-new-terminal`, calling `spawnAdditionalCommandTerminal()`), disabled at
-  `MAX_COMMAND_TERMINALS`. Both share the custom `CommandTerminalIcon` SVG glyph (not a bare
-  lucide icon): the toggle always shows the shell-prompt variant, while "New terminal" passes
-  `showPlus` to render the center-`+` variant (`data-plus` on the svg), so the spawn affordance
-  still reads as "add a Command Terminal" rather than a generic plus. Only the TOGGLE carries the
-  aggregate activity tone/color/march-animation (`tone={transientActivityTone}`); "New terminal"
-  is hardcoded `tone="rest"` (uncolored, unanimated) since it represents an action, not the state
-  of any existing terminal - a fresh terminal has no activity to reflect. A thin divider (matching
-  the one before the Windows min/max/close controls) sits right after "New terminal", so it reads
-  as a transient action distinct from the permanent icon cluster to its right (toggle, Quick Find,
-  stats, settings); the divider mounts/unmounts together with the button so it never leaves
-  an orphan line when the layer is closed. This pair is the LEFT-MOST icons in the title bar's
-  right-aligned button row (before Quick Find), deliberately: that row is right-anchored (a
-  `flex-1` spacer eats the space to its left), so an element's on-screen distance from the window
-  edge is fixed by whatever comes AFTER it, never before it. Keeping "New terminal" + the divider
-  + the toggle first means the conditionally-mounted "New terminal" button
-  appearing/disappearing as the layer opens/closes never shifts Quick Find, stats,
-  settings, or the OS window controls - only this pair's own position moves. The toggle glyph's
-  stroke color is the aggregate activity of the project's terminals (active-green working /
-  attention-amber needs-you / muted rest, via the central `--kng-active` / `--kng-attention`
-  tokens) and the working state BLINKS its whole prompt like a live shell cursor (`.kng-blink`,
-  shipped with the mark). It marched a travelling dash until 2026-08-07; a rounded rect cannot
-  carry a composited travelling dash, so the working chip was redesigned rather than left
-  stalling. The glyph itself is no longer hand-authored: `CommandTerminalIcon` is a thin wrapper
-  over `components/ActivityMark.tsx`, which renders the `terminal-idle` / `terminal-working` /
-  `terminal-new` marks from `@kangentic/branding`. See the Activity marks section below. The
-  toggle reflects only the CURRENT project, so the same glyph is mirrored per project in the
-  sidebar (`SidebarCommandTerminalIndicator` in each `ProjectListItem` row,
-  plus a plain tone dot on `CollapsedRail`'s 28px buttons, where an arc-bearing glyph would read
-  as broken). Both the toggle and the sidebar read one shared selector,
-  `selectCommandTerminalSummary` (`transient-session-slice.ts`), which derives count + tone from
-  the UNSCOPED `sessions` list (`transient && projectId && status === 'running'`) rather than the
-  `transientSessions` map: that map is renderer-owned window pairing whose hard-reload recovery
-  only re-pairs the current project, so a map-based count reads zero for every background project
-  after a reload. The sidebar indicator sits BESIDE the agent thinking/idle counts in the row's
-  right-aligned cluster, never merged into them (a Command Terminal is not a task agent). It always
-  prints its count, even at 1, so it forms an icon+digit pair matching the agent counts and the
-  three indicators stack into one tabular column down the list; a name-adjacent placement was tried
-  and reverted, because project names vary enough that the glyph landed at a different x on every
-  row. Clicking it switches to that project and reopens its layer via the same
-  `setPendingOpenCommandTerminal` flag the notification-click path uses, armed only once the switch
-  is CONFIRMED. Awaiting is not enough: `openProject` also RESOLVES without switching (a moved or
-  renamed folder routes to the "Locate Folder" dialog) and re-throws every other failure, so the
-  sidebar re-reads `currentProject` after the await and leaves the flag disarmed unless it landed.
-  Arming on those paths opens the layer on the OUTGOING project. GEOMETRY is global but
-  POPULATION is per-project: the window layout blob
-  is shared, yet WHICH slots get windows is reconciled to the current project's live transient
-  sessions on open (`reconcileCommandTerminalWindows` +
-  `planCommandWindowReconciliation` in `command-window-reconcile.ts`). Project switching keeps every
-  slot's PTY alive in the map (no stash/restore); the bar closes on switch, and on reopen the
-  reconcile closes carried-over windows whose slot has no live session for the new project (keeping
-  one default terminal) and opens a window for every live session that lacks one (so switching BACK
-  reattaches all of a project's terminals instead of leaking a window-less PTY). The reconcile runs
-  BEFORE the layer mounts (`useCommandBar.open()`, plus the empty-store branch of
-  `useEnsureCommandWindow` for the app-restart blob-restore path), because a carried-over window
-  committed into the store would otherwise spawn a fresh PTY under the wrong project before a
-  bridge-effect reconcile could close it.
-- **Activity marks** - The nine glyphs that express agent/terminal activity are owned upstream in
-  `@kangentic/branding` (`assets/activity/`), NOT hand-authored here, so desktop, web, and mobile
-  cannot drift. `components/ActivityMark.tsx` is the only consumer: it imports each mark with
-  `?raw`, strips the packaged `<svg>` wrapper, and injects the inner markup into a `<g>` under a
-  React-authored root. That root shape is load-bearing and must not become `BrandMark`'s wrapper-
-  `<span>` form: React forbids `children` next to `dangerouslySetInnerHTML` on one element, and
-  `TaskCard` passes a `<title>` child for its hover tooltip. MOTION is always on a COMPOSITED
-  property, because Chromium composites only `transform` / `opacity` and a non-composited
-  animation stops producing frames for exactly as long as the renderer's main thread is blocked
-  (measured: 194 stalls in 3.6h, worst 703ms, and the indicators visibly hitched). Which primitive
-  a mark gets is decided by its geometry, not by taste: to travel a dash along a perimeter a
-  transform must map the shape onto ITSELF while advancing arc length, which is the shape's
-  symmetry group. A circle's is continuous, so the three ROUND working marks rotate (`.kng-spin`)
-  and it is the SAME image the old march produced - `pathLength` 100 makes a dash shift of d
-  exactly a rotation of d percent of 360 degrees. A rounded square's is DISCRETE (four 90-degree
-  rotations, nothing between), so `terminal-working` cannot travel a dash at all; its working
-  state is instead a solid outline with a blinking PROMPT (`.kng-blink`, an `opacity`), and
-  its rest strategy is now `static` rather than `drop-dash` since there is no dash left to drop.
-  Which element blinks was settled at the 16px sidebar size, not at review size: 2.8.0 blinked
-  the 4-unit prompt BAR alone, which draws 2.7px there against the 15.6px of perimeter the march
-  put in motion, and read as no motion at all. The whole prompt is 7.9px. Blinking the outline
-  too moves more ink but fades the tone that carries working-vs-resting, so it stays solid.
-  `.kng-march` still ships but no mark uses it. Three things bite silently: `ActivityMark`'s
-  timeline anchor must select EVERY motion class (none of the primitives is phase-invariant - the
-  rotating arc is dashed and a restarted blink can land mid-off), any consumer that freezes motion
-  must too AND must do it with `!important` (`MonitorSummaryCards`' zero-state Active tile is the
-  only one; `ActivityMark` imports the packaged CSS from node_modules, so `.kng-spin` arrives
-  UNLAYERED and outranks every Tailwind utility, which compile into `@layer utilities` - an
-  un-important override loses the cascade outright and does nothing, which is what the tile did
-  from the day it adopted the shared marks until a rendered test caught it - the lucide era before
-  that just omitted `animate-spin` and never fought the cascade), and the packaged CSS must ship
-  no animation fill mode or a stopped blink rests at its 0.06 trough instead of visible.
-  The shared 1400ms period across all primitives is what keeps a rotating agent ring in lockstep
-  with a blinking chip in the same sidebar row. Marks are `currentColor` only, so the
-  CALL SITE supplies `text-active` / `text-attention` / `text-fg-muted` - never hardcode a hex,
-  since `--kng-active` / `--kng-attention` are desktop-only values that mobile and web
-  deliberately diverge from. The injected `<g>` is `pointer-events: none`, which is
-  load-bearing for any mark inside a button: re-assigning its `innerHTML` on a `mark` change
-  destroys the node the cursor is over, and Chromium then drops the click outright, which
-  shipped as "the first Stop click never registers" (measured: the injected ink covered 15% of
-  the pause button, and `control-stop`'s filled square covers the exact centre). Hits must land
-  on the React-authored `<svg>`, which survives a `mark` change - so the `none` never moves up
-  to the root, which `TaskCard`'s `<title>` tooltip needs hit-testable, and the `<g>` never gets
-  `key={mark}`. That covers a mark FLIP only; an icon that changes ELEMENT TYPE between states
-  (lucide at rest, `ActivityMark` when active) unmounts the `<svg>` too, which no change inside
-  `ActivityMark` can reach. Every such icon renders each of its branches through
-  `components/IconSlot.tsx`, a fixed-size `<span>` that all branches share: React reconciles the
-  one span in place across the swap, so the node under the pointer survives, and the span
-  absorbs the pointer on the glyph's behalf. Each site wraps ONCE around the icon its branching
-  produced, never per branch, so a future branch cannot silently opt out. The sites
-  fixed so far are `StopButtonIcon`, `PauseButtonIcon`, and `MonitorCard`'s `StateGlyph` - the
-  last is why the neutralization is scoped to the glyph rather than put on the button, since
-  its clickable is a whole card carrying other interactive children. That list is what has been
-  ADOPTED, not where the hazard exists: `MonitorTable`'s `StateCell` (inside `DataTable`'s
-  clickable `<tr>`) and `TerminalPanel`'s session-tab glyph have the same element-type swap and
-  are still unwrapped. A slot also neutralizes the element it wraps, so a mark inside one must
-  label itself with `aria-label` - a native `<title>` child would be inert, which is why
-  `TaskCard` (tooltip-bearing, and a mark FLIP only) is not a slot candidate.
-  `tests/ui/command-terminal.spec.ts` covers both variants (a mark flip and an element-type
-  swap) with red-green mouse-level tests, but only for `StopButtonIcon`; the other two adoptions
-  ride on the shared component. There is no `-rest` mark: rest is the `-idle` geometry in a muted
-  tone. `data-rest` on the root is the reduced-motion strategy (`static` / `keep-dash` /
-  `drop-dash`), NOT a tone; test selectors key off `data-mark`. The set's grid is a WIDTH
-  KEYLINE, not a square ink box: each mark fills its slot's width and takes the height its form
-  needs (width is the advance that shifts a row; height is absorbed by `align-items: center`).
-  Two keylines, one per role - 18 for indicators, 20 for controls. Size floors are 12 for
-  indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays lucide.
-  The two control marks render at size 20: their r=10 ring draws 18.33px, a pixel match for the
-  lucide `Circle` they replaced. Upstream geometry has already moved three times (2.5.0 squared
-  the envelope to 18x18 and shrank the controls to r=9; 2.6.0 reversed both to 18 x 14.4; 2.7.1
-  moved the envelope to 18 x 16 so its y edges sit on the integer lattice at 4 / 20), so
-  `tests/unit/activity-mark.test.ts` pins the r=10 control ring, the r=9 agent ring, and the
-  envelope's 18 x 16 box as the guard against a silent upstream reshape. The envelope's height
-  is load-bearing beyond legibility: a card swaps idle for working IN PLACE, so what the eye
-  judges is apparent size, and at 18x18 the envelope enclosed 26% more than the ring and visibly
-  grew on every state change. 18 x 14.4 held that to +0.5%; 18 x 16 gives that parity up at
-  +11.8% (284.6 units against the r=9 ring's 254), accepted upstream as the price of the hinting
-  fix and checked on a rendered idle/working swap strip. Indicators render at 16 (`TaskCard` and
-  both sidebar components), NOT the 14 the lucide glyphs used: the branding envelope is 18 wide
-  where lucide's `Mail` was 20, so a same-number swap silently shrinks it ~10%. 15 restored the
-  drawn size production shipped; 16 is a deliberate one-step legibility bump on top of that.
-  Move the sidebar's two indicator components together or the row goes ragged. lucide stays
-  everywhere else (140+ files), and `utils/swimlane-icons.tsx` needs its whole glyph map because
-  column icon names are persisted as kebab-case strings in the DB.
+  persistence, hosted in a SECOND window-manager layer (`components/command-bar/`) separate
+  from the board task-detail layer. Windows are keyed by a durable SLOT, geometry is global
+  but population is per-project (reconciled before the layer mounts), a reattach NEVER fetches
+  or checks out, and the branch is a per-project fact re-derived by one layer bridge.
+  Rules: `.claude/rules/command-terminal.md`. Design history: [docs/command-terminal.md](docs/command-terminal.md).
+- **Activity marks** - The nine agent/terminal activity glyphs are owned upstream in
+  `@kangentic/branding`, NOT hand-authored here, and render only through
+  `components/ActivityMark.tsx`. Motion is always on a COMPOSITED property, marks are
+  `currentColor` only (the call site supplies the tone), and an icon that changes ELEMENT TYPE
+  between states must render through `components/IconSlot.tsx` or it swallows the click.
+  Rules: `.claude/rules/activity-marks.md`. Design history: [docs/activity-marks.md](docs/activity-marks.md).
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
-  `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation,
-  Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared settings that
-  apply across all projects, saved to global config, and remain fully functional with no
-  project open. The Task tab holds task-presentation settings split out of Board (Card Density,
+  `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications,
+  Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
+  settings that apply across all projects, saved to global config, and remain fully functional with
+  no project open. The Task tab holds task-presentation settings split out of Board (Card Density,
   Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
   task presents itself, not board layout or terminal cosmetics, so Board stays pure board layout
-  and Terminal stays pure terminal cosmetics. Terminal (shell, font, cursor style,
+  and Terminal stays pure terminal cosmetics. The Performance tab holds app-wide rendering:
+  Graphics acceleration (Chromium hardware rendering, which the GPU recovery path in
+  `src/main/index.ts` turns off after a run the GPU killed) and Animations, which moved from
+  Board because it toggles `.no-motion` on `<html>` and was never board chrome. Memory's own
+  hardware row stayed put and is named "Model acceleration": it pairs with Search quality as one
+  speed-versus-accuracy decision, and the rename is what keeps it distinct from Graphics
+  acceleration. Terminal (shell, font, cursor style,
   colors) is global-only, not per-project: shell in particular was never reliably project-scoped
   at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever
   project is currently focused - `src/main/pty/session-manager.ts`), so a background project's
@@ -402,54 +234,55 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `no-personal-info.md` - no usernames, emails, or machine paths in committed code (repo is public).
 
 **Path-scoped rules (load with their subsystem):**
-- `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock` (`src/main/ipc/`).
-- `hmr-patterns.md` - dev-mode HMR parity patterns A through D (`src/renderer/`).
-- `ui-conventions.md` - shared UI primitives, selectors, font floor, no hover-only controls, `select-none` on clickable controls, chrome rows that survive the 900x600 floor, brief accurate copy (`src/renderer/`).
-- `popover-escapes-clipping.md` - a menu popover portals to `document.body` with `strategy: 'fixed'`; `z-index` never escapes an ancestor's overflow clip (`src/renderer/`).
-- `light-dismiss-denylist.md` - clicking outside a task window closes it unless excluded; overlays mount outside the `data-dismiss-layer` shell subtree, action cursors need `data-no-dismiss`, and hover must not promise what the click will not do (`src/renderer/`).
-- `synchronous-shutdown.md` - the `before-quit` path must be synchronous; the only sanctioned
-  `preventDefault` is the bounded PTY exit-callback drain (`src/main/` shutdown).
-- `utc-timestamps.md` - DB writes use `new Date().toISOString()` (`src/main/db/`).
-- `guarded-sync-writes.md` - a synchronous write in config/boards/browser/mobile-bridge/db-repositories/agent-adapters is either routed through `safeWriteJson` or marked `// sync-write-ok:` with a reason.
+- `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock`.
+- `hmr-patterns.md` - dev-mode HMR parity patterns A through D.
+- `ui-conventions.md` - shared primitives, font floor, no hover-only controls, the 900x600 floor, brief copy.
+- `popover-escapes-clipping.md` - a menu popover portals to `document.body` with `strategy: 'fixed'`; `z-index` never escapes an overflow clip.
+- `light-dismiss-denylist.md` - clicking outside a task window closes it; overlays mount outside the `data-dismiss-layer` subtree.
+- `synchronous-shutdown.md` - the `before-quit` path is synchronous; only the bounded PTY exit drain may `preventDefault`.
+- `utc-timestamps.md` - DB writes use `new Date().toISOString()`.
+- `guarded-sync-writes.md` - a synchronous write is routed through `safeWriteJson` or marked `// sync-write-ok:` with a reason.
 - `ipc-7-layer-parity.md` - wire an IPC endpoint through all 7 layers.
-- `project-scoped-ipc.md` - renderer-driven task/session mutations forward an explicit interaction-time `projectId` (`src/preload/`, `src/main/ipc/`, `src/renderer/stores/`).
+- `project-scoped-ipc.md` - renderer-driven task/session mutations forward an explicit interaction-time `projectId`.
 - `esbuild-cjs-imports.md` - ES `import`, not bare `require()`, in bundled main/preload code.
-- `dependency-block-parity.md` - `dependencies` is the esbuild externals (minus `electron`) plus what `electron-builder.yml`'s `files:` names; everything bundled goes in `devDependencies` (`package.json`).
+- `dependency-block-parity.md` - `dependencies` is the esbuild externals plus what `electron-builder.yml` names; everything bundled is a devDependency.
 - `agent-adapters-boundary.md` - no agent-name branching outside `src/main/agent/adapters/`.
-- `automation-adapters.md` - an automation type is declared once in `AUTOMATION_MANIFEST` and implemented under `src/main/automations/adapters/`; the runner owns escaping, timeouts and retry (`src/main/automations/`).
-- `cli-features-over-custom-layers.md` - do not shadow an agent CLI's native controls (`src/main/agent/`).
-- `dev-tooling-build-exclusion.md` - dev tooling build-excluded via `__KANGENTIC_DEV__` (`src/devtools/`).
+- `automation-adapters.md` - an automation type is declared once in `AUTOMATION_MANIFEST`; the runner owns escaping, timeouts, and retry.
+- `cli-features-over-custom-layers.md` - do not shadow an agent CLI's native controls.
+- `dev-tooling-build-exclusion.md` - dev tooling is build-excluded via `__KANGENTIC_DEV__`.
 - `docs-stay-in-sync.md` - update docs when changing anchor source files (types, IPC, migrations, adapters, settings).
-- `protocol-release-parity.md` - every `protocol-v*` tag needs a `CHANGELOG.md` entry; never hand-tag a protocol release (`packages/protocol/`).
-- `skill-authoring.md` - when to fork a skill and how to route agents (`.claude/`).
-- `board-config-parity.md` - team-shared swimlane fields must round-trip to `kangentic.json`.
-- `external-scripts-parity.md` - unbundled bridge/plugin scripts must register in `EXTERNAL_SCRIPTS` and be copied by both `build.js` and `dev.js`.
-- `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts` (`src/renderer/`).
-- `board-completing-task-chokepoint.md` - hide in-flight Done-completing tasks only at KanbanBoard's `tasksPerLane`, never per-lane (`src/renderer/components/board/`).
-- `keybindings-registry.md` - renderer shortcuts declared in `KEYBINDINGS` and bound via `useKeybinding`, not ad-hoc `addEventListener('keydown')` (`src/renderer/`).
-- `keyboard-drag-intent.md` - `IntentKeyboardSensor` is the only dnd-kit keyboard sensor: it arms only on Tab-placed focus, cancels on a pointer press or a focus move, and owns the in-gesture Escape, so a mouse-focused card never lifts on Space/Enter and no ghost outlives a click into a terminal; a sortable that spreads `attributes` registers it, on the same element as `listeners`; the board overlay's measured node carries no transform (`src/renderer/hooks/`, `components/board/`, `board-manager/`, `PrioritiesPopover`, `ShortcutsTab`, `DataTable`).
-- `restore-no-animation-replay.md` - a project switch / restore paints flat: restored windows skip the entrance animation (`skipEnterAnimation`) and `useValuePulse` rebaselines on a `resetKey` instead of pulsing (`src/renderer/`).
-- `cross-platform-parity.md` - code and tests must behave identically on Windows/macOS/Linux/CI; no OS-specific paths, no cross-test state leakage or pixel-exact assertions (`tests/`, `src/main/` pty/agent/git).
-- `browser-automation-driver.md` - the shipped CDP driver is singular and ships; every `kangentic_browser_*` tool routes through `withGuest`; no `src/devtools/` import from shipped code (`src/main/browser/`).
-- `mcp-tool-list-parity.md` - every MCP tool registered under `src/main/agent/mcp-http/*-tools.ts` stays in sync with `MCP_TOOL_MANIFEST` (the settings panel's source) and `docs/mcp-server.md` (`src/main/agent/mcp-http/`, `src/shared/mcp-tool-manifest.ts`).
-- `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools or classified as unexposed with a reason; enum fields validate in the handler, not only in zod (`src/main/agent/mcp-http/task-tools.ts`, `src/main/agent/commands/column-commands.ts`, `src/shared/types.ts`).
-- `central-embedding-engine.md` - only `embed-engine.ts` embeds; lifecycle/IPC call sites index and `markDirty()`, never embed inline (`src/main/retrieval/**`, `src/main/ipc/handlers/**`).
-- `dictation-out-of-process.md` - `sherpa-onnx-node` is imported only by the three sherpa engine files, which run exclusively inside the `kangentic-dictation` utilityProcess worker; `DictationClient` is constructed only in `dictation-client.ts` (`src/main/transcription/**`).
-- `pop-out-surface-registry.md` - every OS `BrowserWindow` is created only in `createWindow` or the pop-out window manager; every detachable surface goes through the shared + renderer registries (`src/main/pop-out/**`, `src/shared/pop-out.ts`, `src/renderer/pop-out/**`).
-- `spawn-entry-point-parity.md` - every agent-spawn entry point routes through `spawnAgent` / `prepareAgentSpawn` and the shared `runSpawnPreamble` (first-spawn override lock + agent resolution); no direct engine spawn calls in handlers (`src/main/ipc/**`, `src/main/transition-engine/**`).
-- `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names, since RPM package names differ per distro (`electron-builder.yml`).
-- `release-gates-fail-loudly.md` - a release-path step that guarantees something fails when it cannot: a missing precondition exits non-zero in a preflight, every no-op-able step says which way it went, guards assert the positive condition, and a job whose `if:` carries a status-check function (`always()`, `cancelled()`, `failure()`) repeats every `needs:` entry in its `if:` (`.github/workflows/**`, `scripts/build.js`, `vite.config.mts`).
-- `task-template-vars-parity.md` - the auto_command / spawn_agent promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS` and drive the resolver map, UI chips, and docs tables (`src/shared/task-template-vars.ts`, `src/main/agent/shared/task-template-resolvers.ts`, `src/renderer/components/dialogs/BoardManagerDialog.tsx`).
-- `settings-tab-scope.md` - a setting's tab must match its persistence scope; a project-scoped setting in a system tab silently drops its write with no project open (`src/renderer/components/settings/settings-registry.ts`, `settings-tabs.ts`, `tabs/**`).
-- `derived-detail-ownership.md` - task-detail ownership is reported as a host's COMPLETE mounted set and reconciled, never accumulated from claim/release; the reporter mounts where it outlives the window store (`src/main/task-detail/**`, `src/renderer/window-manager/bridge/**`, `src/renderer/components/monitor/**`).
-- `retained-pane-never-remounts.md` - a task-detail window whose Browser pane is open is RETAINED across a project switch so its `<webview>` guest survives; never re-parent it, never change its tree shape above `BrowserPane`, and hide it with `opacity: 0` only (`src/renderer/window-manager/**`, `src/renderer/components/browser/**`).
-- `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route programmatic focus through `mayTakeArrivalFocus`, keep the tiers exclusive, and mark genuine user gestures `// arrival-focus-ok:` (`src/renderer/**`).
-- `agent-driven-focus.md` - an agent-driven pane SHOWS its focus move rather than hiding it (the terminal dims, the pane is marked), the driver never takes guest focus itself, the pane restores only AFTER the whole burst, and an agent-opened window denies arrival focus to every terminal (`src/main/browser/**`, `src/renderer/components/browser/**`).
-- `xterm-unicode11-parity.md` - every xterm `Terminal` activates the Unicode 11 width table via `activateUnicode11` at construction, and hand-rolled grid parsers take widths from `wcwidthV11`, so no parser drifts a column per emoji against the others (`src/shared/xterm-unicode11.ts`, `src/renderer/hooks/useTerminal.ts`, `src/renderer/utils/ansi-filter.ts`, `src/main/pty/**`, `src/devtools/main/inspection-server.ts`, `src/devtools/main/composed-width.ts`).
-- `cookie-jar-sharing.md` - browser jar cookies are copied only through `cookie-seed.ts`, `isLocalCookieDomain` is the single localhost exclusion, and partitions stay task-keyed (`persist:kng-<projectId>-<taskId>`), so a project's IdP login shares across tasks while each task's localhost session stays isolated (`src/main/browser/**`, `src/shared/browser-partition.ts`, `src/devtools/main/cookie-jar-routes.ts`).
-- `pty-teardown-grace.md` - a young agent's PTY is never force-killed without its exit sequence and the 1500 ms grace (`SessionManager.kill()` parks it on `DeferredKillRegistry`, outside the registry row); a caller that touches the cwd after a kill captures `awaitExit` before `remove()`; the quit path defers only where the drain follows; a probe PTY runs Claude on the classic renderer; every `~/.claude.json` write takes Claude's own lock (`src/main/pty/**`, `src/main/ipc/**`, `src/main/transition-engine/**`, `src/main/agent/**`).
-- `web-demo-parity.md` - the web build (`demo/`) is the real renderer over the mock bridge: every `ElectronAPI` method has a mock implementation, demo behaviour lives in `demo/boot.js` and the scene registry rather than `src/renderer`, scenes are data, and the `demo` tier stays green (`src/shared/types.ts`, `src/preload/**`, `tests/ui/mock-electron-api.js`, `demo/**`, `tests/captures/**`, `tests/demo/**`).
-- `session-replica-contract.md` - the renderer session store is a replica of main's registry: a row leaving the registry emits `session-removed` (never a forced status), a status push only upserts and a removal push only removes, dropping a session scrubs every map keyed on it through `withoutSessions`, a sync neither resurrects a row removed in its gap nor drops one that arrived in it, a todo-role task is sessionless, and every `kill()` is followed by the push that says what happened (`remove`, `suspend`, or `announceSessionEnded`) (`src/renderer/stores/session-store.ts`, `src/renderer/stores/session-store/**`, `src/renderer/App.tsx`, `src/main/pty/session-manager.ts`, `src/main/pty/session-registry.ts`, `src/main/ipc/handlers/sessions.ts`).
+- `protocol-release-parity.md` - every `protocol-v*` tag needs a `CHANGELOG.md` entry; never hand-tag a protocol release.
+- `skill-authoring.md` - when to fork a skill and how to route agents.
+- `board-config-parity.md` - team-shared swimlane fields round-trip to `kangentic.json`.
+- `external-scripts-parity.md` - unbundled bridge/plugin scripts register in `EXTERNAL_SCRIPTS` and are copied by both `build.js` and `dev.js`.
+- `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts`.
+- `activity-marks.md` - marks come from `@kangentic/branding` via `ActivityMark`; composited motion only; `IconSlot` for element-type swaps.
+- `command-terminal.md` - slot-keyed windows, global geometry against per-project population, and a reattach that never checks out.
+- `board-completing-task-chokepoint.md` - hide in-flight Done-completing tasks at KanbanBoard's `tasksPerLane`, never per-lane.
+- `keybindings-registry.md` - shortcuts declared in `KEYBINDINGS` and bound via `useKeybinding`, not ad-hoc keydown listeners.
+- `keyboard-drag-intent.md` - `IntentKeyboardSensor` is the only dnd-kit keyboard sensor, and it arms only on Tab-placed focus.
+- `restore-no-animation-replay.md` - a project switch or restore paints flat: no entrance replay, no value pulse.
+- `cross-platform-parity.md` - code and tests behave identically on Windows/macOS/Linux/CI.
+- `browser-automation-driver.md` - one shipped CDP driver; every `kangentic_browser_*` tool routes through `withGuest`.
+- `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and `docs/mcp-server.md`.
+- `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools, or classified unexposed with a reason.
+- `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
+- `dictation-out-of-process.md` - `sherpa-onnx-node` is imported only inside the `kangentic-dictation` utilityProcess worker.
+- `pop-out-surface-registry.md` - every `BrowserWindow` comes from `createWindow` or the pop-out manager, through the registries.
+- `spawn-entry-point-parity.md` - every agent spawn routes through `spawnAgent` / `prepareAgentSpawn` and `runSpawnPreamble`.
+- `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names.
+- `release-gates-fail-loudly.md` - a release-path step that guarantees something fails loudly when it cannot.
+- `task-template-vars-parity.md` - promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS`.
+- `settings-tab-scope.md` - a setting's tab must match its persistence scope.
+- `derived-detail-ownership.md` - task-detail ownership is a host's COMPLETE mounted set, reconciled, never accumulated.
+- `retained-pane-never-remounts.md` - a window with an open Browser pane is RETAINED across a project switch; hide it with `opacity: 0`.
+- `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route it through `mayTakeArrivalFocus`.
+- `agent-driven-focus.md` - an agent-driven pane SHOWS its focus move, and the driver never takes guest focus itself.
+- `xterm-unicode11-parity.md` - every xterm `Terminal` activates Unicode 11 widths; hand-rolled parsers use `wcwidthV11`.
+- `cookie-jar-sharing.md` - jar cookies are copied only through `cookie-seed.ts`, and partitions stay task-keyed.
+- `pty-teardown-grace.md` - a young agent's PTY is never force-killed without its exit sequence and the 1500 ms grace.
+- `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.
+- `session-replica-contract.md` - the renderer session store is a replica of main's registry, and a removal is its own push.
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.
@@ -476,11 +309,18 @@ When you codify a new convention, add it as a `.claude/rules/*.md` file followin
 ones (e.g. `board-config-parity.md`):
 
 1. **One concern per file**, with a descriptive kebab-case filename.
-2. **Decide loading, and keep always-on rules few.** Always-on rules (no frontmatter) load every
-   session and cost context every session, so reserve them for universal, file-independent
-   conventions (tool use, house style, security). Everything subsystem-specific gets `paths:`
-   frontmatter so it loads only when a matching file enters context. We run ~4 always-on; treat
-   that as a soft ceiling.
+2. **Decide loading, and measure what it costs.** Always-on rules (no frontmatter) load every
+   session, so reserve them for universal, file-independent conventions (tool use, house style,
+   security); we run 4, totalling about 12k characters. Everything subsystem-specific gets
+   `paths:` frontmatter so it loads only when a matching file enters context. The number to
+   watch is not that always-on count but the union an ordinary edit pulls in, because a rule
+   scoped to `src/renderer/**` matches nearly every renderer file: measured on 2026-09-21, a
+   board-card edit loads 129k characters of CLAUDE.md plus rules, a PTY edit 65k.
+   `node scripts/measure-rule-load.js` prints it per subsystem (`--verbose` names each rule).
+   Run it when you add a rule or widen a glob. If your change moves a subsystem's number a lot,
+   narrow the glob or split the rule rather than accepting it. This is a procedure, not a gate:
+   there is no measured point at which the union starts hurting, so a pass/fail threshold would
+   be invented. The one real gate is on CLAUDE.md alone, where the harness supplies the limit.
 3. **Mind the read-trigger gap.** A path-scoped rule loads when a matching file is *read into
    context*, not when Claude *creates* a new file in that path. So (a) any convention that must
    hold at file-creation time (universal style, security) belongs in an always-on rule, a lint
@@ -508,3 +348,9 @@ actions) or restructure (wrap an unstable `?? {}`/`?? []` fallback in `useMemo`)
 omission is deliberate, suppress that one line with `// eslint-disable-next-line
 react-hooks/exhaustive-deps -- <reason>` and a concrete reason. Use a `tests/unit/` check for
 conventions ESLint cannot express (em-dashes, IPC and board-config parity, ...).
+
+**This file has a size budget.** `tests/unit/rules-index-parity.test.ts` fails when CLAUDE.md
+passes 40,000 characters, the point Claude Code warns at. It loads into every session and every
+subagent's fixed floor, so when it grows, move the newest weight out instead of raising the
+number: prescriptive content into a path-scoped `.claude/rules/*.md`, and background,
+measurements, and rejected alternatives into `docs/`. Leave a pointer line behind.

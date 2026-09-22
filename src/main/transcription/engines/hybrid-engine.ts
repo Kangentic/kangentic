@@ -19,20 +19,75 @@ interface HybridSlot {
 }
 
 /**
+ * How long `finalize()` waits for a final slot that is still loading before it
+ * commits the live text instead. The accurate model starts loading on the
+ * press (`createSession`), so by release it has already had the whole
+ * utterance; this bound only bites on a short utterance against a cold disk.
+ * It has to leave room for the decode itself inside DictationClient's 30 s
+ * FINALIZE_TIMEOUT_MS: a ten-minute hold (the worker's MAX_SESSION_MS) decodes
+ * in about 11 s at Parakeet's measured RTF, and 15 + 11 fits.
+ */
+const FINAL_LOAD_WAIT_MS = 15_000;
+
+/** True when `promise` fulfilled within `ms`; false when it rejected or the
+ *  bound elapsed first. A rejection is consumed here on purpose: the caller
+ *  falls back either way, and the memoized load has its own handler. */
+function fulfilledWithin(promise: Promise<void>, ms: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    timer.unref();
+    promise.then(
+      () => {
+        clearTimeout(timer);
+        resolve(true);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
+}
+
+function forSlot(models: ResolvedModel[], modelId: string | null): ResolvedModel[] {
+  return modelId ? models.filter((model) => model.id === modelId) : [];
+}
+
+/**
  * Composite engine with two independent, injectable slots:
  *   - LIVE: emits partials as the user speaks (the streaming Zipformer natively,
  *     or an offline model re-decoded in chunks). Optional - omit for no preview.
  *   - FINAL: produces the committed accurate text on release (an on-device offline
  *     model, or the remote cloud engine). Optional - omit to keep the live text.
- * At least one slot must be present. Both buffer the same audio; `finalize()`
- * returns the FINAL engine's text when present, else the LIVE engine's. Models are
- * routed to each slot by resolved model id (a model can be both live-chunked and
- * final), so it composes the sub-engines without inferring slots from model kind.
+ * At least one slot must be present. Models are routed to each slot by resolved
+ * model id (a model can be both live-chunked and final), so it composes the
+ * sub-engines without inferring slots from model kind.
+ *
+ * The two slots load at different times, and that split is what keeps the
+ * dictation worker small while it waits. `load()` loads the LIVE slot only (the
+ * ~70 MB streaming model). The FINAL slot (the 631 MB accurate model) loads
+ * lazily, started by the first `createSession()` and overlapped with the
+ * utterance it serves: the session streams partials from the live slot at
+ * once, buffers every frame for the final slot, and `finalize()` hands the
+ * buffer to a final sub-session created only then. A press that releases
+ * before the accurate model is ready (a short utterance on a cold disk) waits a
+ * bounded FINAL_LOAD_WAIT_MS and then commits a full live decode instead. So a
+ * pre-warmed worker holds only the live model, and the accurate model is
+ * resident only in a worker that has actually served a session - which is
+ * exactly the worker DictationClient recycles after its idle window.
  */
 export class HybridEngine implements TranscriptionEngine {
   readonly info = SHERPA_HYBRID_INFO;
   private readonly live: HybridSlot | null;
   private readonly final: HybridSlot | null;
+  /** The model set `load()` was given, kept so the final slot can load from it later. */
+  private models: ResolvedModel[] | null = null;
+  /** The in-flight or settled final-slot load, memoized so every session shares
+   *  one load. Cleared on rejection so the next session retries. */
+  private finalLoad: Promise<void> | null = null;
+  /** Why the last final-slot load failed, for a release that finds no load
+   *  to wait on. Cleared when a new load starts. */
+  private finalLoadError: unknown = null;
 
   constructor(slots: { live: HybridSlotSpec | null; final: HybridSlotSpec | null }) {
     this.live = slots.live ? { engine: slots.live.factory(), modelId: slots.live.modelId } : null;
@@ -42,17 +97,45 @@ export class HybridEngine implements TranscriptionEngine {
     }
   }
 
+  /** Load the live slot now; the final slot waits for the first session. */
   async load(models: ResolvedModel[]): Promise<void> {
-    const forSlot = (modelId: string | null): ResolvedModel[] =>
-      modelId ? models.filter((model) => model.id === modelId) : [];
-    await Promise.all([
-      this.live ? this.live.engine.load(forSlot(this.live.modelId)) : Promise.resolve(),
-      this.final ? this.final.engine.load(forSlot(this.final.modelId)) : Promise.resolve(),
-    ]);
+    this.models = models;
+    if (this.live) await this.live.engine.load(forSlot(models, this.live.modelId));
+  }
+
+  /** Start (or join) the final slot's load. Resolves once it is usable. */
+  private ensureFinalLoaded(): Promise<void> {
+    const final = this.final;
+    if (!final) return Promise.resolve();
+    if (this.finalLoad) return this.finalLoad;
+    const models = this.models;
+    if (!models) {
+      return Promise.reject(new Error('Hybrid engine: load() must run before the final slot can load'));
+    }
+    this.finalLoadError = null;
+    this.finalLoad = final.engine.load(forSlot(models, final.modelId)).catch((error: unknown) => {
+      // Not sticky: a transient failure (a disk hiccup mid-read) gets another
+      // try from the next session's press instead of pinning the fallback for
+      // the life of the worker. Only this load can be the memoized one when
+      // its own rejection lands, since a new one starts only from a cleared
+      // memo.
+      this.finalLoad = null;
+      this.finalLoadError = error;
+      throw error;
+    });
+    return this.finalLoad;
+  }
+
+  /** The load a release waits on: the one its press started. A release never
+   *  starts a load of its own - if the press's load already failed, the
+   *  fallback is immediate and the NEXT press retries. */
+  private finalReady(): Promise<void> {
+    return this.finalLoad ?? Promise.reject(this.finalLoadError ?? new Error('The accurate model has not started loading'));
   }
 
   createSession(options: CreateSessionOptions): TranscriptionEngineSession {
-    // The live sub-session forwards partials; the final buffers silently.
+    // The live sub-session forwards partials; the final slot only ever sees
+    // the buffered frames, at finalize.
     // The last hypothesis the live slot emitted, kept as the fallback for when a
     // final pass fails. It is the text the user has been watching, so falling
     // back to it is also the least surprising thing that can happen on screen.
@@ -66,37 +149,62 @@ export class HybridEngine implements TranscriptionEngine {
           },
         })
       : null;
-    let finalSession: TranscriptionEngineSession | null = null;
-    try {
-      finalSession = this.final
-        ? this.final.engine.createSession({ ...options, onPartial: () => undefined })
-        : null;
-    } catch (error) {
-      // Nothing holds the live session yet, so without this nothing could ever
-      // stop it: the chunked live engine's decode loop would tick for the life of
-      // the worker, and the worker's maybeDisposeEngine cannot reach it (an
-      // engine's dispose only drops its recognizer reference).
-      liveSession?.dispose();
-      throw error;
+    const final = this.final;
+    if (final) {
+      // The press is the precursor gesture: start the accurate model now so it
+      // loads while the user is still speaking. finalize() observes the same
+      // memoized promise; this handler only keeps a rejection from going
+      // unhandled in between.
+      void this.ensureFinalLoaded().catch(() => undefined);
     }
+    /** Every frame of the utterance, for the final sub-session. Copies, since
+     *  the offline sessions copy on push for the same ownership reason. About
+     *  19 MB at the worker's ten-minute session cap. */
+    let buffer: Int16Array[] = [];
+    let finalSession: TranscriptionEngineSession | null = null;
+
+    const liveFallback = async (): Promise<string> => {
+      // The final slot is not usable (still loading past the bound, failed to
+      // load, or failed to start), so the live text is the committed text and
+      // has to be a complete decode of the buffer rather than a partial.
+      if (!liveSession) return '';
+      try {
+        return await liveSession.finalize();
+      } catch {
+        // The live preview is best-effort, and with nothing behind it the
+        // last partial the user watched is the closest thing to a result.
+        return lastLivePartial;
+      }
+    };
 
     return {
       push(pcm: Int16Array): void {
         liveSession?.push(pcm);
-        finalSession?.push(pcm);
+        if (final) buffer.push(pcm.slice());
       },
-      async finalize(): Promise<string> {
-        // With no final slot the live text IS the committed text, so it has to be
-        // a complete decode of the buffer rather than a partial.
-        if (!finalSession) {
-          if (!liveSession) return '';
-          try {
-            return await liveSession.finalize();
-          } catch {
-            // The live preview is best-effort, and with nothing behind it the
-            // last partial the user watched is the closest thing to a result.
-            return lastLivePartial;
-          }
+      finalize: async (): Promise<string> => {
+        if (!final) return liveFallback();
+
+        if (liveSession) {
+          if (!(await fulfilledWithin(this.finalReady(), FINAL_LOAD_WAIT_MS))) return liveFallback();
+        } else {
+          // Nothing to fall back to, so a load failure IS the failure, and
+          // the wait is bounded only by the client's request timeout.
+          await this.finalReady();
+        }
+
+        // Create and feed the final sub-session BEFORE cancelling the live
+        // one: a chunked live engine's cancel() drops its frames, so a final
+        // createSession that throws after the cancel would leave the live
+        // fallback decoding nothing.
+        try {
+          const created = final.engine.createSession({ ...options, onPartial: () => undefined });
+          for (const frame of buffer) created.push(frame);
+          buffer = [];
+          finalSession = created;
+        } catch (error) {
+          if (!liveSession) throw error;
+          return liveFallback();
         }
         // A final slot will produce the committed text, so finalizing the live
         // slot too would run a second full-buffer decode whose result is read
@@ -118,10 +226,12 @@ export class HybridEngine implements TranscriptionEngine {
       cancel(): void {
         liveSession?.cancel();
         finalSession?.cancel();
+        buffer = [];
       },
       dispose(): void {
         liveSession?.dispose();
         finalSession?.dispose();
+        buffer = [];
       },
       async drain(): Promise<void> {
         await Promise.all([liveSession?.drain?.(), finalSession?.drain?.()]);
@@ -130,6 +240,12 @@ export class HybridEngine implements TranscriptionEngine {
   }
 
   async dispose(): Promise<void> {
+    // A final load still in flight assigns its recognizer when it settles, so
+    // disposing the final engine before that would drop nothing and leave the
+    // recognizer behind on a disposed engine. Wait it out; a rejection is not
+    // ours to report here (dictation-worker.ts calls this un-awaited, and an
+    // unhandled rejection takes the worker down).
+    await this.finalLoad?.catch(() => undefined);
     await Promise.all([
       this.live ? this.live.engine.dispose() : Promise.resolve(),
       this.final ? this.final.engine.dispose() : Promise.resolve(),
