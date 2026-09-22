@@ -3782,6 +3782,13 @@ export interface HostMemoryPressureEvent {
   activeAgentCount: number;
 }
 
+/** Pushed when host commit headroom recovers past the hysteresis line after a
+ *  warning was latched - the clear-side edge for `HostMemoryPressureEvent`.
+ *  Fires once per recovery, never on a healthy tick with no prior warning. */
+export interface HostMemoryRecoveryEvent {
+  sample: HostMemorySample;
+}
+
 // === Backlog ===
 
 export type BacklogPriority = 0 | 1 | 2 | 3 | 4;
@@ -5964,6 +5971,7 @@ export interface ElectronAPI {
   // corresponding invoke - main owns the sampler and decides when to fire.
   hostMemory: {
     onPressure: (callback: (event: HostMemoryPressureEvent) => void) => () => void;
+    onRecovery: (callback: (event: HostMemoryRecoveryEvent) => void) => () => void;
   };
 
   // Announcements (remote feed; active = filtered for this client in main.

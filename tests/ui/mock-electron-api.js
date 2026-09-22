@@ -583,6 +583,14 @@
     listeners.forEach(function (fn) { fn(event); });
   };
 
+  // Host memory recovery test hooks (Sentry DESKTOP-16): the clear-side edge
+  // for the pressure push above, same eager pattern.
+  window.__mockHostMemoryRecoveryListeners = [];
+  window.__mockFireHostMemoryRecovery = function (event) {
+    var listeners = window.__mockHostMemoryRecoveryListeners.slice();
+    listeners.forEach(function (fn) { fn(event); });
+  };
+
   // Announcements test hooks: installed eagerly for the same reason as the
   // update-downloaded hooks above. `__mockFireAnnouncementsChanged(active,
   // history)` also updates `__mockActiveAnnouncements` /
@@ -4127,6 +4135,14 @@
         window.__mockHostMemoryPressureListeners.push(callback);
         return function () {
           var listeners = window.__mockHostMemoryPressureListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onRecovery: function (callback) {
+        window.__mockHostMemoryRecoveryListeners.push(callback);
+        return function () {
+          var listeners = window.__mockHostMemoryRecoveryListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };

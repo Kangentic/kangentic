@@ -473,6 +473,7 @@ export const IPC = {
 
   // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
   HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
+  HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
 
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',

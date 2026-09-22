@@ -458,10 +458,11 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 | `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
 
-### Host memory pressure (1 channel)
+### Host memory pressure (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
+| `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 
 ### Announcements (4 channels)
 | Channel | Pattern | Purpose |

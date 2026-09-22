@@ -92,39 +92,57 @@ export function createHostMemoryPressureState(): HostMemoryPressureState {
   return { armed: true, lastWarnedAt: null };
 }
 
+/** The outcome of one evaluation tick. `'pressure'` is the existing
+ *  edge-triggered warning; `'recovered'` is the clear-side edge - headroom
+ *  climbed back past the hysteresis line after a warning was latched (NOT
+ *  fired on every healthy tick above the line, which is why this is not a
+ *  plain boolean: `state.armed` starts `true`, so a fresh boot's first
+ *  healthy tick must read `'none'`, not `'recovered'`). `'none'` covers
+ *  every other case (still above the line and already armed, in the
+ *  threshold-to-hysteresis grey zone, below the line but not yet re-armed or
+ *  blocked by the minimum interval, or a degraded/unsupported sample). */
+export type HostMemoryPressureDecision = 'pressure' | 'recovered' | 'none';
+
 /**
- * Pure edge-triggered decision: does this sample warrant a NEW warning, given
- * the running state? Mutates `state` in place. `now` is injectable for tests.
+ * Pure edge-triggered decision: does this sample warrant a NEW warning, or
+ * does it mark the recovery from one, given the running state? Mutates
+ * `state` in place. `now` is injectable for tests.
  *
- * Three guards, all necessary against a condition that can persist for hours
- * at a 60s sampling cadence: edge-triggering (fire on the downward crossing
- * only), hysteresis (re-arm only well above the line), and a hard minimum
- * interval (a backstop against a value oscillating across the line itself).
+ * Three guards on the warning side, all necessary against a condition that
+ * can persist for hours at a 60s sampling cadence: edge-triggering (fire on
+ * the downward crossing only), hysteresis (re-arm only well above the
+ * line), and a hard minimum interval (a backstop against a value
+ * oscillating across the line itself). The recovery side reuses the same
+ * hysteresis line: it fires once, only when a warning was actually latched,
+ * so a value sitting in the threshold-to-hysteresis grey zone (a "partial"
+ * recovery) is deliberately not treated as recovered - it must clear the
+ * same line the warning side requires headroom to clear before re-arming.
  */
 export function evaluateHostMemoryPressure(
   sample: HostMemorySample,
   state: HostMemoryPressureState,
   now: number = Date.now()
-): boolean {
+): HostMemoryPressureDecision {
   const { commitLimitBytes, commitRemainingBytes } = sample;
   if (commitLimitBytes === null || commitRemainingBytes === null || commitLimitBytes <= 0) {
-    return false;
+    return 'none';
   }
 
   const threshold = pressureThreshold(commitLimitBytes);
   if (commitRemainingBytes >= threshold * HYSTERESIS_MULTIPLIER) {
+    const wasLatched = !state.armed;
     state.armed = true;
-    return false;
+    return wasLatched ? 'recovered' : 'none';
   }
-  if (commitRemainingBytes >= threshold) return false;
-  if (!state.armed) return false;
+  if (commitRemainingBytes >= threshold) return 'none';
+  if (!state.armed) return 'none';
   if (state.lastWarnedAt !== null && now - state.lastWarnedAt < MIN_WARNING_INTERVAL_MS) {
-    return false;
+    return 'none';
   }
 
   state.armed = false;
   state.lastWarnedAt = now;
-  return true;
+  return 'pressure';
 }
 
 export interface HostMemorySamplerOptions {
@@ -133,6 +151,11 @@ export interface HostMemorySamplerOptions {
   getActiveAgentCount: () => number;
   /** Called on the downward crossing only (see evaluateHostMemoryPressure). */
   onPressure: (sample: HostMemorySample, activeAgentCount: number) => void;
+  /** Called on the upward crossing of the hysteresis line, and only when a
+   *  warning was actually latched - the clear edge for `onPressure`. Not
+   *  optional: an unpaired `onPressure` would silently ship a toast with no
+   *  way to dismiss it, which is the bug this option exists to close. */
+  onRecovery: (sample: HostMemorySample) => void;
   /** Called on every tick regardless of pressure - the attach point for a
    *  Sentry context, so whatever event fires next carries the freshest
    *  sample even when nothing ever crosses the threshold. */
@@ -159,8 +182,11 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
       const sample = sampleHostMemory();
       lastSample = sample;
       options.onSample?.(sample);
-      if (evaluateHostMemoryPressure(sample, state, Date.now())) {
+      const decision = evaluateHostMemoryPressure(sample, state, Date.now());
+      if (decision === 'pressure') {
         options.onPressure(sample, options.getActiveAgentCount());
+      } else if (decision === 'recovered') {
+        options.onRecovery(sample);
       }
     } catch (error) {
       console.error('[host-memory] Sampling tick failed:', error);

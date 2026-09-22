@@ -40,11 +40,15 @@ function makeEvent(overrides: Partial<HostMemoryPressureEvent> = {}): HostMemory
 }
 
 let addToastMock: ReturnType<typeof vi.fn>;
+let dismissToastMock: ReturnType<typeof vi.fn>;
+let nextToastId: number;
 
 beforeEach(() => {
-  useHostMemoryStore.setState({ lastEvent: null });
-  addToastMock = vi.fn();
-  useToastStore.getState.mockReturnValue({ addToast: addToastMock });
+  useHostMemoryStore.setState({ lastEvent: null, pressureToastId: null });
+  nextToastId = 0;
+  addToastMock = vi.fn(() => `toast-${++nextToastId}`);
+  dismissToastMock = vi.fn();
+  useToastStore.getState.mockReturnValue({ addToast: addToastMock, dismissToast: dismissToastMock });
 });
 
 describe('useHostMemoryStore.receivePressureEvent', () => {
@@ -83,5 +87,63 @@ describe('useHostMemoryStore.receivePressureEvent', () => {
     );
     const message = addToastMock.mock.calls[0][0].message as string;
     expect(message).toContain('unknown');
+  });
+
+  it('stores the returned toast id so a later recovery can dismiss it', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    expect(useHostMemoryStore.getState().pressureToastId).toBe('toast-1');
+  });
+
+  it('replaces rather than stacks: a second pressure event dismisses the first toast before adding a second', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    const firstToastId = useHostMemoryStore.getState().pressureToastId;
+    expect(firstToastId).not.toBeNull();
+
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+
+    // Order matters: dismiss-before-add, not add-then-dismiss, because
+    // addToast trims to a configurable maxCount that can be as low as 1 - an
+    // add-then-dismiss ordering could evict the new toast and then dismiss
+    // the stale one, leaving nothing on screen.
+    expect(dismissToastMock).toHaveBeenCalledTimes(1);
+    expect(dismissToastMock).toHaveBeenCalledWith(firstToastId);
+    const dismissOrder = dismissToastMock.mock.invocationCallOrder[0];
+    const secondAddOrder = addToastMock.mock.invocationCallOrder[1];
+    expect(dismissOrder).toBeLessThan(secondAddOrder);
+
+    expect(addToastMock).toHaveBeenCalledTimes(2);
+    expect(useHostMemoryStore.getState().pressureToastId).toBe('toast-2');
+  });
+});
+
+describe('useHostMemoryStore.receiveRecovery', () => {
+  it('dismisses exactly the toast id raised by the pressure event, and clears state', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    const toastId = useHostMemoryStore.getState().pressureToastId;
+
+    useHostMemoryStore.getState().receiveRecovery();
+
+    expect(dismissToastMock).toHaveBeenCalledTimes(1);
+    expect(dismissToastMock).toHaveBeenCalledWith(toastId);
+    expect(useHostMemoryStore.getState().pressureToastId).toBeNull();
+    expect(useHostMemoryStore.getState().lastEvent).toBeNull();
+  });
+
+  it('does not call dismissToast and does not throw when no toast was ever raised', () => {
+    expect(() => useHostMemoryStore.getState().receiveRecovery()).not.toThrow();
+    expect(dismissToastMock).not.toHaveBeenCalled();
+    expect(useHostMemoryStore.getState().pressureToastId).toBeNull();
+  });
+
+  it('nulls a stale pressureToastId even when the dismiss matches nothing on screen', () => {
+    // Simulates the toast having already been evicted by maxCount or
+    // dismissed by hand: the id in the store is stale, but the store's own
+    // invariant must self-repair rather than drift from what is on screen.
+    useHostMemoryStore.setState({ pressureToastId: 'stale-toast-id' });
+
+    useHostMemoryStore.getState().receiveRecovery();
+
+    expect(dismissToastMock).toHaveBeenCalledWith('stale-toast-id');
+    expect(useHostMemoryStore.getState().pressureToastId).toBeNull();
   });
 });
