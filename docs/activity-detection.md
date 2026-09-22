@@ -168,9 +168,14 @@ genuine human reply (`event:prompt`) from the agent resuming itself
 (`event:prompt:pty-activity`, `force-thinking`). `started_ms`/`ended_ms` (epoch integers, used by
 the `duration_ms` arithmetic and the `started_ms` index) are mirrored by `started_at`/`ended_at`
 (TEXT UTC ISO 8601, per `.claude/rules/utc-timestamps.md`) - the store derives the mirror from the
-same value it writes to the `_ms` column, so the two can never drift. Read via the
-`kangentic_get_activity_intervals` MCP tool (see `docs/mcp-server.md`) or `kangentic_query_db`. No
-desktop-facing IPC endpoint exists yet.
+same value it writes to the `_ms` column, so the two can never drift. Read directly via the
+`kangentic_get_activity_intervals` MCP tool (see `docs/mcp-server.md`) or `kangentic_query_db`, and
+indirectly by the usage dashboard: `ActivityIntervalStore.getActiveTotals(sinceMs, untilMs)` sums
+the CLOSED `'active'` intervals in a window behind `usage:getDashboardStats`, backing the
+`activeMs` / `activeSessionsCovered` KPI pair (the Avg Active tile) and the per-project Avg Active
+column. Those two travel together because this ledger covers FEWER sessions than `usage_history`
+does - per-interval recording shipped later - so the average is over the sessions with coverage,
+never over the Sessions count.
 
 Priority ladder: `permission > tool > subagent > background-shell > turn-active > idle`. Anchored to `state.activity` for consistency - when forced paths (Interrupted, forceIdle) commit a transition that diverges from the bare predicate (e.g. clearing all counters on Esc), the reason follows the committed state.
 

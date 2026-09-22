@@ -64,7 +64,8 @@ function makeMocks(usageBySessionId: Record<string, SessionUsage> = {}): Mocks {
   // record's applied_effort); the mocks must expose them or the history write
   // throws and is swallowed by the best-effort try/catch.
   const getSessionAgentName = vi.fn((): string | undefined => 'claude');
-  const findByAnyId = vi.fn((): { applied_effort: string | null } | undefined => ({ applied_effort: 'high' }));
+  const findByAnyId = vi.fn((): { applied_effort: string | null; agent_session_id: string | null } | undefined =>
+    ({ applied_effort: 'high', agent_session_id: 'conv-1' }));
 
   const sessionManager = {
     getUsageCache: vi.fn(() => usageBySessionId),
@@ -105,10 +106,13 @@ describe('captureSessionMetrics history write', () => {
       sessionRecordId: 'record-1',
       sessionStartedAt: '2026-04-01T10:00:00Z',
       sessionType: 'claude_agent',
-      totalCostUsd: 0.42,
+      // The conversation lineage, so the repository can turn the cumulative
+      // readings below into this leg's own delta.
+      conversationId: 'conv-1',
+      cumulativeCostUsd: 0.42,
       totalInputTokens: 5000,
       totalOutputTokens: 1500,
-      totalDurationMs: 60000,
+      cumulativeDurationMs: 60000,
       toolCallCount: 7,
       modelId: 'claude-opus-4',
       modelDisplayName: 'Claude Opus 4',
@@ -158,7 +162,7 @@ describe('captureSessionMetrics history write', () => {
 
     expect(recordSessionUsage).toHaveBeenCalledTimes(1);
     expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({
-      totalCostUsd: 0,
+      cumulativeCostUsd: 0,
       totalInputTokens: 5000,
       totalOutputTokens: 1500,
     }));

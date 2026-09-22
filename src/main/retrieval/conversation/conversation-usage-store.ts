@@ -394,6 +394,27 @@ export class ConversationUsageStore {
    *  are keyed by a synthetic `sub:<id>:<messageId>` uuid that no displayed turn
    *  carries, so the filter is belt-and-braces rather than load-bearing; it is
    *  here so the reader's meaning is stated, not inferred. */
+  /**
+   * The oldest turn timestamp this project has, or null when the ledger is
+   * empty. Deliberately NOT window-scoped: it answers "how far back do real
+   * token counts go at all", which is what the Tokens tile needs to say
+   * whether the selected range is fully covered.
+   *
+   * This matters because the two ledgers start at different times.
+   * `usage_history` reaches back to the install's first session, but
+   * per-turn capture shipped later (2026-06-07 on the dogfooding install),
+   * and the transcripts that would let us backfill it are pruned by the CLI
+   * after a few weeks. So an All Time token figure genuinely covers a shorter
+   * span than the cost beside it, and the UI has to say so rather than let
+   * the user read a June-onward number as a March-onward one.
+   */
+  getEarliestTurnMs(): number | null {
+    const row = this.db.prepare(
+      'SELECT MIN(ts) AS earliestMs FROM conversation_turn_usage WHERE ts IS NOT NULL',
+    ).get() as { earliestMs: number | null };
+    return row.earliestMs;
+  }
+
   getForTurns(turnUuids: string[]): ConversationTurnUsageRecord[] {
     if (turnUuids.length === 0) return [];
     const placeholders = turnUuids.map(() => '?').join(',');

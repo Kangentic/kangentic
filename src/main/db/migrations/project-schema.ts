@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+import { LINEAGE_DELTA_SET_SQL } from '../repositories/usage-history-repository';
 import { seedDefaultSwimlanes } from './default-data';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
 import { runAutomationsMigration } from './automations-migration';
@@ -960,6 +961,29 @@ export function runProjectMigrations(db: Database.Database): void {
   // breakdown rides idx_turn_usage_task, which already exists and IS selective.
   db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_agent_type ON conversation_turn_usage(agent_type, ts)');
 
+  // Covering index for the two per-session main-thread rollups the dashboard
+  // runs on every load: `listUsageRollup`'s `session_turns` CTE (breakdown
+  // tokens) and `getGroupedUsageSince`'s `session_tokens` CTE (the cost
+  // allocation denominator). Both group every main-thread turn by session and
+  // sum the same two token columns, so carrying them in the index turns a
+  // 214k-row table walk into a pure index scan.
+  //
+  // Measured on the dogfooding project (214k turns, 2.4k sessions): the
+  // breakdown rollup went from 93 ms to 18 ms per project, which matters
+  // because the app-wide scope runs it once per registered project on the
+  // synchronous main thread that also owns the PTYs.
+  //
+  // PARTIAL on `subagent_id IS NULL` deliberately. Every reader of these
+  // aggregates is main-thread-only, so the subagent rows are dead weight in
+  // the index, and SQLite only picks a partial index up when the query repeats
+  // its predicate - which both CTEs do. `idx_turn_usage_session` stays: it
+  // serves `getForSession`, which reads a session's subagent rows too.
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_turn_usage_main_session '
+    + 'ON conversation_turn_usage(session_id, ts, input_tokens, output_tokens) '
+    + 'WHERE subagent_id IS NULL',
+  );
+
   // Migration: the spawn-link side of `parent_tool_use_id`.
   //
   // `parent_tool_use_id` holds the tool-use id of the spawning call, but nothing
@@ -1220,6 +1244,77 @@ export function runProjectMigrations(db: Database.Database): void {
       transaction();
     }
   }
+
+  // Migration: make total_cost_usd / total_duration_ms SUMMABLE across a
+  // conversation's `--resume` legs.
+  //
+  // The agent reports both as CUMULATIVE-PER-CONVERSATION readings, but each
+  // resume leg is its own `sessions` row and therefore its own usage_history
+  // row, so the dashboard's flat SUM added the running total once per leg. On
+  // the dogfooding install that read $113,209 where the last reading per
+  // conversation summed to $50,487, and one lineage carried the identical
+  // $22.16 across ~20 consecutive rows with 0 tool calls each.
+  //
+  // The shape mirrors what `setTaskGitStats` already does for branch-cumulative
+  // git churn: keep every read query a flat SUM, and make the summed column
+  // per-leg. `cumulative_*` holds the raw reading (never summed, only used as
+  // the next leg's baseline); `total_*` becomes the delta against the highest
+  // reading of a PRIOR leg of the same conversation.
+  //
+  // `conversation_id` is the session's `agent_session_id`, which tracks CLI
+  // forks: both `reconcileResumeAgentSessionId` and the stale-ID recovery in
+  // session-lifecycle.ts persist the agent-reported id, so a `/clear` fork
+  // starts a new lineage whose first leg counts in full. A NULL
+  // `conversation_id` (a row whose `sessions` row was deleted) means "its own
+  // lineage" and keeps its value unchanged.
+  //
+  // The three ALTERs, the index and the backfill run in ONE transaction,
+  // matching the `run_mode` migration below: the guard tests only for
+  // `conversation_id`, so a crash between the first ALTER and the second would
+  // leave that column present, the guard satisfied, and `cumulative_cost_usd` /
+  // `cumulative_duration_ms` never created - after which every
+  // `recordSessionUsage` INSERT fails on a missing column, permanently and with
+  // no self-repair path. A crash inside the transaction rolls the whole thing
+  // back instead, so the guard stays an accurate proxy for "this finished".
+  const hasUsageHistoryConversationId = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
+    .some((column) => column.name === 'conversation_id');
+  if (!hasUsageHistoryConversationId) {
+    const addLineageColumns = db.transaction(() => {
+      db.exec('ALTER TABLE usage_history ADD COLUMN conversation_id TEXT');
+      db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_cost_usd REAL');
+      db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_duration_ms INTEGER');
+      // Created BEFORE the rewrite, not after it. The delta UPDATE below runs a
+      // correlated per-row lookup keyed on exactly this (conversation_id,
+      // session_started_at) pair, so without the index first the backfill scans
+      // the whole table once per row.
+      db.exec('CREATE INDEX IF NOT EXISTS idx_usage_history_conversation ON usage_history(conversation_id, session_started_at)');
+      db.exec(`
+        UPDATE usage_history SET conversation_id = (
+          SELECT s.agent_session_id
+            FROM sessions s
+           WHERE s.id = usage_history.session_record_id
+        )
+      `);
+      // Preserve the raw readings before rewriting the summable columns.
+      db.exec(`
+        UPDATE usage_history
+           SET cumulative_cost_usd = total_cost_usd,
+               cumulative_duration_ms = total_duration_ms
+      `);
+      // Per-leg deltas, using the same definition the write path applies on
+      // every capture. A lineage-less row keeps its reading as its delta.
+      db.exec(`
+        UPDATE usage_history
+           SET ${LINEAGE_DELTA_SET_SQL}
+         WHERE conversation_id IS NOT NULL
+      `);
+    });
+    addLineageColumns();
+  }
+  // Unconditional and idempotent, so the index still lands on a database that
+  // reached this point by some other route than the block above. Serves the
+  // per-leg baseline lookup in `recordSessionUsage`.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_usage_history_conversation ON usage_history(conversation_id, session_started_at)');
 
   // Migration: add per-task permission_mode override column. Mirrors
   // agent_override/model_override/effort_override: settable via the New Task

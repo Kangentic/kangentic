@@ -404,14 +404,40 @@ describe('computeKpis', () => {
     expect(kpis.cacheCreationTokens).toBe(75);
     // 1000 turn tokens over 2 hours.
     expect(kpis.burnRateTokensPerHour).toBeCloseTo(500);
-    // The full $2 allocated across the window.
-    expect(kpis.burnRateUsdPerHour).toBeCloseTo(1);
+    // The LEDGER cost over the same 2 hours, not the turn-allocated share.
+    expect(kpis.burnRateUsdPerHour).toBeCloseTo(kpis.totalCostUsd / 2);
   });
 
-  it('reports null burn rates with no turn data, and null $/hr when no cost was reported', () => {
-    const noTurns = computeKpis(makeTotals(), [], 3_600_000);
-    expect(noTurns.burnRateTokensPerHour).toBeNull();
-    expect(noTurns.burnRateUsdPerHour).toBeNull();
+  it('divides both burn-rate lines by the same hours, each over the number its own tile shows', () => {
+    // The defect this pins: the dollar line used to divide turn-ALLOCATED cost
+    // while the Cost tile showed the ledger total, so `$/hr x hours` did not
+    // reproduce the tile and the two lines implied different window lengths.
+    const kpis = computeKpis(
+      makeTotals({ totalCostUsd: 90, costKnownCount: 3 }),
+      [makeGroup({ inputTokens: 200, outputTokens: 100, allocatedCostUsd: 7 })],
+      3 * 3_600_000,
+    );
+    const hours = 3;
+    expect(kpis.burnRateUsdPerHour! * hours).toBeCloseTo(kpis.totalCostUsd);
+    expect(kpis.burnRateTokensPerHour! * hours)
+      .toBeCloseTo(kpis.turnInputTokens + kpis.turnOutputTokens);
+    // Same denominator, so the ratio of the lines is the ratio of the tiles.
+    expect(kpis.burnRateUsdPerHour! / kpis.burnRateTokensPerHour!)
+      .toBeCloseTo(kpis.totalCostUsd / (kpis.turnInputTokens + kpis.turnOutputTokens));
+  });
+
+  it('reports a dollar rate for a window with ledger cost but no turn rows', () => {
+    // Anything predating the turn ledger. The old `groups.length > 0` gate
+    // rendered a bare `-` next to a Cost tile showing real money.
+    const noTurns = computeKpis(makeTotals({ totalCostUsd: 60, costKnownCount: 2 }), [], 3_600_000);
+    expect(noTurns.burnRateUsdPerHour).toBeCloseTo(60);
+    expect(noTurns.burnRateTokensPerHour).toBe(0);
+  });
+
+  it('reports null burn rates for an empty window, and null $/hr when no cost was reported', () => {
+    const empty = computeKpis(makeTotals({ sessionCount: 0, costKnownCount: 0 }), [], 3_600_000);
+    expect(empty.burnRateTokensPerHour).toBeNull();
+    expect(empty.burnRateUsdPerHour).toBeNull();
 
     const noCost = computeKpis(
       makeTotals({ totalCostUsd: 0, costKnownCount: 0 }),
@@ -425,12 +451,25 @@ describe('computeKpis', () => {
 
   it('floors the elapsed window at one minute so tiny ranges cannot explode the rate', () => {
     const kpis = computeKpis(
-      makeTotals({ sessionCount: 0, costKnownCount: 0 }),
+      makeTotals({ costKnownCount: 0 }),
       [makeGroup({ inputTokens: 60, outputTokens: 0 })],
       1,
     );
     // 60 tokens over the 1-minute floor = 3600 tokens/hr, not 216M.
     expect(kpis.burnRateTokensPerHour).toBeCloseTo(3600);
+  });
+
+  it('averages active time over the sessions the interval ledger covers, not every session', () => {
+    // The two counts come from different ledgers: per-interval recording
+    // shipped later than usage_history, so dividing by `sessionCount` would
+    // under-report every historical range.
+    const kpis = computeKpis(makeTotals({ sessionCount: 10 }), [], 3_600_000, [], {
+      activeMs: 600_000,
+      sessionsCovered: 4,
+    });
+    expect(kpis.activeMs).toBe(600_000);
+    expect(kpis.activeSessionsCovered).toBe(4);
+    expect(kpis.activeMs / kpis.activeSessionsCovered).toBe(150_000);
   });
 
   it('sums subagentNestedCount across every subagent type row, as a subset of subagentCount', () => {

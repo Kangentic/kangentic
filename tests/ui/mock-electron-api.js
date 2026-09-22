@@ -2495,6 +2495,12 @@
             ],
           });
         }
+        // Burn rates derived from THIS fixture's own totals and range, the way
+        // the service computes them: one shared denominator, each numerator
+        // the field its own tile renders. Hardcoded constants here used to
+        // contradict the fixture's cost and tokens, so a UI test could not
+        // check the property the tiles are supposed to have.
+        var rangeHours = Math.max(nowMs - rangeStartMs, 60000) / 3600000;
         return {
           scope: scope,
           period: period,
@@ -2516,6 +2522,8 @@
             filesChanged: 58,
             compactionCount: 2,
             totalDurationMs: 4 * hourMs,
+            activeMs: 90 * 60 * 1000,
+            activeSessionsCovered: 6,
             turnInputTokens: 60000,
             turnOutputTokens: 20000,
             cacheCreationTokens: 30000,
@@ -2527,8 +2535,8 @@
             subagentTurnCount: 190,
             subagentCount: 8,
             subagentNestedCount: 2,
-            burnRateTokensPerHour: 24000,
-            burnRateUsdPerHour: 1.54,
+            burnRateTokensPerHour: (60000 + 20000) / rangeHours,
+            burnRateUsdPerHour: 12.34 / rangeHours,
           },
           previousKpis: period === 'all' ? null : {
             totalCostUsd: 10.0,
@@ -2543,6 +2551,8 @@
             filesChanged: 50,
             compactionCount: 1,
             totalDurationMs: 3 * hourMs,
+            activeMs: 72 * 60 * 1000,
+            activeSessionsCovered: 5,
             turnInputTokens: 50000,
             turnOutputTokens: 16000,
             cacheCreationTokens: 24000,
@@ -2554,8 +2564,8 @@
             subagentTurnCount: 160,
             subagentCount: 6,
             subagentNestedCount: 1,
-            burnRateTokensPerHour: 20000,
-            burnRateUsdPerHour: 1.3,
+            burnRateTokensPerHour: (50000 + 16000) / rangeHours,
+            burnRateUsdPerHour: 10.0 / rangeHours,
           },
           tokenSeries: tokenSeries,
           costSeries: costSeries,
@@ -2582,10 +2592,12 @@
           // 'codex' is in byAgent above and reports no subagent usage, so the
           // Subagents tile has to say so rather than render a bare dash.
           subagentBlindAgents: ['codex'],
+          liveLedgerBaseline: { costUsd: 0 },
+          earliestTurnMs: nowMs - 30 * dayMs,
           perProject: scope.kind === 'all'
             ? [
-                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
-                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
+                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, activeMs: 55 * 60 * 1000, activeSessionsCovered: 4, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
+                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, activeMs: 20 * 60 * 1000, activeSessionsCovered: 2, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
               ]
             : undefined,
         };

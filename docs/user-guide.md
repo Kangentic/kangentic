@@ -893,9 +893,11 @@ Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift
 - **Scope** - the current project, or an app-wide rollup across every registered project (with a per-project comparison table).
 - **Metric** - toggle between cost and tokens.
 - **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
-- **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, burn rate, subagent tokens) with "vs previous period" deltas. The Subagents tile's tooltip adds how many of those subagents another subagent spawned, and names any agent in the range that cannot report subagent usage at all - only Claude can today, so a Codex or Gemini range says so rather than showing a dash that looks like "nothing fanned out".
+- **Breakdowns** - by model, by agent, by reasoning effort, and, when a session fanned out to subagents, by subagent type, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, files, cache reads, compactions, burn rate, average active time, subagent tokens) with "vs previous period" deltas. The Subagents tile's tooltip adds how many of those subagents another subagent spawned, and names any agent in the range that cannot report subagent usage at all - only Claude can today, so a Codex or Gemini range says so rather than showing a dash that looks like "nothing fanned out".
 
 Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
+
+Two things the numbers do NOT mean, both said on the tiles themselves. Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed, so a subscription session can report $0. And tokens are counted per turn and kept apart by type (fresh input, output, cache write, cache read) because cache reads are far larger and far cheaper than fresh input; per-turn counting started later than cost did, so a long range covers less of it, and the Tokens tile says from when.
 
 ## Agent Monitor
 

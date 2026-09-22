@@ -360,9 +360,10 @@ export function StatsDashboardBody() {
         <p
           className="flex items-center gap-1.5 text-[11px] text-fg-faint w-fit cursor-help"
           title={
-            'Costs are API-equivalent as reported by agents; subscription sessions may report $0.\n' +
-            'Totals include finalized sessions plus any currently running, refreshed live as they progress.\n' +
-            'Trend lines use exact per-turn tokens, which measure differently from the session snapshots behind the totals.'
+            'Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0.\n' +
+            'Cost covers finalized sessions plus any currently running, refreshed live as they progress.\n' +
+            'Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it.\n' +
+            'Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count.'
           }
           data-testid="stats-about-numbers"
         >

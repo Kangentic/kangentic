@@ -85,6 +85,40 @@ import type {
 // stays frozen at the pre-refactor semantics.
 // ---------------------------------------------------------------------------
 
+/**
+ * One session's MAIN-THREAD turn tokens in a window, read row-by-row in JS -
+ * the oracle for the `session_turns` CTE the rollup query now joins. Written
+ * as a plain scan on purpose: an oracle that reused the CTE would pass
+ * vacuously.
+ */
+function legacyTurnTokensForSession(
+  db: InstanceType<typeof DatabaseType>,
+  sessionRecordId: string,
+  window: { sinceMs: number | null; untilMs: number | null },
+): { totalInputTokens: number; totalOutputTokens: number } {
+  const rows = db.prepare(
+    'SELECT session_id, ts, input_tokens, output_tokens, subagent_id FROM conversation_turn_usage',
+  ).all() as Array<{
+    session_id: string | null;
+    ts: number | null;
+    input_tokens: number;
+    output_tokens: number;
+    subagent_id: string | null;
+  }>;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  for (const row of rows) {
+    if (row.subagent_id !== null) continue;
+    if (row.ts === null) continue;
+    if (row.session_id !== sessionRecordId) continue;
+    if (window.sinceMs !== null && row.ts < window.sinceMs) continue;
+    if (window.untilMs !== null && row.ts >= window.untilMs) continue;
+    totalInputTokens += row.input_tokens;
+    totalOutputTokens += row.output_tokens;
+  }
+  return { totalInputTokens, totalOutputTokens };
+}
+
 interface LegacyUsageRow {
   sessionRecordId: string;
   sessionStartedAt: string;
@@ -661,12 +695,28 @@ describe.runIf(CAN_RUN)('usage-stats SQL pushdown equivalence (new SQL vs legacy
   });
 
   it('breakdowns: the dimension rollup regroups to the same model/agent/effort tables (order included)', () => {
+    // The oracle still holds for cost, session counts, grouping and ORDER.
+    // Tokens are deliberately no longer the same measurement: the legacy fold
+    // summed `usage_history`'s token columns, which are context-window
+    // SNAPSHOTS, so a breakdown built on them ranked models by how big their
+    // contexts happened to be. The rollup now reads the per-turn ledger, so
+    // each legacy row's tokens are swapped for its session's real turn totals
+    // before the oracle runs - keeping this an equivalence test of the SQL
+    // pushdown rather than of the token source.
     for (const window of WINDOWS) {
+      const sinceMs = msOf(window.sinceIso);
+      const untilMs = msOf(window.untilIso);
       const newRollup = [];
       const legacyRows: LegacyUsageRow[] = [];
       for (const db of databases) {
-        newRollup.push(...new UsageHistoryRepository(db).listUsageRollup(window.sinceIso, window.untilIso));
-        legacyRows.push(...legacyListRowsAfter(db, window.sinceIso, window.untilIso));
+        newRollup.push(...new UsageHistoryRepository(db).listUsageRollup(
+          window.sinceIso, window.untilIso, sinceMs, untilMs,
+        ));
+        legacyRows.push(...legacyListRowsAfter(db, window.sinceIso, window.untilIso)
+          .map((row) => ({
+            ...row,
+            ...legacyTurnTokensForSession(db, row.sessionRecordId, { sinceMs, untilMs }),
+          })));
       }
       expectNumericallyEqual(buildModelBreakdown(newRollup), legacyBuildModelBreakdown(legacyRows), `byModel[${window.label}]`);
       expectNumericallyEqual(buildAgentBreakdown(newRollup), legacyBuildAgentBreakdown(legacyRows), `byAgent[${window.label}]`);

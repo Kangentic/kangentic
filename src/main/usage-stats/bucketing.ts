@@ -392,6 +392,7 @@ export function computeKpis(
   groups: GroupedTurnUsageRow[],
   elapsedMs: number,
   subagentTotals: SubagentUsageTotals[] = [],
+  activeTotals: { activeMs: number; sessionsCovered: number } = { activeMs: 0, sessionsCovered: 0 },
 ): UsageKpis {
   const costKnown = totals.costKnownCount > 0;
 
@@ -399,13 +400,11 @@ export function computeKpis(
   let cacheReadTokens = 0;
   let turnInputTokens = 0;
   let turnOutputTokens = 0;
-  let allocatedCostUsd = 0;
   for (const group of groups) {
     cacheCreationTokens += group.cacheCreationTokens;
     cacheReadTokens += group.cacheReadTokens;
     turnInputTokens += group.inputTokens;
     turnOutputTokens += group.outputTokens;
-    allocatedCostUsd += group.allocatedCostUsd;
   }
   const turnTokens = turnInputTokens + turnOutputTokens;
 
@@ -433,14 +432,34 @@ export function computeKpis(
   }
 
   // Burn rates average over the elapsed window (floored at one minute so a
-  // just-started range cannot produce absurd rates). Main-thread only, matching
-  // the turn fields they derive from: subagent tokens have no cost allocation of
-  // their own (the session's reported cost already covers the whole tree), so
-  // folding them in would change the token rate without the dollar rate and the
-  // two would stop describing the same thing.
+  // just-started range cannot produce absurd rates).
+  //
+  // Both lines divide by the SAME elapsed hours, and each numerator is the KPI
+  // field its own tile renders, so `rate x range hours` reproduces the tile
+  // above it. That was not true before: the dollar line used
+  // `allocatedCostUsd` (cost spread across turn groups), which covers only the
+  // span the turn ledger reaches - about 29% of lifetime cost on the
+  // dogfooding install - while the Cost tile showed the full ledger. Dividing
+  // one tile by the other implied two different window lengths, 1.6x apart.
+  // `allocatedCostUsd` is still the right input for the per-bucket burn CHART,
+  // which genuinely needs cost attributed to a timestamp; it is wrong for a
+  // headline rate that sits next to a full-range total.
+  //
+  // Token side stays main-thread only, matching the Tokens tile: subagent
+  // tokens have no cost allocation of their own (the session's reported cost
+  // already covers the whole tree), so folding them in would move the token
+  // rate without the dollar rate and the two would stop describing the same
+  // work.
+  //
+  // Gated on having any session in the window rather than on `groups.length`:
+  // a range with real ledger cost but no turn rows (anything predating the
+  // turn ledger) rendered a bare `-` next to a live Cost tile. The gate still
+  // has to exist, or an empty window divides a zero numerator by the 60s floor
+  // and reports a rate for a range with nothing in it.
   const elapsedHours = Math.max(elapsedMs, 60_000) / HOUR_MS;
-  const burnRateTokensPerHour = groups.length > 0 ? turnTokens / elapsedHours : null;
-  const burnRateUsdPerHour = groups.length > 0 && costKnown ? allocatedCostUsd / elapsedHours : null;
+  const hasWindowData = totals.sessionCount > 0;
+  const burnRateTokensPerHour = hasWindowData ? turnTokens / elapsedHours : null;
+  const burnRateUsdPerHour = hasWindowData && costKnown ? totals.totalCostUsd / elapsedHours : null;
 
   return {
     totalCostUsd: totals.totalCostUsd,
@@ -455,6 +474,8 @@ export function computeKpis(
     filesChanged: totals.filesChanged,
     compactionCount: totals.compactionCount,
     totalDurationMs: totals.totalDurationMs,
+    activeMs: activeTotals.activeMs,
+    activeSessionsCovered: activeTotals.sessionsCovered,
     turnInputTokens,
     turnOutputTokens,
     cacheCreationTokens,

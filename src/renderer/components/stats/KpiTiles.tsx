@@ -23,8 +23,17 @@ import { CompactTile } from './CompactTile';
 import { agentShortName } from '../../utils/agent-display-name';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
+import { formatDate } from '../../lib/datetime';
 import { KngSparkline } from './charts/KngSparkline';
-import { deltaPercent, type TimePoint } from './useStatsData';
+import {
+  deltaPercent,
+  resolveAvgActiveMs,
+  resolveCacheReadShare,
+  resolveDisplayCost,
+  resolveTokenBuckets,
+  selectLiveSessionIds,
+  type TimePoint,
+} from './useStatsData';
 
 /** The "vs ..." label per range for the hero deltas. */
 const DELTA_BASELINE_LABELS: Record<UsageTimePeriod, string> = {
@@ -150,7 +159,11 @@ interface KpiTilesProps {
  *   instant reactivity (a pushed usage tick must repaint within one animation
  *   frame; see `useValuePulse`'s resetKey contract). For 'live' the tiles show
  *   ONLY in-memory running-session usage; for DB periods the payload totals
- *   get the live sessions layered on top.
+ *   get the live sessions layered on top, MINUS `liveLedgerBaseline`, which is
+ *   the part of those same sessions the ledger already holds. Both halves of
+ *   that subtraction matter: without the status filter the overlay includes
+ *   finalized sessions, and without the baseline it re-adds running ones the
+ *   45s metrics timer already wrote.
  * - Sessions: read from `payload.kpis.sessionCount` directly - the server
  *   (`usage-stats-service.ts`) already folds in-flight sessions into this
  *   count (deduped against the ledger), so no client-side layering is needed
@@ -171,46 +184,65 @@ export function KpiTiles({
 }: KpiTilesProps) {
   const sessions = useSessionStore((state) => state.sessions);
 
-  const liveFilter = useMemo<ReadonlySet<string> | 'all'>(() => {
-    if (!includeLive) return new Set<string>();
-    if (scopeKind !== 'project' || !effectiveProjectId) return 'all';
-    return new Set(
-      sessions.filter((session) => session.projectId === effectiveProjectId).map((session) => session.id),
-    );
-  }, [includeLive, scopeKind, effectiveProjectId, sessions]);
+  // The ONE live-session set, shared by the usage overlay and the "N active
+  // now" label so the two can never disagree about what counts as live. It has
+  // to match what main puts in `liveSessions`, which is what
+  // `liveLedgerBaseline` below is measured over, or the subtraction is against
+  // the wrong sessions. See `selectLiveSessionIds` for which sessions that is
+  // and why each filter is there.
+  const liveSessionIds = useMemo<ReadonlySet<string>>(
+    () => selectLiveSessionIds(sessions, { includeLive, scopeKind, effectiveProjectId }),
+    [includeLive, scopeKind, effectiveProjectId, sessions],
+  );
 
-  const live = useLiveUsageAggregate(liveFilter);
+  const live = useLiveUsageAggregate(liveSessionIds);
 
   // Cosmetic-only: the server already counts these sessions into
-  // `kpis.sessionCount` for the headline; this mirrors that scoping (project
-  // vs all, running/queued only) purely to label how many are live right now.
-  const liveSessionCount = useMemo(() => {
-    if (!includeLive) return 0;
-    return sessions.filter((session) => {
-      if (session.status !== 'running' && session.status !== 'queued') return false;
-      if (scopeKind === 'project' && effectiveProjectId) return session.projectId === effectiveProjectId;
-      return true;
-    }).length;
-  }, [includeLive, scopeKind, effectiveProjectId, sessions]);
+  // `kpis.sessionCount` for the headline; this labels how many are live now.
+  const liveSessionCount = liveSessionIds.size;
 
   const kpis = payload?.kpis ?? null;
   const previous = payload?.previousKpis ?? null;
   const isLive = period === 'live' && includeLive;
-  const displayInput = isLive ? live.input : (kpis?.totalInputTokens ?? 0) + live.input;
-  const displayOutput = isLive ? live.output : (kpis?.totalOutputTokens ?? 0) + live.output;
-  const displayCost = isLive ? live.cost : (kpis?.totalCostUsd ?? 0) + live.cost;
+  // The live overlay carries each running session's CUMULATIVE reading, and
+  // the 45s metrics timer has already upserted that reading into the ledger.
+  // So the ledger's own share of these sessions comes off before the overlay
+  // goes on; otherwise every running session is counted twice and the tile
+  // floats above the breakdowns, which get no overlay at all.
+  const displayCost = resolveDisplayCost({
+    isLivePeriod: isLive,
+    ledgerCostUsd: kpis?.totalCostUsd ?? 0,
+    // Optional-chained through the object too: a payload cached from an older
+    // shape (or a dev server mid-upgrade) has no `liveLedgerBaseline`, and a
+    // throw here takes the whole dashboard down.
+    liveLedgerBaselineCostUsd: payload?.liveLedgerBaseline?.costUsd ?? 0,
+    liveOverlayCostUsd: live.cost,
+  });
   const costKnown = (kpis?.costKnown ?? false) || live.cost > 0;
 
-  const cacheDenominator =
-    (kpis?.cacheReadTokens ?? 0) + (kpis?.cacheCreationTokens ?? 0) + (kpis?.turnInputTokens ?? 0);
-  const cacheReadShare = cacheDenominator > 0 ? (kpis?.cacheReadTokens ?? 0) / cacheDenominator : null;
+  // The four disjoint token types, off the per-turn ledger. Only INPUT has a
+  // cached counterpart, which is why it alone carries the `fresh` qualifier.
+  // See `resolveTokenBuckets` for why there is no single combined total.
+  const tokens = resolveTokenBuckets(kpis);
+  const { freshInputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, hasTokens } = tokens;
+  const cacheReadShare = resolveCacheReadShare(tokens);
 
-  // Second-row stat for the Cost tile: blended $/Mtok (the tokens<->cost
-  // bridge, same math as the per-project table's blended-rate column).
-  const displayTokens = displayInput + displayOutput;
-  const costSub = displayCost > 0 && displayTokens > 0
-    ? `${formatCost(displayCost / (displayTokens / 1_000_000))}/Mtok (blended)`
-    : undefined;
+  // The turn ledger starts later than the cost ledger and the CLI prunes the
+  // transcripts that would backfill it, so a range reaching back before that
+  // genuinely has no token data for its early part. Say so on the tile rather
+  // than letting the number read as full coverage.
+  const earliestTurnMs = payload?.earliestTurnMs ?? null;
+  const tokensPartialFrom = earliestTurnMs !== null && payload && payload.rangeStartMs < earliestTurnMs
+    ? earliestTurnMs
+    : null;
+  const tokensTitle = !hasTokens
+    ? 'No per-turn token data recorded in this range'
+    : [
+        `Fresh input and output on the main thread. ${formatTokenCount(cacheCreationTokens)} cache write and ${formatTokenCount(cacheReadTokens)} cache read are counted separately and priced differently.`,
+        tokensPartialFrom !== null
+          ? `Per-turn capture starts ${formatDate(tokensPartialFrom)}, so this covers less of the range than Cost does.`
+          : null,
+      ].filter(Boolean).join(' ');
 
   const burnIsUsd = kpis?.burnRateUsdPerHour != null && costKnown;
   const burnValue = burnIsUsd
@@ -222,13 +254,18 @@ export function KpiTiles({
     ? `${formatTokenCount(Math.round(kpis.burnRateTokensPerHour))} tok/hr`
     : undefined;
 
-  // Deltas compare the LEDGER windows only (no live layering on either side).
+  // Deltas read the same base as the value above them. They used to compare
+  // bare ledger totals while the hero showed ledger-plus-overlay, so the
+  // number and its percentage described two different quantities.
   // A custom window compares against the same-length window preceding it.
   const deltaBaseline = payload?.previousKpis
     ? (hasCustomWindow ? 'vs preceding window' : DELTA_BASELINE_LABELS[period])
     : '';
-  const tokenDelta = deltaPercent(kpis?.totalTokens ?? 0, previous?.totalTokens);
-  const costDelta = deltaPercent(kpis?.totalCostUsd ?? 0, previous?.totalCostUsd);
+  const tokenDelta = deltaPercent(
+    freshInputTokens + outputTokens,
+    previous ? previous.turnInputTokens + previous.turnOutputTokens : null,
+  );
+  const costDelta = deltaPercent(displayCost, previous?.totalCostUsd);
   const burnDelta = burnIsUsd
     ? deltaPercent(kpis?.burnRateUsdPerHour ?? 0, previous?.burnRateUsdPerHour)
     : deltaPercent(kpis?.burnRateTokensPerHour ?? 0, previous?.burnRateTokensPerHour);
@@ -274,7 +311,7 @@ export function KpiTiles({
   const blindVerb = blindAgents.length === 1 ? 'does not' : 'do not';
   const subagentTitle = hasSubagentTurns
     ? [
-        `Fresh + output tokens from ${kpis!.subagentTurnCount.toLocaleString()} subagent turn(s), additive to Total Tokens and already counted in Cost.`,
+        `Fresh input and output from ${kpis!.subagentTurnCount.toLocaleString()} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them.`,
         `${formatTokenCount(kpis!.subagentCacheReadTokens)} cache read.`,
         nestedCount > 0
           ? `${nestedCount} of ${kpis!.subagentCount} ${nestedCount === 1 ? 'was' : 'were'} spawned by another subagent.`
@@ -284,10 +321,20 @@ export function KpiTiles({
     : blindAgents.length > 0
       ? `${blindLabel} ${blindVerb} report subagent usage, so fan-outs in this range cannot be counted.`
       : 'No subagent turns recorded in this range';
-  const avgSessionDelta = deltaPercent(
-    kpis && kpis.sessionCount > 0 ? kpis.totalDurationMs / kpis.sessionCount : 0,
-    previous && previous.sessionCount > 0 ? previous.totalDurationMs / previous.sessionCount : null,
-  );
+  // Avg Active is ACTIVE time per covered session, not wall clock per ledger
+  // row. Two things changed and both matter. The old numerator was the agent's
+  // own `total_duration_ms`, which counts every hour a session sat idle (active
+  // time measures 39% of it on the dogfooding install). And the old denominator
+  // was `sessionCount`, a count of `usage_history` rows, while the numerator
+  // now comes from the interval ledger, which covers fewer sessions - so the
+  // denominator has to be that ledger's own count or the average is over two
+  // different populations.
+  const activeCoveredSessions = kpis?.activeSessionsCovered ?? 0;
+  const avgActiveMs = resolveAvgActiveMs(kpis?.activeMs ?? 0, activeCoveredSessions);
+  const previousAvgActiveMs = previous
+    ? resolveAvgActiveMs(previous.activeMs, previous.activeSessionsCovered)
+    : null;
+  const avgActiveDelta = deltaPercent(avgActiveMs ?? 0, previousAvgActiveMs);
 
   // Context identity for the pulse rebaseline: scope, project, range, AND the
   // drilled day (payload rangeStart pins it) - any of these changing is a
@@ -298,10 +345,13 @@ export function KpiTiles({
     <div className="flex flex-col gap-2" data-testid="kpi-tiles">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <HeroTile
-          label="Total Tokens"
+          label="Tokens"
           icon={<Braces size={14} />}
-          value={formatTokenCount(displayInput + displayOutput)}
-          sub={`${formatTokenCount(displayInput)} in / ${formatTokenCount(displayOutput)} out`}
+          value={hasTokens ? formatTokenCount(freshInputTokens + outputTokens) : '-'}
+          sub={hasTokens
+            ? `${formatTokenCount(freshInputTokens)} in / ${formatTokenCount(outputTokens)} out`
+            : undefined}
+          title={tokensTitle}
           delta={tokenDelta}
           deltaBaseline={deltaBaseline}
           spark={tokenSparkline}
@@ -314,8 +364,10 @@ export function KpiTiles({
           label="Cost"
           icon={<CircleDollarSign size={14} />}
           value={formatCost(displayCost)}
-          sub={costSub}
-          title={costKnown ? 'API-equivalent cost as reported by agents' : 'No cost reported by agents in this range'}
+          sub={costKnown ? 'API-equivalent' : undefined}
+          title={costKnown
+            ? 'Priced at API list rates from the tokens each agent reported. Not what a subscription was billed.'
+            : 'No cost reported by agents in this range'}
           delta={costDelta}
           deltaBaseline={deltaBaseline}
           spark={costSparkline}
@@ -330,7 +382,7 @@ export function KpiTiles({
           value={burnValue}
           valueSuffix={burnValue === '-' ? undefined : '/hr'}
           sub={burnSub}
-          title="Averaged over the selected range; $/hr is approximate (session cost allocated across turns)"
+          title="Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
           delta={burnDelta}
           deltaBaseline={deltaBaseline}
           spark={burnSparkline}
@@ -349,6 +401,12 @@ export function KpiTiles({
           icon={<SquareTerminal size={14} />}
           value={String(kpis?.sessionCount ?? 0)}
           sub={liveSessionCount > 0 ? `${liveSessionCount} active now` : undefined}
+          // Names what it counts. A resume is a separate CLI invocation and so
+          // a separate session, which is the convention Claude Code itself
+          // uses, but it means the count is not a count of distinct pieces of
+          // work: 277 of this project's 2,434 legs did nothing at all. Without
+          // saying so the number reads as "tasks worked on".
+          title="CLI invocations, counting each resume of a conversation separately"
           delta={sessionsDelta}
           deltaBaseline={deltaBaseline}
           resetKey={resetKey}
@@ -392,8 +450,12 @@ export function KpiTiles({
           label="Cache Reads"
           icon={<Zap size={14} />}
           value={cacheReadShare != null ? `${Math.round(cacheReadShare * 100)}%` : '-'}
+          // The absolute belongs on the tile, not only in the tooltip: a bare
+          // 99% is a share of a number nothing else on the screen shows, and
+          // cache read is the largest token bucket by an order of magnitude.
+          sub={cacheReadShare != null ? `${formatTokenCount(cacheReadTokens)} read` : undefined}
           title={cacheReadShare != null
-            ? 'Share of context input served from prompt cache (turn-derived)'
+            ? `Cache read as a share of all input: ${formatTokenCount(cacheReadTokens)} read against ${formatTokenCount(cacheCreationTokens)} written and ${formatTokenCount(freshInputTokens)} fresh.`
             : 'Not reported by these agents in this range'}
           resetKey={resetKey}
           testId="kpi-cache"
@@ -422,10 +484,22 @@ export function KpiTiles({
           testId="kpi-compactions"
         />
         <CompactTile
-          label="Avg Session"
+          label="Avg Active"
           icon={<Timer size={14} />}
-          value={kpis && kpis.sessionCount > 0 ? formatDuration(kpis.totalDurationMs / kpis.sessionCount) : '-'}
-          delta={avgSessionDelta}
+          value={avgActiveMs !== null ? formatDuration(avgActiveMs) : '-'}
+          // The covered-session count is on the tile, not buried in the
+          // tooltip: it is a different population from the Sessions tile two
+          // cards to the left, and a reader comparing them deserves to see why.
+          sub={avgActiveMs !== null ? `over ${formatTokenCount(activeCoveredSessions)} sessions` : undefined}
+          title={avgActiveMs !== null
+            ? `Time the agent was working, per session, excluding idle. Covers the ${activeCoveredSessions.toLocaleString()} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts.`
+            : 'No activity tracking recorded in this range'}
+          // Gated like the subagent and compaction tiles above: with no
+          // coverage this range the value renders '-', and an ungated delta
+          // would put a -100% pill beside it. "Not measured" is not "measured
+          // as nothing", which is the whole reason resolveAvgActiveMs returns
+          // null rather than 0.
+          delta={avgActiveMs !== null ? avgActiveDelta : null}
           deltaBaseline={deltaBaseline}
           resetKey={resetKey}
           testId="kpi-avg-session"

@@ -253,6 +253,10 @@ interface FakeProject {
   rows?: FixtureRow[];
   groups?: FixtureGroup[];
   subagents?: FixtureSubagentRow[];
+  /** Active-time ledger totals for this project (window-independent in the
+   *  fixture; the service only sums whatever the reader returns). */
+  activeTotals?: { activeMs: number; sessionsCovered: number };
+  earliestTurnMs?: number | null;
   throws?: boolean;
 }
 
@@ -264,6 +268,9 @@ interface ReaderCall {
     | 'listUsageCostGroups'
     | 'listTurnGroups'
     | 'countSessionsRepresented'
+    | 'sumSessionsRepresented'
+    | 'getActiveTotals'
+    | 'getEarliestTurnMs'
     | 'listSubagentTotals';
   sinceIso?: string | null;
   untilIso?: string | null;
@@ -308,6 +315,28 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
           allRows.filter((row) => inWindow(row, sinceIso, untilIso)).map((row) => row.sessionRecordId),
         );
         return sessionRecordIds.filter((recordId) => windowedIds.has(recordId)).length;
+      },
+      sumSessionsRepresented: (sinceIso, untilIso, sessionRecordIds) => {
+        readerCalls.push({ projectId, method: 'sumSessionsRepresented', sinceIso, untilIso, sessionRecordIds });
+        const ids = new Set(sessionRecordIds);
+        return allRows
+          .filter((row) => inWindow(row, sinceIso, untilIso) && ids.has(row.sessionRecordId))
+          .reduce(
+            (sum, row) => ({
+              costUsd: sum.costUsd + row.costUsd,
+              inputTokens: sum.inputTokens + row.inputTokens,
+              outputTokens: sum.outputTokens + row.outputTokens,
+            }),
+            { costUsd: 0, inputTokens: 0, outputTokens: 0 },
+          );
+      },
+      getActiveTotals: (sinceMs, untilMs) => {
+        readerCalls.push({ projectId, method: 'getActiveTotals', sinceMs, untilMs });
+        return project.activeTotals ?? { activeMs: 0, sessionsCovered: 0 };
+      },
+      getEarliestTurnMs: () => {
+        readerCalls.push({ projectId, method: 'getEarliestTurnMs' });
+        return project.earliestTurnMs ?? null;
       },
       listSubagentTotals: (sinceMs, untilMs) => {
         readerCalls.push({ projectId, method: 'listSubagentTotals', sinceMs, untilMs });
