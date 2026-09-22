@@ -1901,6 +1901,13 @@ export function buildDemoPreConfig(options: {
           turnInputTokens: Math.round(totalInput * 0.35), turnOutputTokens: Math.round(totalOutput * 0.5),
           cacheCreationTokens: Math.round(totalInput * 0.2), cacheReadTokens: Math.round(totalInput * 5.5),
           burnRateTokensPerHour: Math.round(26000 * scale), burnRateUsdPerHour: 1.7 * scale,
+          // Active (agent-working) time, and the sessions the interval ledger
+          // reaches. Deliberately BOTH lower than their wall-clock/sessionCount
+          // neighbours above: active time runs well under session duration, and
+          // per-interval recording covers fewer sessions than the usage ledger,
+          // which is exactly what the Avg Active tile's caveat describes.
+          activeMs: Math.round(sessionCount * 38 * 60000 * 0.39),
+          activeSessionsCovered: Math.max(1, Math.round(sessionCount * 0.72)),
         };
         var previous = {};
         Object.keys(kpis).forEach(function (key) { previous[key] = typeof kpis[key] === 'number' ? Math.round(kpis[key] * 0.86 * 1000) / 1000 : kpis[key]; });
@@ -1953,9 +1960,17 @@ export function buildDemoPreConfig(options: {
                   costUsd: totalCost * share, sessionCount: Math.round(sessionCount * share), toolCallCount: Math.round(sessionCount * 41 * share),
                   linesAdded: Math.round(sessionCount * 160 * share), linesRemoved: Math.round(sessionCount * 55 * share), filesChanged: Math.round(sessionCount * 7 * share),
                   totalDurationMs: Math.round(sessionCount * 38 * 60000 * share), lastActiveMs: now - project.lastOpenedMinutesAgo * 60000, topAgent: project.default_agent,
+                  activeMs: Math.round(sessionCount * 38 * 60000 * share * 0.39),
+                  activeSessionsCovered: Math.max(1, Math.round(sessionCount * share * 0.72)),
                 };
               })
             : undefined,
+          // No live overlay reaches this fixture, so the ledger already holds
+          // everything the renderer would layer on: nothing to subtract.
+          liveLedgerBaseline: { costUsd: 0 },
+          // Per-turn capture starts later than the cost ledger, so a long range
+          // shows the Tokens tile's partial-coverage note, as a real install does.
+          earliestTurnMs: now - 30 * dayMs,
         };
       };
     })();
