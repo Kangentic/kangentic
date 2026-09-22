@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ElementType } from 'react';
-import { Bell, Bot, Brain, Bug, FolderCog, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
@@ -17,6 +17,7 @@ import { BoardTab } from './tabs/BoardTab';
 import { TaskTab } from './tabs/TaskTab';
 import { ChangesTab } from './tabs/ChangesTab';
 import { BehaviorTab } from './tabs/BehaviorTab';
+import { PerformanceTab } from './tabs/PerformanceTab';
 import { DictationTab } from './tabs/DictationTab';
 import { McpServerTab } from './tabs/McpServerTab';
 import { BrowserAutomationTab } from './tabs/BrowserAutomationTab';
@@ -74,6 +75,7 @@ const TAB_ICONS: Record<string, ElementType> = {
   task: SquareKanban,
   changes: GitCompare,
   behavior: SlidersHorizontal,
+  performance: Gauge,
   dictation: Mic,
   memory: Brain,
   hotkeys: Keyboard,
@@ -201,6 +203,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'task': return <TaskTab globalConfig={globalConfig} />;
       case 'changes': return <ChangesTab globalConfig={globalConfig} />;
       case 'behavior': return <BehaviorTab globalConfig={globalConfig} />;
+      case 'performance': return <PerformanceTab globalConfig={globalConfig} />;
       case 'dictation': return <DictationTab globalConfig={globalConfig} onOpenHotkeys={() => navigateToTab('hotkeys')} />;
       case 'hotkeys': return <HotkeysTab globalConfig={globalConfig} />;
       case 'mcpServer': return <McpServerTab globalConfig={globalConfig} />;

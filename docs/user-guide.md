@@ -487,7 +487,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -799,6 +799,39 @@ Because Claude Code supports `--resume`, conversation context is fully preserved
 
 Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
+## Graphics failures
+
+Chromium renders the app through a separate graphics process. Rarely, that process fails over and
+over. When it
+exhausts every fallback it has, Chromium shuts the whole app down on purpose. There is no crash
+dialog and no warning: the window simply disappears, and it usually does so within seconds of
+launching, so the app can look like it will not start at all.
+
+Kangentic recovers itself. The next launch starts without graphics acceleration, which removes the
+graphics process entirely and takes that shutdown off the table. You get a toast saying so, and
+Settings > Performance shows **Graphics acceleration** switched off, with a note that Kangentic
+turned it off after repeated failures.
+
+What to expect while it is off:
+
+- Terminals render through the slower DOM path instead of WebGL. Long-running agents with heavy
+  output feel less smooth. Everything still works.
+- Animations and the rest of the UI are unaffected.
+- Nothing turns it back on by itself. When you want to try again, switch **Graphics acceleration**
+  back on in Settings > Performance and restart. If the failure returns, the next launch turns it
+  off again.
+
+Kangentic does not diagnose the cause, and deliberately does not guess at one. Across the installs
+seen so far the app itself was never doing anything unusual at the time, and the failures started
+seconds into boot before any agent or terminal existed. A display driver is the usual culprit for
+this class of failure, so updating yours is the first thing worth trying, but the app has no way to
+confirm that from the inside and will not claim it did. If it keeps happening, the local crash
+records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the useful thing to
+attach to a bug report.
+
+Unrelated, despite the similar name: **Model acceleration** in Settings > Memory controls where the
+semantic search model runs, not app rendering. The two are independent.
+
 ## Conversation Memory
 
 Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Memory.
@@ -809,7 +842,7 @@ The structured transcript of each session: user turns, assistant replies, thinki
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Hardware acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 

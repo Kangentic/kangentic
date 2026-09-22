@@ -303,6 +303,56 @@
     windowMaximized: false,
   }, window.__mockConfigOverrides || {});
 
+  // Graphics recovery test hook (Sentry DESKTOP-18/DESKTOP-W): main can write
+  // graphicsAccelerationEnabled: false during whenReady AFTER this renderer's
+  // first config read, which is exactly the race App.tsx's own re-read
+  // (useConfigStore.getState().loadConfig() inside the notice handler) exists
+  // to close. Arm with window.__mockGraphicsAccelerationWriteLandsAfterBoot
+  // (set before load, alongside a config seeded with the STALE pre-write
+  // value): the first STALE_CALL_BUDGET config.get()/getGlobal() calls each
+  // report the seeded value untouched, and every call after that reports
+  // main's real write (graphicsAccelerationEnabled: false,
+  // graphicsAccelerationOffBy: 'app'), mirroring configManager.save() in
+  // src/main/index.ts's whenReady block.
+  //
+  // The budget is 4, not 1, because two OTHER things call loadConfig() during
+  // boot with nothing to do with the GPU notice, and each is doubled by
+  // React.StrictMode (src/renderer/index.tsx), which runs every mount effect
+  // twice in this dev-server-backed tier:
+  //   1. App.tsx's own top-level `loadConfig()` call (the boot read itself).
+  //   2. useProjectSwitchEffect's mount-time reload (its null-branch with no
+  //      project open, or its cold-path branch with one - either way, this
+  //      fires once per mount).
+  // That is 2 sources x 2 StrictMode passes = 4 incidental calls, all
+  // dispatched synchronously in the same tick and settled before the GPU
+  // notice's chain can reach its own inner loadConfig() call (behind two
+  // extra microtask hops through readStatus().catch().then()). Empirically
+  // confirmed via console instrumentation: with the notice's own re-read
+  // removed, calls stop at exactly 4 (all stale); with it present, a genuine
+  // 5th call lands after (corrected). Only the FIRST StrictMode pass's
+  // readStatus() call ever produces a notice - it consumes
+  // window.__mockGpuNoticePending on read, so the second pass's call is a
+  // silent no-op - which is why the notice contributes exactly one extra
+  // call rather than two.
+  //
+  // A spec exercising this must also pass `omitProject: true` and seed
+  // `onboardedProjectIds` to a defined array (see graphics-recovery.spec.ts):
+  // with a project seeded, useProjectSwitchEffect's cold path re-fires a
+  // SECOND time once the project resolves (consuming budget beyond this
+  // fixed accounting), and App.tsx's one-time onboardedProjectIds backfill
+  // fires its own incidental updateConfig() otherwise.
+  var GRAPHICS_ACCELERATION_STALE_CALL_BUDGET = 4;
+  var graphicsAccelerationGetCallCount = 0;
+  var graphicsAccelerationGetGlobalCallCount = 0;
+  function withStaleGraphicsAccelerationOverride(effectiveConfig, callCount) {
+    if (!window.__mockGraphicsAccelerationWriteLandsAfterBoot) return effectiveConfig;
+    if (callCount <= GRAPHICS_ACCELERATION_STALE_CALL_BUDGET) return effectiveConfig;
+    return Object.assign({}, effectiveConfig, {
+      graphicsAccelerationEnabled: false,
+      graphicsAccelerationOffBy: 'app',
+    });
+  }
+
   function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       var r = (Math.random() * 16) | 0;
@@ -2684,13 +2734,15 @@
       get: async function () {
         // Return effective config: global merged with current project's overrides
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
-        if (currentProject && projectConfigs[currentProject.path]) {
-          return deepMerge(config, projectConfigs[currentProject.path]);
-        }
-        return config;
+        graphicsAccelerationGetCallCount++;
+        var effective = (currentProject && projectConfigs[currentProject.path])
+          ? deepMerge(config, projectConfigs[currentProject.path])
+          : config;
+        return withStaleGraphicsAccelerationOverride(effective, graphicsAccelerationGetCallCount);
       },
       getGlobal: async function () {
-        return config;
+        graphicsAccelerationGetGlobalCallCount++;
+        return withStaleGraphicsAccelerationOverride(config, graphicsAccelerationGetGlobalCallCount);
       },
       set: async function (partial) {
         rejectConfigSetIfConfigured();
@@ -4146,6 +4198,28 @@
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
+      },
+    },
+
+    // noticePending is consumed on read, like the real handler, so a spec
+    // asserting the toast fires exactly once gets main's real behaviour.
+    // Arm with window.__mockGpuNoticePending / __mockGpuSoftwareRendering
+    // before load.
+    gpuHealth: {
+      readStatus: function () {
+        // Test hook: simulate the invoke itself rejecting (a stale preload, a
+        // handler throw). Set window.__mockGpuHealthReadStatusRejects = true
+        // before load. App.tsx guards this call with .catch, so the only
+        // observable effect should be "no toast, otherwise a normal boot".
+        if (window.__mockGpuHealthReadStatusRejects === true) {
+          return Promise.reject(new Error('mock gpuHealth.readStatus rejection'));
+        }
+        var noticePending = window.__mockGpuNoticePending === true;
+        window.__mockGpuNoticePending = false;
+        return Promise.resolve({
+          softwareRendering: window.__mockGpuSoftwareRendering === true,
+          noticePending: noticePending,
+        });
       },
     },
 

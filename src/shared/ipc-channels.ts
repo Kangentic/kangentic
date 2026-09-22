@@ -475,6 +475,17 @@ export const IPC = {
   HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
   HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
 
+  // How this launch is rendering, and whether the user still needs telling
+  // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)
+  //
+  // An invoke, not a push, unlike HOST_MEMORY_PRESSURE above. That one is
+  // driven by a periodic sampler, so it never fires during boot and never has
+  // to prove the renderer is listening. This is decided once, while the
+  // renderer may still be parsing its bundle, and a send with no listener
+  // registered is dropped silently - with the escalation record already
+  // cleared, so nothing would ever resend it. The renderer pulls instead.
+  GPU_HEALTH_STATUS: 'gpuHealth:status',
+
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',
   ANNOUNCEMENTS_GET_HISTORY: 'announcements:getHistory',

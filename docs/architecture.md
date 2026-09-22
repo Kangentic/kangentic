@@ -464,6 +464,11 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 | `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 
+### GPU health (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `gpuHealth:status` | invoke | How this launch is rendering, and whether the user still needs telling. Returns `GpuGraphicsStatus` (`{ softwareRendering, noticePending }`) via `ElectronAPI.gpuHealth.readStatus()`. A PULL, unlike its neighbour above: both facts are decided during boot, before the renderer can have registered a listener, and the escalation record behind them is already cleared by then, so a dropped push would lose the notice for good. Reading consumes `noticePending`, so a renderer reload cannot re-toast. See `src/main/diagnostics/gpu-health.ts` (Sentry DESKTOP-18 / DESKTOP-W) |
+
 ### Announcements (4 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

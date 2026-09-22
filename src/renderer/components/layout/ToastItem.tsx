@@ -131,20 +131,27 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
         {/* Without the width cap above (and min-w-0 here) a long message grows the
             toast leftward to the viewport edge and then truncates - a git failure
             reached ~1800px on a wide monitor and still lost its tail. */}
-        <span className="text-fg-secondary min-w-0 break-words">{toast.message}</span>
-
-        {/* The interactive children opt back in. A descendant's
-            `pointer-events-auto` is hit-testable inside a `none` ancestor, which
-            is the whole mechanism. They sit at the container's flush-right edge
-            while a dialog is centred, so they clear a dialog footer's buttons. */}
-        {toast.action && (
-          <button
-            onClick={toast.action.onClick}
-            className="pointer-events-auto text-accent-fg underline underline-offset-2 hover:opacity-80 ml-1 flex-shrink-0"
-          >
-            {toast.action.label}
-          </button>
-        )}
+        {/* The action lives INSIDE the message's inline flow, not beside it as
+            a flex sibling. As a sibling under `items-start` it pinned to the
+            top right, which on a message that wraps to three lines left it
+            floating beside the first line, visually detached from the sentence
+            it belongs to. Inline, it trails the last line. A one-line toast is
+            unaffected: the card is content-width, so the button already sat
+            immediately after the text. */}
+        <span className="text-fg-secondary min-w-0 break-words">
+          {toast.message}
+          {toast.action && (
+            <>
+              {' '}
+              <button
+                onClick={toast.action.onClick}
+                className="pointer-events-auto text-accent-fg underline underline-offset-2 hover:opacity-80"
+              >
+                {toast.action.label}
+              </button>
+            </>
+          )}
+        </span>
 
         {toast.variant === 'error' && (
           <button
