@@ -25,6 +25,8 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Session Lifecycle](session-lifecycle.md) -- State machine, spawn flow, queue, suspend, resume, crash recovery
 - [Transition Engine](transition-engine.md) -- Column automations and their adapters, templates and escaping, execution flow, priority rules, cross-agent handoff
 - [Database](database.md) -- Schema (including session_transcripts and handoffs tables), migrations, repository pattern, connection management
+- [Command Terminal](command-terminal.md) - The second window-manager layer: slot-keyed windows, global geometry against per-project population, the reattach and branch rules, and the title-bar controls
+- [Activity Marks](activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
 
 ### Integration
 - [Agent Integration](agent-integration.md) -- Adapter interface, Claude/Codex/Gemini/Aider CLI details, permission modes, detection, command building
