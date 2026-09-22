@@ -19,10 +19,11 @@ vi.mock('electron', () => ({
 
 import { EmbedClient, resolveDeviceChain } from '../../src/main/retrieval/embedder/embed-client';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES } from '../../src/main/utility-process/commit-ceiling';
 import type { EmbeddingModelDef } from '../../src/shared/embedding-models';
 
 // Mirrors the private IDLE_SHUTDOWN_MS in embed-client.ts.
-const IDLE_SHUTDOWN_MS = 5 * 60_000;
+const IDLE_SHUTDOWN_MS = 30 * 60_000;
 
 const TEST_MODEL: EmbeddingModelDef = {
   id: 'test-model',
@@ -46,6 +47,8 @@ interface FakeChild extends EventEmitter {
   /** Present only when a test forks with a piped stderr (the real shape);
    *  absent otherwise, which the client must tolerate. */
   stderr?: EventEmitter;
+  /** Set by the ceiling test; the real UtilityProcess carries one. */
+  pid?: number;
 }
 
 const forkedChildren: FakeChild[] = [];
@@ -486,6 +489,240 @@ describe('EmbedClient', () => {
       await nextPromise;
 
       expect(client.crashed).toBe(false);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not arm the idle timer with no child, so a later worker\'s genuine crash is still counted', async () => {
+    // The latent latch: a hold released before any worker existed used to
+    // arm a timer whose killChild() set intentionalShutdown with nothing to
+    // kill, and the NEXT worker's genuine crash then consumed that flag and
+    // was never recorded.
+    vi.useFakeTimers();
+    try {
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+      client.setWarmHold(true);
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 2);
+      expect(mockFork).not.toHaveBeenCalled();
+
+      const promise = client.embed(['x'], { timeoutMs: 60_000 });
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('exit', 1);
+      await expect(promise).resolves.toBeNull();
+
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prewarm() forks + inits the worker and arms the idle timer without posting an embed', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.prewarm();
+      const child = lastChild();
+      expect(child.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'init' }));
+      child.emit('message', { type: 'ready' });
+      await promise;
+      expect(child.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'embed' }));
+
+      // A second prewarm joins the live worker rather than forking again.
+      await client.prewarm();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // Nothing else ever touched the worker, and it still lets go on its own.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      child.emit('exit');
+      expect(client.crashed).toBe(false);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an interactive embed with timeoutMs resolves null during a cold start while the init continues, and a later embed joins it with one fork', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      // The palette's 400 ms budget against a worker still loading its model.
+      const gaveUp = client.embed(['first'], { timeoutMs: 400 });
+      const child = lastChild();
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(gaveUp).resolves.toBeNull();
+
+      // The init was not abandoned: the next query rides the same worker.
+      const later = client.embed(['second'], { timeoutMs: 400 });
+      expect(mockFork).toHaveBeenCalledTimes(1);
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      const vectors = [new Float32Array([0.2])];
+      child.emit('message', { type: 'result', id: 1, vectors });
+      await expect(later).resolves.toBe(vectors);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a background embed waits out the cold start regardless of timeoutMs', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['batch'], { timeoutMs: 400, background: true });
+      const child = lastChild();
+      let settled = false;
+      void promise.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(false);
+
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      const vectors = [new Float32Array([0.3])];
+      child.emit('message', { type: 'result', id: 1, vectors });
+      await expect(promise).resolves.toBe(vectors);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waitForInteractiveIdle resolves once an interactive embed gave up inside ensureReady()', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const gaveUp = client.embed(['query'], { timeoutMs: 400 });
+      let idleResolved = false;
+      const idlePromise = client.waitForInteractiveIdle().then(() => {
+        idleResolved = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(idleResolved).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(gaveUp).resolves.toBeNull();
+      await idlePromise;
+      expect(idleResolved).toBe(true);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a worker whose only caller gave up during init is still idle-recycled once ready', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const gaveUp = client.embed(['query'], { timeoutMs: 400 });
+      const child = lastChild();
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(gaveUp).resolves.toBeNull();
+
+      // Ready lands with nobody waiting: the settle itself arms the timer.
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('setWarmHold(false) with no hold taken leaves the running idle countdown untouched', async () => {
+    // The getStatus poll shape: a "nothing to drain" pass releases a hold it
+    // never took. If that restarted the countdown, the worker could never
+    // expire while the Memory tab (which polls every 1.5 s) was open.
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 60_000);
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a worker over the commit ceiling is idle-recycled at the short window, still never while the drain holds it', async () => {
+    vi.useFakeTimers();
+    try {
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? WORKER_COMMIT_CEILING_BYTES + 1 : null));
+      const client = new EmbedClient(TEST_MODEL, 'auto', undefined, { readCommitBytes });
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.pid = 4242;
+      client.setWarmHold(true);
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      // Held by the drain: the short window does not apply either.
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 3);
+      expect(child.kill).not.toHaveBeenCalled();
+
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(readCommitBytes).toHaveBeenCalledWith(4242);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a worker exactly at the commit ceiling keeps the long window - the comparison is strict', async () => {
+    // The test above only ever exercises ceiling+1, so a `>` flipped to `>=`
+    // in overCommitCeiling() would pass it unnoticed. This pins the boundary
+    // value itself.
+    vi.useFakeTimers();
+    try {
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? WORKER_COMMIT_CEILING_BYTES : null));
+      const client = new EmbedClient(TEST_MODEL, 'auto', undefined, { readCommitBytes });
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.pid = 4242;
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS * 2);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - HEAVY_IDLE_SHUTDOWN_MS * 2);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(readCommitBytes).toHaveBeenCalledWith(4242);
+
       client.dispose();
     } finally {
       vi.useRealTimers();

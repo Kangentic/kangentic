@@ -6356,6 +6356,9 @@ export interface ElectronAPI {
   // Conversation memory (search index) status + proactive surfaces.
   memory: {
     getStatus: () => Promise<MemoryStatus>;
+    /** Spawn + init the embedding worker ahead of the first Smart query, so
+     *  Quick Find's typing time covers the cold start. Fire-and-forget. */
+    prewarm: () => void;
     /** Purge the project's conversation index and re-run the backfill sweep
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */
@@ -6742,6 +6745,18 @@ export interface ProcessMetrics {
   platform: NodeJS.Platform;
   arch: string;
   versions: { kangentic: string; electron: string; node: string; chrome: string };
+  /** The main process's own `process.memoryUsage()`, in bytes: how much of
+   *  its footprint is V8 heap (`heapUsedBytes` of `heapTotalBytes`), Node
+   *  external allocations (`externalBytes`, of which `arrayBuffersBytes` are
+   *  Buffers and ArrayBuffers), against its resident set (`rssBytes`). The
+   *  per-process table below cannot split those apart. */
+  main: {
+    rssBytes: number;
+    heapTotalBytes: number;
+    heapUsedBytes: number;
+    externalBytes: number;
+    arrayBuffersBytes: number;
+  };
   processes: {
     pid: number;
     type: string;

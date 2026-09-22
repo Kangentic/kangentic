@@ -44,6 +44,13 @@ export function registerSearchHandlers(context: IpcContext): void {
     return retrievalService.getStatus(context);
   });
 
+  // The Quick Find open is the precursor gesture for a Smart query: spawn +
+  // init the embedding worker now so the typing that follows covers its cold
+  // start. Fire-and-forget; embeds nothing.
+  ipcMain.on(IPC.MEMORY_PREWARM, () => {
+    retrievalService.prewarmEmbedWorker(context);
+  });
+
   ipcMain.handle(
     IPC.MEMORY_REBUILD_INDEX,
     async (_event, projectId?: string | null): Promise<void> => {

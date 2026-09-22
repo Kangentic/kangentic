@@ -79,17 +79,41 @@ vi.mock('../../src/main/transcription/engines/engine-selection', () => ({
 
 import type { DictationClient } from '../../src/main/transcription/dictation-client';
 import type { DictationConfig, DictationModelProgress, DictationStartOptions } from '../../src/shared/types';
-import { selectEngine, type EngineSelection } from '../../src/main/transcription/engines/engine-selection';
+import { computeEngineKey, selectEngine, type EngineSelection } from '../../src/main/transcription/engines/engine-selection';
 import { ensureModel } from '../../src/main/transcription/models/model-manager';
 import type { ModelDef } from '../../src/main/transcription/models/model-registry';
+
+const STUB_MODEL: ModelDef = {
+  id: 'stub-model',
+  engineKind: 'online-transducer',
+  displayName: 'Stub Model',
+  license: 'MIT',
+  tier: 'accurate-base',
+  approxSizeMb: 1,
+  files: [],
+  roles: {},
+};
+
+/** A selection that names a model, so prepareModels actually calls
+ *  ensureModel (the stub selection the mock returns carries none). */
+const SELECTION_WITH_MODEL: EngineSelection = {
+  id: 'stub',
+  info: { id: 'stub', displayName: 'Stub Engine', streaming: false, punctuation: true, license: 'MIT', requiresModelDownload: false },
+  models: [STUB_MODEL],
+  liveModelId: STUB_MODEL.id,
+  liveModelKind: STUB_MODEL.engineKind,
+  finalModelId: null,
+  isRemote: false,
+  language: 'en',
+};
 
 /** The finalize() text the fake client hands back, so a positive test can
  *  confirm the committed text still reaches the caller alongside the signal. */
 const FINALIZED_TEXT = 'the finalized utterance';
 
 /** A minimal fake DictationClient: createSession/finalize always succeed;
- *  finalize() resolves FINALIZED_TEXT. Real behavior (rejection paths,
- *  warm-hold, idle recycle) is covered by dictation-client.test.ts.
+ *  finalize() resolves FINALIZED_TEXT. Real behavior (rejection paths, the
+ *  idle recycle) is covered by dictation-client.test.ts.
  *  `overrides` lets the getInfo() worker-health tests below report the
  *  client as crashed; every other call site keeps the healthy default. */
 function makeFakeClient(overrides: { crashed?: boolean; crashReason?: string | null } = {}): DictationClient {
@@ -102,10 +126,32 @@ function makeFakeClient(overrides: { crashed?: boolean; crashReason?: string | n
     push: vi.fn(),
     finalize: vi.fn(async () => FINALIZED_TEXT),
     cancel: vi.fn(),
-    setWarmHold: vi.fn(),
-    disposeWarm: vi.fn(),
+    release: vi.fn(),
     dispose: vi.fn(),
   }) as unknown as DictationClient;
+}
+
+const PREWARM_CONFIG: DictationConfig = {
+  enabled: true,
+  engineMode: 'auto',
+  modelId: null,
+  liveModelId: null,
+  punctuation: true,
+  language: 'en',
+};
+
+/** A `prewarm` that parks inside its awaits (the model prep), so a test can
+ *  land a second call on it before it reaches the client. */
+function parkPrewarm(): { release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(ensureModel).mockImplementationOnce(async () => {
+    await gate;
+    return { modelId: 'stub-model', kind: 'online-transducer', dir: '/mock/dir', paths: {} };
+  });
+  return { release };
 }
 
 import { TranscriptionService } from '../../src/main/transcription/transcription-service';
@@ -237,29 +283,118 @@ describe('TranscriptionService: DictationClient wiring', () => {
     expect(partials).toEqual([[dictationSessionId, 'hel']]);
   });
 
-  it('prewarm(config) holds the client warm and asks it to ensure the engine; prewarm(null) releases the hold and disposes warm state', async () => {
+  it('prewarm(config) asks the client to ensure the engine without holding it; prewarm(null) cancels active sessions and releases the worker', async () => {
     const client = makeFakeClient();
     const service = new TranscriptionService(client);
 
-    await service.prewarm({ enabled: true, engineMode: 'auto', modelId: null, liveModelId: null, punctuation: true, language: 'en' });
-    expect(client.setWarmHold).toHaveBeenCalledWith(true);
+    await service.prewarm(PREWARM_CONFIG);
     expect(client.ensureWarm).toHaveBeenCalledTimes(1);
+    expect(client.release).not.toHaveBeenCalled();
 
+    const { dictationSessionId } = await service.start(START_OPTIONS);
     await service.prewarm(null);
-    expect(client.setWarmHold).toHaveBeenCalledWith(false);
-    expect(client.disposeWarm).toHaveBeenCalledTimes(1);
+    expect(client.cancel).toHaveBeenCalledWith(dictationSessionId);
+    expect(client.release).toHaveBeenCalledTimes(1);
+    // The session is gone main-side too: a late stop commits nothing.
+    await expect(service.finalize(dictationSessionId)).resolves.toBe('');
   });
 
-  it('dispose() cancels every active session and tears down the client synchronously', async () => {
+  it('re-prewarms with the last config when the client emits recycled, and not after prewarm(null)', async () => {
     const client = makeFakeClient();
     const service = new TranscriptionService(client);
+
+    // Nothing to warm before any prewarm has named a config.
+    (client as unknown as EventEmitter).emit('recycled');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.ensureWarm).not.toHaveBeenCalled();
+
+    await service.prewarm(PREWARM_CONFIG);
+    expect(client.ensureWarm).toHaveBeenCalledTimes(1);
+
+    (client as unknown as EventEmitter).emit('recycled');
+    await vi.waitFor(() => expect(client.ensureWarm).toHaveBeenCalledTimes(2));
+
+    await service.prewarm(null);
+    (client as unknown as EventEmitter).emit('recycled');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.ensureWarm).toHaveBeenCalledTimes(2);
+  });
+
+  it('a recycled re-prewarm that fails reports no model-progress error', async () => {
+    // One selection (and one resolved model) per prewarm: the explicit one
+    // and the recycled one.
+    const resolvedModel = { modelId: STUB_MODEL.id, kind: STUB_MODEL.engineKind, dir: '/mock/dir', paths: {} };
+    vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL).mockReturnValueOnce(SELECTION_WITH_MODEL);
+    vi.mocked(ensureModel).mockResolvedValueOnce(resolvedModel).mockResolvedValueOnce(resolvedModel);
+    const client = makeFakeClient();
+    (client.ensureWarm as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('worker did not respond'));
+    const service = new TranscriptionService(client);
+    const progressEvents: DictationModelProgress[] = [];
+    service.on('model-progress', (progress: DictationModelProgress) => progressEvents.push(progress));
+
+    // The explicit prewarm reports, as it always has.
+    await service.prewarm(PREWARM_CONFIG);
+    expect(progressEvents).toHaveLength(1);
+
+    // The one the recycle triggers, half an hour after the last press, does not.
+    (client as unknown as EventEmitter).emit('recycled');
+    await vi.waitFor(() => expect(client.ensureWarm).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(progressEvents).toHaveLength(1);
+  });
+
+  it('a prewarm(null) landing during an in-flight prewarm stops it before ensureWarm and reports no error for the request it lost', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL);
+    const parked = parkPrewarm();
+    const client = makeFakeClient();
+    const service = new TranscriptionService(client);
+    const progressEvents: DictationModelProgress[] = [];
+    service.on('model-progress', (progress: DictationModelProgress) => progressEvents.push(progress));
+
+    const inFlight = service.prewarm(PREWARM_CONFIG);
+    await service.prewarm(null);
+    expect(client.release).toHaveBeenCalledTimes(1);
+
+    parked.release();
+    await inFlight;
+
+    // The worker the user just turned off must not come back.
+    expect(client.ensureWarm).not.toHaveBeenCalled();
+    expect(progressEvents).toEqual([]);
+  });
+
+  it('a config change during an in-flight prewarm supersedes it: only the newest reaches ensureWarm', async () => {
+    // The stale prewarm parks in its model prep under its own engine key, so
+    // the newer one (a different key) does not simply join its download.
+    vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL);
+    vi.mocked(computeEngineKey).mockReturnValueOnce('stub-key-stale');
+    const parked = parkPrewarm();
+    const client = makeFakeClient();
+    const service = new TranscriptionService(client);
+
+    const stale = service.prewarm(PREWARM_CONFIG);
+    await service.prewarm({ ...PREWARM_CONFIG, language: 'de' });
+    expect(client.ensureWarm).toHaveBeenCalledTimes(1);
+
+    parked.release();
+    await stale;
+    expect(client.ensureWarm).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispose() cancels every active session, tears down the client synchronously, and drops the warm config so a late recycled event warms nothing', async () => {
+    const client = makeFakeClient();
+    const service = new TranscriptionService(client);
+    await service.prewarm(PREWARM_CONFIG);
     const { dictationSessionId } = await service.start(START_OPTIONS);
 
     service.dispose();
 
     expect(client.cancel).toHaveBeenCalledWith(dictationSessionId);
-    expect(client.setWarmHold).toHaveBeenCalledWith(false);
     expect(client.dispose).toHaveBeenCalledTimes(1);
+
+    (client as unknown as EventEmitter).emit('recycled');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.ensureWarm).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -304,28 +439,6 @@ describe('TranscriptionService.prewarm: failure reporting is a behavior change, 
   // download/start already uses, but ONLY when selectEngine got far enough to
   // name a model (`selected` assigned) before the failure - see the second
   // test below for the guard that gates on that.
-  const STUB_MODEL: ModelDef = {
-    id: 'stub-model',
-    engineKind: 'online-transducer',
-    displayName: 'Stub Model',
-    license: 'MIT',
-    tier: 'accurate-base',
-    approxSizeMb: 1,
-    files: [],
-    roles: {},
-  };
-
-  const SELECTION_WITH_MODEL: EngineSelection = {
-    id: 'stub',
-    info: { id: 'stub', displayName: 'Stub Engine', streaming: false, punctuation: true, license: 'MIT', requiresModelDownload: false },
-    models: [STUB_MODEL],
-    liveModelId: STUB_MODEL.id,
-    liveModelKind: STUB_MODEL.engineKind,
-    finalModelId: null,
-    isRemote: false,
-    language: 'en',
-  };
-
   it('reports a model-progress error when the worker load fails after selectEngine already named a model', async () => {
     vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL);
     vi.mocked(ensureModel).mockResolvedValueOnce({

@@ -759,6 +759,7 @@ const api: ElectronAPI = {
 
   memory: {
     getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
+    prewarm: () => ipcRenderer.send(IPC.MEMORY_PREWARM),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
   },
 

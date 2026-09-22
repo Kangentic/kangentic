@@ -19,7 +19,15 @@
  *    silent instead of a felt burn,
  *  - always yields the shared worker to a live interactive query (search /
  *    MCP recall) via `waitForInteractiveIdle()`, bounded so a continuous
- *    stream of queries can slow but never permanently starve the drain.
+ *    stream of queries can slow but never permanently starve the drain,
+ *  - holds the worker resident only while it has a batch to embed, and
+ *    releases it once every dirty project is caught up, so the worker's own
+ *    idle recycle (EmbedClient.IDLE_SHUTDOWN_MS) can let a genuinely idle
+ *    worker go. The hold used to be keyed on semantic search being ENABLED,
+ *    which kept a 1.75 GB commit reservation resident for the life of the app
+ *    with nothing to do (#706). It is keyed on work now; a query never holds,
+ *    it just re-arms the idle timer, and Quick Find warms the worker on open
+ *    (`prewarm`) so the first query after a release still lands warm.
  *
  * The DB is the durable queue (`chunksNeedingEmbedding` / `embedded_model`),
  * so a crash mid-drain just leaves chunks pending; the next markDirty (or the
@@ -53,11 +61,13 @@ export interface EmbedStore {
 
 /** The narrow slice of EmbedClient the engine actually uses. Structural, for
  *  the same reason as EmbedStore. Extends `Embedder` (dimensions/modelTag/
- *  noiseFloor/embed) because resolveEmbedder hands this straight to the
+ *  noiseFloor/embed) because resolveClient hands this straight to the
  *  interactive query path, which relies on those fields. */
 export interface EmbedWorkerClient extends Embedder {
   embed(texts: string[], opts?: { timeoutMs?: number; isQuery?: boolean; background?: boolean }): Promise<Float32Array[] | null>;
   setWarmHold(hold: boolean): void;
+  /** Spawn + init the worker ahead of a query, embedding nothing. */
+  prewarm(): Promise<void>;
   waitForInteractiveIdle(): Promise<void>;
   dispose(): void;
   readonly crashed: boolean;
@@ -148,11 +158,10 @@ function selectedAcceleration(context: IpcContext): MemoryAcceleration {
   }
 }
 
-/** Whether the embed worker should stay warm (never idle-recycle): semantic
- *  is enabled and a project is open. Gates every cold-load spike the same way
- *  regardless of which path (task-detail open, Quick Find, MCP recall,
- *  background drain) touches the worker next. */
-function shouldWarmHold(context: IpcContext, disposed: boolean): boolean {
+/** Whether the shared client may stay around at all: semantic is enabled and
+ *  a project is open. Off, the client is disposed outright (reconcile);
+ *  on, it is the drain's pending work, not this gate, that holds it warm. */
+function mayKeepClient(context: IpcContext, disposed: boolean): boolean {
   return !disposed && isSemanticEnabled(context) && context.currentProjectId != null;
 }
 
@@ -221,27 +230,26 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     return client;
   }
 
-  /** The embedder for the interactive query path (search / MCP recall), or
-   *  null for lexical-only. Non-null only when semantic is enabled, the model
-   *  is present, and the worker has not crashed past its cap. */
-  function resolveEmbedder(context: IpcContext): Embedder | null {
+  /** The client for the interactive paths (a search / MCP recall query, or a
+   *  Quick Find prewarm), or null for lexical-only. Non-null only when
+   *  semantic is enabled, the model is present, and the worker has not
+   *  crashed past its cap. Never holds the worker: a query's own embed()
+   *  re-arms the idle timer, and a prewarm arms it on ready. */
+  function resolveClient(context: IpcContext): EmbedWorkerClient | null {
     if (disposed || !isSemanticEnabled(context)) return null;
     const model = selectedModel(context);
     if (!isEmbeddingModelPresent(model)) return null;
     const resolved = getClientFor(model, selectedAcceleration(context));
-    resolved.setWarmHold(shouldWarmHold(context, disposed));
     return resolved.crashed ? null : resolved;
   }
 
-  /** Re-evaluate the warm-hold gate, and (when semantic just became viable)
-   *  mark the current project dirty. This subsumes the old
-   *  scheduleEmbedHeal: enabling semantic while the model is ALREADY on disk,
-   *  or switching model/acceleration, would otherwise never fire a fresh
-   *  embed trigger. */
-  function reconcileWarmHoldAndDirty(context: IpcContext): void {
-    if (shouldWarmHold(context, disposed)) {
-      client?.setWarmHold(true);
-    } else if (client) {
+  /** Drop the client when it may no longer exist (semantic off, no project),
+   *  and (when semantic just became viable) mark the current project dirty.
+   *  This subsumes the old scheduleEmbedHeal: enabling semantic while the
+   *  model is ALREADY on disk, or switching model/acceleration, would
+   *  otherwise never fire a fresh embed trigger. */
+  function reconcileClientAndDirty(context: IpcContext): void {
+    if (client && !mayKeepClient(context, disposed)) {
       client.dispose();
       client = null;
       activeModelId = null;
@@ -311,7 +319,6 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     if (!syncVecTable(store, model)) return 'drained';
 
     const resolvedClient = getClientFor(model, selectedAcceleration(context));
-    resolvedClient.setWarmHold(shouldWarmHold(context, disposed));
 
     if (resolvedClient.crashed) {
       // Terminal for this client instance (MAX_CRASHES reached): every
@@ -341,6 +348,15 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       }
       return 'drained';
     }
+
+    // There is a batch, so hold the worker resident until the dirty set is
+    // empty again (runLoop releases it). Taken only now, AFTER the empty
+    // check: getStatus re-marks the current project on every poll (the
+    // Memory tab polls every 1.5 s), and a hold taken on every such pass
+    // would clear and re-arm the worker's idle countdown each time, so it
+    // could never expire while that tab was open. Still ahead of the first
+    // await, so no timer can fire between the wake and the hold.
+    resolvedClient.setWarmHold(true);
 
     // Never let a background batch sit in front of a live interactive query.
     // Bounded so a continuous query stream slows, but never permanently
@@ -395,6 +411,11 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
   async function runLoop(): Promise<void> {
     while (!disposed) {
       try {
+        // Nothing pending anywhere: let the worker's idle recycle count down.
+        // The one release point, at the top, so an iteration that threw (and
+        // dropped its popped project) releases as surely as one that drained.
+        // A no-op on a client whose hold was never taken.
+        if (dirty.size === 0) client?.setWarmHold(false);
         const context = attachedContext;
         if (!context || !isSemanticEnabled(context) || dirty.size === 0) {
           await waitForWake();
@@ -443,11 +464,21 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     markDirty,
 
     getEmbedder(context: IpcContext): Embedder | null {
-      return resolveEmbedder(context);
+      return resolveClient(context);
     },
 
     reconcile(context: IpcContext): void {
-      reconcileWarmHoldAndDirty(context);
+      reconcileClientAndDirty(context);
+    },
+
+    /** Spawn + init the worker ahead of a query (Quick Find open), embedding
+     *  nothing. A no-op when there is nothing to warm. */
+    prewarm(context: IpcContext): void {
+      // Fired from an ipcMain.on handler, which has no promise to reject
+      // into: an unhandled rejection here would be the whole main process's
+      // problem. EmbedClient.prewarm resolves on every path today, so this
+      // guards the contract rather than a known throw.
+      void resolveClient(context)?.prewarm().catch(() => undefined);
     },
 
     get activeDevice(): string | null {

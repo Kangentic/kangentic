@@ -81,8 +81,13 @@ export const useHostMemoryStore = create<HostMemoryState>((set, get) => ({
     // event, and a toast that vanishes on its own about a machine running out
     // of memory is worse than one that stays until dismissed. It clears
     // instead when receiveRecovery() fires.
+    //
+    // "Memory reservations", not "memory": the sample is Windows commit
+    // headroom (RAM plus page file, charged for every reservation whether or
+    // not it is touched), so RAM can read half free while this fires, and the
+    // one lever a user has is the page file that sets the limit.
     const toastId = useToastStore.getState().addToast({
-      message: `This computer is low on memory (${headroom} free) while ${agentClause} running. Kangentic may recover automatically if it runs out.`,
+      message: `This computer is nearly out of memory reservations (${headroom} left) while ${agentClause} running. RAM can look free while this happens; a larger page file raises the limit.`,
       variant: 'warning',
       duration: 0,
     });

@@ -12,7 +12,10 @@ churning embedded the freshly-indexed chunks right at navigation time - a felt h
 (GPU power draw, or a multi-second CPU burn) correlated with the click, not with any real-time
 constraint. See the central-background-embedding task for the full history; commit `5eac2f93`
 (#352) fixed the *cold-load* spikes this rule's refactor could not (warm-holding the worker) -
-this rule is about the *residual*: the legitimate inference cost of embedding itself.
+this rule is about the *residual*: the legitimate inference cost of embedding itself. That hold is
+now keyed on the drain having work, not on semantic search being enabled (#706): the engine holds
+the worker while a batch is pending, releases it once every dirty project is caught up, and the
+worker's own idle recycle lets a genuinely idle one go after 30 minutes.
 
 ## The rule
 
@@ -34,8 +37,11 @@ IPC handlers (`src/main/ipc/handlers/**`), and config-change reconciliation - ma
   `embedEngine.getEmbedder`) for the interactive search / MCP recall path. A live user query
   always takes priority over the background drain in the shared worker (see
   `EmbedWorkerClient.waitForInteractiveIdle()` in `embed-client.ts`).
-- **Reconcile** via `retrievalService.reconcileEmbedWorker(context)` (warm-hold gate + dirty
-  re-mark on a semantic/model/acceleration change).
+- **Reconcile** via `retrievalService.reconcileEmbedWorker(context)` (the dispose gate for a
+  client that may no longer exist - semantic off, no project open - plus the dirty re-mark on a
+  semantic/model/acceleration change).
+- **Prewarm** via `retrievalService.prewarmEmbedWorker(context)` (spawn + init the worker ahead
+  of a Smart query, on the Quick Find open; it embeds nothing and takes no hold).
 
 A project switch must never perform synchronous embedding work. If you find yourself writing
 `await embedPass(...)` or `client.embed(...)` in a lifecycle hook or an IPC handler, that is the

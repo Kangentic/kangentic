@@ -274,6 +274,52 @@ test.describe('Search Palette', () => {
     }
   });
 
+  test('opening Quick Find in Smart mode prewarms the embedding worker on the open, never on a keystroke; keyword mode never does', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      const prewarmCalls = () => page.evaluate(
+        () => ((window as unknown as { __mockMemoryPrewarmCalls?: number[] }).__mockMemoryPrewarmCalls ?? []).length,
+      );
+
+      // Keyword mode (semantic off): a full open, type, results round trip
+      // runs the palette's mount effect, and the worker is never warmed.
+      await page.keyboard.press('Control+Shift+F');
+      await expect(page.getByTestId('search-palette')).toBeVisible();
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+      expect(await prewarmCalls()).toBe(0);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('search-palette')).not.toBeVisible();
+
+      // Smart mode: the open itself is the precursor gesture for a semantic
+      // query, so the worker warms on the open, before any keystroke. The
+      // count is read rather than pinned at one: the dev renderer this tier
+      // runs mounts under StrictMode, which invokes the mount effect twice,
+      // and the second send is a no-op against the worker's memoized init.
+      await page.evaluate(() =>
+        window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true } }),
+      );
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
+        }).__zustandStores;
+        return stores?.config.getState().loadConfig();
+      });
+      await page.keyboard.press('Control+Shift+F');
+      await expect(page.getByTestId('search-palette')).toBeVisible();
+      await expect.poll(prewarmCalls).toBeGreaterThan(0);
+      const warmedOnOpen = await prewarmCalls();
+
+      // Typing a query, and the results it brings, warm it no further.
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+      expect(await prewarmCalls()).toBe(warmedOnOpen);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Ctrl+F focuses the board search on the board view', async () => {
     const { browser, page } = await launchWithState(preConfigWithSearchHits());
     try {

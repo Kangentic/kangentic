@@ -4,6 +4,7 @@ import { PATHS } from '../../config/paths';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import { unpacked } from '../../utility-process/paths';
+import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES, readProcessCommitBytes } from '../../utility-process/commit-ceiling';
 import type { Embedder } from '../types';
 import type { EmbeddingModelDef } from './embedding-config';
 import type { MemoryAcceleration } from '../../../shared/types';
@@ -14,8 +15,17 @@ const QUEUE_CAP = 64;
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Cold init (WASM compile + model load) can exceed a request timeout. */
 const INIT_TIMEOUT_MS = 120_000;
-/** Kill the worker after this long idle to reclaim its memory. */
-const IDLE_SHUTDOWN_MS = 5 * 60_000;
+/** Kill the worker after this long without a request, unless the engine is
+ *  holding it for a drain in progress. Generous on purpose: a cold load is a
+ *  3-4 s GPU/CPU burst (the spike commit 51893ffe added the hold to stop),
+ *  so the worker should let go only once the index is genuinely finished and
+ *  nobody has searched for a good while. Process exit is what gives the
+ *  memory back - onnxruntime keeps its arena reservation for the life of the
+ *  process (1.75 GB of commit for a 243 MB working set, #706). A worker whose
+ *  commit has passed WORKER_COMMIT_CEILING_BYTES gets HEAVY_IDLE_SHUTDOWN_MS
+ *  instead (utility-process/commit-ceiling.ts), still only once the drain
+ *  has released it. */
+const IDLE_SHUTDOWN_MS = 30 * 60_000;
 /** After this many crashes inside the restart policy's decay window, disable
  *  the semantic layer. A window rather than the whole app run: a worker that
  *  dies three times in a burst (a bad GPU provider on a cold start, say) used to
@@ -46,12 +56,15 @@ interface PendingRequest {
 }
 
 /**
- * Client for the embedding utilityProcess worker. Spawns lazily on first demand,
- * shuts the worker down when idle (unless `setWarmHold(true)` is held), and
- * restarts it (with a crash cap) after an unexpected exit. Every failure path -
- * not spawned, crashed, timed out, over the queue cap - resolves `null` so
- * callers degrade to lexical-only rather than throwing. `dispose()` is
- * synchronous for the shutdown path.
+ * Client for the embedding utilityProcess worker. Spawns lazily on first demand
+ * (or ahead of it, via `prewarm()`), shuts the worker down once it has gone
+ * IDLE_SHUTDOWN_MS without a request (unless `setWarmHold(true)` is held, which
+ * the engine does only while a drain has work pending), and restarts it (with a
+ * crash cap) after an unexpected exit. Every failure path - not spawned,
+ * crashed, timed out, over the queue cap, or an interactive query whose budget
+ * ran out during a cold start - resolves `null` so callers degrade to
+ * lexical-only rather than throwing. `dispose()` is synchronous for the
+ * shutdown path.
  */
 export class EmbedClient implements Embedder {
   readonly dimensions: number;
@@ -60,11 +73,14 @@ export class EmbedClient implements Embedder {
 
   private readonly deviceChain: string[];
   private readonly restartPolicy: UtilityRestartPolicy;
+  /** Commit reader behind the ceiling check; injectable so tests drive it. */
+  private readonly readCommitBytes: (pid: number) => number | null;
 
   constructor(
     private readonly model: EmbeddingModelDef,
     acceleration: MemoryAcceleration = 'auto',
     restartPolicy?: UtilityRestartPolicy,
+    options?: { readCommitBytes?: (pid: number) => number | null },
   ) {
     this.dimensions = model.dimensions;
     this.modelTag = model.modelTag;
@@ -72,6 +88,7 @@ export class EmbedClient implements Embedder {
     this.deviceChain = resolveDeviceChain(acceleration);
     this.restartPolicy = restartPolicy
       ?? new UtilityRestartPolicy({ service: SERVICE_NAME, maxCrashes: MAX_CRASHES });
+    this.readCommitBytes = options?.readCommitBytes ?? readProcessCommitBytes;
   }
 
   private child: UtilityProcess | null = null;
@@ -82,8 +99,9 @@ export class EmbedClient implements Embedder {
   private idleTimer: NodeJS.Timeout | null = null;
   private currentActiveDevice: string | null = null;
   /** While true, the idle recycle never fires, so the worker (and its loaded
-   *  model + GPU backend) stays resident. The service holds it whenever semantic
-   *  search is enabled and a project is open. */
+   *  model + GPU backend) stays resident. The engine holds it while a drain
+   *  has a batch pending and releases it once every dirty project is caught
+   *  up; a query never holds, it just re-arms the idle timer. */
   private warmHold = false;
   /** True while an intentional teardown (idle recycle or dispose) is in flight,
    *  so the resulting 'exit' is not miscounted as a crash. */
@@ -125,21 +143,23 @@ export class EmbedClient implements Embedder {
     if (this.pending.size >= QUEUE_CAP) return null;
 
     const background = opts?.background ?? false;
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     // Track interactive intent BEFORE ensureReady() so a live query counts as
     // in-flight during the cold-start worker-spawn window, not only once it
     // reaches sendEmbed(). Cleared in the finally, which also wakes any waiters.
     if (!background) this.interactiveInFlightCount += 1;
     try {
-      const ready = await this.ensureReady();
+      // A background batch waits out a cold start however long it takes. An
+      // interactive query spends its own budget on it and then degrades to
+      // lexical, while the init it started carries on for the next query to
+      // join: Quick Find on a released worker keeps answering keystrokes
+      // instead of stalling for the model load.
+      const ready = background ? await this.ensureReady() : await this.readyWithin(timeoutMs);
       if (!ready || this.disposed) return null;
 
       this.clearIdleTimer();
       try {
-        return await this.sendEmbed(
-          texts,
-          opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          opts?.isQuery ?? false,
-        );
+        return await this.sendEmbed(texts, timeoutMs, opts?.isQuery ?? false);
       } finally {
         this.armIdleShutdown();
       }
@@ -149,6 +169,29 @@ export class EmbedClient implements Embedder {
         this.notifyInteractiveIdleIfClear();
       }
     }
+  }
+
+  /** Spawn and initialize the worker ahead of a query, embedding nothing.
+   *  Fired from the Quick Find open: the typing that follows is the free
+   *  window for the cold start. Shares `ensureReady()`'s memo with the query
+   *  path, so it is never a second load; the ready settle arms the idle timer. */
+  async prewarm(): Promise<void> {
+    if (this.disposed || this.crashed) return;
+    await this.ensureReady();
+  }
+
+  /** `ensureReady()` bounded by `ms`: false when the init has not finished in
+   *  time. The init keeps running and stays memoized either way. */
+  private readyWithin(ms: number): Promise<boolean> {
+    const ready = this.ensureReady();
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms);
+      timer.unref();
+      void ready.then((ok) => {
+        clearTimeout(timer);
+        resolve(ok);
+      });
+    });
   }
 
   /** Resolves once no interactive (non-background) request is in flight.
@@ -219,6 +262,11 @@ export class EmbedClient implements Embedder {
       this.readyResolver = (ok: boolean) => {
         clearTimeout(readyTimer);
         resolve(ok);
+        // Every spawn gets its idle timer here, whoever spawned it: a prewarm
+        // posts no request to arm one from, and an interactive query that
+        // gave up during this init is no longer around to. A request that
+        // follows clears and re-arms it as usual.
+        if (ok) this.armIdleShutdown();
       };
     });
 
@@ -301,6 +349,9 @@ export class EmbedClient implements Embedder {
     // arrives with `this.child === null` and correctly falls through.
     if (this.child !== null && child !== this.child) return;
     this.child = null;
+    // A crash must not leave the idle timer counting down against a child
+    // that is already gone.
+    this.clearIdleTimer();
     this.currentActiveDevice = null;
     this.readyPromise = null;
     this.readyResolver?.(false);
@@ -316,20 +367,34 @@ export class EmbedClient implements Embedder {
   }
 
   /** Hold (or release) the worker against the idle recycle. Releasing re-arms
-   *  the timer immediately so a stale hold does not linger past its use. */
+   *  the timer immediately so a stale hold does not linger past its use. A
+   *  no-op when nothing changes: a release with no hold taken must leave a
+   *  countdown already running alone, or every "nothing to drain" pass
+   *  would restart it. */
   setWarmHold(hold: boolean): void {
+    if (hold === this.warmHold) return;
     this.warmHold = hold;
     if (hold) this.clearIdleTimer();
     else this.armIdleShutdown();
   }
 
   private armIdleShutdown(): void {
-    if (this.disposed || this.warmHold || this.idleTimer || this.pending.size > 0) return;
+    if (this.disposed || !this.child || this.warmHold || this.idleTimer || this.pending.size > 0) return;
+    const delayMs = this.overCommitCeiling() ? HEAVY_IDLE_SHUTDOWN_MS : IDLE_SHUTDOWN_MS;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (this.pending.size === 0) this.killChild();
-    }, IDLE_SHUTDOWN_MS);
+      if (this.child && this.pending.size === 0) this.killChild();
+    }, delayMs);
     this.idleTimer.unref();
+  }
+
+  /** Whether the current child's commit has passed the ceiling, which earns
+   *  it the short idle window. False with no child or no reading. */
+  private overCommitCeiling(): boolean {
+    const pid = this.child?.pid;
+    if (typeof pid !== 'number') return false;
+    const commitBytes = this.readCommitBytes(pid);
+    return commitBytes !== null && commitBytes > WORKER_COMMIT_CEILING_BYTES;
   }
 
   private clearIdleTimer(): void {
@@ -340,11 +405,14 @@ export class EmbedClient implements Embedder {
   }
 
   private killChild(): void {
-    this.intentionalShutdown = true;
     const child = this.child;
     this.child = null;
     this.readyPromise = null;
     if (child) {
+      // Set only when there is a child to classify. Latched with nothing to
+      // kill, the flag would be consumed by the NEXT worker's genuine crash
+      // and read it as intentional.
+      this.intentionalShutdown = true;
       try {
         child.postMessage({ type: 'shutdown' });
       } catch {
