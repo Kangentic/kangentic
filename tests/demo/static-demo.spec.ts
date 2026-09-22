@@ -14,7 +14,7 @@
  *
  * Every test owns its own page (the built-in fixture), so nothing leaks between cases.
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
@@ -295,6 +295,27 @@ async function hostFrame(page: Page, sceneName: string): Promise<() => Promise<D
 
 const hasEscape = (messages: DemoReadyMessage[]) => messages.some((message) => message.type === 'kangentic-demo-escape');
 
+/**
+ * Focus an element inside the cross-origin `#demo` iframe and wait for the TOP-LEVEL browsing
+ * context's focus to actually land there before returning.
+ *
+ * `Locator.focus()` calls the element's `focus()` inside the iframe's own renderer, which
+ * updates that document's `activeElement` immediately. But `page.keyboard.press()` at the top
+ * level dispatches through whichever frame the BROWSER PROCESS currently believes is focused,
+ * and for a cross-origin iframe that hand-off is a separate, asynchronous step (an IPC round
+ * trip between renderer processes on Chromium). Pressing Escape right after `.focus()` can race
+ * that hand-off: the key lands on the top-level document (which has no listener) instead of the
+ * iframe, so the dialog never sees it and stays open until Playwright's retry. `document.hasFocus()`,
+ * read from INSIDE the iframe, reflects the browser process's actual routing rather than just the
+ * iframe's local `activeElement`, so polling it (instead of a fixed pad) makes the wait real.
+ */
+async function focusAcrossFrame(locator: Locator): Promise<void> {
+  await locator.focus();
+  await expect
+    .poll(() => locator.evaluate((element) => document.hasFocus() && document.activeElement === element))
+    .toBe(true);
+}
+
 test('Escape posts an escape message when the app has nothing of its own to close', async ({ page }) => {
   // The case a host cannot handle itself: keyboard focus is inside the cross-origin frame, on the
   // terminal's textarea, where the renderer's arrival-focus arbiter puts it, so every key goes
@@ -357,7 +378,7 @@ test('Escape posts nothing while the app owns it, and the app closes its own sur
   const readDialogMessages = await hostFrame(page, 'new-task');
   const dialog = page.frameLocator('#demo').locator('[data-testid="new-task-dialog"]');
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: 'Cancel' }).focus();
+  await focusAcrossFrame(dialog.getByRole('button', { name: 'Cancel' }));
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   expect(hasEscape(await readDialogMessages()), 'a dialog owns the first Escape').toBe(false);
@@ -369,7 +390,7 @@ test('Escape posts nothing while the app owns it, and the app closes its own sur
   await expect(detail).toBeVisible();
   // Pin the isolation the way the rung-1 test does: no dialog is open, so this can only be rung 3.
   await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
-  await frame.locator('[data-testid="task-detail-close"]').focus();
+  await focusAcrossFrame(frame.locator('[data-testid="task-detail-close"]'));
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
   expect(hasEscape(await readWindowMessages()), 'a task window owns the first Escape').toBe(false);
