@@ -220,6 +220,46 @@ test.describe('SettingTextInput commit boundary', () => {
     }
   });
 
+  test('an external config change while the field is UNFOCUSED resyncs the draft, and a subsequent blur with no further edit writes nothing', async () => {
+    // The complement of the "mid-edit" case below: while unfocused, an external value
+    // must flow into the draft (the useEffect's `setDraft(value)` branch, which a fresh
+    // mount's `useState(value)` never exercises - every earlier case in this file closes
+    // and reopens the panel, which remounts the field and would pass even if this
+    // branch were deleted).
+    //
+    // The second assertion is what makes this worth its own case rather than a mirror of
+    // the mid-edit one: the effect also updates `committedRef.current = value`
+    // UNCONDITIONALLY, every render, focused or not. A resync that updated the visible
+    // draft but left committedRef stale would make the very next blur read as "the user
+    // edited it" and write the external value straight back to disk as if it were a fresh
+    // edit - the committedRef no-op guard silently defeated by its own resync.
+    const { browser, page } = await launchPage();
+    try {
+      await createProject(page, `setting-text-external-unfocused-${Date.now()}`);
+      await openSettings(page);
+      await openTab(page, 'Git');
+      await installProjectOverrideWriteSpy(page);
+
+      const initScript = page.getByTestId('setting-row-git.initScript').locator('input');
+      // Deliberately never clicked/focused: document.activeElement must not be this
+      // input when the external write lands, so the resync branch (not the mid-edit
+      // guard) is what is under test.
+      await setProjectOverrideGitInitScriptExternally(page, 'external-unfocused-change');
+
+      await expect(initScript).toHaveValue('external-unfocused-change');
+
+      await initScript.click();
+      await initScript.blur();
+      // Intentional fixed budget - we cannot poll for "nothing happens". Gives an
+      // errant re-commit of the resynced value a chance to land before asserting its
+      // absence.
+      await page.waitForTimeout(500);
+      expect(await getProjectOverrideWriteCalls(page)).toHaveLength(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('an external config change mid-edit does not clobber the draft, and the users edit still wins on blur', async () => {
     const { browser, page } = await launchPage();
     try {
