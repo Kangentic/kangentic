@@ -254,8 +254,15 @@ interface FakeProject {
   groups?: FixtureGroup[];
   subagents?: FixtureSubagentRow[];
   /** Active-time ledger totals for this project (window-independent in the
-   *  fixture; the service only sums whatever the reader returns). */
+   *  fixture; the service only sums whatever the reader returns). Ignored
+   *  when `activeIntervals` is set. */
   activeTotals?: { activeMs: number; sessionsCovered: number };
+  /** Windowed active-time fixture, mirroring the real interval-ledger SQL: each
+   *  entry contributes only when its `tsMs` falls inside the requested
+   *  [sinceMs, untilMs) window, letting a test give the CURRENT and PREVIOUS
+   *  windows genuinely different totals (the static `activeTotals` above
+   *  cannot, since it answers every window identically). */
+  activeIntervals?: Array<{ tsMs: number; activeMs: number; sessionId: string }>;
   earliestTurnMs?: number | null;
   throws?: boolean;
 }
@@ -323,15 +330,23 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
           .filter((row) => inWindow(row, sinceIso, untilIso) && ids.has(row.sessionRecordId))
           .reduce(
             (sum, row) => ({
-              costUsd: sum.costUsd + row.costUsd,
-              inputTokens: sum.inputTokens + row.inputTokens,
-              outputTokens: sum.outputTokens + row.outputTokens,
+              costUsd: sum.costUsd + row.totalCostUsd,
+              inputTokens: sum.inputTokens + row.totalInputTokens,
+              outputTokens: sum.outputTokens + row.totalOutputTokens,
             }),
             { costUsd: 0, inputTokens: 0, outputTokens: 0 },
           );
       },
       getActiveTotals: (sinceMs, untilMs) => {
         readerCalls.push({ projectId, method: 'getActiveTotals', sinceMs, untilMs });
+        if (project.activeIntervals) {
+          const matching = project.activeIntervals.filter((interval) =>
+            (sinceMs === null || interval.tsMs >= sinceMs) && (untilMs === null || interval.tsMs < untilMs));
+          return {
+            activeMs: matching.reduce((sum, interval) => sum + interval.activeMs, 0),
+            sessionsCovered: new Set(matching.map((interval) => interval.sessionId)).size,
+          };
+        }
         return project.activeTotals ?? { activeMs: 0, sessionsCovered: 0 };
       },
       getEarliestTurnMs: () => {
@@ -507,6 +522,45 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.perProject?.[0]).toEqual(expect.objectContaining({ filesChanged: 5 }));
   });
 
+  it('perProject tokens come from the TURN ledger (not the usage_history snapshot columns), and active time is PER PROJECT', () => {
+    // summarizeProject switched from totals.totalInputTokens/totalOutputTokens
+    // (usage_history's context-window snapshot columns) to a fold over this
+    // project's own turnGroups. makeRow's defaults (100/40) and makeGroup's
+    // (50/25) are deliberately different so a reversion to the old columns is
+    // caught by a wrong number, not a coincidentally-matching one. activeMs /
+    // activeSessionsCovered come from `projectActive`, read per project inside
+    // the loop - never the app-wide accumulator - so each project must show
+    // its OWN reading, not the other project's or a summed one.
+    const { service } = makeService([
+      {
+        id: 'p1',
+        name: 'One',
+        rows: [makeRow({ sessionRecordId: 'a' })],
+        groups: [makeGroup({ sessionId: 'a' })],
+        activeTotals: { activeMs: 600_000, sessionsCovered: 3 },
+      },
+      {
+        id: 'p2',
+        name: 'Two',
+        rows: [makeRow({ sessionRecordId: 'b', totalInputTokens: 200, totalOutputTokens: 80 })],
+        groups: [makeGroup({ sessionId: 'b', inputTokens: 70, outputTokens: 35 })],
+        activeTotals: { activeMs: 900_000, sessionsCovered: 5 },
+      },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'all' }, 'today');
+
+    const p1 = stats.perProject!.find((project) => project.projectId === 'p1')!;
+    const p2 = stats.perProject!.find((project) => project.projectId === 'p2')!;
+    expect(p1.inputTokens).toBe(50);
+    expect(p1.outputTokens).toBe(25);
+    expect(p2.inputTokens).toBe(70);
+    expect(p2.outputTokens).toBe(35);
+    expect(p1.activeMs).toBe(600_000);
+    expect(p1.activeSessionsCovered).toBe(3);
+    expect(p2.activeMs).toBe(900_000);
+    expect(p2.activeSessionsCovered).toBe(5);
+  });
+
   it("All Time buckets adapt to the data span: a two-week history renders DAILY, not three weekly bars", () => {
     const nowMs = Date.now();
     const dayMs = 24 * 3_600_000;
@@ -527,6 +581,36 @@ describe('usage-stats service: app-wide rollup', () => {
     // Dense daily grid across the ~2-week span (14-16 local-day buckets).
     expect(stats.costSeries.length).toBeGreaterThanOrEqual(14);
     expect(stats.costSeries.length).toBeLessThanOrEqual(16);
+  });
+
+  it('burn rate divides by the REPORTED (bucket-aligned) range start, matching the returned rangeStartMs', () => {
+    // 'all' period with a session that does NOT start at local midnight, so
+    // the bucket-aligned start the payload REPORTS (stats.rangeStartMs) sits
+    // strictly earlier than the raw session-start-derived range start.
+    // Before this fix, computeKpis divided by the raw internal rangeStartMs
+    // while the payload reported the bucket-aligned one, so
+    // burnRateUsdPerHour * (rangeEndMs - rangeStartMs) did not reproduce
+    // totalCostUsd - the tile and its own rate implied two different window
+    // lengths. Anchored to a fixed local time so the misalignment (a session
+    // starting mid-afternoon, not at local midnight) cannot depend on when
+    // the suite happens to run.
+    const nowMs = new Date(2026, 6, 10, 18, 0, 0).getTime();
+    const sessionStartedAt = new Date(2026, 6, 5, 14, 30, 0);
+    const { service } = makeService([
+      {
+        id: 'p1',
+        name: 'One',
+        rows: [makeRow({ sessionStartedAt: sessionStartedAt.toISOString(), totalCostUsd: 24 })],
+      },
+    ], nowMs);
+
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all');
+
+    // The vacuity guard: prove the two really differ before trusting the
+    // reproduction check below.
+    expect(stats.rangeStartMs).toBeLessThan(sessionStartedAt.getTime());
+    const hours = (stats.rangeEndMs - stats.rangeStartMs) / 3_600_000;
+    expect(stats.kpis.burnRateUsdPerHour! * hours).toBeCloseTo(stats.kpis.totalCostUsd, 6);
   });
 
   it('a day drill bounds BOTH reads to the local day and re-scopes the range at hourly granularity', () => {
@@ -621,6 +705,44 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.previousKpis!.subagentCount).toBe(2);
     // Two windows, two reads.
     expect(readerCalls.filter((call) => call.method === 'listSubagentTotals')).toHaveLength(2);
+  });
+
+  it('reads active-time totals for the PREVIOUS window too, so Avg Active is not zeroed out', () => {
+    // Same regression shape as the subagent test above, one field over: the
+    // service accumulates previousActiveMsTotal/previousActiveSessionsCovered
+    // in the `if (previousWindow)` branch, and a dropped read there leaves
+    // previousKpis.activeMs at 0 even though the ledger genuinely has activity
+    // - which renders as a full-size delta on the Avg Active tile every load.
+    // Uses activeIntervals (not the static activeTotals) so the current and
+    // previous windows get genuinely DIFFERENT numbers: a dropped read reads
+    // as 0, not as a coincidence.
+    const nowMs = Date.now();
+    const yesterdayNoon = new Date(nowMs);
+    yesterdayNoon.setDate(yesterdayNoon.getDate() - 1);
+    yesterdayNoon.setHours(12, 0, 0, 0);
+    const previousMs = yesterdayNoon.getTime();
+    const { service, readerCalls } = makeService([{
+      id: 'p1',
+      name: 'One',
+      rows: [
+        makeRow({ sessionRecordId: 'today', sessionStartedAt: new Date(nowMs).toISOString() }),
+        makeRow({ sessionRecordId: 'yesterday', sessionStartedAt: new Date(previousMs).toISOString() }),
+      ],
+      activeIntervals: [
+        { tsMs: nowMs, activeMs: 600_000, sessionId: 'today-a' },
+        { tsMs: previousMs, activeMs: 300_000, sessionId: 'yesterday-a' },
+      ],
+    }]);
+
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.kpis.activeMs).toBe(600_000);
+    expect(stats.kpis.activeSessionsCovered).toBe(1);
+    expect(stats.previousKpis).not.toBeNull();
+    expect(stats.previousKpis!.activeMs).toBe(300_000);
+    expect(stats.previousKpis!.activeSessionsCovered).toBe(1);
+    // Two windows, two reads.
+    expect(readerCalls.filter((call) => call.method === 'getActiveTotals')).toHaveLength(2);
   });
 
   it('keeps subagent tokens OUT of the main-thread KPI fields and series', () => {
@@ -732,6 +854,33 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.byAgent).toEqual([]);
     expect(stats.byEffort).toEqual([]);
   });
+
+  it('stats.earliestTurnMs is the MIN across projects, skipping a project with none', () => {
+    // p1 is processed FIRST and carries the LARGER value (5000); p2 is
+    // processed SECOND and carries the SMALLER one (2000). That ascending
+    // fixture-vs-processing order is what discriminates a correct `<` from an
+    // inverted `>`: with p1 alone (or with p2's value larger than p1's), a
+    // flipped comparison would still land on the right answer by coincidence.
+    const { service } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'a' })], earliestTurnMs: 5000 },
+      { id: 'p2', name: 'Two', rows: [makeRow({ sessionRecordId: 'b' })], earliestTurnMs: 2000 },
+      // No turn data at all for this project - must not overwrite the real
+      // minimum with null.
+      { id: 'p3', name: 'Three', rows: [makeRow({ sessionRecordId: 'c' })], earliestTurnMs: null },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'all' }, 'today');
+
+    expect(stats.earliestTurnMs).toBe(2000);
+  });
+
+  it('stats.earliestTurnMs is null when no scoped project has any turn data', () => {
+    const { service } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow()], earliestTurnMs: null },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.earliestTurnMs).toBeNull();
+  });
 });
 
 describe('usage-stats service: subagentBlindAgents', () => {
@@ -838,6 +987,42 @@ describe('usage-stats service: live session count overlay', () => {
     service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(readerCalls.some((call) => call.method === 'countSessionsRepresented')).toBe(false);
+  });
+
+  it('sums liveLedgerBaseline.costUsd across live sessions in DIFFERENT projects, windowed', () => {
+    // The `+=` accumulator is load-bearing: two projects each contribute a
+    // live session already snapshotted into their own project's ledger, and
+    // the total has to be the SUM (8), not the last project's value alone (5)
+    // or the first's (3).
+    const { service, readerCalls } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'live-p1', totalCostUsd: 3 })] },
+      { id: 'p2', name: 'Two', rows: [makeRow({ sessionRecordId: 'live-p2', totalCostUsd: 5 })] },
+      // No live session here at all - the sum query must not even run.
+      { id: 'p3', name: 'Three', rows: [] },
+    ]);
+    const stats = service.getDashboardStats(
+      { kind: 'all' },
+      'today',
+      null,
+      null,
+      [
+        makeLiveSession({ sessionRecordId: 'live-p1', projectId: 'p1' }),
+        makeLiveSession({ sessionRecordId: 'live-p2', projectId: 'p2' }),
+      ],
+    );
+
+    expect(stats.liveLedgerBaseline).toEqual({ costUsd: 8 });
+    expect(readerCalls.some((call) => call.projectId === 'p3' && call.method === 'sumSessionsRepresented')).toBe(false);
+  });
+
+  it('leaves liveLedgerBaseline at zero when no live session is in scope', () => {
+    const { service, readerCalls } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1', totalCostUsd: 9 })] },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.liveLedgerBaseline).toEqual({ costUsd: 0 });
+    expect(readerCalls.some((call) => call.method === 'sumSessionsRepresented')).toBe(false);
   });
 
   it('scopes live sessions to the matching project in an app-wide rollup, and rolls up into the headline count', () => {

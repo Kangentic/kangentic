@@ -390,6 +390,71 @@ test.describe('usage dashboard', () => {
     }
   });
 
+  test('the Tokens tile flags a range that reaches back before per-turn capture started', async () => {
+    // The two ledgers do not start at the same time: usage_history reaches
+    // back to a project's first session, but per-turn capture shipped later
+    // and the CLI prunes the transcripts that would backfill it. A range
+    // whose rangeStartMs sits before earliestTurnMs genuinely has less token
+    // coverage than the Cost tile beside it, and the tile has to say so
+    // rather than let a partial number read as full coverage. The default
+    // fixture's rangeStartMs never reaches back that far (~5h), so this
+    // branch has no coverage without a custom fixture.
+    const dayMs = 24 * 60 * 60 * 1000;
+    const partialCoverageFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          var dayMs = ${dayMs};
+          return {
+            scope: scope, period: period,
+            rangeStartMs: now - 60 * dayMs, rangeEndMs: now,
+            bucketSizeMs: 86400000, costBucketSizeMs: 86400000, generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 40, costKnown: true,
+              totalInputTokens: 5000, totalOutputTokens: 1000, totalTokens: 6000,
+              sessionCount: 4, toolCallCount: 20,
+              linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+              compactionCount: 0, totalDurationMs: 100000,
+              activeMs: 0, activeSessionsCovered: 0,
+              turnInputTokens: 900, turnOutputTokens: 150,
+              cacheCreationTokens: 10, cacheReadTokens: 50,
+              subagentInputTokens: 0, subagentOutputTokens: 0,
+              subagentCacheCreationTokens: 0, subagentCacheReadTokens: 0,
+              subagentTurnCount: 0, subagentCount: 0, subagentNestedCount: 0,
+              burnRateTokensPerHour: 100, burnRateUsdPerHour: 1,
+            },
+            previousKpis: null,
+            tokenSeries: [], costSeries: [],
+            byModel: [], byAgent: [], byEffort: [], bySubagentType: [],
+            subagentBlindAgents: [],
+            liveLedgerBaseline: { costUsd: 0 },
+            earliestTurnMs: now - 10 * dayMs,
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + partialCoverageFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      // Off Live so the Cost tile reads the ledger total rather than an empty
+      // client-side overlay - a sanity check that the note does not corrupt
+      // the neighboring tile.
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+
+      const tokensTile = page.locator('[data-testid="kpi-tokens"]');
+      await expect(tokensTile).toBeVisible({ timeout: 10000 });
+      const title = await tokensTile.getAttribute('title');
+      // Stable substrings only: the title interpolates a locale-formatted
+      // date, which is not portable across Windows and CI Linux.
+      expect(title).toContain('Per-turn capture starts');
+      expect(title).toContain('covers less of the range than Cost does');
+      await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$40.00');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the Subagents tile and By-subagent card report fan-out without changing the main-thread totals', async () => {
     // Task-tool subagent tokens are ADDITIVE: the headline Tokens tile and
     // both series stay main-thread, so the historical series remains
