@@ -15,7 +15,7 @@
       "color": "#8b5cf6",
       "autoSpawn": true,
       "permissionMode": "plan",
-      "modelOverride": "claude-opus-5",
+      "modelOverride": "claude-opus-5-5",
       "effortOverride": "xhigh",
       "planExitTarget": "Executing"
     },
@@ -35,7 +35,7 @@
       "color": "#f59e0b",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "modelOverride": "claude-opus-5",
+      "modelOverride": "claude-opus-5-5",
       "effortOverride": "high",
       "sessionTarget": "isolated",
       "sessionSpawnStrategy": "always_spawn_new",
