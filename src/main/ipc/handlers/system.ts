@@ -106,7 +106,14 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CONFIG_GET_GLOBAL, () => context.configManager.load());
 
   ipcMain.handle(IPC.CONFIG_SET, (_, config) => {
-    context.configManager.save(config);
+    // `persisted` is returned rather than discarded so the ONE caller that represents a
+    // deliberate user gesture - the settings panel's `updateSetting` - can say "this
+    // setting did not save". It cannot be decided here: this channel also carries the
+    // window-layout blobs, the discovered-model caches, and announcement dismissals, so
+    // treating every CONFIG_SET as user-initiated would just move the bounds-timer spam
+    // up a layer. The machine-level condition is reported separately and once, through
+    // config:writeFailed (see write-failure-notice.ts).
+    const persisted = context.configManager.save(config);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
     // Invalidate cached detection for all agents so the next detect() call picks up new cliPaths,
     // and drop the cached agents.list() result so it rebuilds against the new config.
@@ -154,6 +161,7 @@ export function registerSystemHandlers(context: IpcContext): void {
     // so every window's optimistic read should still match. A write failure is reported
     // separately, through config:writeFailed, not by skipping this broadcast.
     broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
+    return { persisted };
   });
 
   // Synchronous sibling of CONFIG_SET for the renderer's quit/unload flush: an async
@@ -178,13 +186,14 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.CONFIG_SET_PROJECT, (_, overrides) => {
     if (!context.currentProjectPath) throw new Error('No project open');
-    context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
+    const persisted = context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
     // A per-project override changes the EFFECTIVE config open pop-outs read (the Changes
     // surface reads git.defaultBaseBranch, which is project-overridable), so fan the same
     // bare signal CONFIG_SET does so they re-fetch instead of diffing a stale base branch.
     // Same "fires either way" reasoning as CONFIG_SET's broadcast above.
     broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
+    return { persisted };
   });
 
   ipcMain.handle(IPC.CONFIG_GET_PROJECT_BY_PATH, (_, projectPath: string) => {
@@ -196,7 +205,7 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CONFIG_SET_PROJECT_BY_PATH, (_, projectPath: string, overrides) => {
     const project = context.projectRepo.list().find((p) => p.path === projectPath);
     if (!project) throw new Error('Unknown project path');
-    context.configManager.saveProjectOverrides(projectPath, overrides);
+    const persisted = context.configManager.saveProjectOverrides(projectPath, overrides);
     // Background projects pick up changes when they next open; only the
     // currently-open project needs its in-memory state refreshed now.
     if (projectPath === context.currentProjectPath) {
@@ -222,8 +231,13 @@ export function registerSystemHandlers(context: IpcContext): void {
         retrievalService.startForProject(context, project);
       });
     }
+    return { persisted };
   });
 
+  // Left returning a bare count on purpose, not { persisted }: one user click here writes
+  // one file PER PROJECT, so routing it through the settings panel's failure toast would
+  // fire N times for a single condition. It already reports honestly - the per-project
+  // check below keeps `updatedCount` truthful when some projects are unwritable.
   ipcMain.handle(IPC.CONFIG_SYNC_DEFAULT_TO_PROJECTS, (_, partial) => {
     const projects = context.projectRepo.list();
     let updatedCount = 0;

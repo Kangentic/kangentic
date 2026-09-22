@@ -273,6 +273,69 @@ describe('CONFIG_SET IPC handler - broadcasts config:changed even when the write
   });
 });
 
+describe('config write handlers - report whether the write reached disk', () => {
+  // Sentry DESKTOP-1C. The boolean ConfigManager.save() already returned was
+  // discarded here, so the settings panel could not tell a stored setting from a
+  // dropped one. It cannot be decided in the handler - config:set also carries
+  // window layouts, model caches and announcement dismissals - so it is returned
+  // and the ONE caller that represents a user gesture acts on it.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('config:set returns { persisted: true } on a write that reached disk', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:set', { theme: 'dark' })).toEqual({ persisted: true });
+  });
+
+  it('config:set returns { persisted: false } when the write failed', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.save as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:set', { theme: 'dark' })).toEqual({ persisted: false });
+  });
+
+  it('config:setProject reports the project-override write too', () => {
+    // The project-scoped half is the one most likely to be missed: the settings
+    // panel routes every per-project tab through it, so leaving it returning
+    // undefined would make those tabs silently unreportable.
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:setProject', { theme: 'dark' })).toEqual({ persisted: false });
+  });
+
+  it('config:setProjectByPath reports for the currently-open project', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main', projectPaths: ['/repo/main'] });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:setProjectByPath', '/repo/main', { theme: 'dark' }))
+      .toEqual({ persisted: false });
+  });
+
+  it('config:setProjectByPath reports for a background project too', () => {
+    // The early-return branch for a non-current project skips applyRuntimeConfig
+    // and the broadcast; it must not also skip the result, or a write from the
+    // project-settings dialog for a background project reports nothing.
+    const context = makeContext({
+      currentProjectPath: '/repo/main',
+      projectPaths: ['/repo/main', '/repo/other'],
+    });
+    (context.configManager.saveProjectOverrides as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(invokeHandler('config:setProjectByPath', '/repo/other', { theme: 'dark' }))
+      .toEqual({ persisted: false });
+  });
+});
+
 describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring', () => {
   // Regression guard: toggling memory settings (semanticEnabled off, etc.) must
   // release/re-hold the resident embed worker promptly rather than waiting for

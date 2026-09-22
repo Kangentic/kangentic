@@ -175,6 +175,13 @@ export function AgentTab({ config, globalConfig, agentList }: {
             }
           >
             <div className="relative">
+              {/* Per-keystroke, and this is the panel's most expensive field: a cliPaths
+                  write also invalidates every agent's detection cache and re-runs
+                  agents.list(), which probes each CLI. It is NOT a SettingTextInput
+                  because the re-detect button beside it re-probes the PERSISTED path, so
+                  a commit-on-blur boundary would race that refresh against the write the
+                  blur started. Fixing it needs the commit to be awaitable, not just
+                  deferred. See SettingTextInput's docblock. */}
               <input
                 type="text"
                 value={globalConfig.agent.cliPaths[agent.name] || ''}

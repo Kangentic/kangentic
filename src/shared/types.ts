@@ -3538,6 +3538,20 @@ export type SerializedTileNode =
       sizes: number[];
     };
 
+/**
+ * What a config write reports back. `persisted` is false when the write did not reach
+ * disk - `ConfigManager.save()` / `saveProjectOverrides()` degrade rather than throw
+ * (see `src/main/safe-write.ts`), so without this the renderer could not tell a stored
+ * setting from a dropped one.
+ *
+ * Only the settings panel acts on it, and deliberately so: these channels also carry
+ * window-layout blobs, model caches and announcement dismissals, none of which
+ * represent something a user just asked for. Sentry DESKTOP-1C.
+ */
+export interface ConfigSetResult {
+  persisted: boolean;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   theme: 'dark',
   themeFollowsSystem: false,
@@ -5782,15 +5796,16 @@ export interface ElectronAPI {
   config: {
     get: () => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
-    set: (config: DeepPartial<AppConfig>) => Promise<void>;
+    set: (config: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
      *  path so the final state reaches disk before the renderer tears down (an async
-     *  set() can be dropped mid-teardown). Same merge semantics as set(). */
+     *  set() can be dropped mid-teardown). Same merge semantics as set(). Returns
+     *  nothing on purpose: there is no renderer left to tell. */
     setSync: (config: DeepPartial<AppConfig>) => void;
     getProjectOverrides: () => Promise<DeepPartial<AppConfig> | null>;
-    setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<void>;
+    setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;
-    setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<void>;
+    setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     syncDefaultToProjects: (partial: DeepPartial<AppConfig>) => Promise<number>;
     /** Fires after ANY window's config:set persists (including this one). Bare signal;
      *  re-fetch via config.get()/loadConfig() to pick up the new effective config. Lets

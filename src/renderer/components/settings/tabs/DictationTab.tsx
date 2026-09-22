@@ -6,7 +6,7 @@ import type {
   DictationConfig,
   DictationInfo,
 } from '../../../../shared/types';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, SettingTextInput, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
 import { formatCombo } from '../../../utils/keybindings';
@@ -383,26 +383,24 @@ export function DictationTab({
               <p className="text-xs text-fg-faint">
                 Sends the final clip to your OpenAI-compatible /v1/audio/transcriptions endpoint. The live preview stays on-device.
               </p>
-              <input
-                type="text"
+              <SettingTextInput
                 placeholder="https://api.example.com/v1/audio/transcriptions"
                 value={dictation.remote?.url ?? ''}
-                onChange={(event) => updateGlobal({ dictation: { remote: { url: event.target.value } } })}
-                className={INPUT_CLASS}
+                onCommit={(nextUrl) => updateGlobal({ dictation: { remote: { url: nextUrl } } })}
+                ariaLabel="Cloud transcription endpoint"
               />
-              <input
+              <SettingTextInput
                 type="password"
                 placeholder="API key (optional)"
                 value={dictation.remote?.apiKey ?? ''}
-                onChange={(event) => updateGlobal({ dictation: { remote: { apiKey: event.target.value } } })}
-                className={INPUT_CLASS}
+                onCommit={(nextApiKey) => updateGlobal({ dictation: { remote: { apiKey: nextApiKey } } })}
+                ariaLabel="Cloud transcription API key"
               />
-              <input
-                type="text"
+              <SettingTextInput
                 placeholder="Model (optional, e.g. whisper-1)"
                 value={dictation.remote?.model ?? ''}
-                onChange={(event) => updateGlobal({ dictation: { remote: { model: event.target.value } } })}
-                className={INPUT_CLASS}
+                onCommit={(nextModel) => updateGlobal({ dictation: { remote: { model: nextModel } } })}
+                ariaLabel="Cloud transcription model"
               />
             </div>
           )}

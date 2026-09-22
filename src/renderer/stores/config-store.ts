@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppConfig, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
+import type { AppConfig, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
 import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
@@ -57,7 +57,9 @@ interface ConfigStore {
   globalConfig: AppConfig;
   loading: boolean;
   loadConfig: () => Promise<void>;
-  updateConfig: (partial: DeepPartial<AppConfig>) => Promise<void>;
+  /** Persist a global config partial. Resolves with whether the write reached disk;
+   *  only the settings panel acts on that (see `ConfigSetResult`). */
+  updateConfig: (partial: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
   /** Dismiss the onboarding checklist for a project (adds its id to `onboardedProjectIds`). */
   markProjectOnboarded: (projectId: string) => void;
   /** Dismiss an in-app announcement (adds its id to `dismissedAnnouncementIds`,
@@ -185,7 +187,10 @@ interface ConfigStore {
   // -- Project overrides --
   projectOverrides: DeepPartial<AppConfig> | null;
   loadProjectOverrides: () => Promise<void>;
-  updateProjectOverride: (partial: DeepPartial<AppConfig>) => Promise<void>;
+  /** Persist a project-override partial. Same `persisted` contract as `updateConfig`;
+   *  resolves `{ persisted: true }` for the no-project-open no-op, since no write was
+   *  attempted. */
+  updateProjectOverride: (partial: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
 
 }
 
@@ -266,6 +271,13 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
   };
 
   /** The tail of the project-override write chain; see `updateProjectOverride`. */
+  // hmr-safe: this lives in the store factory's closure, not module scope, so the Pattern A
+  // scan does not reach it and a Fast Refresh of this module replaces it with a fresh
+  // resolved chain. That is acceptable rather than overlooked: the chain only ORDERS writes,
+  // and a write already in flight has reached main before the reload, so nothing is lost on
+  // disk. The reload's own loadConfig() re-reads it. Do not pin this without pinning the
+  // store instance too (Pattern E), or the chain and the store it writes into come from
+  // different generations.
   let projectOverrideWrites: Promise<void> = Promise.resolve();
 
   return {
@@ -295,7 +307,11 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     },
 
     updateConfig: async (partial) => {
-      await window.electronAPI.config.set(partial);
+      // The result is returned, not acted on here: this method also carries the
+      // window-layout blobs, the model caches and announcement dismissals, which are
+      // not things the user asked for. Only the settings panel's `updateSetting`
+      // reads it (Sentry DESKTOP-1C).
+      const result = await window.electronAPI.config.set(partial);
       const configs = await refreshConfigs();
       set(withSeededWorkspace(configs));
       // Global settings can change every project's effective config, so
@@ -310,6 +326,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       if (partial.agent) {
         get().loadAgentList();
       }
+      return result;
     },
 
     markProjectOnboarded: (projectId) => {
@@ -510,6 +527,23 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       if (open) {
         set({ settingsOpen: true });
       } else {
+        // A focused SettingTextInput commits on blur; blurring HERE, before
+        // projectSettingsPath is cleared below, routes that commit through the
+        // normal (already-correct) blur path. Without this, closing the panel while
+        // a field is focused relies on SettingTextInput's own unmount-flush effect
+        // instead, which fires as a DIRECT CONSEQUENCE of this same close - by the
+        // time it runs, projectSettingsPath is already null, and updateProjectOverride
+        // would treat the edit as the no-project-open no-op and silently drop it.
+        //
+        // Scoped to the panel's own subtree, not a bare activeElement.blur(). This
+        // action also runs programmatically with focus somewhere else entirely (the
+        // walkthrough closes and reopens the panel on the next frame), and an
+        // unscoped blur would then pull focus out of whatever the user was actually
+        // in, a terminal included.
+        const focused = typeof document !== 'undefined' ? document.activeElement : null;
+        if (focused instanceof HTMLElement && focused.closest('[data-testid="settings-panel"]')) {
+          focused.blur();
+        }
         set({
           settingsOpen: false,
           projectSettingsPath: null,
@@ -557,22 +591,54 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     },
 
     updateProjectOverride: (partial) => {
+      // Captured synchronously, at call time - NOT lazily inside the deferred `write`
+      // below, which only runs once the write chain's tail settles (at least one
+      // microtask later). A SettingTextInput's unmount-flush effect can call this as
+      // a DIRECT CONSEQUENCE of setSettingsOpen(false), which nulls projectSettingsPath
+      // / projectOverrides in the SAME synchronous update that triggers the unmount -
+      // so a lazy `get()` inside `write` would already see them cleared. This snapshot
+      // is what a flush chases across a close so a project-scoped edit made right
+      // before Escape (or the settings.toggle shortcut) is not silently discarded.
+      // setSettingsOpen(false) also blurs the focused field before it clears state,
+      // which is what lets a NORMAL blur-triggered commit (routed through here) see
+      // these still-valid values in the first place.
+      const capturedProjectPath = get().projectSettingsPath;
+      const capturedProjectOverrides = get().projectOverrides;
       // Each write merges over the PREVIOUS write's result, not over the snapshot
       // both read at call time. The Theme tab commits on every arrow key and can
       // fire a tile commit and the follow-system toggle inside one round trip;
       // unchained, whichever landed last would carry only its own keys and
-      // silently drop the other's.
-      const write = async () => {
-        const projectPath = get().projectSettingsPath;
-        if (!projectPath) return;
-        const current = get().projectOverrides || {};
+      // silently drop the other's. So `projectOverrides` is still read LIVE here
+      // first - the capture above is a FALLBACK for when the live copy has been
+      // cleared by a close that raced this same commit, not a replacement for it.
+      const write = async (): Promise<ConfigSetResult> => {
+        const projectPath = get().projectSettingsPath ?? capturedProjectPath;
+        // Nothing was attempted, so nothing failed. Reporting `persisted: false` here
+        // would make the settings panel toast "this setting did not save" for the
+        // no-project-open no-op, which is a different thing entirely.
+        if (!projectPath) return { persisted: true };
+        const current = get().projectOverrides ?? capturedProjectOverrides ?? {};
         const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
-        await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
-        const effective = deepMergeConfig(get().globalConfig, merged);
-        set({ projectOverrides: merged, config: effective });
+        const result = await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
+        // Only the project still being edited gets the optimistic local update, the same
+        // guard `loadProjectOverrides` uses. The disk write above is what matters and has
+        // already happened; this `set` just saves the open panel a refetch. Unguarded, a
+        // flush that lands after a close would leave non-null overrides in a store whose
+        // panel is shut, and a flush that lands after the panel REOPENED on a different
+        // project would merge this project's overrides over that one's global config.
+        // Neither was reachable before the capture-at-call-time fallback above, because
+        // the cleared path made this whole branch a no-op.
+        if (get().projectSettingsPath === projectPath) {
+          const effective = deepMergeConfig(get().globalConfig, merged);
+          set({ projectOverrides: merged, config: effective });
+        }
+        return result;
       };
-      projectOverrideWrites = projectOverrideWrites.then(write, write);
-      return projectOverrideWrites;
+      // The chain tail stays Promise<void> so a write's result cannot leak into the
+      // NEXT write's `then`; the caller gets its own promise carrying the result.
+      const written = projectOverrideWrites.then(write, write);
+      projectOverrideWrites = written.then(() => undefined, () => undefined);
+      return written;
     },
 
   };
