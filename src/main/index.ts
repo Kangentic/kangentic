@@ -287,7 +287,7 @@ for (const arg of process.argv) {
  *
  * Placed HERE on purpose, and the position is load-bearing in two directions.
  * It must come before `app.whenReady()`, because
- * `app.disableHardwareAcceleration()` is a no-op once the app is ready. And it
+ * `app.disableHardwareAcceleration()` THROWS once the app is ready. And it
  * must come after `initErrorReporting()` above, because it is the first thing
  * in the process to call `windowConfigManager.load()`: if that load hits an
  * unwritable config dir, `reportSyncWriteFailure` LATCHES the source before it
@@ -310,12 +310,11 @@ for (const arg of process.argv) {
  * this whole path exists for) is unreachable. `disableHardwareAcceleration()`
  * then keeps the display driver out of the browser process, which
  * `--in-process-gpu` alone would pull in, turning a contained GPU-child crash
- * into a browser crash with no fallback ladder at all. The second one is
- * Electron's API rather than the `--disable-gpu` switch it is usually spoken
- * of as: it blocklists every GPU feature through GpuDataManager instead of
- * appending a switch. Same effect here, and it is worth naming precisely,
- * because the whole point of this path is that someone reads it during an
- * incident.
+ * into a browser crash with no fallback ladder at all. Calling the API rather
+ * than appending `--disable-gpu` ourselves is not a distinction: Electron's
+ * `App::DisableHardwareAcceleration` appends that exact switch AND disables
+ * the GpuDataManager, and it throws if called once the app is ready, which is
+ * the other half of why this sits at module scope.
  *
  * Verified on Windows in Electron 41: with both set, getAppMetrics() reports
  * no GPU process at all. NOT verified on macOS or Linux, and no test tier

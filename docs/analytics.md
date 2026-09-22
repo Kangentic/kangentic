@@ -375,7 +375,7 @@ in one Sentry org, one triage surface.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` holds, `src/main/index.ts` has already started Chromium with
   `app.disableHardwareAcceleration()` and `--in-process-gpu` (decided at module scope, because
-  that API is a no-op after ready), and now persists `graphicsAccelerationEnabled: false` with
+  that API throws once the app is ready), and now persists `graphicsAccelerationEnabled: false` with
   `graphicsAccelerationOffBy: 'app'` so later launches read the setting instead of re-deriving it
   from a record that is about to be cleared. `graphicsAccelerationOffBy` is what stops a later
   failure overwriting a choice the user made themselves. The renderer PULLS this state

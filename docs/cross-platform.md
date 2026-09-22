@@ -218,14 +218,10 @@ rules out anything the app itself was doing: no agent, terminal, or embedding wo
 early, and the software-GL rung does not touch the display driver at all. It is a host problem,
 and the app's job is to survive it rather than diagnose it.
 
-Disabling the GPU is still not a fix on its own, on either platform. The reasoning is worth
-keeping so a future GPU issue does not re-derive it and ship the flag that does not work.
-
-Two names for nearly the same thing, and the difference matters when you read a stack:
-`app.disableHardwareAcceleration()` does not append `--disable-gpu`. It calls
-`GpuDataManager::DisableHardwareAcceleration()`, which blocklists every GPU feature; Chromium then
-propagates `--disable-gpu` to the GPU process itself. The argument below is about the switch as
-Chromium's ladder sees it, so it holds for either route in.
+`--disable-gpu` (which `app.disableHardwareAcceleration()` appends, along with disabling the
+GpuDataManager, and only before the app is ready) is still not a fix on its own, on either
+platform. The reasoning is worth keeping so a future GPU issue does not re-derive it and ship the
+flag that does not work.
 
 Chromium's own fallback ladder (`content/browser/gpu/gpu_data_manager_impl_private.cc`,
 `GpuDataManagerImplPrivate::InitializeGpuModes`) pushes `DISPLAY_COMPOSITOR` and, if allowed,
@@ -273,10 +269,11 @@ What ships now, on every platform:
   `child-process-gone` from, so the death that kills the app is one JS is never told about.
   Whatever is going to be on disk has to already be there.
 - `src/main/index.ts` decides at MODULE SCOPE, before `app.whenReady()`, whether to start in
-  software rendering, because `app.disableHardwareAcceleration()` is a no-op after ready. It
-  engages both `app.disableHardwareAcceleration()` and `--in-process-gpu`: the switch removes the
-  GPU child, the API keeps the display driver out of the browser process that child's absence
-  would otherwise pull it into. `--in-process-gpu` is set on every platform, unguarded, and has
+  software rendering, because `app.disableHardwareAcceleration()` THROWS once the app is ready
+  rather than quietly doing nothing. It engages both that call and `--in-process-gpu`:
+  `--in-process-gpu` removes the GPU child, and the `--disable-gpu` the API appends keeps the
+  display driver out of the browser process that child's absence would otherwise pull it into.
+  `--in-process-gpu` is set on every platform, unguarded, and has
   been verified only on Windows. That is deliberate rather than an oversight: the two issues this
   path exists for are a Windows install and an Ubuntu one, and guarding the switch to the platform
   it was measured on would weaken the recovery exactly where the Linux report came from.
