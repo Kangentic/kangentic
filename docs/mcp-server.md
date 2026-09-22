@@ -1235,7 +1235,7 @@ List recent crash records from `<projectRoot>/.kangentic/logs/crashes/` (falling
 
 ### kangentic_get_process_metrics
 
-Live snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads `app.getMetrics()` on demand; not project-scoped. No parameters.
+Live snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads `app.getMetrics()` on demand; not project-scoped. No parameters. The per-process `privateBytes` is the Windows commit figure (in KB, like the rest of the table), which is what the low-memory warning measures; the two model workers appear by service name (`kangentic-dictation`, `kangentic-embeddings`). `main` carries the main process's own `process.memoryUsage()` in bytes (`rssBytes`, `heapTotalBytes`, `heapUsedBytes`, `externalBytes`, `arrayBuffersBytes`), which is the only way to tell V8 heap from Node external allocations from Chromium's own footprint without attaching an inspector to the live process.
 
 ### kangentic_get_ipc_log
 

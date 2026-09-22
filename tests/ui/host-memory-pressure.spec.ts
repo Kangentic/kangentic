@@ -60,7 +60,7 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast).toBeVisible();
-      await expect(toast).toContainText('low on memory');
+      await expect(toast).toContainText('memory reservations');
       await expect(toast).toContainText('1.5 GB');
       await expect(toast).toContainText('2 agents');
     } finally {

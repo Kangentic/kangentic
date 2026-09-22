@@ -502,6 +502,9 @@ export const IPC = {
 
   // Conversation-memory semantic-layer status (Smart-mode palette UI).
   MEMORY_STATUS: 'memory:status',
+  // Spawn + init the embedding worker ahead of the first Smart query (Quick
+  // Find open); fire-and-forget, embeds nothing.
+  MEMORY_PREWARM: 'memory:prewarm',
   // Purge the current project's conversation index and re-run the backfill sweep
   // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
   MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',

@@ -92,6 +92,7 @@ function makeFakeClient(overrides?: Partial<EmbedWorkerClient>): EmbedWorkerClie
   return {
     embed: vi.fn(async (texts: string[]) => texts.map(() => new Float32Array([0.1]))),
     setWarmHold: vi.fn(),
+    prewarm: vi.fn(async () => undefined),
     waitForInteractiveIdle: vi.fn(() => Promise.resolve()),
     dispose: vi.fn(),
     crashed: false,
@@ -271,6 +272,112 @@ describe('createEmbedEngine drain loop', () => {
     expect(() => engine.dispose()).not.toThrow();
   });
 
+  it('takes the warm hold only when a batch exists and releases it once every dirty project is drained', async () => {
+    const visits: string[] = [];
+    const storeA = new FakeStore('proj-hold-a', [makeChunk(1), makeChunk(2)], visits);
+    const storeB = new FakeStore('proj-hold-b', [makeChunk(3)], visits);
+    const dbA = { __fakeProjectId: 'proj-hold-a' } as unknown as Database.Database;
+    const dbB = { __fakeProjectId: 'proj-hold-b' } as unknown as Database.Database;
+    markVecCapable(dbA);
+    markVecCapable(dbB);
+    const dbs = new Map([['proj-hold-a', dbA], ['proj-hold-b', dbB]]);
+    const stores = new Map([['proj-hold-a', storeA], ['proj-hold-b', storeB]]);
+    // Record the hold's state at every embed so the test can prove the hold
+    // was ON while the batch posted, and observe the release after.
+    const holds: boolean[] = [];
+    let held = false;
+    const client = makeFakeClient({
+      setWarmHold: vi.fn((hold: boolean) => {
+        held = hold;
+      }),
+      embed: vi.fn(async (texts: string[]) => {
+        holds.push(held);
+        return texts.map(() => new Float32Array([0.1]));
+      }),
+    });
+
+    const engine = createEmbedEngine({
+      getDb: (projectId) => dbs.get(projectId)!,
+      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      createClient: () => client,
+      delay: immediateDelay,
+      drainBatchSize: 1,
+    });
+
+    engine.attach(makeContext({ currentProjectId: 'proj-hold-a' }));
+    engine.markDirty('proj-hold-a');
+    engine.markDirty('proj-hold-b');
+
+    await vi.waitFor(() => {
+      expect(storeA.remaining).toBe(0);
+      expect(storeB.remaining).toBe(0);
+    });
+    await vi.waitFor(() => expect(held).toBe(false));
+
+    // Every batch posted under the hold, and the release came only after the
+    // last one: while proj-b still had work, a drained proj-a did not release.
+    expect(holds).toEqual([true, true, true]);
+    const calls = (client.setWarmHold as ReturnType<typeof vi.fn>).mock.calls.map(([hold]) => hold);
+    expect(calls.indexOf(false)).toBeGreaterThan(calls.lastIndexOf(true));
+
+    engine.dispose();
+  });
+
+  it('a markDirty with nothing pending never touches the hold (the getStatus poll shape)', async () => {
+    const store = new FakeStore('proj-caught-up', [], []);
+    const db = { name: 'proj-caught-up' } as unknown as Database.Database;
+    markVecCapable(db);
+    const client = makeFakeClient();
+
+    const engine = createEmbedEngine({
+      getDb: () => db,
+      createStore: () => store,
+      createClient: () => client,
+      delay: immediateDelay,
+    });
+
+    engine.attach(makeContext({ currentProjectId: 'proj-caught-up' }));
+    // The Memory tab re-marks the project on every 1.5 s poll.
+    engine.markDirty('proj-caught-up');
+    engine.markDirty('proj-caught-up');
+    engine.markDirty('proj-caught-up');
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(client.embed).not.toHaveBeenCalled();
+    expect(client.setWarmHold).not.toHaveBeenCalledWith(true);
+
+    engine.dispose();
+  });
+
+  it('releases the hold after a drain iteration that throws', async () => {
+    const store = new FakeStore('proj-throws', [makeChunk(40)], []);
+    const db = { name: 'proj-throws' } as unknown as Database.Database;
+    markVecCapable(db);
+    const client = makeFakeClient({
+      embed: vi.fn(async () => {
+        throw new Error('the vec write blew up');
+      }),
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const engine = createEmbedEngine({
+      getDb: () => db,
+      createStore: () => store,
+      createClient: () => client,
+      delay: immediateDelay,
+    });
+
+    engine.attach(makeContext({ currentProjectId: 'proj-throws' }));
+    engine.markDirty('proj-throws');
+
+    await vi.waitFor(() => expect(client.setWarmHold).toHaveBeenCalledWith(false));
+    const calls = (client.setWarmHold as ReturnType<typeof vi.fn>).mock.calls.map(([hold]) => hold);
+    expect(calls.indexOf(false)).toBeGreaterThan(calls.indexOf(true));
+
+    engine.dispose();
+    warnSpy.mockRestore();
+  });
+
   it('does not embed while semantic is disabled, even with a dirty project', async () => {
     const store = new FakeStore('proj-e', [makeChunk(30)], []);
     const db = { name: 'proj-e' } as unknown as Database.Database;
@@ -295,7 +402,7 @@ describe('createEmbedEngine drain loop', () => {
   });
 });
 
-describe('createEmbedEngine getEmbedder (resolveEmbedder)', () => {
+describe('createEmbedEngine getEmbedder (resolveClient)', () => {
   it('returns null when semantic search is disabled, even with a project open', () => {
     const engine = createEmbedEngine({
       getDb: () => ({}) as unknown as Database.Database,
@@ -335,7 +442,7 @@ describe('createEmbedEngine getEmbedder (resolveEmbedder)', () => {
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
-  it('returns the shared client for the interactive query path when semantic is enabled, the model is present, and the client is healthy', () => {
+  it('returns the shared client for the interactive query path when semantic is enabled, the model is present, and the client is healthy, without holding it', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
       getDb: () => ({}) as unknown as Database.Database,
@@ -346,6 +453,42 @@ describe('createEmbedEngine getEmbedder (resolveEmbedder)', () => {
 
     const context = makeContext({ currentProjectId: 'proj-healthy', semanticEnabled: true });
     expect(engine.getEmbedder(context)).toBe(client);
+    // A query never holds the worker; its own embed() re-arms the idle timer.
+    expect(client.setWarmHold).not.toHaveBeenCalled();
+  });
+});
+
+describe('createEmbedEngine prewarm', () => {
+  it('warms the client when semantic is on and the model is present, and never when disabled, model absent, or crashed', () => {
+    const healthy = makeFakeClient();
+    const engine = createEmbedEngine({
+      getDb: () => ({}) as unknown as Database.Database,
+      createStore: () => new FakeStore('proj-prewarm', [], []),
+      createClient: () => healthy,
+      delay: immediateDelay,
+    });
+
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: false }));
+    expect(healthy.prewarm).not.toHaveBeenCalled();
+
+    vi.mocked(isEmbeddingModelPresent).mockReturnValueOnce(false);
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: true }));
+    expect(healthy.prewarm).not.toHaveBeenCalled();
+
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: true }));
+    expect(healthy.prewarm).toHaveBeenCalledTimes(1);
+    expect(healthy.embed).not.toHaveBeenCalled();
+    expect(healthy.setWarmHold).not.toHaveBeenCalled();
+
+    const crashed = makeFakeClient({ crashed: true });
+    const crashedEngine = createEmbedEngine({
+      getDb: () => ({}) as unknown as Database.Database,
+      createStore: () => new FakeStore('proj-prewarm-crashed', [], []),
+      createClient: () => crashed,
+      delay: immediateDelay,
+    });
+    crashedEngine.prewarm(makeContext({ currentProjectId: 'proj-prewarm-crashed', semanticEnabled: true }));
+    expect(crashed.prewarm).not.toHaveBeenCalled();
   });
 });
 
@@ -369,7 +512,7 @@ describe('createEmbedEngine workerCrashReason', () => {
     expect(engine.workerCrashReason).toBeNull();
   });
 
-  it("forwards the crashed client's own crashReason once resolveEmbedder has run", () => {
+  it("forwards the crashed client's own crashReason once resolveClient has run", () => {
     const crashedClient = makeFakeClient({
       crashed: true,
       crashReason: "exited with code 1: Error: Cannot find module 'sharp'",
@@ -391,7 +534,7 @@ describe('createEmbedEngine workerCrashReason', () => {
 });
 
 describe('createEmbedEngine reconcile', () => {
-  it('holds the existing client warm without disposing it when semantic is enabled and a project is open', () => {
+  it('leaves the existing client alone (no dispose, no hold) when semantic is enabled and a project is open', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
       getDb: () => ({}) as unknown as Database.Database,
@@ -402,16 +545,18 @@ describe('createEmbedEngine reconcile', () => {
 
     const context = makeContext({ currentProjectId: 'proj-warm', semanticEnabled: true });
     // Seed the shared client via the query path first, so there is something
-    // for reconcile to hold warm. attach() is deliberately NOT called here:
-    // the warm-hold/dispose branch of reconcile is synchronous and does not
-    // depend on the drain loop being started.
+    // for reconcile to keep. attach() is deliberately NOT called here: the
+    // dispose branch of reconcile is synchronous and does not depend on the
+    // drain loop being started.
     engine.getEmbedder(context);
     client.setWarmHold.mockClear();
     client.dispose.mockClear();
 
     engine.reconcile(context);
 
-    expect(client.setWarmHold).toHaveBeenCalledWith(true);
+    // The hold is the drain's to take, when it has a batch; reconcile only
+    // decides whether the client may exist at all.
+    expect(client.setWarmHold).not.toHaveBeenCalled();
     expect(client.dispose).not.toHaveBeenCalled();
   });
 

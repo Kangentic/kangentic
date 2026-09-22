@@ -4,6 +4,7 @@ import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { UtilityRestartPolicy } from '../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../utility-process/stderr-tail';
 import { unpacked } from '../utility-process/paths';
+import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES, readProcessCommitBytes } from '../utility-process/commit-ceiling';
 import type {
   CancelMessage,
   CreateSessionMessage,
@@ -24,12 +25,21 @@ import type {
 const ENSURE_ENGINE_TIMEOUT_MS = 120_000;
 /** A decode pass on a long utterance; generous but bounded. */
 const FINALIZE_TIMEOUT_MS = 30_000;
-/** Kill the worker after this long idle, unless `setWarmHold(true)` is held.
- *  Dictation holds up to two loaded models (warmCap), and the whole point of
- *  `prewarm` is that the first press is instant - so this mirrors
- *  EmbedClient's warm-hold shape, not LineCountClient's bare idle-kill (that
- *  worker holds no expensive warm state; this one does). */
-const IDLE_SHUTDOWN_MS = 5 * 60_000;
+/** Recycle a worker that has served a session after this long without a
+ *  request, or after HEAVY_IDLE_SHUTDOWN_MS once its commit has passed
+ *  WORKER_COMMIT_CEILING_BYTES (utility-process/commit-ceiling.ts). Only such
+ *  a worker holds the accurate model (HybridEngine loads it lazily on the
+ *  first session), and onnxruntime never returns that arena to the OS
+ *  in-process, so the recycle is a process exit: 3 GB of commit for an idle
+ *  631 MB model was what fired the low-memory warning (#706). A worker that
+ *  has only been pre-warmed holds the ~70 MB live model and is never
+ *  recycled - it IS the instant first press. TranscriptionService re-warms a
+ *  recycled worker straight back to that baseline.
+ *
+ *  The timer never runs while a session is open. A session's frames travel
+ *  fire-and-forget and would not touch it, so `activeSessions` gates both the
+ *  arm and the fire instead, however long the hold. */
+const IDLE_SHUTDOWN_MS = 30 * 60_000;
 /** After this many crashes inside the restart policy's decay window, stop
  *  trying to offload. See restart-policy.ts's header for why this is a
  *  window, not the whole app run. */
@@ -51,9 +61,11 @@ interface PendingRequest {
 /**
  * Client for the `kangentic-dictation` utilityProcess worker (see
  * dictation-worker.ts for the wire protocol and DESKTOP-X for why the engine
- * runs there at all). Spawns lazily on first demand, shuts the worker down
- * when idle unless `setWarmHold(true)` is held, and restarts it (with a
- * crash cap) after an unexpected exit.
+ * runs there at all). Spawns lazily on first demand, recycles a worker that
+ * has served a session once it has been idle for IDLE_SHUTDOWN_MS (a short
+ * HEAVY_IDLE_SHUTDOWN_MS once its commit passes the ceiling), emitting
+ * `'recycled'` so the service can warm a fresh, small one, and restarts it
+ * (with a crash cap) after an unexpected exit.
  *
  * Unlike EmbedClient/LineCountClient, dictation has no fallback engine to
  * degrade to - a failed request REJECTS rather than resolving null/empty, so
@@ -68,10 +80,19 @@ export class DictationClient extends EventEmitter {
   private readonly restartPolicy: UtilityRestartPolicy;
   private disposed = false;
   private idleTimer: NodeJS.Timeout | null = null;
-  /** While true, the idle recycle never fires, so the worker (and its warm
-   *  engines) stays resident. TranscriptionService holds it whenever
-   *  dictation is enabled. */
-  private warmHold = false;
+  /** True once the current child has created a session, which is what makes
+   *  it load the accurate model. Only such a child is worth recycling; a
+   *  prewarm-only child is the resident baseline. Per child: cleared on every
+   *  kill and exit. */
+  private servedSession = false;
+  /** Sessions created and not yet finalized or cancelled. A recycle never
+   *  fires while one is open. Every path that ends a session (finalize,
+   *  cancel, a failed create, a kill, an exit) clears its entry, and
+   *  TranscriptionService ends every session it starts, so an entry cannot
+   *  go stale. */
+  private readonly activeSessions = new Set<string>();
+  /** Commit reader behind the ceiling check; injectable so tests drive it. */
+  private readonly readCommitBytes: (pid: number) => number | null;
   /** The child an intentional teardown (idle recycle or dispose) is killing,
    *  so the resulting 'exit' is not miscounted as a crash. Held per child
    *  rather than as a bare boolean: a killed worker's 'exit' arrives
@@ -82,10 +103,14 @@ export class DictationClient extends EventEmitter {
    *  deliberate kill as one. */
   private intentionalKill: UtilityProcess | null = null;
 
-  constructor(restartPolicy?: UtilityRestartPolicy) {
+  constructor(
+    restartPolicy?: UtilityRestartPolicy,
+    options?: { readCommitBytes?: (pid: number) => number | null },
+  ) {
     super();
     this.restartPolicy = restartPolicy
       ?? new UtilityRestartPolicy({ service: SERVICE_NAME, maxCrashes: MAX_CRASHES });
+    this.readCommitBytes = options?.readCommitBytes ?? readProcessCommitBytes;
   }
 
   get crashed(): boolean {
@@ -120,8 +145,15 @@ export class DictationClient extends EventEmitter {
     const child = this.ensureSpawned();
     if (!child) throw new Error(this.unavailableMessage());
     this.clearIdleTimer();
+    this.servedSession = true;
+    this.activeSessions.add(request.dictationSessionId);
     try {
       await this.request<CreateSessionMessage>(child, { type: 'createSession', ...request }, ENSURE_ENGINE_TIMEOUT_MS);
+    } catch (error) {
+      // The service cancels a session whose create failed; drop it here too,
+      // so a failed create can never hold the recycle open.
+      this.activeSessions.delete(request.dictationSessionId);
+      throw error;
     } finally {
       this.armIdleShutdown();
     }
@@ -163,12 +195,15 @@ export class DictationClient extends EventEmitter {
       const result = await this.request<FinalizeMessage>(child, { type: 'finalize', dictationSessionId }, FINALIZE_TIMEOUT_MS);
       return result.text ?? '';
     } finally {
+      this.activeSessions.delete(dictationSessionId);
       this.armIdleShutdown();
     }
   }
 
-  /** Fire-and-forget cancel; a no-op if the worker is unavailable. */
+  /** Fire-and-forget cancel; a no-op if the worker is unavailable. Ends the
+   *  session for the recycle's purposes either way. */
   cancel(dictationSessionId: string): void {
+    this.activeSessions.delete(dictationSessionId);
     if (!this.child) return;
     const message: CancelMessage = { type: 'cancel', dictationSessionId };
     try {
@@ -176,10 +211,15 @@ export class DictationClient extends EventEmitter {
     } catch {
       // Same lost-race reasoning as push() above.
     }
+    this.armIdleShutdown();
   }
 
-  /** Release every warm engine in the worker (dictation disabled). A no-op
-   *  if the worker was never spawned - nothing is warm either way. */
+  /** Release every warm engine in the worker in place, keeping the process.
+   *  The client half of the worker's `disposeWarm` protocol (whose mid-load
+   *  supersede guard dictation-worker.test.ts covers). Not what disabling
+   *  dictation does any more - that is `release()`, since an in-process
+   *  dispose leaves onnxruntime's reservation behind. A no-op if the worker
+   *  was never spawned - nothing is warm either way. */
   disposeWarm(): void {
     if (!this.child) return;
     const message: DisposeWarmMessage = { type: 'disposeWarm' };
@@ -275,6 +315,12 @@ export class DictationClient extends EventEmitter {
     // nulls the live child or rejects the replacement's in-flight requests.
     if (this.child !== null && child !== this.child) return;
     this.child = null;
+    // A crash must not leave the idle timer running against a child that is
+    // already gone: it would fire on the replacement (which, freshly
+    // pre-warmed, has served no session) or on nothing, as a phantom recycle.
+    this.clearIdleTimer();
+    this.servedSession = false;
+    this.activeSessions.clear();
     const lostSessionError = new Error('The dictation worker exited unexpectedly');
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
@@ -285,21 +331,43 @@ export class DictationClient extends EventEmitter {
     if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode, stderrTail);
   }
 
-  /** Hold (or release) the worker against the idle recycle. Releasing re-arms
-   *  the timer immediately so a stale hold does not linger past its use. */
-  setWarmHold(hold: boolean): void {
-    this.warmHold = hold;
-    if (hold) this.clearIdleTimer();
-    else this.armIdleShutdown();
+  /** Kill the worker now, on purpose (dictation was turned off). Unlike the
+   *  idle recycle this emits no `'recycled'`, so nothing re-warms it. A
+   *  later request spawns afresh; `dispose()` is the one that refuses. */
+  release(): void {
+    this.clearIdleTimer();
+    const turnedOffError = new Error('Dictation was turned off');
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(turnedOffError);
+    }
+    this.pending.clear();
+    this.killChild();
   }
 
+  /** Arm the idle recycle, but only for a child worth recycling: one that has
+   *  served a session and so holds the accurate model. A prewarm-only child
+   *  is left resident on purpose. */
   private armIdleShutdown(): void {
-    if (this.disposed || this.warmHold || this.idleTimer || this.pending.size > 0) return;
+    if (this.disposed || !this.child || !this.servedSession || this.idleTimer) return;
+    if (this.pending.size > 0 || this.activeSessions.size > 0) return;
+    const delayMs = this.overCommitCeiling() ? HEAVY_IDLE_SHUTDOWN_MS : IDLE_SHUTDOWN_MS;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (this.pending.size === 0) this.killChild();
-    }, IDLE_SHUTDOWN_MS);
+      if (!this.child || this.pending.size > 0 || this.activeSessions.size > 0) return;
+      this.killChild();
+      this.emit('recycled');
+    }, delayMs);
     this.idleTimer.unref();
+  }
+
+  /** Whether the current child's commit has passed the ceiling, which earns
+   *  it the short idle window. False with no child or no reading. */
+  private overCommitCeiling(): boolean {
+    const pid = this.child?.pid;
+    if (typeof pid !== 'number') return false;
+    const commitBytes = this.readCommitBytes(pid);
+    return commitBytes !== null && commitBytes > WORKER_COMMIT_CEILING_BYTES;
   }
 
   private clearIdleTimer(): void {
@@ -312,6 +380,8 @@ export class DictationClient extends EventEmitter {
   private killChild(): void {
     const child = this.child;
     this.child = null;
+    this.servedSession = false;
+    this.activeSessions.clear();
     this.intentionalKill = child;
     if (child) {
       try {

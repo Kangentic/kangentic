@@ -4457,6 +4457,17 @@
 
     memory: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
+      // Fire-and-forget worker warm-up on a Smart-mode Quick Find open. Recorded
+      // (one timestamp per call) so a UI test can assert it fires at least once
+      // per open, never in keyword mode, and no further as the user types. Not
+      // an exact count: StrictMode double-invokes the mount effect, and the
+      // second send is a no-op against the worker's memoized init.
+      prewarm: function () {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockMemoryPrewarmCalls) window.__mockMemoryPrewarmCalls = [];
+          window.__mockMemoryPrewarmCalls.push(Date.now());
+        }
+      },
       rebuildIndex: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];

@@ -11,12 +11,14 @@ import type {
  * HybridEngine's slot composition. It imports no sherpa, so nothing is mocked
  * here; the sub-engines are plain fakes.
  *
- * The load-bearing case is a final slot whose createSession throws. The live
- * sub-session is built first, so without the try/catch it is never returned and
- * never disposed: a chunked live session's decode loop would then tick for the
- * life of the worker, and dictation-worker.ts's maybeDisposeEngine cannot reach
- * it, because an engine's dispose() only drops its recognizer reference.
+ * The load-bearing cases are the lazy final slot (#706): `load()` warms only
+ * the live slot, the accurate model loads on the first session and is fed
+ * from a buffer at finalize, and a release that arrives before it is ready
+ * commits a full live decode instead of waiting on the client's timeout.
  */
+
+// Mirrors the private FINAL_LOAD_WAIT_MS in hybrid-engine.ts.
+const FINAL_LOAD_WAIT_MS = 15_000;
 
 interface FakeSession extends TranscriptionEngineSession {
   push: ReturnType<typeof vi.fn>;
@@ -57,6 +59,18 @@ function makeFakeEngine(finalizeText: string): FakeEngine {
   return engine;
 }
 
+/** A load the test settles by hand, for the still-loading cases. */
+function deferredLoad(engine: FakeEngine): { resolve: () => void; reject: (error: Error) => void } {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const gate = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  engine.load = vi.fn(() => gate);
+  return { resolve, reject };
+}
+
 function makeOptions(): CreateSessionOptions {
   return { sampleRate: 16000, language: 'en', punctuation: true, onPartial: vi.fn() };
 }
@@ -65,51 +79,216 @@ function model(id: string): ResolvedModel {
   return { id, engineId: 'whisper-cpp', kind: 'offline-nemo-transducer', paths: {} };
 }
 
-describe('HybridEngine', () => {
-  it('disposes the live sub-session when the final slot fails to start', () => {
-    const live = makeFakeEngine('live text');
-    const final = makeFakeEngine('final text');
-    const failure = new Error('the final model was evicted');
-    final.createSession = vi.fn(() => {
-      throw failure;
-    });
+const BOTH_MODELS = [model('live-model'), model('final-model')];
 
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
-
-    expect(() => engine.createSession(makeOptions())).toThrow(failure);
-    expect(live.session.dispose).toHaveBeenCalledTimes(1);
+function makeHybrid(live: FakeEngine | null, final: FakeEngine | null): HybridEngine {
+  return new HybridEngine({
+    live: live ? { factory: () => live, modelId: 'live-model' } : null,
+    final: final ? { factory: () => final, modelId: 'final-model' } : null,
   });
+}
 
-  it('fans push out to both sub-sessions', () => {
-    const live = makeFakeEngine('live text');
-    const final = makeFakeEngine('final text');
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
+/** Flush pending microtasks (a settled load reaching its continuation). */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe('HybridEngine', () => {
+  describe('lazy final slot', () => {
+    it('load() loads only the live slot; the final slot loads on the first createSession, once across sessions', async () => {
+      const live = makeFakeEngine('live text');
+      const final = makeFakeEngine('final text');
+      const engine = makeHybrid(live, final);
+
+      await engine.load(BOTH_MODELS);
+      expect(live.loadedWith).toEqual([model('live-model')]);
+      expect(final.load).not.toHaveBeenCalled();
+
+      engine.createSession(makeOptions());
+      expect(final.load).toHaveBeenCalledTimes(1);
+      expect(final.loadedWith).toEqual([model('final-model')]);
+
+      engine.createSession(makeOptions());
+      expect(final.load).toHaveBeenCalledTimes(1);
     });
 
-    const session = engine.createSession(makeOptions());
-    const pcm = new Int16Array([1, 2, 3]);
-    session.push(pcm);
+    it('buffers pushed frames as copies and replays them into the final sub-session at finalize, in order', async () => {
+      const live = makeFakeEngine('live text');
+      const final = makeFakeEngine('final text');
+      const engine = makeHybrid(live, final);
+      await engine.load(BOTH_MODELS);
 
-    expect(live.session.push).toHaveBeenCalledWith(pcm);
-    expect(final.session.push).toHaveBeenCalledWith(pcm);
+      const session = engine.createSession(makeOptions());
+      const first = new Int16Array([1, 2, 3]);
+      const second = new Int16Array([4, 5]);
+      session.push(first);
+      session.push(second);
+
+      // The live slot sees every frame at once; the final slot sees none yet.
+      expect(live.session.push).toHaveBeenCalledTimes(2);
+      expect(final.createSession).not.toHaveBeenCalled();
+      expect(final.session.push).not.toHaveBeenCalled();
+
+      // A caller that reuses its buffer after push must not corrupt the copy.
+      first.fill(0);
+
+      await expect(session.finalize()).resolves.toBe('final text');
+      expect(final.createSession).toHaveBeenCalledTimes(1);
+      expect(final.session.push.mock.calls.map(([frame]) => Array.from(frame as Int16Array))).toEqual([
+        [1, 2, 3],
+        [4, 5],
+      ]);
+    });
+
+    it('creates and feeds the final sub-session before cancelling the live one, so a final createSession throw falls back to a full live decode', async () => {
+      const live = makeFakeEngine('live text');
+      const final = makeFakeEngine('final text');
+      final.createSession = vi.fn(() => {
+        throw new Error('the final model was evicted');
+      });
+      const engine = makeHybrid(live, final);
+      await engine.load(BOTH_MODELS);
+
+      const session = engine.createSession(makeOptions());
+      session.push(new Int16Array([1]));
+
+      await expect(session.finalize()).resolves.toBe('live text');
+      // A chunked live engine's cancel() drops its frames, so the cancel must
+      // not have run before the final sub-session was known to exist.
+      expect(live.session.cancel).not.toHaveBeenCalled();
+      expect(live.session.finalize).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to a full live decode when the final load is not ready within the wait bound', async () => {
+      vi.useFakeTimers();
+      try {
+        const live = makeFakeEngine('live text');
+        const final = makeFakeEngine('final text');
+        deferredLoad(final);
+        const engine = makeHybrid(live, final);
+        await engine.load(BOTH_MODELS);
+
+        const session = engine.createSession(makeOptions());
+        const finalizePromise = session.finalize();
+
+        await vi.advanceTimersByTimeAsync(FINAL_LOAD_WAIT_MS - 1);
+        expect(live.session.finalize).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(finalizePromise).resolves.toBe('live text');
+        expect(final.createSession).not.toHaveBeenCalled();
+        expect(live.session.cancel).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('falls back to live when the load the press started already failed, without starting a retry; the next press retries', async () => {
+      const live = makeFakeEngine('live text');
+      const final = makeFakeEngine('final text');
+      final.load = vi.fn(async () => {
+        throw new Error('model file missing');
+      });
+      const engine = makeHybrid(live, final);
+      await engine.load(BOTH_MODELS);
+
+      const first = engine.createSession(makeOptions());
+      await flush();
+      await expect(first.finalize()).resolves.toBe('live text');
+      // The release waited on the press's load; it did not kick a second one.
+      expect(final.load).toHaveBeenCalledTimes(1);
+
+      const second = engine.createSession(makeOptions());
+      expect(final.load).toHaveBeenCalledTimes(2);
+      await flush();
+      await expect(second.finalize()).resolves.toBe('live text');
+    });
+
+    it('with no live slot, waits for the final load past the bound and then commits the accurate text', async () => {
+      vi.useFakeTimers();
+      try {
+        const final = makeFakeEngine('final text');
+        const gate = deferredLoad(final);
+        const engine = makeHybrid(null, final);
+        await engine.load([model('final-model')]);
+
+        const session = engine.createSession(makeOptions());
+        session.push(new Int16Array([7]));
+        let settled = false;
+        const finalizePromise = session.finalize().then((text) => {
+          settled = true;
+          return text;
+        });
+
+        await vi.advanceTimersByTimeAsync(FINAL_LOAD_WAIT_MS * 2);
+        expect(settled).toBe(false);
+
+        gate.resolve();
+        await expect(finalizePromise).resolves.toBe('final text');
+        expect(final.session.push).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('with no live slot, a failed final load is the failure', async () => {
+      const final = makeFakeEngine('final text');
+      final.load = vi.fn(async () => {
+        throw new Error('model file missing');
+      });
+      const engine = makeHybrid(null, final);
+      await engine.load([model('final-model')]);
+
+      const session = engine.createSession(makeOptions());
+      await expect(session.finalize()).rejects.toThrow('model file missing');
+    });
+
+    it('cancel drops the buffer and never creates the final sub-session', async () => {
+      const live = makeFakeEngine('live text');
+      const final = makeFakeEngine('final text');
+      const engine = makeHybrid(live, final);
+      await engine.load(BOTH_MODELS);
+
+      const session = engine.createSession(makeOptions());
+      session.push(new Int16Array([1]));
+      session.cancel();
+
+      expect(live.session.cancel).toHaveBeenCalledTimes(1);
+      expect(final.createSession).not.toHaveBeenCalled();
+    });
+
+    it('dispose waits for a pending final load before disposing the final engine, and swallows its rejection', async () => {
+      const live = makeFakeEngine('live text');
+      const final = makeFakeEngine('final text');
+      const gate = deferredLoad(final);
+      const engine = makeHybrid(live, final);
+      await engine.load(BOTH_MODELS);
+      engine.createSession(makeOptions());
+
+      let disposed = false;
+      const disposing = engine.dispose().then(() => {
+        disposed = true;
+      });
+      await flush();
+      expect(disposed).toBe(false);
+      expect(final.dispose).not.toHaveBeenCalled();
+
+      gate.reject(new Error('model file missing'));
+      await expect(disposing).resolves.toBeUndefined();
+      expect(final.dispose).toHaveBeenCalledTimes(1);
+      expect(live.dispose).toHaveBeenCalledTimes(1);
+    });
   });
 
   // The live slot's finalize is a full-buffer decode whose text is read only on
   // the error path below, so paying for it on every release is waste. With the
   // chunked live engine that is about 0.6s of release-to-insert latency after a
   // 30s hold.
-  it('cancels the live slot rather than finalizing it when a final slot exists', async () => {
+  it('cancels the live slot rather than finalizing it once the final sub-session is up', async () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
 
     const session = engine.createSession(makeOptions());
     await expect(session.finalize()).resolves.toBe('final text');
@@ -122,10 +301,7 @@ describe('HybridEngine', () => {
   // be a complete decode and not the last partial.
   it('finalizes the live slot when there is no final slot', async () => {
     const live = makeFakeEngine('live text');
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: null,
-    });
+    const engine = makeHybrid(live, null);
 
     const session = engine.createSession(makeOptions());
     await expect(session.finalize()).resolves.toBe('live text');
@@ -141,10 +317,7 @@ describe('HybridEngine', () => {
     live.session.finalize = vi.fn(async () => {
       throw new Error('the live decode failed');
     });
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: null,
-    });
+    const engine = makeHybrid(live, null);
 
     const session = engine.createSession(makeOptions());
     live.emitPartial('what the user was watching');
@@ -158,10 +331,8 @@ describe('HybridEngine', () => {
     final.session.finalize = vi.fn(async () => {
       throw new Error('the cloud endpoint is not configured');
     });
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
 
     const session = engine.createSession(makeOptions());
     live.emitPartial('what the user was watching');
@@ -172,10 +343,7 @@ describe('HybridEngine', () => {
   it('forwards live partials to the caller as well as keeping them', () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
 
     const options = makeOptions();
     engine.createSession(options);
@@ -191,30 +359,43 @@ describe('HybridEngine', () => {
     final.session.finalize = vi.fn(async () => {
       throw failure;
     });
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
 
     const session = engine.createSession(makeOptions());
     await expect(session.finalize()).rejects.toThrow(failure);
   });
 
-  it('drains both sub-sessions', async () => {
+  // The worker drains a session after its finalize (closeSession), which is
+  // when the final sub-session exists to be drained.
+  it('drains both sub-sessions once the final one exists', async () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
     live.session.drain = vi.fn(async () => undefined);
     final.session.drain = vi.fn(async () => undefined);
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
 
     const session = engine.createSession(makeOptions());
+    await session.finalize();
     await session.drain?.();
 
     expect(live.session.drain).toHaveBeenCalledTimes(1);
     expect(final.session.drain).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains cleanly before the final sub-session exists (a cancelled session)', async () => {
+    const live = makeFakeEngine('live text');
+    const final = makeFakeEngine('final text');
+    live.session.drain = vi.fn(async () => undefined);
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
+
+    const session = engine.createSession(makeOptions());
+    session.cancel();
+    await expect(session.drain?.()).resolves.toBeUndefined();
+
+    expect(live.session.drain).toHaveBeenCalledTimes(1);
   });
 
   // The default production shape for both slots: SherpaOnlineEngine (the
@@ -226,12 +407,11 @@ describe('HybridEngine', () => {
   it('drains cleanly when neither sub-session implements drain', async () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
 
     const session = engine.createSession(makeOptions());
+    await session.finalize();
     await expect(session.drain?.()).resolves.toBeUndefined();
   });
 
@@ -242,12 +422,11 @@ describe('HybridEngine', () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
     final.session.drain = vi.fn(async () => undefined);
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
+    await engine.load(BOTH_MODELS);
 
     const session = engine.createSession(makeOptions());
+    await session.finalize();
     await expect(session.drain?.()).resolves.toBeUndefined();
 
     expect(final.session.drain).toHaveBeenCalledTimes(1);
@@ -256,14 +435,12 @@ describe('HybridEngine', () => {
   it('routes each resolved model to the slot that asked for it', async () => {
     const live = makeFakeEngine('live text');
     const final = makeFakeEngine('final text');
-    const engine = new HybridEngine({
-      live: { factory: () => live, modelId: 'live-model' },
-      final: { factory: () => final, modelId: 'final-model' },
-    });
+    const engine = makeHybrid(live, final);
 
-    await engine.load([model('live-model'), model('final-model')]);
-
+    await engine.load(BOTH_MODELS);
     expect(live.loadedWith).toEqual([model('live-model')]);
+
+    engine.createSession(makeOptions());
     expect(final.loadedWith).toEqual([model('final-model')]);
   });
 

@@ -429,8 +429,16 @@ the two: a hold dictates, and a tap under `NAVIGATION_TAP_MS` instead navigates 
 pane's history. See `docs/embedded-browser.md` decisions 21 and 24 for the target rules in full.
 Global-only (App Settings only; no per-project override).
 Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
-an OpenAI-compatible endpoint. The first six keys below are settings-panel rows; the rest are
-config-only (driven by the Mode preset + Live/Refinement model dropdowns).
+an OpenAI-compatible endpoint. The engines live in the `kangentic-dictation` utility process, which
+is sized to its use: while dictation is enabled it keeps only the small live (streaming) model
+resident, the accurate model loads on the first press and overlaps the utterance, and a worker that
+has loaded it is recycled 30 minutes after its last session (a process exit is what gives the
+model's memory reservation back) and comes back live-only. On Windows, a worker whose memory has
+grown past 1.5 GB of commit is recycled at the next two-minute gap instead, since the models grow
+with use and a heavy user never leaves a half-hour gap; that shorter window reads a commit figure
+Electron reports on Windows only, so macOS and Linux always use the half-hour one. Turning
+dictation off releases the worker at once. The first six keys below are settings-panel rows; the
+rest are config-only (driven by the Mode preset + Live/Refinement model dropdowns).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -457,7 +465,7 @@ The Memory tab hosts conversation search + recall - a local index over agent con
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `memory.indexingEnabled` | boolean | `true` | Index agent conversation transcripts locally for search and recall. Off: no indexing runs, no conversation hits appear in Quick Find or `kangentic_search`, and the embed worker never starts. All local and keyless. |
-| `memory.semanticEnabled` | boolean | `false` | Enable the semantic (embedding) layer on top of lexical search. Turning it on triggers a one-time local model download (the selected `memory.embeddingModel`) and background embedding of the index. Runs in an Electron utilityProcess (transformers.js on onnxruntime-node; execution provider set by `memory.acceleration`); vector search via the sqlite-vec extension. Lexical FTS5 search works regardless; when the model or extension is unavailable, Smart search transparently falls back to lexical. |
+| `memory.semanticEnabled` | boolean | `false` | Enable the semantic (embedding) layer on top of lexical search. Turning it on triggers a one-time local model download (the selected `memory.embeddingModel`) and background embedding of the index. Runs in an Electron utilityProcess (transformers.js on onnxruntime-node; execution provider set by `memory.acceleration`); vector search via the sqlite-vec extension. The worker stays resident while the index has chunks to embed, is released 30 minutes after the last query or batch once no project has work pending (on Windows, two minutes once its memory has grown past 1.5 GB of commit, which sustained index drains do; the commit figure behind that shorter window is Windows-only, so macOS and Linux always use the half-hour one), and is re-spawned on demand (a Smart-mode Quick Find open warms it ahead of the first keystroke; a query or new index work spawns it outright). Lexical FTS5 search works regardless; when the model or extension is unavailable, or a query's budget runs out while the worker is still starting, Smart search transparently falls back to lexical. |
 | `memory.embeddingModel` | string | `'bge-base'` | Which local embedding model powers semantic search, chosen by quality in the Memory tab's "Search quality" dropdown. Options (see `src/shared/embedding-models.ts`), all from the bge-*-en-v1.5 family: `bge-small` (Balanced, 384d, ~34 MB), `bge-base` (Accurate, 768d, ~110 MB), `bge-large` (Best accuracy, 1024d, ~337 MB). All ONNX/q8, keyless, offline, CLS-pooled with the same retrieval query prefix - only size/dimensions/accuracy scale between tiers. The dropdown shows the quality word; the concrete model name + size + download state show in the status card below it. Switching re-embeds the index in the background; a dimension change (e.g. to `bge-large`) recreates the vector table. |
 | `memory.acceleration` | `'auto' \| 'gpu' \| 'cpu'` | `'auto'` | Which hardware the embedding model runs on, set in the Memory tab's "Model acceleration" dropdown (renamed from "Hardware acceleration" once Settings > Performance gained a "Graphics acceleration" row, since two settings a user would read as the same thing is worse than one longer label). `auto` (default) and `gpu` prefer a GPU execution provider (DirectML on Windows, WebGPU elsewhere) and fall back to CPU if it fails to initialize; `cpu` forces the universal path. Offloading to an idle GPU keeps the CPU free for the agents when many run at once. The active backend ("DirectML (GPU)", "CPU", ...) is shown in the status card. All local and keyless. |
 

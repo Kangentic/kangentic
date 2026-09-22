@@ -75,9 +75,13 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   }, []);
 
   // Fetch the semantic-layer status on open and on each mode flip, so the
-  // Smart-mode degraded notice reflects the current backend state.
+  // Smart-mode degraded notice reflects the current backend state. In Smart
+  // mode the open is also the moment to start the embedding worker: it is
+  // released after a long idle, and the typing that follows is exactly the
+  // window its cold start needs.
   useEffect(() => {
     let cancelled = false;
+    if (mode === 'smart') window.electronAPI.memory.prewarm();
     window.electronAPI.memory
       .getStatus()
       .then((status) => {

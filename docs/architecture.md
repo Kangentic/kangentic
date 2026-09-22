@@ -489,11 +489,12 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (2 channels)
+### Memory (3 channels)
 Conversation-memory semantic layer (Smart-mode search). See the Memory settings tab.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `memory:status` | invoke | Report the conversation-memory index status for the Smart-mode palette UI. |
+| `memory:prewarm` | on | Spawn + init the embedding worker ahead of the first Smart query (fire-and-forget, embeds nothing). Sent on a Smart-mode Quick Find open: the worker is released once it has gone long enough without a query or pending index work (see `memory.semanticEnabled` in `docs/configuration.md` for the windows), and the typing that follows the open is the window its cold start needs. A no-op when semantic is off, the model is absent, or the worker has crashed past its cap. |
 | `memory:rebuildIndex` | invoke | Purge the current project's conversation index and re-run the backfill sweep (recovery from a corrupt/stale index; Memory settings "Rebuild index"). |
 
 ### Diagnostics (2 channels)
@@ -519,7 +520,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:modelProgress` | on | Push: first-use model download progress |
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
 | `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
-| `transcribe:prewarm` | on | Pre-load the selected engine so the next press is instant; `null` releases the warm engines (fire-and-forget) |
+| `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the accurate model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |
 
 ## Database
 

@@ -327,6 +327,14 @@ export const retrievalService = {
     embedEngine.reconcile(context);
   },
 
+  /** Spawn + init the embed worker ahead of a Smart query (Quick Find open),
+   *  embedding nothing. A no-op when semantic is off, the model is absent, or
+   *  the worker has crashed past its cap. */
+  prewarmEmbedWorker(context: IpcContext): void {
+    if (disposed) return;
+    embedEngine.prewarm(context);
+  },
+
   /** Current conversation-memory status for the renderer's Smart-mode UI and
    *  the settings model card. */
   getStatus(context: IpcContext): MemoryStatus {
