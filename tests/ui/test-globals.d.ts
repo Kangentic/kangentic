@@ -69,6 +69,11 @@ declare global {
     /** Fires the host-memory-pressure push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
     __mockFireHostMemoryPressure?: (event: import('../../src/shared/types').HostMemoryPressureEvent) => void;
 
+    /** Subscribers registered via `hostMemory.onRecovery`; fired by `__mockFireHostMemoryRecovery`. Installed eagerly at mock-bootstrap time (Sentry DESKTOP-16). */
+    __mockHostMemoryRecoveryListeners?: Array<(event: import('../../src/shared/types').HostMemoryRecoveryEvent) => void>;
+    /** Fires the host-memory-recovery push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
+    __mockFireHostMemoryRecovery?: (event: import('../../src/shared/types').HostMemoryRecoveryEvent) => void;
+
     /** Pushes `config:writeFailed`, which App.tsx toasts verbatim at variant 'error', duration 12000. Installed once `config.onWriteFailed` has a subscriber, so wait for the app to mount. */
     __mockFireConfigWriteFailed?: (message: string) => void;
 

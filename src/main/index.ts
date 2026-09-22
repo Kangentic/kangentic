@@ -1659,6 +1659,10 @@ app.whenReady().then(async () => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       mainWindow.webContents.send(IPC.HOST_MEMORY_PRESSURE, { sample, activeAgentCount });
     },
+    onRecovery: (sample) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send(IPC.HOST_MEMORY_RECOVERED, { sample });
+    },
   });
 
   // This span MUST stay one unbroken synchronous block. createWindow() calls

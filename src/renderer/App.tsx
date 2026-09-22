@@ -140,9 +140,14 @@ export function App() {
     });
 
     // Host memory pressure (Sentry DESKTOP-16): a rare, edge-triggered push
-    // from main's sampler - see stores/host-memory-store.ts.
-    const cleanupHostMemoryListener = window.electronAPI.hostMemory?.onPressure((event) => {
+    // from main's sampler - see stores/host-memory-store.ts. The recovery
+    // push is the clear-side edge; its payload carries a sample but the
+    // store deliberately discards it (nothing displays a recovery reading).
+    const cleanupHostMemoryPressureListener = window.electronAPI.hostMemory?.onPressure((event) => {
       useHostMemoryStore.getState().receivePressureEvent(event);
+    });
+    const cleanupHostMemoryRecoveryListener = window.electronAPI.hostMemory?.onRecovery(() => {
+      useHostMemoryStore.getState().receiveRecovery();
     });
 
     // Announcements: hydrate the active list (the first poll may have landed
@@ -165,7 +170,8 @@ export function App() {
       cleanupListChanged?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
-      cleanupHostMemoryListener?.();
+      cleanupHostMemoryPressureListener?.();
+      cleanupHostMemoryRecoveryListener?.();
       cleanupAnnouncementsChanged?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
