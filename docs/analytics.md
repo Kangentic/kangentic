@@ -42,6 +42,13 @@ hung and the hard failsafe force-killed the process), or `abrupt` (nothing was r
 kill, a power loss). Uptime is wall-clock and includes time asleep. Aptabase's own session
 duration is coarse by comparison, since heartbeats are the only events a long agent run emits.
 
+Each write also stamps `at`, the wall-clock moment of that write, so the last record on disk says
+when the run was last known alive. For a `clean` or `failsafe` exit that is the exit itself; for an
+`abrupt` one it is the final checkpoint, which is the only clock an abrupt ending leaves behind.
+It is read locally rather than reported: `previousRunLastAliveAt()` feeds the GPU report gate,
+which needs to tell "the GPU died as this run ended" from "the GPU died once, forty minutes before
+something unrelated killed it".
+
 `utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
 reports, so it is NOT comparable across platforms (POSIX derives it from `waitpid`, Windows from
 `GetExitCodeProcess`). Group by `service` and platform before reading it. The value `-1` is a
@@ -63,11 +70,12 @@ the phase gate is per-run, not per-window, which is what keeps this at exactly t
 matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel does NOT carry the same
 meaning it does for `utility_worker_crashed` above: there it means the fork never started, but here it
 means Electron's `child-process-gone` event reported no exit code, a routine and more common case.
-Reaching the latch also writes a durable escalation record for the NEXT launch to report to Sentry
-(see "Error Reporting" below) - live reporting is not possible here, because the GPU process
-exhausting every fallback mode can end in Chromium killing the browser process outright
-(`LOG(FATAL)`, DESKTOP-W), which happens before an async Sentry POST queued at that moment could
-ever transmit.
+The latch governs this Aptabase tick ONLY. The durable escalation record is written on every death
+from the first (see "Error Reporting" below), because the death that actually kills the app is one
+JS never hears about: Chromium calls `RecordProcessCrash`, and the `LOG(FATAL)` under it, from the
+delegate rather than from the observer notification Electron emits `child-process-gone` from. Live
+reporting is impossible here for the same reason - the browser process is gone before an async
+Sentry POST queued at that moment could transmit.
 
 The curated `feature` vocabulary is `ANALYTICS_FEATURES` in `src/main/analytics/usage.ts`:
 `command_terminal`, `worktree_session`, `board_profile`, `popout_window`, `browser_pane`,
@@ -323,16 +331,33 @@ in one Sentry org, one triage surface.
   for can end in Chromium calling `LOG(FATAL)` (`IntentionallyCrashBrowserForUnusableGpuProcess`),
   which kills the whole process before an async Sentry POST queued at that moment would ever
   transmit - the reason a 90-day search never turned up a single `'GPU' process exited with
-  'launch-failed'` event despite the SDK capturing that reason by default. Reaching the threshold
-  (three deaths in five minutes, matching Chromium's own `kForgiveGpuCrashMinutes` judgment) writes a
-  durable record to `<configDir>/gpu-health.json`, carrying `app.getGPUFeatureStatus()` AT THAT
-  MOMENT; further deaths in the same run keep updating count, lastAt, and that status rather than
-  freezing the record at the threshold, so a chronic looper's report does not read identically to a
-  run that latched once and ended. `src/main/index.ts` reads the record once `app.whenReady()`
-  resolves on the FOLLOWING launch, **clears it BEFORE reporting** (so a launch with error reporting
+  'launch-failed'` event despite the SDK capturing that reason by default. EVERY death writes the
+  durable record at `<configDir>/gpu-health.json`, from the first - not just a threshold breach.
+  The ordering is why: Chromium calls `GpuProcessHost::RecordProcessCrash` (and the `LOG(FATAL)`
+  under it) from the delegate, BEFORE the observer notification Electron emits
+  `child-process-gone` from, so the death that actually kills the app is one JS never hears about.
+  A write gated on three observed deaths can therefore lose the whole incident, which is what
+  DESKTOP-18's seven 8-to-12-second launches would have done. Each write carries
+  `app.getGPUFeatureStatus()` AT THAT MOMENT plus a bounded `deaths` sequence (20 entries, middle
+  trimmed, first and last kept) recording the reason, exit code, GPU mode and timestamp of each
+  death in order - the sequence is the only thing that can say WHICH rung of Chromium's ladder
+  failed, where a single end-state snapshot cannot. `src/main/index.ts` reads the record once `app.whenReady()`
+  resolves on the FOLLOWING launch, skips it if `isEscalationFromCurrentRun` says THIS run wrote it
+  (the writer is installed at module scope and the reader runs after `createWindow` and an `await`,
+  so a GPU crash-looping from startup writes into that gap; consuming it there would burn the
+  report on a run about to be killed and leave the next launch with nothing),
+  **clears it BEFORE reporting** (so a launch with error reporting
   off - the kill switch, or `KANGENTIC_ERROR_REPORTING=0` - still consumes it silently rather than
   carrying it forward to a later launch that might have reporting on; the local crash JSONs and the
-  `gpu_process_gone` Aptabase count exist either way), then calls `reportHandledError` with tags
+  `gpu_process_gone` Aptabase count exist either way). The clear is a compare-and-clear against the
+  `lastAt` that was reported, because a crash loop can write a FRESH record between the read and the
+  clear and an unconditional unlink would take it. Not every pending record earns an issue:
+  `shouldReportEscalation` reports on `count >= 3`, OR when the previous run ended `abrupt` AND the
+  last death sits within 90s of that run's last known sign of life (`run-uptime.ts`'s `at`
+  checkpoint). The second arm needs both halves - `abrupt` alone means only that no exit was
+  recorded, which covers a renderer OOM, a task-manager kill and a power loss, and pairing it with
+  "the GPU died once at some point" would blame graphics for a death it had nothing to do with.
+  When it does report, `src/main/index.ts` calls `reportHandledError` with tags
   `source: gpu_process`, `reason`, `exitCode`, `crashCount`, and a `gpu_process` context carrying
   `reason`, `exitCode`, `count`, `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
   produced the escalation, not the one reporting it - the same build-attribution concern the native
@@ -344,7 +369,20 @@ in one Sentry org, one triage surface.
   and `previousRunExit` is the previous run's `run-uptime.ts` exit kind (`abrupt` means that run ended
   in a process kill, the DESKTOP-W shape; `clean` or `failsafe` means Chromium recovered on its own,
   the DESKTOP-15 shape; `unknown` on a first launch or a wiped config dir), so the two failure shapes
-  are distinguishable on arrival.
+  are distinguishable on arrival. The context also carries `deaths` (the sequence above),
+  `gpuInfoOnReport` (`app.getGPUInfo('complete')`, the one call of it in this path, naming the
+  machine's actual graphics stack), `killedTheLastRun`, and `softwareRenderingEngaged`.
+- **A GPU failure that killed the last run also downgrades this one, once.** When
+  `killedTheLastRun` holds, `src/main/index.ts` has already started Chromium with
+  `app.disableHardwareAcceleration()` and `--in-process-gpu` (decided at module scope, because
+  that API is a no-op after ready), and now persists `graphicsAccelerationEnabled: false` with
+  `graphicsAccelerationOffBy: 'app'` so later launches read the setting instead of re-deriving it
+  from a record that is about to be cleared. `graphicsAccelerationOffBy` is what stops a later
+  failure overwriting a choice the user made themselves. The renderer PULLS this state
+  (`IPC.GPU_HEALTH_STATUS`) rather than main pushing it: both facts are decided during boot, when a
+  `webContents.send` can land before any listener is registered and be dropped silently, and the
+  record behind them is already gone. Reading consumes the notice, so a reload cannot re-toast.
+  See "Graphics failures" in [user-guide.md](user-guide.md) for what the user sees.
 - **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
   (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`
   handler, and sits deliberately AFTER `trackEvent('app_error')` so the "how often do update

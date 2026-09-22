@@ -563,6 +563,10 @@ const api: ElectronAPI = {
     },
   },
 
+  gpuHealth: {
+    readStatus: () => ipcRenderer.invoke(IPC.GPU_HEALTH_STATUS),
+  },
+
   announcements: {
     getActive: () => ipcRenderer.invoke(IPC.ANNOUNCEMENTS_GET),
     getHistory: () => ipcRenderer.invoke(IPC.ANNOUNCEMENTS_GET_HISTORY),

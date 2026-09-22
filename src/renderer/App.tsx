@@ -24,6 +24,8 @@ import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { resolveIdleToast } from './utils/idle-toast';
+import { resolveGpuNotice } from './utils/gpu-notice';
+import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { describeAutomationFailure } from '../shared/automation-describe';
@@ -148,6 +150,58 @@ export function App() {
     });
     const cleanupHostMemoryRecoveryListener = window.electronAPI.hostMemory?.onRecovery(() => {
       useHostMemoryStore.getState().receiveRecovery();
+    });
+
+    // Graphics state (Sentry DESKTOP-18/DESKTOP-W). PULLED, not pushed: main
+    // decides both facts during boot, possibly before this renderer could
+    // have registered a listener, and a dropped push would lose the notice
+    // for good because the record behind it is already cleared. Reading
+    // consumes `noticePending`, so this never re-toasts on a reload.
+    void window.electronAPI.gpuHealth?.readStatus().catch((error) => {
+      // Swallowed, not reported: this is the ONE call in the bootstrap that a
+      // user who never has a graphics problem still makes, and an unhandled
+      // rejection here would surface as a renderer error for all of them if
+      // the channel ever went missing (a stale preload, a handler throw).
+      // Nothing downstream needs it - no status means hardware, as today.
+      console.warn('[GPU-HEALTH] Could not read graphics status:', error);
+      return null;
+    }).then((status) => {
+      if (!status) return;
+      // Arrives asynchronously, so a terminal that mounts before this lands
+      // will attempt WebGL once and arm a retry. Harmless (the attach path
+      // already handles a refused context) and not worth a synchronous boot
+      // hop to avoid, but it does mean the skip below is an optimisation for
+      // later mounts rather than a hard guarantee for the first one.
+      setSoftwareRenderingActive(status.softwareRendering);
+      const notice = resolveGpuNotice(status);
+      if (!notice) return;
+      // Main wrote graphicsAccelerationEnabled: false during whenReady, which may
+      // have landed after this renderer read config. Re-read it, or Settings >
+      // Performance shows "On" for the rest of a session that is demonstrably
+      // running without acceleration - the exact lying control this design
+      // dropped the tri-state to avoid.
+      void useConfigStore.getState().loadConfig();
+      useToastStore.getState().addToast({
+        message: notice.message,
+        variant: 'warning',
+        // Never auto-dismisses: the app stays degraded until the user acts,
+        // and a 4-second toast about why their app vanished is worse than
+        // none at all.
+        duration: 0,
+        action: {
+          label: 'Performance settings',
+          onClick: () => {
+            useConfigStore.getState().setLastSettingsTab('performance');
+            useConfigStore.getState().setSettingsOpen(true);
+          },
+        },
+      });
+    }).catch((error) => {
+      // The .catch above guards only the invoke. A throw from anything in the
+      // handler body would land here as an unhandled rejection that `void`
+      // hides from the reader but Electron still reports, so it gets the same
+      // swallow: nothing downstream of this chain needs it to have succeeded.
+      console.warn('[GPU-HEALTH] Could not apply graphics status:', error);
     });
 
     // Announcements: hydrate the active list (the first poll may have landed

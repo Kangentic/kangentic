@@ -135,6 +135,34 @@ const DEFAULT_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 30_000, 60_000, 120_000]
  */
 export const WEBGL_ATTACH_BUDGET = 8;
 
+/**
+ * True when main started this launch without a GPU process at all
+ * (Sentry DESKTOP-18/DESKTOP-W). Set once from App.tsx's boot pull, before
+ * any terminal mounts. Module state rather than a store because this module
+ * is the only consumer and the value never changes within a launch.
+ *
+ * Preserved across Fast Refresh (HMR Pattern A): App.tsx's boot pull is what
+ * sets it, and that effect does not re-run on every module update, so a reset
+ * here would quietly put a software-rendered dev session back to retrying
+ * WebGL forever.
+ */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+let softwareRenderingActive: boolean = import.meta.hot?.data?.softwareRenderingActive ?? false;
+
+/** Called once at boot from App.tsx. Exported for tests, which need to clear
+ *  it again between cases. */
+export function setSoftwareRenderingActive(active: boolean): void {
+  softwareRenderingActive = active;
+}
+
+// @ts-expect-error -- Vite handles import.meta.hot
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.softwareRenderingActive = softwareRenderingActive;
+  });
+}
+
 interface WebglAttachmentController {
   suspend(): void;
   resume(): boolean;
@@ -246,6 +274,25 @@ export function attachWebglRenderer(
   rendererKey: string,
   options?: AttachWebglOptions,
 ): () => void {
+  // This launch has no GPU process at all (Sentry DESKTOP-18/DESKTOP-W: main
+  // started Chromium with --disable-gpu and --in-process-gpu after the last
+  // run was killed by its GPU). The retry schedule below never gives up, by
+  // design, but there is nothing here to come back: a context that cannot
+  // exist is not a context that is temporarily blocked. Report DOM and stop.
+  if (softwareRenderingActive) {
+    rendererStatusByKey.set(rendererKey, {
+      renderer: 'dom',
+      contextLossCount: 0,
+      failedAttempts: 0,
+      retryArmed: false,
+      suspendedByBudget: false,
+    });
+    options?.onRendererChange?.('dom');
+    return () => {
+      rendererStatusByKey.delete(rendererKey);
+    };
+  }
+
   const createAddon = options?.createAddon ?? (() => new WebglAddon());
   const retryDelaysMs = options?.retryDelaysMs?.length ? options.retryDelaysMs : DEFAULT_RETRY_DELAYS_MS;
   const attachBudget = options?.attachBudget ?? WEBGL_ATTACH_BUDGET;

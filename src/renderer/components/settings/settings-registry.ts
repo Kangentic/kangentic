@@ -38,7 +38,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Board > Window ──
   { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Window', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
   { id: 'statusBarVisible', tabId: 'board', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Window', keywords: ['bottom', 'bar', 'hide', 'visible'] },
-  { id: 'animationsEnabled', tabId: 'board', label: 'Animations', description: 'Enable transition and motion effects', scope: 'global', section: 'Window', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility'] },
 
   // ── Task ──
   { id: 'cardDensity', tabId: 'task', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
@@ -141,6 +140,16 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
 
+  // ── Performance ──
+  // Graphics acceleration is a plain boolean and never a tri-state: an
+  // "automatic" that silently resolved to software would leave the control
+  // reading Automatic while acceleration was off. See AppConfig in
+  // shared/types.ts and the recovery path in src/main/index.ts.
+  { id: 'graphicsAccelerationEnabled', tabId: 'performance', label: 'Graphics acceleration', description: 'Hardware rendering for the app window and terminals.', scope: 'global', keywords: ['gpu', 'hardware', 'acceleration', 'graphics', 'rendering', 'webgl', 'chromium', 'software', 'driver', 'crash', 'slow'] },
+  // Moved here from Board > Window: it toggles `.no-motion` on <html>
+  // (config-store.ts), so it was never board chrome.
+  { id: 'animationsEnabled', tabId: 'performance', label: 'Animations', description: 'Transition and motion effects.', scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility', 'animation', 'performance'] },
+
   // ── Behavior > Windows ──
   { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
   { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
@@ -170,7 +179,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'memory.indexingEnabled', tabId: 'memory', label: 'Index conversations for search', description: 'Locally index agent conversation transcripts so you can search and recall them. Runs offline with no API key. Turn off to stop indexing and hide conversation search results.', scope: 'global', keywords: ['index', 'conversation', 'transcript', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history'] },
   { id: 'memory.semanticEnabled', tabId: 'memory', label: 'Semantic search', description: 'Match conversations by meaning, not just keywords. Downloads a small local model once, then runs fully offline. Requires conversation indexing.', scope: 'global', keywords: ['semantic', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'offline', 'memory', 'download'] },
   { id: 'memory.embeddingModel', tabId: 'memory', label: 'Search quality', description: 'Faster and smaller, or slower and more accurate. The model is downloaded once and runs offline; switching re-indexes in the background.', scope: 'global', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'balanced', 'bge', 'tier', 'download'] },
-  { id: 'memory.acceleration', tabId: 'memory', label: 'Hardware acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload'] },
+  // "Model acceleration", not "Hardware acceleration": Performance now owns a
+  // row called Graphics acceleration, and two settings a user would read as
+  // the same thing is worse than one slightly longer label. It stays HERE
+  // rather than moving to Performance because "Search quality" above is the
+  // other half of the same speed-versus-accuracy decision, and someone
+  // troubleshooting slow semantic search comes to this tab.
+  { id: 'memory.acceleration', tabId: 'memory', label: 'Model acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload', 'model'] },
   // ── Privacy (synthetic) ──
   { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out'] },
 
@@ -233,6 +248,7 @@ export const TAB_LABELS: Record<string, string> = {
   changes: 'Changes',
   terminal: 'Terminal',
   behavior: 'Behavior',
+  performance: 'Performance',
   dictation: 'Dictation',
   memory: 'Memory',
   hotkeys: 'Hotkeys',

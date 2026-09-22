@@ -306,11 +306,14 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string }> = {
   git: { ready: '[data-testid="setting-row-git.worktreesEnabled"]', alt: 'Settings on the Git tab: worktrees on or off, automatic cleanup, the default base branch, files and a script for each new worktree, and how often PRs and the remote are refreshed.' },
   browser: { ready: '[data-testid="setting-row-browser.enabled"]', alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.' },
   shortcuts: { ready: '[data-testid="add-shortcut"]', alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add Shortcut and Presets controls.' },
-  board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel, the status bar, and animations.' },
+  board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.' },
   task: { ready: '[data-testid="setting-row-cardDensity"]', alt: 'Settings on the Task tab: card density, card preview, ticket numbers, and a switch for each pill the context bar shows.' },
   changes: { ready: '[data-testid="setting-row-diffViewMode"]', alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.' },
   terminal: { ready: '[data-testid="setting-row-terminal.shell"]', alt: 'Settings on the Terminal tab: the shell, the font size and family, the cursor style, backspace behavior, and the terminal colors.' },
   behavior: { ready: '[data-testid="setting-row-agent.maxConcurrentSessions"]', alt: 'Settings on the Behavior tab: the concurrent session cap, what happens when it is reached, idle focus and timeout, auto-resume, and how windows dismiss and restore.' },
+  // The callout under Graphics acceleration only renders on an install Kangentic downgraded
+  // itself, so the alt describes the two switches a normal install shows and not that line.
+  performance: { ready: '[data-testid="setting-row-graphicsAccelerationEnabled"]', alt: 'Settings on the Performance tab: switches for graphics acceleration and for animations.' },
   hotkeys: { ready: '[data-testid="hotkeys-tab"]', alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.' },
   notifications: { ready: '[data-testid="setting-row-notifications.onAgentIdle"]', alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.' },
   dictation: { ready: '[data-testid="setting-row-dictation.enabled"]', alt: 'Settings on the Dictation tab: the voice dictation toggle, the language, the live and refinement models, punctuation, push-to-talk, and auto-submit.' },

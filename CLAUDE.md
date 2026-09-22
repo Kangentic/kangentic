@@ -285,13 +285,19 @@ won't be found.
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
-  `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Hotkeys, Notifications, Dictation,
-  Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared settings that
-  apply across all projects, saved to global config, and remain fully functional with no
-  project open. The Task tab holds task-presentation settings split out of Board (Card Density,
+  `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications,
+  Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
+  settings that apply across all projects, saved to global config, and remain fully functional with
+  no project open. The Task tab holds task-presentation settings split out of Board (Card Density,
   Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
   task presents itself, not board layout or terminal cosmetics, so Board stays pure board layout
-  and Terminal stays pure terminal cosmetics. Terminal (shell, font, cursor style,
+  and Terminal stays pure terminal cosmetics. The Performance tab holds app-wide rendering:
+  Graphics acceleration (Chromium hardware rendering, which the GPU recovery path in
+  `src/main/index.ts` turns off after a run the GPU killed) and Animations, which moved from
+  Board because it toggles `.no-motion` on `<html>` and was never board chrome. Memory's own
+  hardware row stayed put and is named "Model acceleration": it pairs with Search quality as one
+  speed-versus-accuracy decision, and the rename is what keeps it distinct from Graphics
+  acceleration. Terminal (shell, font, cursor style,
   colors) is global-only, not per-project: shell in particular was never reliably project-scoped
   at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever
   project is currently focused - `src/main/pty/session-manager.ts`), so a background project's

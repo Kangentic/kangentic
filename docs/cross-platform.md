@@ -202,14 +202,30 @@ macOS builds use hardened runtime with `build/entitlements.plist` providing JIT,
 
 The deb package declares `depends` on Electron's required system libraries (`libnss3`, `libatk-bridge2.0-0`, `libgtk-3-0`, `libgbm1`, `libasound2t64 | libasound2`, `libdrm2`, `libxshmfence1`); the alternation covers Ubuntu 24.04+'s rename of `libasound2` to `libasound2t64`. The rpm package declares `depends` as `.so` soname capabilities (`libnss3.so()(64bit)`, `libatk-1.0.so.0()(64bit)`, `libgtk-3.so.0()(64bit)`, `libgbm.so.1()(64bit)`, `libasound.so.2()(64bit)`, `libdrm.so.2()(64bit)`, `libxshmfence.so.1()(64bit)`) rather than package names, because RPM package names differ per distro (Fedora `libxshmfence` vs. openSUSE `libxshmfence1`) while every distro's rpmbuild auto-generates a `Provides:` for the soname itself. See `.claude/rules/linux-package-dependencies.md`. Without these, the app crashes on launch, or fails to install at all, on fresh Linux installations.
 
-## GPU Process on Linux
+## When the GPU process is unusable
 
-Two Sentry issues on one Ubuntu 24.04 install (DESKTOP-W, a `LOG(FATAL)` browser-process kill, and
-DESKTOP-15, a recovered GPU death three days later) both trace to the GPU process failing to
-*launch*, not to a crashing driver. `--disable-gpu` (what `app.disableHardwareAcceleration()`
-appends) is not a fix for that class, and was deliberately not added anywhere in the codebase for
-it - the reasoning is worth keeping so a future GPU issue does not re-derive it and ship the flag
-that does not work.
+Not a Linux problem, despite where it was first seen. Three installs have hit this across
+90 days: DESKTOP-W (a `LOG(FATAL)` browser-process kill on Ubuntu 24.04, via
+`OnProcessLaunchFailed`), DESKTOP-15 (a recovered GPU death on the same box three days later),
+and DESKTOP-18 (the identical `LOG(FATAL)` on Windows 10, via `OnProcessCrashed` with
+`EXCEPTION_BREAKPOINT`, on an Intel UHD 630). The shipped code has never had a platform gate;
+only this section's title did.
+
+DESKTOP-18 is worth reading for its timing rather than its stack. All seven of that install's
+runs died between 8.3 and 12.0 seconds after their own `app_start_time`, so Chromium walked its
+entire fallback ladder within nine seconds of boot, seven times, and the user never got in. That
+rules out anything the app itself was doing: no agent, terminal, or embedding work exists that
+early, and the software-GL rung does not touch the display driver at all. It is a host problem,
+and the app's job is to survive it rather than diagnose it.
+
+Disabling the GPU is still not a fix on its own, on either platform. The reasoning is worth
+keeping so a future GPU issue does not re-derive it and ship the flag that does not work.
+
+Two names for nearly the same thing, and the difference matters when you read a stack:
+`app.disableHardwareAcceleration()` does not append `--disable-gpu`. It calls
+`GpuDataManager::DisableHardwareAcceleration()`, which blocklists every GPU feature; Chromium then
+propagates `--disable-gpu` to the GPU process itself. The argument below is about the switch as
+Chromium's ladder sees it, so it holds for either route in.
 
 Chromium's own fallback ladder (`content/browser/gpu/gpu_data_manager_impl_private.cc`,
 `GpuDataManagerImplPrivate::InitializeGpuModes`) pushes `DISPLAY_COMPOSITOR` and, if allowed,
@@ -223,14 +239,53 @@ skips straight to `SOFTWARE_GL` in that same list, so on a machine that failed t
 identical `LOG(FATAL)`, only faster. The top frame in DESKTOP-W's stack is `OnProcessLaunchFailed`,
 not a crash handler, which points at a process-*launch* failure (sandbox, seccomp/AppArmor, a
 container or hardened kernel, a missing or broken mesa/libva) rather than a driver fault; a launch
-failure is not something a rendering-mode fallback flag can route around. The only Electron switch
-that skips a GPU child launch entirely is `--in-process-gpu`, which trades a GPU hang for an app
-hang and is a separate, higher-risk decision from anything shipped for these two issues.
+failure is not something a rendering-mode fallback flag can route around. The same conclusion holds
+for DESKTOP-18's crash shape on Windows, for the simpler reason that reaching the fatal at all
+means the software modes had already been current and had already failed.
 
-What did ship: `src/main/diagnostics/gpu-health.ts` counts repeated GPU `child-process-gone` deaths
-and, once they cross a threshold, writes a durable escalation for the NEXT launch to report to
-Sentry rather than live - `LOG(FATAL)` can kill the process before a live report's async transport
-completes. See "Error Reporting" in [analytics.md](analytics.md) for the full mechanism.
+The switch that does work is `--in-process-gpu`: it removes the GPU child process entirely, so
+`IntentionallyCrashBrowserForUnusableGpuProcess` is unreachable. It was deferred when DESKTOP-W
+was the only evidence, on the grounds that it trades a GPU hang for an app hang. DESKTOP-18's seven
+dead launches settled that trade: an app that hangs occasionally beats an app that cannot start.
+
+Measured on Electron 41 (Windows), booting a real window with both switches applied:
+
+| | `app.getAppMetrics()` process types | `gpu_compositing` | `webgl` |
+|---|---|---|---|
+| Control | `Browser`, `GPU`, `Tab`, `Utility` | `enabled` | `enabled` |
+| `--disable-gpu --in-process-gpu` | `Browser`, `Tab`, `Utility` | `disabled_software` | `unavailable_software` |
+
+No GPU process is spawned at all, which is the property the whole recovery path rests on. That
+table is a Windows measurement. The switches are Chromium's own and the shipped code has no
+platform gate, so the same behaviour is expected on Linux and macOS, but neither has been
+re-measured, and DESKTOP-W and DESKTOP-15 both came from the Ubuntu box.
+`app.getGPUInfo('complete')` still settles under the switches (1 ms), and still names the adapter,
+so the report loses nothing by running in this mode. `webgl: unavailable_software` is why
+`terminal-webgl.ts` skips its attach entirely rather than retrying on its usual schedule: in this
+mode the context is not blocked, it cannot exist.
+
+What ships now, on every platform:
+
+- `src/main/diagnostics/gpu-health.ts` records EVERY GPU `child-process-gone` death, not just a
+  threshold breach, along with the sequence of Chromium GPU modes they died on. The threshold moved
+  to report time. The reason is ordering: Chromium calls `GpuProcessHost::RecordProcessCrash` (and
+  the `LOG(FATAL)` below it) from the delegate, BEFORE the observer notification Electron emits
+  `child-process-gone` from, so the death that kills the app is one JS is never told about.
+  Whatever is going to be on disk has to already be there.
+- `src/main/index.ts` decides at MODULE SCOPE, before `app.whenReady()`, whether to start in
+  software rendering, because `app.disableHardwareAcceleration()` is a no-op after ready. It
+  engages both `app.disableHardwareAcceleration()` and `--in-process-gpu`: the switch removes the
+  GPU child, the API keeps the display driver out of the browser process that child's absence
+  would otherwise pull it into. `--in-process-gpu` is set on every platform, unguarded, and has
+  been verified only on Windows. That is deliberate rather than an oversight: the two issues this
+  path exists for are a Windows install and an Ubuntu one, and guarding the switch to the platform
+  it was measured on would weaken the recovery exactly where the Linux report came from.
+- The downgrade is a real user-visible setting (`graphicsAccelerationEnabled`, Settings > Performance),
+  set to `off` once and never back on by us. A one-line callout says Kangentic did it. Nothing
+  watches the driver version: we never established what killed the GPU process, so the app claims
+  no cause and suggests no cure.
+
+See "Error Reporting" in [analytics.md](analytics.md) for the reporting half.
 
 ## Auto-Update Platform Guard
 
