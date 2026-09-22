@@ -8,6 +8,8 @@ import {
   checkpointRunUptime,
   recordRunExit,
   previousRunLaunchProps,
+  peekPreviousRun,
+  previousRunLastAliveAt,
   bucketUptimeSeconds,
   resetRunUptimeForTests,
   RUN_UPTIME_CHECKPOINT_INTERVAL_MS,
@@ -28,6 +30,7 @@ let runPath: string;
 interface RunRecordOnDisk {
   uptimeSeconds?: unknown;
   exit?: unknown;
+  at?: unknown;
 }
 
 function readRecord(): RunRecordOnDisk {
@@ -51,19 +54,19 @@ afterEach(() => {
 });
 
 describe('initRunUptimeTracking', () => {
-  it('reports no previous run on a first launch and starts this run at zero', () => {
+  it('reports no previous run on a first launch and starts this run at zero, stamped with the launch instant', () => {
     initRunUptimeTracking(runPath, START_MS);
 
     expect(previousRunLaunchProps()).toEqual({});
-    expect(readRecord()).toEqual({ uptimeSeconds: 0, exit: null });
+    expect(readRecord()).toEqual({ uptimeSeconds: 0, exit: null, at: new Date(START_MS).toISOString() });
   });
 
-  it('treats a corrupt record as no previous run, without throwing, and still starts this run', () => {
+  it('treats a corrupt record as no previous run, without throwing, and still starts this run stamped with the launch instant', () => {
     fs.writeFileSync(runPath, '{ not json');
 
     expect(() => initRunUptimeTracking(runPath, START_MS)).not.toThrow();
     expect(previousRunLaunchProps()).toEqual({});
-    expect(readRecord()).toEqual({ uptimeSeconds: 0, exit: null });
+    expect(readRecord()).toEqual({ uptimeSeconds: 0, exit: null, at: new Date(START_MS).toISOString() });
   });
 
   it('treats a wrong-shaped record (a string where the seconds belong) as no previous run', () => {
@@ -85,12 +88,19 @@ describe('initRunUptimeTracking', () => {
 });
 
 describe('checkpointRunUptime', () => {
-  it('writes the elapsed seconds, rounded, with no exit', () => {
+  it('writes the elapsed seconds, rounded, with no exit, and stamps at with the exact checkpoint instant', () => {
     initRunUptimeTracking(runPath, START_MS);
 
     checkpointRunUptime(START_MS + 90_400);
 
-    expect(readRecord()).toEqual({ uptimeSeconds: 90, exit: null });
+    // uptimeSeconds rounds to the nearest second (90); at is the exact wall
+    // clock instant of the checkpoint and keeps the sub-second 400ms. That
+    // asymmetry is intentional: at is a moment, uptimeSeconds is a duration.
+    expect(readRecord()).toEqual({
+      uptimeSeconds: 90,
+      exit: null,
+      at: new Date(START_MS + 90_400).toISOString(),
+    });
   });
 
   it('is a no-op before init', () => {
@@ -108,7 +118,13 @@ describe('checkpointRunUptime', () => {
 
     checkpointRunUptime(START_MS + 70_000);
 
-    expect(readRecord()).toEqual({ uptimeSeconds: 10, exit: 'clean' });
+    // The late checkpoint must not overwrite `at` either: it stays the exit
+    // instant (10_000), never the checkpoint's later instant (70_000).
+    expect(readRecord()).toEqual({
+      uptimeSeconds: 10,
+      exit: 'clean',
+      at: new Date(START_MS + 10_000).toISOString(),
+    });
   });
 });
 
@@ -178,6 +194,88 @@ describe('recordRunExit', () => {
   it('is a no-op before init (a shutdown that races ahead of whenReady)', () => {
     expect(() => recordRunExit('clean', START_MS)).not.toThrow();
     expect(fs.existsSync(runPath)).toBe(false);
+  });
+});
+
+describe('peekPreviousRun', () => {
+  it('returns null when the file does not exist, without throwing', () => {
+    expect(() => peekPreviousRun(runPath)).not.toThrow();
+    expect(peekPreviousRun(runPath)).toBeNull();
+  });
+
+  it('reads the previous run, surfacing at as lastAliveAt, on a round trip', () => {
+    initRunUptimeTracking(runPath, START_MS);
+    recordRunExit('clean', START_MS + 3_600_000);
+    resetRunUptimeForTests();
+
+    expect(peekPreviousRun(runPath)).toEqual({
+      uptimeSeconds: 3600,
+      exit: 'clean',
+      lastAliveAt: new Date(START_MS + 3_600_000).toISOString(),
+    });
+  });
+
+  it('reads a pre-upgrade record with no at key as lastAliveAt: null, without invalidating the rest of the record', () => {
+    // Written by the currently shipped version, before `at` existed: only
+    // uptimeSeconds and exit are on disk. A literal fixture, not a call
+    // through the writers, since the writers can no longer produce this shape.
+    fs.writeFileSync(runPath, JSON.stringify({ uptimeSeconds: 3600, exit: 'clean' }));
+
+    expect(peekPreviousRun(runPath)).toEqual({
+      uptimeSeconds: 3600,
+      exit: 'clean',
+      lastAliveAt: null,
+    });
+  });
+
+  it('reads a non-string at as lastAliveAt: null rather than passing the wrong type through', () => {
+    for (const malformedAt of [12345, null, { nested: true }]) {
+      fs.writeFileSync(runPath, JSON.stringify({ uptimeSeconds: 42, exit: 'clean', at: malformedAt }));
+
+      expect(peekPreviousRun(runPath)).toEqual({
+        uptimeSeconds: 42,
+        exit: 'clean',
+        lastAliveAt: null,
+      });
+    }
+  });
+
+  it('does not start this run tracking: the peeked file is unchanged and module state keeps the run recorded elsewhere', () => {
+    // A different path establishes a known previousRun in module state
+    // first, so the assertions below fail if peekPreviousRun were a thin
+    // wrapper over initRunUptimeTracking instead of a side-effect-free read.
+    const otherPath = path.join(tempDir, 'other-run.json');
+    const otherRunAt = new Date(START_MS).toISOString();
+    fs.writeFileSync(otherPath, JSON.stringify({ uptimeSeconds: 111, exit: 'clean', at: otherRunAt }));
+    initRunUptimeTracking(otherPath, START_MS + 500_000);
+    expect(previousRunLastAliveAt()).toBe(otherRunAt);
+
+    const peekedAt = new Date(START_MS + 999_000).toISOString();
+    fs.writeFileSync(runPath, JSON.stringify({ uptimeSeconds: 999, exit: 'failsafe', at: peekedAt }));
+    const fileBeforePeek = fs.readFileSync(runPath, 'utf-8');
+
+    const peeked = peekPreviousRun(runPath);
+
+    expect(peeked).toEqual({ uptimeSeconds: 999, exit: 'failsafe', lastAliveAt: peekedAt });
+    expect(fs.readFileSync(runPath, 'utf-8')).toBe(fileBeforePeek);
+    // Unaffected by the peek: still the run recorded at otherPath, not runPath's.
+    expect(previousRunLastAliveAt()).toBe(otherRunAt);
+  });
+});
+
+describe('previousRunLastAliveAt', () => {
+  it('returns null before init', () => {
+    expect(previousRunLastAliveAt()).toBeNull();
+  });
+
+  it('returns null on a first launch with no previous record, then the previous exit instant on the next launch', () => {
+    initRunUptimeTracking(runPath, START_MS);
+    expect(previousRunLastAliveAt()).toBeNull();
+
+    recordRunExit('clean', START_MS + 3_600_000);
+    relaunch();
+
+    expect(previousRunLastAliveAt()).toBe(new Date(START_MS + 3_600_000).toISOString());
   });
 });
 
