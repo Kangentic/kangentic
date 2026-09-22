@@ -384,6 +384,15 @@ reveals what that one cannot avoid.
   and that nothing under `components/browser/**` autofocuses on mount. It carries a pinned site list
   so a rename cannot silently empty the scan. Writing this scan is what found the Agent Monitor hole
   below.
+
+  Both marker reads go through `tests/unit/helpers/opt-out-marker.ts`, at the scope each scan
+  actually needs: the push-and-open scan is file-scoped, because the violation is a pair of
+  file-level facts with no one line to point at, while the `autoFocus` scan is line-scoped and
+  JSX-aware, because the violation is one attribute. They shared a private `/agent-focus-ok/`
+  until then, which had no colon and no anchor, so a bare mention anywhere in a file waived every
+  site in it and a comment explaining why a file deliberately does NOT take the opt-out read as
+  the opt-out. Verified red-green: reducing `CommandTerminalLayer`'s marker to a bare one, which
+  the old reader accepted, now fails the scan by name.
 - **Test (chokepoint, load-bearing):** `tests/unit/browser-pane-driver.test.ts` pins that `withGuest`
   arms `ensureFocusEmulation` (on both the attaching and already-attached paths, and never when the
   gate refuses) and brackets `fn` with the begin/end signal including the throwing path. It also pins

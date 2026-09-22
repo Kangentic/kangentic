@@ -154,7 +154,8 @@ The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes
 | Dictation into a text field inside the GUEST PAGE | Done | `<webview>.executeJavaScript` reaches the guest's focused field directly; password fields refuse, and dictation fills but never submits. A cross-origin iframe stays unreachable (top frame only); see decision 24 |
 | An intercepted keystroke aimed at the note input | Done | delivered to the field (printable characters and Backspace only, Enter still dropped) instead of being lost; see decision 21 |
 | The dictation chip landing on the split seam and covering pane controls | Done | it anchors to the target itself (the field, or the terminal's own pane) rather than to the window, whose centre IS the seam; see decision 22 |
-| Scroll primitive, and modifier-click (Ctrl/Shift+click) | Future | `click` scrolls its own target into view, but there is no standalone scroll tool and no way to send a modified click |
+| Scroll primitive | Done | `kangentic_browser_scroll` dispatches a real `mouseWheel`, optionally centred on a selector; see decision 40. Note that the KEYS which normally scroll (PageUp / PageDown / Home / End) are delivered without their default action, so `keypress` is not a scroll path |
+| Modifier-click (Ctrl/Shift+click) | Future | no way to send a modified click; `click` takes no modifier argument |
 | Cross-platform verification of the focus behavior | Unverified | every measurement was Windows; the out-of-process guest focus path is exactly what differs on macOS/Linux. CI's Linux tiers exercise the code paths, not this behavior |
 | Google refusal signature (`/signin/oauth/error`) | Unverified | written from documented behavior, never captured from a live `disallowed_useragent` bounce. Benign if wrong (no prompt appears, which is today's behavior); the unit tests pin the matching logic, not the signature |
 | Devtools exposure on the webview | Future | UX vs. security tradeoff |
@@ -386,7 +387,7 @@ src/main/agent/commands/
   dev-port-commands.ts                      kangentic_reserve_dev_ports / kangentic_check_dev_ports
 
 src/main/agent/mcp-http/
-  browser-tools.ts                          the 16 kangentic_browser_* tools
+  browser-tools.ts                          the 26 kangentic_browser_* tools
 
 src/renderer/components/browser/
   BrowserPane.tsx                           top-level component (loading/empty/active)

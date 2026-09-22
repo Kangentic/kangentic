@@ -1727,6 +1727,8 @@ Returns `{ armed, seen }` - what the next dialog will get, and every dialog this
 
 **Every dialog is answered whether you call this or not**, and that is what stops a pane wedging. Kangentic enables the CDP `Page` domain, which moves dialogs off Chromium's own UI and onto the debugger; a dialog nobody answers would then block the page with nothing on screen for the user to dismiss, and every later call would queue behind it until the drive lock timed out. The default is DISMISS, which is the safe direction for all four types: cancel a `confirm`, decline a `prompt`, stay on the page for a `beforeunload`.
 
+Enabling `Page` is only half of it. Measured on Electron 41, Electron's own dialog delegate still fires alongside the CDP route, so both ran: the page took the CDP answer and carried on while a native box stayed on screen whose buttons then did nothing, because the answer had already been given. The guest is therefore created with `disableDialogs: true`, which is what actually removes the duplicate. `prompt()` is a separate case: Electron does not implement it, so it throws in the page instead of opening a dialog, and `promptText` is unreachable for a `<webview>` guest. It stays in the API because the CDP path handles it correctly if a future runtime delivers one.
+
 ### Choosing a viewport
 
 A docked pane is only as wide as the task window's split leaves it, which in practice is a few hundred CSS pixels below every desktop breakpoint. An agent verifying a responsive layout there measures the mobile rendering and reports it as the desktop one, so three tools exist to choose the viewport deliberately. They are not interchangeable, and the difference that matters is what each costs the page:

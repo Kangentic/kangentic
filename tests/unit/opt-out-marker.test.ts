@@ -2,15 +2,21 @@
  * Covers the shared opt-out marker reader (`helpers/opt-out-marker.ts`), which
  * a dozen convention scans now depend on. A bug here does not fail loudly: it
  * makes every one of those scans quietly stop enforcing, or quietly start
- * rejecting markers that are really there. So the three association rules and
+ * rejecting markers that are really there. So the four association rules and
  * the reason requirement are pinned directly rather than only through their
  * consumers.
+ *
+ * The last block is the adoption guard, which replaced the hand-kept census of
+ * consumers that used to sit in the helper's docblock.
  */
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   hasOptOutMarker,
   hasJsxOptOutMarker,
+  hasLineOnlyOptOutMarker,
   hasFileScopedOptOut,
 } from './helpers/opt-out-marker';
 
@@ -229,7 +235,203 @@ describe('hasFileScopedOptOut', () => {
     expect(hasFileScopedOptOut('// example-ok:\n', MARKER)).toBe(false);
   });
 
+  it('requires the reason on the marker\'s OWN line', () => {
+    // This rule matches whole file text, so a `\s*` before the reason character
+    // crossed the line break and let the NEXT line stand in as the reason. A
+    // bare marker was then honoured in every file that had anything after it,
+    // which is every real file; the one-line fixture above was the only shape
+    // that still failed. Measured before fixing.
+    expect(hasFileScopedOptOut('// example-ok:\nconst b = 2;\n', MARKER)).toBe(false);
+    expect(hasFileScopedOptOut('// example-ok:\n// unrelated prose\n', MARKER)).toBe(false);
+    expect(hasFileScopedOptOut('// example-ok:\n\nconst b = 2;\n', MARKER)).toBe(false);
+    // The real shape every live file-scoped site uses still passes.
+    expect(hasFileScopedOptOut('const a = 1;\n// example-ok: an ancestor carries it.\n', MARKER)).toBe(true);
+  });
+
   it('does not match a file with no marker', () => {
     expect(hasFileScopedOptOut('const a = 1;\n', MARKER)).toBe(false);
+  });
+});
+
+describe('hasLineOnlyOptOutMarker', () => {
+  it('matches a marker on the line itself', () => {
+    const lines = ['  const width = ref.getBoundingClientRect().width; // example-ok: sizes a sibling.'];
+    expect(hasLineOnlyOptOutMarker(lines, 0, MARKER)).toBe(true);
+  });
+
+  it('does NOT reach the comment block above, which is the whole point', () => {
+    // The difference from hasOptOutMarker, pinned directly. A line here can
+    // carry several violations, so a marker above cannot say which it waives.
+    const lines = ['  // example-ok: sizes a sibling.', '  const width = ref.getBoundingClientRect().width;'];
+    expect(hasLineOnlyOptOutMarker(lines, 1, MARKER)).toBe(false);
+    expect(hasOptOutMarker(lines, 1, MARKER)).toBe(true);
+  });
+
+  it('still requires a reason and still rejects quoted prose', () => {
+    expect(hasLineOnlyOptOutMarker(['  const w = r.width; // example-ok:'], 0, MARKER)).toBe(false);
+    expect(hasLineOnlyOptOutMarker(['  const w = r.width; // not an `example-ok:` site'], 0, MARKER)).toBe(false);
+  });
+
+  it('tolerates an out-of-range index', () => {
+    expect(hasLineOnlyOptOutMarker([], 0, MARKER)).toBe(false);
+  });
+});
+
+describe('every tests/unit scan reads its marker through this module', () => {
+  /**
+   * The adoption guard, which replaced a census paragraph in the helper's
+   * docblock. That paragraph was hand-kept, and it drifted within one merge: it
+   * claimed four markers were unmigrated and had already missed a fifth
+   * (`toast-count-ok`). A list nobody can forget to update is a scan.
+   *
+   * A real marker is `<name>-ok:` WITH the colon. Test-fixture ids like
+   * `task-ok` or `sess-ok` carry none, so they do not trip this.
+   */
+  const UNIT_DIR = __dirname;
+
+  /**
+   * Markers are named `<thing>-ok` by convention, and that convention is what
+   * lets this pattern find a NEW one with no list to maintain. `hmr-safe`
+   * predates it and is the one name the pattern cannot derive, so it is spelled
+   * out. Prefer ending a new marker in `-ok` over extending this: every name
+   * added here is a name someone has to remember to add.
+   */
+  const LEGACY_MARKER_NAMES = ['hmr-safe'];
+  const MARKER_LITERAL = new RegExp(
+    `\\b(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*-ok|${LEGACY_MARKER_NAMES.join('|')}):`,
+  );
+  const HELPER_IMPORT = './helpers/opt-out-marker';
+
+  /**
+   * Files that name a marker without reading one. Each needs a reason, because
+   * the cheap way to pass this guard is to add an entry instead of an import.
+   *
+   * Empty today, and legitimately so: every file that names a marker reads one.
+   * The helper's own suite names `example-ok` all over and would qualify, but it
+   * imports the module it tests, so it passes the same way every consumer does.
+   */
+  const NOT_MARKER_READERS = new Map<string, string>();
+
+  type ScannedFile = { name: string; contents: string };
+
+  /**
+   * The scan itself, pure, so the allowlist branch can be exercised. Reading it
+   * straight off the live directory left that branch dead: with no entry to
+   * skip, deleting the lookup altogether changed no result.
+   */
+  function handRolledMarkerReaders(
+    files: ScannedFile[],
+    allowlist: ReadonlySet<string>,
+  ): string[] {
+    return files
+      .filter(({ name, contents }) =>
+        !allowlist.has(name)
+        && MARKER_LITERAL.test(contents)
+        && !contents.includes(HELPER_IMPORT))
+      .map(({ name }) => name);
+  }
+
+  /**
+   * Recursive, because `tests/unit` has subdirectories (`mobile-bridge/`,
+   * `protocol/`) holding 60-odd suites. None is a convention scan today, so a
+   * flat read gave the right ANSWER while being blind to a whole tree - which
+   * is the shape of silent gap this guard exists to close. Names are posix
+   * paths relative to `tests/unit`, so a top-level file is still its bare name.
+   */
+  function unitTestFiles(directory: string = UNIT_DIR): string[] {
+    const found: string[] = [];
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) found.push(...unitTestFiles(full));
+      else if (entry.name.endsWith('.test.ts')) found.push(full);
+    }
+    return directory === UNIT_DIR
+      ? found.map((absolute) => path.relative(UNIT_DIR, absolute).split(path.sep).join('/'))
+      : found;
+  }
+
+  function scannedFiles(): ScannedFile[] {
+    return unitTestFiles().map((name) => ({
+      name,
+      contents: fs.readFileSync(path.join(UNIT_DIR, name), 'utf-8'),
+    }));
+  }
+
+  it('fails any scan that names a marker but hand-rolls its reader', () => {
+    const offenders = handRolledMarkerReaders(scannedFiles(), new Set(NOT_MARKER_READERS.keys()));
+
+    expect(
+      offenders,
+      'These scans name a `<name>-ok:` marker but do not import helpers/opt-out-marker.\n'
+      + 'A private reader drifts from the shared one: five different association rules were in\n'
+      + 'the tree at once, and the hand-rolled ones let a bare marker with no reason waive a\n'
+      + 'site while prose quoting a marker read as taking it.\n\n'
+      + 'Import the rule that matches the code shape (hasOptOutMarker, hasJsxOptOutMarker,\n'
+      + 'hasLineOnlyOptOutMarker, hasFileScopedOptOut), or add an entry with a reason to\n'
+      + 'NOT_MARKER_READERS here:\n'
+      + offenders.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('reports a hand-rolled reader, and the allowlist actually waives one', () => {
+    // The mechanism against fixtures, because the live tree has nothing to
+    // report and nothing to waive, so it exercises neither branch.
+    const files: ScannedFile[] = [
+      { name: 'hand-rolled.test.ts', contents: "const OPT_OUT = 'cookie-copy-ok:';" },
+      { name: 'migrated.test.ts', contents: `import { hasOptOutMarker } from '${HELPER_IMPORT}';\n// sync-write-ok: x` },
+      { name: 'unrelated.test.ts', contents: "const taskId = 'task-ok';" },
+    ];
+    expect(handRolledMarkerReaders(files, new Set())).toEqual(['hand-rolled.test.ts']);
+    expect(handRolledMarkerReaders(files, new Set(['hand-rolled.test.ts']))).toEqual([]);
+  });
+
+  it('every allowlist entry names a file that exists and carries a reason', () => {
+    // A stale entry is how an allowlist becomes the census it replaced. Vacuous
+    // while the map is empty, and load-bearing the moment anyone adds to it.
+    const present = new Set(unitTestFiles());
+    for (const [name, reason] of NOT_MARKER_READERS) {
+      expect(present.has(name), `${name} is allowlisted but no longer exists`).toBe(true);
+      expect(reason.length, `${name} needs a reason`).toBeGreaterThan(10);
+    }
+  });
+
+  it('scans a real, non-empty set of files and sees known consumers', () => {
+    // Anti-vacuity. A renamed directory or a broken read would otherwise empty
+    // the scan, and an empty scan passes.
+    const files = unitTestFiles();
+    expect(files.length).toBeGreaterThan(50);
+    // The recursive half: a flat read would miss these entirely.
+    expect(files, 'the walk must descend into tests/unit subdirectories')
+      .toContain('protocol/roster.test.ts');
+
+    // Stronger than a file count: the guard above is satisfied when NOTHING
+    // matches, so pin that the pattern actually fires against real file text.
+    // Without this, breaking MARKER_LITERAL into a regex that matches nothing
+    // leaves the guard green while it enforces nothing at all.
+    const naming = scannedFiles().filter(({ contents }) => MARKER_LITERAL.test(contents));
+    expect(naming.length, 'the marker pattern matched no file in tests/unit').toBeGreaterThan(10);
+
+    for (const known of [
+      'guarded-sync-writes.test.ts',
+      'cookie-jar-sharing.test.ts',
+      'agent-driven-focus-sites.test.ts',
+      'toast-negative-assertion.test.ts',
+      'popover-inflow-menu.test.ts',
+      'column-archived-filter-single-source.test.ts',
+    ]) {
+      expect(files, `${known} is a marker reader and should be scanned`).toContain(known);
+    }
+  });
+
+  it('detects the shape it bans', () => {
+    // The guard is a regex over file text, so pin what counts as a marker.
+    expect(MARKER_LITERAL.test("const OPT_OUT = 'cookie-copy-ok:';")).toBe(true);
+    expect(MARKER_LITERAL.test('// sync-write-ok: the caller reports.')).toBe(true);
+    // The one marker whose name the `-ok` convention does not cover. Without
+    // this the guard would miss a hand-rolled `hmr-safe` reader entirely.
+    expect(MARKER_LITERAL.test('// hmr-safe: the guard survives Fast Refresh.')).toBe(true);
+    // Fixture ids, which have no colon, must not drag a file into the scan.
+    expect(MARKER_LITERAL.test("const taskId = 'task-ok';")).toBe(false);
+    expect(MARKER_LITERAL.test("sessions: ['sess-ok', 't-ok']")).toBe(false);
   });
 });

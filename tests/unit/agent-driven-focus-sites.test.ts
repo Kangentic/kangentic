@@ -25,12 +25,20 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasFileScopedOptOut, hasJsxOptOutMarker } from './helpers/opt-out-marker';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const RENDERER_DIR = path.join(REPO_ROOT, 'src/renderer');
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 
-const OK_MARKER = /agent-focus-ok/;
+/**
+ * The two scans below waive sites at different scopes, so they read the marker
+ * with different rules from `helpers/opt-out-marker.ts`. Both used to share one
+ * private `/agent-focus-ok/`, which had neither a colon nor an anchor: a bare
+ * mention anywhere in a file exempted every site in it, and a comment saying a
+ * file deliberately does NOT take the opt-out read as the opt-out.
+ */
+const MARKER = 'agent-focus-ok';
 /** Opening or re-pointing a task detail. Both end in a window that can host a terminal. */
 const OPENS_A_WINDOW = /\b(openWindow|setDetailTaskId)\s*\(/;
 /** Threading the origin through, in either of its two spellings. */
@@ -89,8 +97,10 @@ function agentReachableWindowOpeners(): { relative: string; source: string }[] {
 
 describe('agent-reachable window opens declare their origin', () => {
   it('every push-driven window opener threads the origin or carries a marker', () => {
+    // File-scoped: the violation IS the pair of file-level facts (it takes a
+    // push, it opens a window), so there is no one line to point a marker at.
     const offenders = agentReachableWindowOpeners()
-      .filter(({ source }) => !DECLARES_ORIGIN.test(source) && !OK_MARKER.test(source))
+      .filter(({ source }) => !DECLARES_ORIGIN.test(source) && !hasFileScopedOptOut(source, MARKER))
       .map(({ relative }) => relative);
 
     expect(
@@ -184,10 +194,23 @@ describe('no agent-reachable browser surface autofocuses on mount', () => {
     // BrowserEmptyState can mount from kangentic_browser_open_pane, so a bare
     // `autoFocus` there is an agent-triggered focus steal.
     const browserDir = path.join(RENDERER_DIR, 'components/browser');
-    const offenders = collectSourceFiles(browserDir)
-      .map((absolute) => ({ relative: toPosix(absolute), source: fs.readFileSync(absolute, 'utf-8') }))
-      .filter(({ source }) => /\bautoFocus\b/.test(codeOnly(source)) && !OK_MARKER.test(source))
-      .map(({ relative }) => relative);
+    const offenders: string[] = [];
+    for (const absolute of collectSourceFiles(browserDir)) {
+      const source = fs.readFileSync(absolute, 'utf-8');
+      const lines = source.split('\n');
+      // `codeOnly` blanks comment lines rather than dropping them, so the two
+      // arrays stay index-aligned: match on the stripped line, read the marker
+      // from the original, where the marker lives. Do not "tidy" this into a
+      // filter that removes empties.
+      const strippedLines = codeOnly(source).split('\n');
+      strippedLines.forEach((stripped, lineIndex) => {
+        if (!/\bautoFocus\b/.test(stripped)) return;
+        // Line-scoped, and JSX-aware because `autoFocus` is an attribute: the
+        // marker may sit above the element's opening tag rather than adjacent.
+        if (hasJsxOptOutMarker(lines, lineIndex, MARKER)) return;
+        offenders.push(`${toPosix(absolute)}:${lineIndex + 1}`);
+      });
+    }
 
     expect(
       offenders,
