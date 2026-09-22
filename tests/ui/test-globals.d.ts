@@ -72,6 +72,11 @@ declare global {
     /** Pushes `config:writeFailed`, which App.tsx toasts verbatim at variant 'error', duration 12000. Installed once `config.onWriteFailed` has a subscriber, so wait for the app to mount. */
     __mockFireConfigWriteFailed?: (message: string) => void;
 
+    /** Forces `config.set` / `setProjectOverrides` / `setProjectOverridesByPath` to resolve `{ persisted: false }`, the "write did not reach disk" path the settings panel toasts. Read per call, so it can be flipped mid-test. Set in addInitScript or at runtime. */
+    __mockConfigSetPersisted?: boolean;
+    /** Makes those same three config setters REJECT with this message, the separate failure the real project-scoped handlers raise for an unknown or unopened project. Set in addInitScript or at runtime. */
+    __mockConfigSetRejects?: string;
+
     /** Pre-seeds the Board Profiles the mock serves from `boardConfig.getBoardProfiles()`. Set in addInitScript. */
     __mockBoardProfiles?: import('../../src/shared/types').BoardProfile[];
     /** Makes `boardConfig.setBoardProfiles()` reject with this message, leaving the seeded list intact so the store's reload still answers. Set in addInitScript or at runtime. */

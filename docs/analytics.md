@@ -275,8 +275,16 @@ in one Sentry org, one triage surface.
   `reason` tag), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, and `crashCount`), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
-  `crashCount` - see the GPU health bullet below) - send the real error to Sentry so hidden issues
-  are diagnosable, not just counted. The utility-worker report also
+  `crashCount` - see the GPU health bullet below), and a guarded synchronous write that could not
+  reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
+  outage: `config`, `config_dirs`, `config_project_override`, `import_source`, `browser_url`, the
+  three `mobile_bridge_*` stores, `asana_credential`, plus an `errno` tag when the error carries
+  one) - send the real error to Sentry so hidden issues
+  are diagnosable, not just counted. ENOSPC arrives on that last path and is deliberately NOT
+  filtered: it is a host condition rather than a defect, but it is also the only evidence the
+  user-facing toast fires at all, and the per-source latch already caps the volume at one event
+  per outage. The `errno` tag is what makes muting it later a Sentry-UI change rather than a code
+  change (Sentry DESKTOP-1C). The utility-worker report also
   carries a `utility_process` context block with the last 8 KiB of the worker's stderr (home
   directory redacted). Both workers are forked with stderr piped for this; with Electron's
   `inherit` default, a packaged GUI build sent the worker's uncaught-exception dump nowhere, so

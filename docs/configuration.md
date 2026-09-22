@@ -23,9 +23,35 @@ degrade differently. Global `save()` already updated its in-memory config before
 write, so it keeps serving the change for the rest of the session even though the write failed.
 `saveProjectOverrides()` holds no cache: a failed project-override write leaves
 `.kangentic/config.json` with its previous contents, so the change is lost rather than merely
-unpersisted, and a later read serves the old value until a write to that project succeeds. Either
-way, the user is told once per failing write source via the `config:writeFailed` push (below),
-latched in `src/main/config/write-failure-notice.ts` until a later write to that source succeeds.
+unpersisted, and a later read serves the old value until a write to that project succeeds.
+
+The user is told about it twice, by two mechanisms that answer different questions.
+
+The machine-level condition goes out once per failing write source via the `config:writeFailed`
+push (below), latched in `src/main/config/write-failure-notice.ts` until a later write to that
+source succeeds. Its message names the cause where the errno identifies one: a full disk, a
+missing permission, a read-only volume, or an unavailable drive. An errno with no mapped cause
+falls back to the plain "could not write to its data folder" sentence rather than guessing.
+
+That notice is not enough on its own, because the busiest writer of source `config` is the 500 ms
+window-bounds debounce, so it is usually spent on a window move. Every settings change afterwards
+would be silent for the rest of the session. So `config:set`, `config:setProject` and
+`config:setProjectByPath` also resolve `{ persisted }`, and the settings panel
+(`AppSettingsPanel.tsx`) raises its own "This setting did not save" toast when a write the user
+just asked for did not land. That check lives in the panel rather than the IPC handler because
+those channels also carry window layouts, model caches and announcement dismissals, none of which
+is a user gesture. It is collapsed per setting, keyed by the leaf dot-path it writes
+(`git.initScript`), on a 60 second cooldown. The bucket has to be the leaf rather than the
+top-level key, or a failed `git.worktreesEnabled` would silence `git.initScript` failing moments
+later, which is the silence the per-setting bucket exists to remove.
+
+One gesture can still be several writes, which is what the cooldown is for. Number fields commit
+on every keystroke (typing `120` writes `1`, then `12`, then `120`), the Theme tab commits on
+every arrow key, and the CLI path and remote-execution fields stay per-keystroke deliberately.
+Settings TEXT fields do not: they use `SettingTextInput` (`settings/shared.tsx`), which commits on
+blur, Enter, or unmount rather than per character. A settings write is not cheap - one `config:set`
+is a synchronous whole-file write in main plus a `config:get` + `config:getGlobal` round trip plus
+a runtime re-apply - so a 40-character path used to pay all of that 40 times.
 
 ## Settings Panel
 
@@ -735,14 +761,14 @@ Config files written by hand (without `id` fields on columns) are treated as add
 |---------|---------|
 | `config:get` | Get effective config (global + project merged) |
 | `config:getGlobal` | Get global config only (no project overrides) |
-| `config:set` | Update global config (partial merge) |
+| `config:set` | Update global config (partial merge); resolves `{ persisted }` |
 | `config:setSync` | Update global config synchronously (used on window close to persist the workspace layout) |
 | `config:getProject` | Get project-level overrides for current project |
-| `config:setProject` | Update project-level overrides for current project |
+| `config:setProject` | Update project-level overrides for current project; resolves `{ persisted }` |
 | `config:getProjectByPath` | Get project-level overrides by project path |
-| `config:setProjectByPath` | Update project-level overrides by project path |
+| `config:setProjectByPath` | Update project-level overrides by project path; resolves `{ persisted }` |
 | `config:syncDefaultToProjects` | Sync changed default values to all existing projects (deep merge) |
-| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, at most once per failing source until a later write to that source succeeds |
+| `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, naming the cause where the errno gives one, at most once per failing source until a later write to that source succeeds |
 | `boardConfig:exists` | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |

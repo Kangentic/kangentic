@@ -281,15 +281,15 @@ from a host's complete mounted set, never accumulated from claim/release - see
 |---------|---------|---------|
 | `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
 | `config:getGlobal` | invoke | Fetch global-only AppConfig (no project overrides) |
-| `config:set` | invoke | Update global config (partial merge) |
-| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down |
+| `config:set` | invoke | Update global config (partial merge). Resolves `ConfigSetResult` (`{ persisted }`), which says whether the write reached disk. Only the settings panel acts on it: this channel also carries window layouts, model caches and announcement dismissals, so a failure here is not necessarily something a user asked for (Sentry DESKTOP-1C) |
+| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down. Puts the same boolean on `event.returnValue`, which the preload bridge discards: there is no renderer left to tell |
 | `config:getProject` | invoke | Fetch project-level config overrides |
-| `config:setProject` | invoke | Update project-level overrides |
+| `config:setProject` | invoke | Update project-level overrides; resolves `ConfigSetResult` |
 | `config:getProjectByPath` | invoke | Fetch project overrides by filesystem path |
-| `config:setProjectByPath` | invoke | Update project overrides by filesystem path |
-| `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs |
+| `config:setProjectByPath` | invoke | Update project overrides by filesystem path; resolves `ConfigSetResult` for a background project as well as the current one |
+| `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs. Returns a bare count rather than `ConfigSetResult`: one click writes one file per project, and the count already excludes the ones that failed |
 | `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` is applied; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
-| `config:writeFailed` | on | Push to the main window only, not broadcast to pop-outs (`ToastContainer` mounts in `AppLayout` alone, so a pop-out has no toast host): a synchronous write to the data directory failed, so the change applies to this session but will not persist. Carries the user-facing message. Latched per failing source in `src/main/config/write-failure-notice.ts`, so it fires at most once until a later write to that source succeeds (Sentry DESKTOP-14/DESKTOP-13) |
+| `config:writeFailed` | on | Push to the main window only, not broadcast to pop-outs (`ToastContainer` mounts in `AppLayout` alone, so a pop-out has no toast host): a synchronous write to the data directory failed, so the change applies to this session but will not persist. Carries the user-facing message, which names the cause when the errno gives one (disk full, no permission, read-only volume, drive unavailable). Latched per failing source in `src/main/config/write-failure-notice.ts`, so it fires at most once until a later write to that source succeeds (Sentry DESKTOP-14/DESKTOP-13, DESKTOP-1C) |
 
 ### Keybindings (1 channel)
 | Channel | Pattern | Purpose |

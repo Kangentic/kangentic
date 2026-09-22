@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useAnySettingVisible, useSettingVisible, useSettingsSearch } from './settings-search';
@@ -526,3 +526,106 @@ export function CompactToggleList({ items }: { items: CompactToggleItem[] }) {
  * labels at identical weight, with no hierarchy between them.
  */
 export const INPUT_CLASS = 'bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary w-full focus:outline-none focus:border-accent';
+
+export interface SettingTextInputProps {
+  /** The persisted value. Flows into the draft whenever the field is not focused. */
+  value: string;
+  /** Called once per edit, on blur, Enter, or unmount, and only when the value changed. */
+  onCommit: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  ariaLabel?: string;
+  testId?: string;
+  /** Appended to INPUT_CLASS, for per-field extras like `placeholder-fg-faint`. */
+  className?: string;
+  /** `password` for a secret. Same commit boundary either way: a username and the
+   *  password beside it must not persist on different schedules. */
+  type?: 'text' | 'password';
+}
+
+/**
+ * Text input for a settings row that COMMITS ON BLUR, ENTER, OR UNMOUNT, never per
+ * keystroke.
+ *
+ * Every settings text field used to write on every `onChange`, and a settings write is
+ * not cheap: one `config:set` is a synchronous whole-file write in main plus a
+ * `config:get` + `config:getGlobal` round trip plus a runtime re-apply. Typing a
+ * 40-character CLI path did all of that 40 times, and for `agent.cliPaths` it also
+ * invalidated every agent's detection cache and re-ran `agents.list()` per character.
+ *
+ * Two tabs had already hand-rolled this boundary for their own reasons
+ * (`MobileDevicesTab`'s relay address, `ShortcutsTab`'s command fields). This is that
+ * same pattern as a shared control, so a new settings field gets the boundary by
+ * default rather than by remembering. It is the text-input sibling of `Select`, which
+ * `.claude/rules/ui-conventions.md` already requires over a raw `<select>`.
+ *
+ * The draft re-syncs from `value` only while the field is unfocused. Mid-edit the user
+ * owns the text: a project switch or a config reload landing between two keystrokes
+ * must not overwrite what they are typing.
+ *
+ * DO NOT adopt this for a field with an adjacent action button that reads the PERSISTED
+ * value: the CLI path (its re-detect button re-probes the saved path) and the remote
+ * execution fields (Test connection probes by agent name, so main reads the saved
+ * server). Both stay per-keystroke on purpose. Deferring the write there would disable
+ * the button while typing AND race the action against the write the blur just started,
+ * because the commit is fire-and-forget. Adopting those needs an awaitable commit, which
+ * is a bigger change than a boundary.
+ */
+export function SettingTextInput({
+  value, onCommit, placeholder, disabled, ariaLabel, testId, className, type = 'text',
+}: SettingTextInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState(value);
+  /** The last value we know is persisted, so a blur with no edit writes nothing. */
+  const committedRef = useRef(value);
+
+  useEffect(() => {
+    committedRef.current = value;
+    if (document.activeElement === inputRef.current) return;
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    if (draft === committedRef.current) return;
+    committedRef.current = draft;
+    onCommit(draft);
+  };
+
+  /** Latest `commit` for the unmount flush below, which must not re-run per render.
+   *  Written in an effect, not during render, which `react-hooks/refs` requires. */
+  const commitRef = useRef(commit);
+  useEffect(() => { commitRef.current = commit; });
+
+  // An unmount is the third way an edit ends, alongside blur and Enter, and it is the
+  // only one React fires no event for: removing a focused input dispatches no blur, so
+  // `commit` never runs and the draft is discarded. The settings panel unmounts that way
+  // on both of its keyboard paths - Escape (SettingsPanelShell's document keydown) and
+  // the settings.toggle shortcut (AppLayout's `setSettingsOpen(false)`, which skips the
+  // exit animation entirely). A click away blurs first and is unaffected. Before this
+  // control the fields wrote per keystroke, so those paths kept the edit; losing it is a
+  // regression this boundary introduced rather than a tradeoff it chose.
+  //
+  // The effect owns no deps on purpose: it must run its cleanup exactly once, at unmount.
+  // `commitRef` is what keeps that honest - a `[]` cleanup would otherwise close over the
+  // mount-time draft, and listing `onCommit` would re-run the cleanup every render, since
+  // every adopting tab passes an inline arrow.
+  useEffect(() => () => commitRef.current(), []);
+
+  return (
+    <input
+      ref={inputRef}
+      type={type}
+      className={className ? `${INPUT_CLASS} ${className}` : INPUT_CLASS}
+      value={draft}
+      placeholder={placeholder}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      data-testid={testId}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      // Enter blurs rather than committing directly, so there is ONE commit path.
+      // Committing here as well would double-write when the blur follows.
+      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+    />
+  );
+}

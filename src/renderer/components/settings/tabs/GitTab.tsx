@@ -1,6 +1,6 @@
 import type { AppConfig } from '../../../../shared/types';
 import { BranchPicker } from '../../dialogs/BranchPicker';
-import { SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SettingRow, SettingToggleRow, Select, SettingTextInput, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 /** Preset cadences for the two background timers (PR-state refresh, remote
@@ -39,24 +39,26 @@ export function GitTab({ config }: { config: AppConfig }) {
         />
       </SettingRow>
       <SettingRow {...settingProps('git.copyFiles')}>
-        <input
-          type="text"
+        {/* The split/trim/filter runs at the COMMIT, not per keystroke: typing
+            ".env, .env.local" used to write a differently-shaped array per character. */}
+        <SettingTextInput
           value={(config.git.copyFiles ?? []).join(', ')}
-          onChange={(event) => {
-            const files = event.target.value.split(',').map((file) => file.trim()).filter(Boolean);
+          onCommit={(nextCopyFiles) => {
+            const files = nextCopyFiles.split(',').map((file) => file.trim()).filter(Boolean);
             updateProject({ git: { copyFiles: files } });
           }}
           placeholder=".env, .env.local"
-          className={`${INPUT_CLASS} placeholder-fg-faint`}
+          ariaLabel="Files to copy into a worktree"
+          className="placeholder-fg-faint"
         />
       </SettingRow>
       <SettingRow {...settingProps('git.initScript')}>
-        <input
-          type="text"
+        <SettingTextInput
           value={config.git.initScript || ''}
-          onChange={(event) => updateProject({ git: { initScript: event.target.value || null } })}
+          onCommit={(nextInitScript) => updateProject({ git: { initScript: nextInitScript || null } })}
           placeholder="npm install"
-          className={`${INPUT_CLASS} placeholder-fg-faint`}
+          ariaLabel="Worktree init script"
+          className="placeholder-fg-faint"
         />
       </SettingRow>
       <SettingToggleRow

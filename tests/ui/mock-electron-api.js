@@ -471,6 +471,32 @@
 
   function noop() {}
 
+  // What config.set / setProjectOverrides / setProjectOverridesByPath resolve with.
+  // Defaults to a write that reached disk; a test forces the failure path by setting
+  // window.__mockConfigSetPersisted = false, which is what the settings panel's
+  // "This setting did not save" toast keys off (Sentry DESKTOP-1C). Read per call,
+  // not captured once, so a test can flip it mid-run to simulate a disk recovering.
+  // Note the real ConfigManager.save() updates its in-memory config even when the
+  // write fails, so the mock deliberately still applies the partial before returning
+  // persisted: false.
+  function configSetResult() {
+    return { persisted: window.__mockConfigSetPersisted !== false };
+  }
+
+  // A REJECTED write is a different failure from one that degraded: the real
+  // project-scoped handlers throw for an unknown or unopened project, and the settings
+  // panel reports that separately (with no data-folder clause).
+  //
+  // Called BEFORE the mock applies the partial, because the real handlers throw their
+  // precondition before ever reaching ConfigManager - nothing is written on that path.
+  // Rejecting after the mutation would leave mock state a rejected real write never
+  // produces, which is a trap for any later test that asserts on state after a reject.
+  function rejectConfigSetIfConfigured() {
+    if (window.__mockConfigSetRejects) {
+      throw new Error(String(window.__mockConfigSetRejects));
+    }
+  }
+
   // Board Profiles live in kangentic.json, not the DB, so the mock keeps them
   // in a plain module-scope array. Declared here (alongside noop) rather than
   // beside the boardConfig object, whose neighbouring `state` bindings belong to
@@ -2659,6 +2685,7 @@
         return config;
       },
       set: async function (partial) {
+        rejectConfigSetIfConfigured();
         config = deepMerge(config, partial);
         // hotkeyOverrides is a dictionary-style map (CONFIG_DICTIONARY_PATHS in
         // config-manager.ts): the real save REPLACES it wholesale so a deleted
@@ -2688,6 +2715,7 @@
         if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
           config.terminal.colors = Object.assign({}, partial.terminal.colors);
         }
+        return configSetResult();
       },
       // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
       // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject + commandTerminalWorkspace + terminal.colors).
@@ -2717,16 +2745,20 @@
         return null;
       },
       setProjectOverrides: async function (overrides) {
+        rejectConfigSetIfConfigured();
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
         if (currentProject) {
           projectConfigs[currentProject.path] = overrides;
         }
+        return configSetResult();
       },
       getProjectOverridesByPath: async function (projectPath) {
         return projectConfigs[projectPath] || null;
       },
       setProjectOverridesByPath: async function (projectPath, overrides) {
+        rejectConfigSetIfConfigured();
         projectConfigs[projectPath] = overrides;
+        return configSetResult();
       },
       syncDefaultToProjects: async function () {
         return 0;

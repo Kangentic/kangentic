@@ -26,6 +26,26 @@ chrome unless these are stated.
 - **Dropdowns:** use the shared `Select` component from
   `src/renderer/components/settings/shared.tsx`, never a raw `<select>` with inline classes.
   The shared component renders `appearance-none` with a custom ChevronDown for correct spacing.
+- **Settings text fields commit on blur, Enter, or unmount, not per keystroke.** Use `SettingTextInput`
+  (`settings/shared.tsx`), the text sibling of `Select`. A settings write is not cheap: one
+  `config:set` is a synchronous whole-file write in main plus a `config:get` + `config:getGlobal`
+  round trip plus a runtime re-apply, so a per-keystroke field paid all of that once per
+  character. It commits on blur, Enter, or unmount. The unmount flush is not optional: removing a
+  focused input fires no blur, and the panel unmounts that way on both of its keyboard close
+  paths (Escape, and the `settings.toggle` shortcut, which skips the exit animation), so without
+  it a typed-but-unblurred edit is silently dropped where the per-keystroke field had saved it.
+  Four kinds of field are exempt, and each says so at its own call site:
+  - A field with an adjacent action button that reads the PERSISTED value (the CLI path's
+    re-detect, the remote-execution url and basic-auth fields' Test connection). Deferring the
+    write disables the button while typing and races the action against the write the blur
+    started. Adopting these needs an awaitable commit, not just a boundary.
+  - A field kept per-keystroke to match the commit boundary of the sibling group it sits in
+    (`agent-execution-fields.tsx`'s Server Working Directory), so one section does not mix two
+    boundaries.
+  - The two tabs that hand-rolled the boundary before it was shared and layer more on top of it:
+    `MobileDevicesTab`'s relay address (URL validation plus a probe against the DRAFT, not the
+    persisted value) and `ShortcutsTab`'s command fields (which commit a whole array item).
+  - Number inputs, which are not converted and still write per keystroke.
 - **Setting label + description:** use the shared `SettingText`
   (`src/renderer/components/SettingText.tsx`), or its `SETTING_LABEL_CLASS` /
   `SETTING_DESCRIPTION_CLASS` when a surface needs the two parts separately. Never re-type the
@@ -145,7 +165,9 @@ chrome unless these are stated.
 - The remaining bullets have no dedicated mechanical test yet. Candidate future checks: a scan for
   raw `<select>` and for `text-[10px]` (or smaller) under `src/renderer/`; a scan of
   `SETTINGS_REGISTRY` label/description fields for raw hex / byte-code literals (`0x`, `\x`, `\u`,
-  `U+`).
+  `U+`); a scan of `settings/tabs/**` for a raw text `<input>` carrying `INPUT_CLASS` that is not
+  one of the exempt fields above, which is the check that would make the `SettingTextInput` bullet
+  self-maintaining rather than review-only.
 
 ## Scope
 
