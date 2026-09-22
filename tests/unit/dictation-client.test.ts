@@ -594,6 +594,48 @@ describe('DictationClient', () => {
     }
   });
 
+  it('a failed createSession does not leak its id in activeSessions, so a later completed session on the same worker can still idle-recycle', async () => {
+    // armIdleShutdown()'s second guard (`activeSessions.size > 0`) returns
+    // early for as long as ANY entry sits in the set. createSession's catch
+    // deletes its own id on a worker-reported failure specifically so a
+    // create that never became a session cannot hold that guard closed
+    // forever. Nothing else clears an individual entry - only killChild()/
+    // onWorkerExit() clear the whole set - so this is the one path a leak
+    // could hide in.
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+
+      const failing = client.createSession({
+        dictationSessionId: 'dictation-fail',
+        ...fakeEnsureEngineRequest(),
+        sessionOptions: { language: 'en', punctuation: true },
+      });
+      const child = lastChild();
+      const failAssertion = expect(failing).rejects.toThrow('boom');
+      child.emit('message', { type: 'error', id: lastRequestId(child), message: 'boom' });
+      await failAssertion;
+
+      // A second, genuinely completed session on the SAME worker (createSession
+      // failing does not kill the child - only a worker exit does that).
+      await serveAndFinish(client);
+
+      // servedSession was set true by the failed attempt too (the worker may
+      // already have started the load the client gave up waiting on), so this
+      // worker is recyclable on its own terms - the only thing that could
+      // still block the arm is a leaked activeSessions entry.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(recycled).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe('commit ceiling', () => {
     async function serveWithCommit(commitBytes: number | null): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
       const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
