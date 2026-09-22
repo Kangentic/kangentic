@@ -118,7 +118,7 @@ function elapsedSeconds(nowMs: number): number {
  *
  * `initRunUptimeTracking` cannot serve this: it runs inside whenReady, and
  * index.ts's graphics decision has to happen at module scope, because
- * app.disableHardwareAcceleration() is a no-op once the app is ready. This
+ * app.disableHardwareAcceleration() throws once the app is ready. This
  * is the same pure read, callable earlier, and it touches no module state so
  * the two cannot interfere.
  */

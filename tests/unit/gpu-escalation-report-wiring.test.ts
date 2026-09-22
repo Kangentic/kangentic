@@ -117,7 +117,7 @@ function escalationReportTryBlock(): string {
   // the module-scope graphics decision (resolveGraphicsMode), which only
   // peeks at the record to decide whether to start Chromium in software
   // rendering and never clears anything - it has to run before whenReady
-  // because app.disableHardwareAcceleration() is a no-op after. The REPORT
+  // because app.disableHardwareAcceleration() throws after. The REPORT
   // path, which owns the clear, is the later one. `reportPathIsTheLaterRead`
   // below pins that ordering so this anchor cannot silently pick the wrong
   // block if the two are ever reordered.
@@ -290,7 +290,7 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     // production, logged as a console warning, with nothing going red.
     expect(
       INDEX_CODE,
-      'src/main/index.ts must register the GPU_HEALTH_STATUS handler. It cannot move to ipc/handlers/: it returns index.ts module-scope state (the pre-whenReady graphics decision and the one-shot notice flag), and resolveGraphicsMode must run before app.whenReady() because app.disableHardwareAcceleration() is a no-op after it',
+      'src/main/index.ts must register the GPU_HEALTH_STATUS handler. It cannot move to ipc/handlers/: it returns index.ts module-scope state (the pre-whenReady graphics decision and the one-shot notice flag), and resolveGraphicsMode must run before app.whenReady() because app.disableHardwareAcceleration() throws after it',
     ).toContain('ipcMain.handle(IPC.GPU_HEALTH_STATUS');
 
     // Consume-on-read is the property the "fires exactly once" UI assertion
