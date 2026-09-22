@@ -85,6 +85,15 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
       }
       throw new Error(`unexpected run SQL: ${sql}`);
     },
+    get: (..._args: unknown[]) => {
+      if (sql.includes('MIN(ts) AS earliestMs')) {
+        const tsValues = [...table.values()]
+          .map((row) => row.ts)
+          .filter((ts): ts is number => ts !== null);
+        return { earliestMs: tsValues.length > 0 ? Math.min(...tsValues) : null };
+      }
+      throw new Error(`unexpected get SQL: ${sql}`);
+    },
     all: (...args: unknown[]) => {
       const rows = [...table.values()];
       // The subagent breakdown - checked FIRST because its WHERE clause also
@@ -611,5 +620,41 @@ describe('ConversationUsageStore.getGroupedUsageSince', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].turnCount).toBe(3);
     expect(groups[0].inputTokens).toBe(30);
+  });
+});
+
+describe('ConversationUsageStore.getEarliestTurnMs', () => {
+  // Backs UsageDashboardStats.earliestTurnMs: the Tokens tile's "per-turn
+  // capture starts <date>" note, which fires when the selected range reaches
+  // back further than this. NOT window-scoped - it answers how far back real
+  // token counts go at all.
+  it('returns the oldest ts across every turn, ignoring a NULL ts', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(owner, [
+      { turnUuid: 'a1', ts: 5000, model: 'model-x', usage: usage() },
+      // A NULL ts (no timestamp on the transcript entry) cannot be the
+      // earliest anything; it must not win a bare MIN() or poison the read.
+      { turnUuid: 'a2', ts: null, model: 'model-x', usage: usage() },
+      { turnUuid: 'a3', ts: 2000, model: 'model-x', usage: usage() },
+    ], now);
+
+    expect(store.getEarliestTurnMs()).toBe(2000);
+  });
+
+  it('returns null when the ledger has no rows', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    expect(store.getEarliestTurnMs()).toBeNull();
+  });
+
+  it('returns null when every row has a NULL ts', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(owner, [
+      { turnUuid: 'a1', ts: null, model: 'model-x', usage: usage() },
+    ], now);
+
+    expect(store.getEarliestTurnMs()).toBeNull();
   });
 });
