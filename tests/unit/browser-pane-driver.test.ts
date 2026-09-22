@@ -19,10 +19,16 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   isDebuggerAttached: vi.fn(() => false),
   detachDebugger: vi.fn(),
   ensureFocusEmulation: vi.fn(),
+  waitForDialogInterception: vi.fn(async () => {}),
 }));
 
 import { webContents, BrowserWindow } from 'electron';
-import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
+import {
+  attachDebugger,
+  ensureFocusEmulation,
+  isDebuggerAttached,
+  waitForDialogInterception,
+} from '../../src/main/browser/cdp/cdp';
 import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { resetGuestDriveQueuesForTests } from '../../src/main/browser/guest-drive-queue';
@@ -121,6 +127,40 @@ describe('withGuest - agent input signalling', () => {
     }
 
     expect(focusCalls).toEqual([]);
+  });
+
+  it('WAITS for dialog interception before running the body', async () => {
+    // Found by a live agent, not by review. `attachDebugger` is synchronous
+    // and its domain enables are fire-and-forget, so the FIRST drive against a
+    // guest used to run while `Page.enable` was still in flight. A click that
+    // opened a `confirm()` in that window raced ahead of the interceptor:
+    // Chromium showed its own native modal, the renderer blocked, every later
+    // command queued behind it, and nothing on the agent side could recover -
+    // only the user dismissing the box. Every drive after the first was fine,
+    // which is exactly why a sweep that calls anything else first never sees it.
+    let interceptionResolved = false;
+    let releaseInterception = (): void => undefined;
+    vi.mocked(waitForDialogInterception).mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        releaseInterception = () => { interceptionResolved = true; resolve(); };
+      }),
+    );
+
+    let bodyRan = false;
+    const drive = withGuest(
+      { selector: { projectId: 'p' }, capability: 'interact', config: config() },
+      async () => { bodyRan = true; return true; },
+    );
+
+    // Give the driver every chance to run the body early.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bodyRan, 'the body must not run while Page.enable is still in flight').toBe(false);
+
+    releaseInterception();
+    await drive;
+    expect(interceptionResolved).toBe(true);
+    expect(bodyRan).toBe(true);
   });
 
   it('arms focus emulation before running the operation', async () => {
@@ -311,6 +351,27 @@ describe('withGuest - resolution and attach', () => {
     const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() }, async (guestWebContents) => (guestWebContents as { id: number }).id);
     expect(result).toEqual({ ok: true, data: 7 });
     expect(vi.mocked(attachDebugger)).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the body the RESOLVED ENTRY alongside the guest', async () => {
+    // `set_viewport` picks between emulation, a window resize and a lane
+    // resize from `entry.kind` plus the pop-out registry. A `WebContents`
+    // cannot answer either question, and deriving it from `hostWebContents`
+    // would couple the choice to a Chromium detail. If this argument is ever
+    // dropped, every call quietly routes down the docked-pane branch, so pin
+    // it here rather than only inside the tool.
+    browserPaneRegistry.register({ handle: 'lane_z', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, kind: 'lane' });
+    seedGuest(7);
+    const seen: { sessionId: string; kind: string }[] = [];
+    const result = await withGuest(
+      { selector: { sessionId: 'lane_z', projectId: 'p' }, capability: 'observe', config: config() },
+      async (_guestWebContents, entry) => {
+        seen.push({ sessionId: entry.sessionId, kind: entry.kind });
+        return 'ok';
+      },
+    );
+    expect(result).toEqual({ ok: true, data: 'ok' });
+    expect(seen).toEqual([{ sessionId: 'lane_z', kind: 'lane' }]);
   });
 
   it('does not re-attach when the debugger is already attached', async () => {

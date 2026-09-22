@@ -1,18 +1,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, ipcMain, session } from 'electron';
+import { app, ipcMain, session, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { browserPartitionForTask } from '../../../shared/browser-partition';
 import { BROWSER_PANE_VISIBILITIES } from '../../../shared/types';
-import type { BrowserCaptureInput, BrowserPaneRegisterInput, BrowserPaneVisibility } from '../../../shared/types';
+import type {
+  BrowserCaptureInput,
+  BrowserPaneRegisterInput,
+  BrowserPaneVisibility,
+  BrowserViewportOverride,
+} from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
-import { setBrowserPaneOpenerHost } from '../../browser/browser-pane-opener';
+import { setBrowserPaneOpenerHost, offscreenSurfaceUrl } from '../../browser/browser-pane-opener';
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
+import { destroyLane, laneTaskIds, setLaneChangeListener } from '../../browser/browser-lane-manager';
+import { broadcast } from '../../pop-out/window-broadcast';
 import { enumerateProjectPartitions } from '../../browser/browser-partition-cleanup';
 import { syncJarFromIdentity } from '../../browser/jar-seeder';
+import { releaseViewportOverride } from '../../browser/viewport-override';
+import {
+  getViewportOverride,
+  type ViewportOverrideRecord,
+} from '../../browser/viewport-override-store';
 
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -100,6 +112,26 @@ export function registerBrowserHandlers(context: IpcContext): void {
     },
   });
 
+  // Make an offscreen surface VISIBLE in the UI.
+  //
+  // Not cosmetic. The card globe and the task-detail Browser pill both read
+  // `browserGuestTasks`, which is written in exactly one place -
+  // `BrowserPane.tsx`, on the `<webview>`'s `dom-ready` - so an offscreen
+  // `BrowserWindow` set nothing and the user had no way to know their task had
+  // a browser at all, let alone close it. That is what ended agent-requested
+  // lanes; this push is what lets the remaining fallback stay honest.
+  //
+  // `broadcast` rather than `webContents.send`, and the reason is the MONITOR
+  // pop-out, not a detached task detail (there is no task-detail pop-out
+  // surface). `PopOutMonitorRoot` mounts `MonitorDetailLayer`, so a task detail
+  // - and its Browser pill - renders in that window's own renderer, which never
+  // mounts App.tsx and so has none of its subscriptions. `broadcast` reaches a
+  // pop-out only if its surface declares the channel, so the monitor surface
+  // lists `BROWSER_OFFSCREEN_SURFACES` and seeds the set in its own bootstrap.
+  setLaneChangeListener(() => {
+    broadcast(context.mainWindow, IPC.BROWSER_OFFSCREEN_SURFACES, laneTaskIds());
+  });
+
   ipcMain.handle(IPC.BROWSER_CAPTURE_SEND, async (_event, input: BrowserCaptureInput) => {
     if (!input.sessionId) throw new Error('captureAndSend requires a sessionId');
     if (!input.pngBase64) throw new Error('captureAndSend requires pngBase64');
@@ -185,11 +217,21 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // project's browser-urls.json. Nothing surfaced the mix-up; the task just
   // reopened on a page from a different project.
   ipcMain.handle(IPC.BROWSER_URL_GET, (_event, taskId: string, projectId?: string | null) => {
-    const { projectPath } = resolveProjectContext(context, projectId);
-    if (!projectPath) return { projectDefault: null, taskOverride: null };
+    const { projectId: resolvedProjectId, projectPath } = resolveProjectContext(context, projectId);
+    if (!projectPath || !resolvedProjectId) return { projectDefault: null, taskOverride: null };
     const overrides = context.configManager.loadProjectOverrides(projectPath);
     const projectDefault = overrides?.browser?.defaultUrl ?? null;
-    const taskOverride = browserUrlStore.get(projectPath, taskId);
+    // An OFFSCREEN surface's live URL outranks the saved one, and this is what
+    // makes the reclaim land on the right page.
+    //
+    // A pane asking for its URL while the task's surface is offscreen is a pane
+    // about to REPLACE that surface: the registration it is heading for
+    // destroys it (`browser-lane-handoff.ts`). So the honest answer to "what
+    // was this task last looking at" is where the agent left the offscreen
+    // surface, which the sidecar cannot know - it is written by the PANE on its
+    // own `did-navigate`, and an offscreen surface has no renderer to write it.
+    const taskOverride =
+      offscreenSurfaceUrl(taskId, resolvedProjectId) ?? browserUrlStore.get(projectPath, taskId);
     // Deliberately does NOT report a reserved dev-server port. A reservation is
     // not evidence anything is serving there - the project decides its own ports
     // - so pointing the pane at one renders a blank page for a server nobody
@@ -330,6 +372,85 @@ export function registerBrowserHandlers(context: IpcContext): void {
     if (!isPaneVisibility(visibility)) return;
     browserPaneRegistry.setVisibility(webContentsId, visibility);
   });
+
+  // The pane element's own size, which only the renderer can measure. Fitting
+  // a requested viewport needs it; see BrowserPaneEntry.widgetSize.
+  ipcMain.handle(
+    IPC.BROWSER_PANE_WIDGET_SIZE,
+    (_event, webContentsId: number, width: unknown, height: unknown) => {
+      if (!isGuestId(webContentsId)) return;
+      if (typeof width !== 'number' || typeof height !== 'number') return;
+      if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+      browserPaneRegistry.setWidgetSize(webContentsId, width, height);
+    },
+  );
+
+  // What override this guest is already under. A pane that mounts after one was
+  // set (a pop-out window, or a re-register) never saw the push, so it asks
+  // once rather than showing nothing while the page renders at a width the user
+  // cannot account for.
+  ipcMain.handle(IPC.BROWSER_VIEWPORT_GET, (_event, webContentsId: number) => {
+    if (!isGuestId(webContentsId)) return null;
+    const record = getViewportOverride(webContentsId);
+    if (!record) return null;
+    return toRendererOverride(record);
+  });
+
+  // The user taking their pane back, from the chip in the pane's own toolbar.
+  //
+  // Deliberately NOT routed through the agent's `withGuest` chokepoint: that
+  // path gates on the automation capability config and serializes behind
+  // whatever drive currently holds the guest, and neither may stand between a
+  // user and undoing something an agent did to their screen. The automatic
+  // counterpart runs when the agent's session ends, which can be hours away.
+  ipcMain.handle(IPC.BROWSER_VIEWPORT_CLEAR, async (_event, webContentsId: number) => {
+    if (!isGuestId(webContentsId)) return false;
+    const guest = webContents.fromId(webContentsId);
+    if (!guest) return false;
+    await releaseViewportOverride(guest);
+    return true;
+  });
+
+  // Which tasks hold their one browser surface offscreen, asked for on mount
+  // and after an HMR update. The push keeps it current from there; this is the
+  // initial read, because a surface can sit unchanged for a whole session and
+  // a reloaded renderer would otherwise show no browser for a task that has
+  // one.
+  ipcMain.handle(IPC.BROWSER_OFFSCREEN_SURFACES_GET, () => laneTaskIds());
+
+  // The user's Close on a task whose surface is offscreen.
+  //
+  // `closeBrowserForTask`'s ordinary path retires a guest id and clears the
+  // pane's open flag, and an offscreen surface has neither - so without this
+  // the kebab's "Close browser" was a control that said Close and did nothing.
+  // Scoped through `getByTaskId(taskId, projectId)` rather than by task id
+  // alone, per `.claude/rules/project-scoped-ipc.md`.
+  ipcMain.handle(IPC.BROWSER_OFFSCREEN_CLOSE, (_event, taskId: string, projectId?: string | null) => {
+    const { projectId: resolvedProjectId } = resolveProjectContext(context, projectId);
+    if (!resolvedProjectId) return false;
+    let closed = false;
+    for (const entry of browserPaneRegistry.getByTaskId(taskId, resolvedProjectId)) {
+      if (entry.kind !== 'lane') continue;
+      if (destroyLane(entry.sessionId)) closed = true;
+    }
+    return closed;
+  });
+}
+
+function isGuestId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+/** The main-side record minus the bookkeeping the renderer has no use for
+ *  (which session owns it), so the chip cannot accidentally render an id. */
+function toRendererOverride(record: ViewportOverrideRecord): BrowserViewportOverride {
+  return {
+    mechanism: record.mechanism,
+    requested: record.requested,
+    measured: record.measured,
+    deviceScaleFactor: record.deviceScaleFactor,
+    appliedAt: record.appliedAt,
+  };
 }
 
 function isPaneVisibility(value: unknown): value is BrowserPaneVisibility {

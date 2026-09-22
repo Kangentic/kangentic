@@ -22,8 +22,14 @@ import { useSessionStore } from '../../stores/session-store';
  * call this, so a pane the user cannot see (hidden or parked) closes the same
  * way as one they can. A pane on its empty state has no guest and no entry in
  * `browserGuestTasks`; closing it is then just the hide without the hold.
+ *
+ * A task's surface may be OFFSCREEN instead of a pane at all (main's fallback
+ * when no pane can mount). That has no guest id to retire and no node to
+ * unmount, so both steps above are no-ops for it and main has to destroy the
+ * window directly. Skipping that left a control that says Close and does
+ * nothing, on the one surface the user has no other way to reach.
  */
-export async function closeBrowserForTask(taskId: string): Promise<void> {
+export async function closeBrowserForTask(taskId: string, projectId?: string | null): Promise<void> {
   const webContentsId = useSessionStore.getState().browserGuestTasks.get(taskId);
   if (webContentsId !== undefined) {
     try {
@@ -31,6 +37,14 @@ export async function closeBrowserForTask(taskId: string): Promise<void> {
     } catch {
       // Main will still unregister on the unmount below; the only loss is the
       // reason word, and a lane it might stand up ends with the session.
+    }
+  }
+  if (useSessionStore.getState().browserOffscreenTasks.has(taskId)) {
+    try {
+      await window.electronAPI.browser.closeOffscreenSurface(taskId, projectId);
+    } catch {
+      // Nothing else can reach it, so report nothing and leave it to session
+      // end - the same guarantee every offscreen surface already has.
     }
   }
   useSessionStore.getState().setBrowserOpen(taskId, false);

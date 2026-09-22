@@ -48,9 +48,11 @@ vi.mock('../../src/main/browser/browser-url-store', () => ({
 // The lane manager owns real Electron windows and has its own suite
 // (browser-lane-manager.test.ts). Here it is a seam, so these tests can assert
 // the opener's ROUTING - which branch runs, and what it does or does not touch.
+let laneExistsForTask = false;
 vi.mock('../../src/main/browser/browser-lane-manager', () => ({
   openLane: vi.fn(async () => ({ ok: true, laneId: 'lane_abc12345', webContents: {} })),
   destroyLane: vi.fn(() => true),
+  hasLaneForTask: () => laneExistsForTask,
 }));
 
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
@@ -87,21 +89,19 @@ function pane(overrides: Record<string, unknown> = {}) {
     url: 'http://localhost:5173',
     registeredAt: 0,
     kind: 'pane',
-    handoff: false,
     alive: true,
     debuggerAttached: false,
     ...overrides,
   };
 }
 
-/** A hand-off lane standing in for the caller task's closed pane. */
-function handoffLane(overrides: Record<string, unknown> = {}) {
+/** The OFFSCREEN form of the caller task's one surface. */
+function offscreenSurface(overrides: Record<string, unknown> = {}) {
   return pane({
     sessionId: 'lane_standin1',
     webContentsId: 12,
     url: 'http://localhost:4200',
     kind: 'lane',
-    handoff: true,
     ...overrides,
   });
 }
@@ -148,6 +148,7 @@ describe('openPaneForCallerTask', () => {
     vi.clearAllMocks();
     sent = [];
     loadedUrls = [];
+    laneExistsForTask = false;
     installHost();
     vi.mocked(browserPaneRegistry.list).mockReturnValue([]);
     vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
@@ -164,13 +165,26 @@ describe('openPaneForCallerTask', () => {
       expect(sent).toEqual([]);
     });
 
-    it('refuses with project-not-open when the caller project is backgrounded', async () => {
-      // The board window layer renders the OPEN project's tasks, so no window
-      // could be mounted for this task even if the push landed.
-      installHost({ currentProjectId: 'other-project' });
-      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
-      expect(result).toMatchObject({ ok: false, error: { kind: 'project-not-open' } });
+    it('opens the surface OFFSCREEN when the caller project is backgrounded, instead of refusing', async () => {
+      // The board window layer renders only the OPEN project's tasks, so no
+      // window could be mounted for this task even if the push landed. That
+      // used to be a flat `project-not-open`, which composed with the
+      // `no-pane-open` hint into a loop: every drive said "call open_pane",
+      // and open_pane said "switch project". The surface comes up offscreen
+      // instead - driveable, reported as such, and reclaimed into a real pane
+      // as soon as one can mount.
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
+      // openLane registers the surface for real; the mock stands in for that.
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([
+        offscreenSurface({ sessionId: 'lane_abc12345' }),
+      ] as never);
+
+      const result = await openPaneForCallerTask(openInput('http://localhost:4200'));
+
+      expect(result).toMatchObject({ ok: true, data: { offscreen: true, laneId: 'lane_abc12345' } });
+      // No renderer involvement at all: no window push, no URL sidecar write.
       expect(sent).toEqual([]);
+      expect(browserUrlStore.set).not.toHaveBeenCalled();
     });
 
     it('refuses with browser-pane-disabled when the project turned the pane off', async () => {
@@ -364,8 +378,8 @@ describe('openPaneForCallerTask', () => {
       // asked for its PANE, and handing the lane back as `opened: false` would
       // report a surface the agent cannot see and never asked for. The visible
       // pane's registration is also what stands the lane down.
-      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([handoffLane()] as never);
-      vi.mocked(browserPaneRegistry.list).mockReturnValue([handoffLane()] as never);
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([offscreenSurface()] as never);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([offscreenSurface()] as never);
       // Pinned here: `clearAllMocks` keeps implementations, so an earlier test's
       // resolved value would otherwise decide how the cold path ends.
       vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
@@ -377,77 +391,51 @@ describe('openPaneForCallerTask', () => {
       expect(withGuest).not.toHaveBeenCalled();
     });
 
-    it('names the hand-off lane when the project is backgrounded, so the agent knows it still has a browser', async () => {
+    it('returns the EXISTING offscreen surface rather than opening a second one', async () => {
+      // One surface per task. A backgrounded agent calling open_pane again must
+      // get the surface it already has, reported honestly as not newly opened,
+      // not a second offscreen window nothing on screen can distinguish.
       installHost({ currentProjectId: 'other-project', currentProjectPath: null });
-      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([handoffLane()] as never);
-      const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
-      expect(result).toMatchObject({ ok: false, error: { kind: 'project-not-open' } });
-      expect(result.ok === false && result.error.detail).toContain('lane_standin1');
-      expect(sent).toEqual([]);
-    });
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([offscreenSurface()] as never);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([offscreenSurface()] as never);
 
-    it('opens an isolated LANE for a backgrounded project, with no pane and no window', async () => {
-      // The reported real-world dead end (#542), reproduced live: close a task's
-      // detail window and its <webview> guest is destroyed - correctly, the node
-      // unmounted; the registry log names it `reason=guest-destroyed`. Switch
-      // projects too and the agent still running in the backgrounded project has
-      // no pane AND no way to get one: every drive returns `no-pane-open`, whose
-      // hint says to call open_pane, which refused with `project-not-open`.
-      //
-      // A lane is the way out precisely because it needs no task-detail window,
-      // so it must sit AHEAD of that guard rather than behind it.
-      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
-      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
-      // openLane registers the lane for real; the mock stands in for that.
-      vi.mocked(browserPaneRegistry.list).mockReturnValue([
-        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
-      ] as never);
+      const result = await openPaneForCallerTask(openInput(undefined));
 
-      const result = await openPaneForCallerTask({
-        ...openInput('http://localhost:4200'),
-        isolated: true,
+      expect(result).toMatchObject({
+        ok: true,
+        data: { opened: false, navigated: false, url: 'http://localhost:4200', laneId: 'lane_standin1', offscreen: true },
       });
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw new Error('expected the lane to open');
-      expect(result.data.laneId).toBe('lane_abc12345');
-      // No renderer involvement at all: no window push, no URL sidecar write.
       expect(sent).toEqual([]);
-      expect(browserUrlStore.set).not.toHaveBeenCalled();
     });
 
     it('tells a backgrounded caller to pass a url rather than failing vaguely', async () => {
       // The saved URL and project default live behind the project path, which is
-      // exactly what is unavailable here - so say that, and say the lane itself
-      // still works, instead of refusing with project-not-open.
+      // exactly what is unavailable here - so say that, and say the browser
+      // itself still works, instead of refusing with project-not-open.
       installHost({ currentProjectId: 'other-project', currentProjectPath: null });
       vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
 
-      const result = await openPaneForCallerTask({ ...openInput(undefined), isolated: true });
+      const result = await openPaneForCallerTask(openInput(undefined));
 
       expect(result).toMatchObject({ ok: false, error: { kind: 'no-url' } });
       if (result.ok) throw new Error('expected a refusal');
-      expect(result.error.detail).toContain('the lane itself will open fine');
+      expect(result.error.detail).toContain('the browser itself will open fine');
     });
 
-    it('never hands the shared pane to a caller that asked for isolation', async () => {
-      // Silently returning the shared pane would give the caller the exact
-      // opposite of what it asked for, and it would not find out. The enclosing
-      // describe leaves a LIVE shared pane registered, which is what makes this
-      // meaningful: the isolated branch has to win against a resolvable pane.
-      vi.mocked(browserPaneRegistry.list).mockReturnValue([
-        pane(),
-        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
-      ] as never);
+    it('prefers the VISIBLE pane over the offscreen surface when the project is open', async () => {
+      // The reclaim direction. A task holding both (the window between a pane
+      // registering and the offscreen one being destroyed) must resolve to the
+      // pane: it is the surface the user can see and the one every supervision
+      // guard lives on.
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([pane(), offscreenSurface()] as never);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([pane(), offscreenSurface()] as never);
 
-      const result = await openPaneForCallerTask({
-        ...openInput('http://localhost:4200'),
-        isolated: true,
-      });
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw new Error('expected a lane');
-      expect(result.data.laneId).toBeTruthy();
-      expect(result.data.pane.sessionId).not.toBe(CALLER_SESSION);
+      const result = await openPaneForCallerTask(openInput(undefined));
+
+      expect(result).toMatchObject({ ok: true, data: { opened: false, navigated: false } });
+      if (!result.ok) throw new Error('expected the visible pane');
+      expect(result.data.pane.sessionId).toBe(CALLER_SESSION);
+      expect(result.data.offscreen).toBeUndefined();
     });
 
     it('navigates a RETAINED live pane whose project is backgrounded', async () => {
@@ -562,24 +550,84 @@ describe('openPaneForCallerTask', () => {
     });
   });
 
-  describe('isolated lane', () => {
-    // The lane's cookie jar is keyed by task identity (browser-lane-manager.ts's
-    // browserPartitionForTask), so openLane carries taskId + projectId and no cwd.
+  describe('the offscreen fallback', () => {
+    // Reached only when no pane can mount. The surface's cookie jar is keyed by
+    // task identity (browser-lane-manager.ts's browserPartitionForTask), so
+    // openLane carries taskId + projectId and no cwd.
     beforeEach(() => {
+      installHost({ currentProjectId: 'other-project', currentProjectPath: null });
       vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
       vi.mocked(browserPaneRegistry.list).mockReturnValue([
-        pane({ sessionId: 'lane_abc12345', kind: 'lane', url: 'http://localhost:4200' }),
+        offscreenSurface({ sessionId: 'lane_abc12345' }),
       ] as never);
     });
 
-    it('opens a lane carrying the caller task + project, with no cwd', async () => {
+    it('opens the surface carrying the caller task + project, with no cwd', async () => {
       const args = openInput('http://localhost:4200');
-      const result = await openPaneForCallerTask({ ...args, isolated: true });
+      const result = await openPaneForCallerTask(args);
       expect(result.ok).toBe(true);
       const laneArgs = vi.mocked(openLane).mock.calls[0][0] as Record<string, unknown>;
       expect(laneArgs.taskId).toBe(args.callerTaskId);
       expect(laneArgs.projectId).toBe(args.projectId);
       expect(laneArgs).not.toHaveProperty('cwd');
+    });
+
+    it('says RETRY for a surface that exists but has not finished loading', async () => {
+      // `openLane` enters its map before the load and registers only after, so
+      // for up to the load deadline a surface is neither driveable nor absent -
+      // most often because the hand-off just stood one up for a window the user
+      // closed. Falling through would reach `surface-exists`, whose advice
+      // (pass that handle as sessionId) answers `no-pane-open` for as long as
+      // the load takes, which is the opposite of actionable.
+      laneExistsForTask = true;
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
+
+      const result = await openPaneForCallerTask(openInput('http://localhost:4200'));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'surface-opening' } });
+      if (result.ok) throw new Error('expected a refusal');
+      expect(result.error.detail).toContain('Retry');
+      expect(openLane, 'and it must not race a second one into existence').not.toHaveBeenCalled();
+    });
+
+    it('reclaims onto the page the OFFSCREEN surface is on, not the saved one', async () => {
+      // The reclaim's URL, and the one thing about it that is not obvious.
+      // `browserUrlStore` is written by the PANE on its own `did-navigate`, and
+      // an offscreen surface has no renderer to write it (main's guest-side
+      // did-navigate bridge is gated on `getType() === 'webview'`, so it never
+      // fires for one either). Left to the sidecar, the pane about to replace
+      // the offscreen surface mounts on whatever page the task last had a
+      // VISIBLE pane on - which can be many navigations behind the agent.
+      installHost();
+      vi.mocked(browserUrlStore.get).mockReturnValue('http://localhost:5173/stale');
+      vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([
+        offscreenSurface({ url: 'http://localhost:4200/checkout/step-3' }),
+      ] as never);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([
+        offscreenSurface({ url: 'http://localhost:4200/checkout/step-3' }),
+      ] as never);
+      vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
+
+      await openPaneForCallerTask(openInput(undefined));
+
+      expect(browserUrlStore.set).toHaveBeenCalledWith(
+        '/projects/app',
+        CALLER_TASK,
+        'http://localhost:4200/checkout/step-3',
+      );
+    });
+
+    it('is never reached while the project IS open: that path mounts a real pane', async () => {
+      // The whole point of removing `isolated`. An agent has no way to ask for
+      // an offscreen surface, so a task whose window can be mounted always gets
+      // a visible one.
+      installHost();
+      vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
+
+      await openPaneForCallerTask(openInput('http://localhost:4200'));
+
+      expect(openLane).not.toHaveBeenCalled();
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST });
     });
   });
 });

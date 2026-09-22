@@ -113,11 +113,20 @@ function automationConfig(): ResolvedBrowserAutomationConfig {
  * resolution when the caller has no task - which is the case in this harness,
  * so it never reaches the withGuest spy either. `open_pane`'s own scoping is
  * covered by tests/unit/browser-pane-opener.test.ts.
+ *
+ * `pop_out` and `dock` are `null` for the same reason as `open_pane`, and it is
+ * the same guarantee rather than a weaker one: they take no target argument at
+ * all, so the only task they can name is the caller's own, and both refuse with
+ * `no-caller-task` before touching a window when there is none. Their scoping
+ * is covered by tests/unit/browser-pane-detach.test.ts.
  */
 const MINIMAL_ARGS: Record<string, Record<string, unknown> | null> = {
   kangentic_browser_list_panes: null,
   kangentic_browser_open_pane: null,
   kangentic_browser_close_pane: null,
+  kangentic_browser_pop_out: null,
+  kangentic_browser_dock: null,
+  kangentic_browser_set_viewport: { width: 1920, height: 1080 },
   kangentic_browser_navigate: { url: 'http://localhost:1' },
   kangentic_browser_screenshot: {},
   kangentic_browser_screenshot_element: { selector: 'body' },
@@ -129,6 +138,13 @@ const MINIMAL_ARGS: Record<string, Record<string, unknown> | null> = {
   kangentic_browser_click: {},
   kangentic_browser_type: { text: 'x' },
   kangentic_browser_keypress: { keys: 'Enter' },
+  kangentic_browser_hover: { selector: 'body' },
+  kangentic_browser_scroll: { deltaY: 100 },
+  kangentic_browser_select_option: { selector: 'select', value: 'x' },
+  kangentic_browser_drop_files: { selector: 'body', paths: ['/tmp/x.txt'] },
+  kangentic_browser_history: { direction: 'back' },
+  kangentic_browser_network: {},
+  kangentic_browser_handle_dialog: { accept: true },
   kangentic_browser_drag: { fromSelector: 'a', toSelector: 'b' },
   kangentic_browser_eval: { expression: '1' },
 };

@@ -23,6 +23,29 @@ interface AgentDriveState {
   /** Session ids whose pane an agent is driving right now. */
   drivingSessionIds: string[];
   setAgentDriving: (sessionId: string, driving: boolean) => void;
+  /**
+   * Monotonic counter, bumped when the user presses Ctrl+C in this session's
+   * terminal. A COUNTER rather than a flag because it is an EVENT: two
+   * interrupts in a row must both register, and there is no sensible moment to
+   * reset a flag.
+   *
+   * This exists because the engine's answer is far too slow to hang a pointer
+   * block on. Measured end to end on a live agent: 3067ms from the keypress to
+   * the veil clearing, which is `UserInterruptCoordinator`'s 3000ms settle
+   * window plus change. That window is right for what it does - it gives the
+   * agent's own `PostToolUseFailure` / `Stop` hooks time to fire so the engine
+   * does not force-idle an agent that is still working - but the veil must not
+   * wait for it, because the veil swallows the pointer and three seconds of
+   * "I pressed stop and the page is still dead" is the exact complaint this
+   * whole path exists to answer.
+   *
+   * Safe to act on immediately, and that asymmetry is the point: if the
+   * interrupt did not actually stop the agent, the next drive re-opens the
+   * veil within a call or two. Releasing early costs a moment of an unmarked
+   * drive; releasing late costs the user their own browser.
+   */
+  userInterrupts: Record<string, number>;
+  noteUserInterrupt: (sessionId: string) => void;
 }
 
 const createAgentDriveStore = () => create<AgentDriveState>((set) => ({
@@ -37,6 +60,14 @@ const createAgentDriveStore = () => create<AgentDriveState>((set) => ({
           : state.drivingSessionIds.filter((id) => id !== sessionId),
       };
     }),
+  userInterrupts: {},
+  noteUserInterrupt: (sessionId) =>
+    set((state) => ({
+      userInterrupts: {
+        ...state.userInterrupts,
+        [sessionId]: (state.userInterrupts[sessionId] ?? 0) + 1,
+      },
+    })),
 }));
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this

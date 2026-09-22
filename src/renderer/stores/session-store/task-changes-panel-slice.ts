@@ -71,6 +71,23 @@ export interface TaskChangesPanelSlice {
    */
   browserGuestTasks: Map<string, number>;
   /**
+   * Tasks whose one browser surface is currently OFFSCREEN, pushed from main.
+   *
+   * The counterpart to `browserGuestTasks` for a surface no `<webview>` backs.
+   * Main opens one when no pane can mount - the user closed the task window
+   * while an agent was live, or the project is backgrounded - and only main can
+   * see it, since there is no renderer inside an offscreen `BrowserWindow` to
+   * register anything. Without this the browser existed and nothing on screen
+   * said so: an agent ran a whole verification in one with no globe, no pill
+   * and no way for the user to close it, which is what ended agent-requested
+   * lanes entirely.
+   *
+   * Read alongside `browserGuestTasks` everywhere "this task has a browser" is
+   * the question. The whole set arrives on every change, never a delta, so a
+   * missed push self-corrects on the next one. Never persisted.
+   */
+  browserOffscreenTasks: Set<string>;
+  /**
    * Per-task counter that forces `useBrowserUrl` to refetch, keyed by task ID.
    *
    * Exists for one case: `kangentic_browser_open_pane` seeds the task's URL
@@ -175,6 +192,18 @@ export interface TaskChangesPanelSlice {
    * guest for the same task cannot erase the newer one.
    */
   clearBrowserGuest: (taskId: string, webContentsId: number) => void;
+  /**
+   * Replace the offscreen-surface set from main's push (or the mount-time
+   * read). Takes the WHOLE set, never a delta: main is the only authority, and
+   * a renderer applying deltas would stay wrong forever after one missed push.
+   */
+  setBrowserOffscreenTasks: (taskIds: string[]) => void;
+  /**
+   * Read the offscreen-surface set from main. Called on mount and from the
+   * HMR `vite:afterUpdate` resync (Pattern B), because the push alone leaves a
+   * reloaded renderer blank for a surface that never changes again.
+   */
+  loadBrowserOffscreenTasks: () => Promise<void>;
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
@@ -320,6 +349,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserOpenTasks: new Set<string>(),
   browserHeldTasks: new Set<string>(),
   browserGuestTasks: new Map<string, number>(),
+  browserOffscreenTasks: new Set<string>(),
   browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
@@ -404,6 +434,23 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const next = new Map(current);
     next.delete(taskId);
     set({ browserGuestTasks: next });
+  },
+
+  setBrowserOffscreenTasks: (taskIds) => {
+    // Replace only on a real membership change. Every card on the board
+    // subscribes to this set, so a new Set on each push would re-render the
+    // whole board every time a lane is touched.
+    const current = get().browserOffscreenTasks;
+    if (current.size === taskIds.length && taskIds.every((taskId) => current.has(taskId))) return;
+    set({ browserOffscreenTasks: new Set(taskIds) });
+  },
+
+  loadBrowserOffscreenTasks: async () => {
+    // Optional-chained for the same reason every other bootstrap read is: a
+    // Vite full reload can run this before the preload bridge is re-injected.
+    const taskIds = await window.electronAPI.browser?.getOffscreenSurfaces?.().catch(() => null);
+    if (!taskIds) return;
+    get().setBrowserOffscreenTasks(taskIds);
   },
 
   refreshBrowserUrl: (taskId) => {

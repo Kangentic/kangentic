@@ -157,6 +157,17 @@ export function App() {
       },
     );
 
+    // Which tasks hold their one browser surface OFFSCREEN. Read once, then
+    // live on the push. Only main can see these: an offscreen `BrowserWindow`
+    // has no renderer to register itself, so without this the card globe and
+    // the Browser pill show nothing for a task that genuinely has a browser.
+    // The initial read is what covers a reload and an HMR update, since a
+    // surface can sit unchanged for a whole session.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
+    const cleanupOffscreenSurfaces = window.electronAPI.browser?.onOffscreenSurfaces?.((taskIds) => {
+      useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
+    });
+
     return () => {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
       cleanupAutoOpen();
@@ -166,6 +177,7 @@ export function App() {
       cleanupUpdateListener?.();
       cleanupHostMemoryListener?.();
       cleanupAnnouncementsChanged?.();
+      cleanupOffscreenSurfaces?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
   }, []);
@@ -1013,6 +1025,10 @@ if (import.meta.hot) {
     }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
+    // Offscreen browser surfaces Pattern B: main is the only authority, and a
+    // surface can sit unchanged across the whole session, so the push alone
+    // would leave the card globe dark after a Fast Refresh.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
     // Announcements Pattern B: re-pull the active list and the archive from
     // main-process truth. loadActive also re-runs the open-dialog
     // reconciliation, which a history-opened dialog is exempt from.

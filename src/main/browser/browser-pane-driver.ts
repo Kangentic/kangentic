@@ -1,6 +1,15 @@
 import { BrowserWindow, type WebContents } from 'electron';
-import { browserPaneRegistry, type ResolveTargetSelector } from './browser-pane-registry';
-import { attachDebugger, ensureFocusEmulation, isDebuggerAttached } from './cdp/cdp';
+import {
+  browserPaneRegistry,
+  type BrowserPaneEntry,
+  type ResolveTargetSelector,
+} from './browser-pane-registry';
+import {
+  attachDebugger,
+  ensureFocusEmulation,
+  isDebuggerAttached,
+  waitForDialogInterception,
+} from './cdp/cdp';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
@@ -93,7 +102,7 @@ export interface WithGuestOptions {
  */
 export async function withGuest<T>(
   options: WithGuestOptions,
-  fn: (webContents: WebContents) => Promise<T>,
+  fn: (webContents: WebContents, entry: BrowserPaneEntry) => Promise<T>,
 ): Promise<DriverResult<T>> {
   const gate = capabilityGate(options.capability, options.config);
   if (gate) return { ok: false, error: gate };
@@ -154,6 +163,19 @@ export async function withGuest<T>(
       };
     }
   }
+
+  // Do not let a drive outrun dialog interception.
+  //
+  // `attachDebugger` is synchronous and its domain enables are fire-and-forget,
+  // so before this await the FIRST drive against a guest ran while
+  // `Page.enable` was still in flight. A click that opened a `confirm()` in
+  // that window raced ahead of the interceptor: Chromium showed its own native
+  // modal, the renderer blocked, every later command queued behind it, and
+  // there was no agent-side way out. Found by a live agent whose first act on a
+  // fresh pane was a click; a sweep that calls anything else first never
+  // reproduces it. Resolved already for every call after the attach, so this
+  // costs one settled-promise await on the hot path.
+  await waitForDialogInterception(webContents);
 
   // Tell the guest it BEHAVES as focused, so a page that hides UI or pauses on
   // blur works normally under automation and keeps its own focused element after
@@ -224,7 +246,14 @@ export async function withGuest<T>(
         // across a boundary. So the selector forms are the supported path, and the
         // limits of the selector-less ones are documented rather than papered over
         // with focus management. See `docs/embedded-browser.md`.
-        const data = await fn(webContents);
+        // The resolved entry is handed over alongside the guest because
+        // `WebContents` alone cannot tell a lane from a pane, nor a docked pane
+        // from a popped-out one, and `set_viewport` picks a different mechanism
+        // for each. Deriving it from `hostWebContents` would work today and
+        // couple a product decision to a Chromium implementation detail; the
+        // registry already knows, so it says. Existing one-argument callbacks
+        // are assignable, so this costs no call site.
+        const data = await fn(webContents, target.entry);
         report('ok');
         return { ok: true, data } as DriverResult<T>;
       } catch (error) {

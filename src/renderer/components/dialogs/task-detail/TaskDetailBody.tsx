@@ -19,7 +19,7 @@ import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import type { Task, SessionDisplayState, SwimlaneRole } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
-import { useIsAgentDrivingSession } from '../../../stores/agent-drive-store';
+import { useAgentDriveVeil } from '../../../hooks/useAgentDriveVeil';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
 import { usePopOut } from '../../../pop-out/usePopOut';
@@ -200,7 +200,9 @@ export function TaskDetailBody({
   // Only meaningful while the pane is actually on screen: a drive against a
   // popped-out, held, or closed pane must not dim a terminal the user is
   // working in.
-  const agentDrivingBrowser = useIsAgentDrivingSession(sessionId) && showBrowser;
+  // The same shaped envelope the pane's veil reads, so the border cannot flip
+  // at the router's raw cadence underneath a veil that no longer does.
+  const agentDrivingBrowser = useAgentDriveVeil(sessionId).visible && showBrowser;
   const showChanges = changesOpen && !showBrowser && !changesPopOut.isOpen;
   const rightPanelPresent = showChanges || showBrowser || descriptionPeekOpen;
   const changesPresent = showChanges;
@@ -488,19 +490,26 @@ export function TaskDetailBody({
               }`}
               style={terminalBasis !== undefined ? { flexBasis: terminalBasis } : undefined}
             >
-              {/* Dimmed while an agent drives the Browser pane.
-                  Interacting with a page means clicking it, and a click gives
-                  the guest real keyboard focus - so the focus move cannot be
-                  designed away, and every attempt to hide it put keystrokes on
-                  the wrong side. It is shown instead, so the user can SEE that
-                  their typing will not land here. Opacity only: the terminal
-                  stays mounted, live, and clickable, and one click takes focus
-                  straight back. */}
+              {/* The terminal is NEVER dimmed by an agent drive, and the wrapper
+                  is kept only because the tree shape below it is load-bearing.
+
+                  It used to fade to 40% for the length of a drive, on the
+                  reasoning that the focus move should be shown. That reasoning
+                  was pointed at the wrong pane. A CDP click does steal the
+                  guest's focus, but main then intercepts every keyDown at the
+                  guest and writes it straight to this terminal, so this is the
+                  surface that still accepts your typing and the page is the one
+                  that cannot. Dimming it faded the live half of the split while
+                  the inert half stayed bright, and it did so at the router's
+                  400ms cadence, which read as a flicker.
+
+                  The drive is marked on the pane instead: a veil, the accent
+                  border on the split, and a label naming it, all on the shaped
+                  envelope in `useAgentDriveVeil`. See
+                  `.claude/rules/agent-driven-focus.md`. */}
               <div
                 data-testid="task-detail-terminal-dim"
-                className={`absolute inset-0 transition-opacity duration-200 ${
-                  agentDrivingBrowser ? 'opacity-40' : 'opacity-100'
-                }`}
+                className="absolute inset-0"
               >
                 {/* A dormant window (retained while its project is backgrounded,
                     or parked after the user closed it) is mounted ONLY to keep

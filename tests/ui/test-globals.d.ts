@@ -19,6 +19,8 @@ declare global {
         | { type: 'unregister'; webContentsId: number }
         | { type: 'user-close'; webContentsId: number }
         | { type: 'visibility'; webContentsId: number; visibility: string }
+        | { type: 'viewport-clear'; webContentsId: number }
+        | { type: 'offscreen-close'; taskId: string; projectId: string | null }
       >;
       seedTaskUrl: (taskId: string, url: string) => void;
       /** The project a task URL was last saved against (null if never saved). */
@@ -31,6 +33,12 @@ declare global {
       emitPaneCloseRequest: (projectId: string, taskIds: string[]) => void;
       /** Fire main's agent-input push for one guest (an agent is / is no longer driving it). */
       emitAgentInput: (webContentsId: number, active: boolean) => void;
+      /** Fire main's "these tasks hold their browser surface offscreen" push.
+       *  Takes the WHOLE set, as main does. */
+      emitOffscreenSurfaces: (taskIds: string[]) => void;
+      /** Seed the set a renderer reads on mount, for a surface that already
+       *  existed before this renderer did. */
+      seedOffscreenSurfaces: (taskIds: string[]) => void;
     };
 
     /** Captures the URL most recently submitted by BrowserEmptyState mounts. */

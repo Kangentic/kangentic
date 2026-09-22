@@ -21,6 +21,7 @@ import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-s
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { setAgentInputSender, isAgentDriving } from './browser/agent-input-signal';
+import { setViewportOverrideSender } from './browser/viewport-override-store';
 import { encodeTerminalKey } from '../shared/terminal-key-encoding';
 import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
@@ -313,6 +314,18 @@ app.on('web-contents-created', (_event, contents) => {
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
+    // Electron must not draw its own JavaScript dialog for a guest, because
+    // the CDP driver already answers them (`cdp.ts`, `Page.enable` +
+    // `Page.javascriptDialogOpening`). Measured on Electron 41: BOTH fire.
+    // The page got its answer from CDP and carried on, while Electron left a
+    // native "Really delete?" box on screen whose OK and Cancel then did
+    // nothing - the answer was already given. So the box was not merely
+    // redundant, it was a lie about what the page would do, and the user had
+    // to dismiss one per dialog.
+    //
+    // Suppressing it here rather than in the driver because this is Electron's
+    // own delegate, which the CDP interception does not sit in front of.
+    webPreferences.disableDialogs = true;
 
     let allowed: boolean;
     try {
@@ -634,6 +647,30 @@ setAgentInputSender((guest, active) => {
   const hostWindow = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest);
   if (!hostWindow || hostWindow.isDestroyed()) return;
   hostWindow.webContents.send(IPC.BROWSER_AGENT_INPUT, guest.id, active);
+});
+
+// Routed exactly as the two above are, and for the same reason: a detached
+// pane's chip lives in the pop-out window's renderer, not the main one. A LANE
+// has no host window at all and `fromWebContents` on its own offscreen guest
+// resolves the lane window, whose renderer has no pane to tell - the send is a
+// harmless no-op there, which is correct, since nobody is looking at a lane.
+setViewportOverrideSender((guest, override) => {
+  if (guest.isDestroyed()) return;
+  const hostWindow = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest);
+  if (!hostWindow || hostWindow.isDestroyed()) return;
+  hostWindow.webContents.send(
+    IPC.BROWSER_VIEWPORT_OVERRIDE,
+    guest.id,
+    override
+      ? {
+          mechanism: override.mechanism,
+          requested: override.requested,
+          measured: override.measured,
+          deviceScaleFactor: override.deviceScaleFactor,
+          appliedAt: override.appliedAt,
+        }
+      : null,
+  );
 });
 
 // Enforce single instance -- prevents manual double-launches from spawning

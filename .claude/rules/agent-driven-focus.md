@@ -70,19 +70,176 @@ reveals what that one cannot avoid.
   `_keypress` WITHOUT a selector only land when the pane already holds focus. The selector forms
   work because the click and the characters happen inside ONE call, which is the only configuration
   that measured clean. It is recorded in `docs/embedded-browser.md`.
-- **The focus move is SHOWN, not hidden.** This is the design, and it is what the three failed
-  attempts above were replaced with. While a burst is open the terminal side of the split dims
-  (`opacity` only - it stays mounted, live, and one click away), the pane takes an accent border,
-  and the toolbar says "Agent typing here" in words. `agent-drive-store.ts` holds the state, keyed by
-  sessionId; `BrowserPane` owns the translation from the guest id the signal carries, because it is
-  the only component that knows both.
+- **The focus move is SHOWN, not hidden, and it is shown ON THE PAGE.** This is the design, and it
+  is what the three failed attempts above were replaced with. While a burst is open the pane takes
+  a veil, an accent border, and a static "Agent is driving" label in its bottom-left corner.
+  `agent-drive-store.ts` holds the state, keyed by sessionId; `BrowserPane` owns the translation
+  from the guest id the signal carries, because it is the only component that knows both.
 
-  Colour is not the whole signal on purpose: the text cue is what makes "why has my typing stopped
-  appearing" answerable, and colour alone is not readable by everyone.
+  **The terminal is never touched.** It faded to 40% until 2026-09-21, on the reasoning that the
+  focus move should be visible, and that was aimed at the wrong half of the split. Main intercepts
+  every keyDown at the guest and writes it to the terminal, so the terminal is the surface that
+  still accepts the user's typing and the PAGE is the one that cannot take a keystroke. Dimming the
+  terminal faded the working half while the inert half stayed bright. Do not reintroduce it, and do
+  not put a status strip, a notice or a label there either: the terminal stays unobstructed.
+
+  **The MOTION is the primary cue, and the veil supports it.** Reported from a live drive: "on a
+  white background the dim isn't coming through". It was coming through - the veil was applied and
+  measurable. A viewer simply cannot tell a veiled white page from a page that is grey, because
+  they never see the two side by side. **A tint needs a baseline; motion does not.** So the inset
+  ring breathes (`.kng-drive-pulse`, opacity, 1400ms, the activity marks' shared period so a driving
+  pane is in lockstep with every other working indicator rather than adding a cadence), and the
+  label's dot breathes with it.
+
+  The RING carries the motion, not the 6px dot alone. The activity marks learned that the expensive
+  way: a 2.7px element blinking reads as no motion at all. The ring is the page's whole perimeter
+  and covers no content, so it can move without making anything harder to read.
+
+  Colour is not the whole signal on purpose: the veil is a luminance change rather than a hue, and
+  the label is what makes "why has my typing stopped appearing" answerable in words. Neither the
+  veil nor the motion alone would do - a dimmed or pulsing surface is the universal look for
+  loading, and this is not that.
+
+  **The pointer block is a SEPARATE layer from the announcement, on the RAW signal.** They answer
+  different questions and must not share an envelope. The mark asks "should the pane still be
+  marked", and its tail deliberately outlives the last call so a run does not strobe. The block
+  asks "is the agent driving right now", and has to be exact in both directions: it cannot lag the
+  first call, and it must not outlive the last one by five seconds holding a page the agent has
+  finished with. When they shared one envelope the first call of every run went unguarded for a
+  whole inter-call gap.
+
+  The blocking layer carries the accent ring, so the pane is never silently dead: a page that stops
+  taking clicks with nothing on screen to explain it is worse than a brief mark. An edge rather
+  than a wash, so a short block reads as a pulse at the border. The ring only BREATHES once the
+  run is announced, so motion still means sustained control.
+
+  The announcement layer must never take the pointer. It sits above the block, so if it captured,
+  it would keep swallowing clicks through its fade after the block had let go.
+
+  **The guest's own event capture goes with the block.** A `<webview>` does not reliably honour CSS
+  stacking, so a scrim on top of it is not enough on its own: the guest's `pointerEvents` has to go
+  to `none` too, exactly as draw mode already does.
+
+  This is a correctness fix, not only honesty about the veil. Clicking into the page during a drive
+  used to strand the user's typing: the click is a gesture away from the guarded element, so the
+  renderer's guard disarms and `restoreTarget` goes null, while main is still unconditionally
+  preventDefaulting every keyDown at the guest. Keystrokes then reached neither the page nor the
+  terminal and were dropped in silence. With the pointer swallowed that state is unreachable. It
+  also stops a click racing the agent, which changes the page under a verification in progress.
+
+  The cost is accepted and should stay written down: the page cannot be scrolled while a run is
+  open. The toolbar is outside the overlay container and stays live throughout (Close browser, the
+  note input, Draw, Inspect), and a run closes on its own timer, so a stuck veil cannot lock the
+  pane away permanently.
 
   The interception stays as the safety net underneath, so a user who types anyway still lands in
   their terminal rather than a web form. Visible state and safe routing are complements here, not
   alternatives.
+- **The visual runs on a shaped envelope whose unit is the RUN, never the burst.** `isAgentDriving`
+  is tight because it decides where a keystroke goes: it opens on the first call and closes
+  `DRIVE_BURST_QUIET_MS` (400ms) after the last. `useAgentDriveVeil` is the shaping layer, and
+  every consumer reads it - the pane's veil and the split row's accent border both call the hook,
+  because shaping only one leaves the other flipping at the raw cadence underneath it.
+
+  **Measured, from a real 27-call agent verification against a live pane** (the agent's own
+  transcript timestamps):
+
+  | | min | median | max |
+  |---|---|---|---|
+  | one call holds the guest | 253ms | 272ms | 929ms |
+  | gap between consecutive calls | 1060ms | 1665ms | 4428ms |
+
+  Both rows matter and the second is the surprising one. A call holds the guest about a quarter of
+  a second, so one call is a signal roughly 670ms long. And the gap between calls is never under a
+  second, because it is the MODEL THINKING rather than the tool running - so the 400ms quiet window
+  never bridges it and **every call is its own burst**. Ten calls an agent issues "back to back"
+  arrive as ten bursts about 1.1s apart.
+
+  A per-burst envelope therefore has no good setting: paint each burst and a routine verification
+  flashes 27 times, suppress short bursts and nothing ever paints because every burst is short.
+  A first attempt used a 700ms grace chosen to sit just above the single-call band; 26 of 27 calls
+  fell under it and the user saw nothing at all. Do not reintroduce a per-burst threshold.
+
+  **Four requirements, and every earlier cut satisfied three of them.** Stated by the user: show
+  the agent is working as soon as possible; block the user's input as soon as possible; release
+  both as soon as the agent is no longer using the pane; never flash or flicker.
+
+  The tension is only between the first and the last, and only if "no flicker" is read as "never
+  appear briefly". It is not. What was reported was ONE cue strobing 27 times across a single piece
+  of work. So the cure is holding across the gaps, not delaying the start, and once that is right
+  the first requirement is free.
+
+  So: the veil OPENS on the first burst with no threshold, HOLDS while bursts keep arriving within
+  `LINK_MS` (5000ms, above the widest gap measured), and CLOSES on the earliest honest signal - the
+  agent going idle, the user's Ctrl+C, or `LINK_MS` of silence. A whole verification is one fade in
+  and one fade out.
+
+  A second-burst threshold was tried and removed: it made the announcement trail the agent by a
+  whole inter-call gap, and it put the mark out of step with the pointer block, which cannot wait.
+  Do not reintroduce one.
+
+  Consumers own the fade: 200ms in, and the exit depends on WHY the run ended. A run that wound
+  down (the link window expired) fades over 500ms, which reads as an ending rather than as
+  something abruptly gone. A run the user STOPPED fades in 100ms, because they pressed the key and
+  are waiting to see that it landed. The hook reports which through `stopped`; the two are
+  identical in the store and nothing alike to the person watching.
+
+  That split came from a report of the release "still feeling slow" against a release whose state
+  flip and pointer restore were both already instant. Only the fade was left - and for that half
+  second the veil was telling the user not to touch a page that was fully clickable again, which is
+  the visual contradicting the behaviour rather than merely lagging it. Do not fix that by
+  shortening BOTH: the slow wind-down is still right for the case nobody triggered.
+
+  Easing instead of suppressing was rejected outright - a fade on a cue that should never have
+  appeared is a slower flash, and a slower flash occupies more time on screen, not less. Under
+  reduced motion, drop the fades and keep every timing: the run rule is scheduling rather than
+  animation, and it is the part that removes the churn.
+
+  **A stop bypasses the envelope entirely, and the user's Ctrl+C does not wait for the engine.**
+  The link window exists to bridge the model THINKING between two calls, so an interrupted or
+  finished agent must never wait it out: the hook watches the session and closes the run at once
+  when it stops running or its activity becomes a definite idle or permission. This is not a nicety
+  now that the veil swallows the pointer - waiting it out locks the user out of their own browser
+  for seconds after they pressed stop, which is how it was reported.
+
+  The engine's own answer is far too slow to hang a pointer block on, and the number is worth
+  keeping because it is not intuitive. **Measured end to end against a live agent: 3067ms from the
+  keypress to the veil clearing.** That is `UserInterruptCoordinator`'s 3000ms settle window, which
+  exists so the engine gives the agent's `PostToolUseFailure` / `Stop` hooks a chance before it
+  force-idles a session that might still be working. Right for the engine, wrong for the veil.
+
+  Why it is that slow, and why it felt intermittent: interrupting DURING a tool call fires
+  `PostToolUseFailure` with `is_interrupt` and idles at once, while interrupting BETWEEN calls
+  fires **no hook at all**. A call runs about 300ms out of every 2s, so the slow path is the
+  common one. What a user reads as "it released in ~400ms" is usually not a release at all - it is
+  the remainder of the 5000ms link window happening to expire near their keypress.
+
+  So the Ctrl+C handler in `terminal-clipboard.ts` notes the interrupt in `agentDriveStore`
+  directly, alongside the existing `notifyUserInterrupt` IPC, and the veil closes on that. A
+  COUNTER rather than a flag, because it is an event: a second press must register, and there is
+  no sensible moment to reset a flag. Acting on it immediately is safe in the direction that
+  matters - if the interrupt did not actually stop the agent, the next drive re-opens the veil
+  within a call or two, whereas releasing late costs the user their own browser.
+
+  Use `requiresUserInteraction`, not `!isActive`: it is true only for a DEFINITE state, so an
+  unknown or not-yet-loaded activity can never tear the veil down underneath a live drive. That is
+  the direction that fails safe, and it is also what
+  [[activity-state-classification]] requires - never compare the literals here.
+
+  **Known bounded gap, left open deliberately.** The release is a renderer decision; main's
+  `isAgentDriving` still reports true until `DRIVE_BURST_QUIET_MS` after the last call returns. So
+  for up to ~400ms after a stop the pane looks and feels interactive while a keystroke into it is
+  still intercepted and routed to the terminal. That is the same class this rule exists to close,
+  and it is not closed here for two reasons: the misroute lands in the terminal the user was
+  already typing in rather than somewhere surprising, and the obvious fix (main flushing the burst
+  when a session goes idle) ends the guard early, which fires `restoreIfStolen` and is the one
+  thing measured to BREAK a running tool. Closing it needs a signal that distinguishes "the agent
+  stopped" from "activity is momentarily stale", which does not exist yet. Do not shorten the veil
+  instead - holding it until the burst closes is exactly the ~400ms lag that was reported.
+
+  **Re-measure before retuning.** Every constant here is pinned to that table, and the table is one
+  workload on one machine. If the numbers are ever in doubt, read the gaps out of an agent
+  transcript again rather than adjusting by feel.
 - **The renderer sees a BURST, not a call.** `endAgentInput` debounces its announcement by
   `DRIVE_BURST_QUIET_MS`, and a call arriving inside that window cancels it. Without this the pane
   handed focus back between every consecutive tool call: measured at 810 trusted `focusin` events on
@@ -179,8 +336,8 @@ reveals what that one cannot avoid.
   same place, for the same reason.
 - **Dictating into the GUEST PAGE goes through `executeJavaScript`, never the CDP driver.** This was
   first recorded as a non-goal on the grounds that it needed a new non-agent CDP path; that was
-  wrong, and the correction matters because the wrong version would have flashed "Agent typing here"
-  and armed this guard on the user's own dictation. `<webview>.executeJavaScript` runs in the guest
+  wrong, and the correction matters because the wrong version would have veiled the pane and armed
+  this guard on the user's own dictation. `<webview>.executeJavaScript` runs in the guest
   from the renderer in 1-2ms and touches neither `withGuest` nor the agent-input signal. Keep it
   that way: a guest write must never route through the driver.
 
@@ -233,8 +390,27 @@ reveals what that one cannot avoid.
   that the driver never calls `focus()` on the guest at ANY capability tier. These fail the moment
   the chokepoint stops buying the property.
 - **Test (visible):** `tests/ui/browser-pane-agent-input-focus.spec.ts` pins that a drive marks the
-  pane, un-marks it when the drive ends, says it in words, and never marks a pane whose guest is not
-  the one being driven.
+  pane, un-marks it when the drive ends, says it in words, takes no pointer events, and never marks
+  a pane whose guest is not the one being driven, and that it swallows the pointer while driving
+  and HANDS IT BACK afterwards (both the scrim and the guest's own `pointerEvents`, since a pane
+  left inert after a run would be a worse bug than the one blocking fixes). It also pins the four
+  properties that define the current treatment against the one it replaced: the terminal stays at
+  full opacity throughout, a single isolated call paints nothing, the SECOND call of a run opens
+  the veil, and the veil rides straight over the gap between calls instead of blinking per call.
+  Another pins the motion by its
+  COMPUTED animation (name, `infinite`, and the 1400ms period) rather than by its class, so a
+  keyframe deleted, renamed, or lost to the cascade fails loudly - the exact way an activity mark
+  once stopped moving for months behind an un-important override.
+
+  The isolated-call case is watched with a `MutationObserver` rather than sampled once the call is
+  over, and the distinction is load-bearing: a per-burst cue goes up and comes back down inside the
+  wait, so a final read is `false` either way and the test passes against the bug. The assertion is
+  that it never went up.
+
+  Its assertions carry explicit timeouts past Playwright's 5s default wherever they wait for the
+  run to CLOSE, because `LINK_MS` is 5000ms and the default would race the product. The shared page
+  also means a test that leaves a run open leaks it into the next one, so `settleIdle` re-establishes
+  a false baseline wherever a test needs one.
 - **Test (burst):** `tests/unit/agent-input-burst.test.ts` pins that a run of back-to-back calls
   announces ONE begin, that the end waits for the quiet window, that a call inside that window
   continues the same burst, and that `isAgentDriving` reports true for the WHOLE burst INCLUDING

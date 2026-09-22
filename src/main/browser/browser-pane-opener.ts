@@ -16,7 +16,7 @@ import {
   type DriverResult,
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
-import { openLane, destroyLane } from './browser-lane-manager';
+import { openLane, destroyLane, hasLaneForTask } from './browser-lane-manager';
 
 /**
  * Opens and closes a task's embedded Browser pane on behalf of the
@@ -107,20 +107,6 @@ export interface OpenPaneInput {
    */
   capability: BrowserCapability;
   config: ResolvedBrowserAutomationConfig;
-  /**
-   * Open a private LANE instead of the task's shared pane.
-   *
-   * The discriminator is the ACT OF ASKING, not who is asking - which is the
-   * whole reason this is an argument rather than per-caller routing. Every
-   * subagent inherits its parent's `callerSessionId`, so the server genuinely
-   * cannot tell concurrent workers apart, and the alternatives (a hook that
-   * stamps Claude's `agent_id`) are single-agent solutions in a product that
-   * supports ten agent CLIs.
-   *
-   * A lane's id comes back as `sessionId`, which every driving tool already
-   * accepts, so no tool needed a new argument.
-   */
-  isolated?: boolean;
 }
 
 export interface OpenPaneData {
@@ -131,11 +117,17 @@ export interface OpenPaneData {
   url: string;
   pane: BrowserPaneStatus;
   /**
-   * Present only for an isolated lane. The caller MUST pass this back as
-   * `sessionId` on every later browser call, or it falls back to the shared
-   * pane and the isolation it just asked for silently does nothing.
+   * Present only when the surface came up OFFSCREEN, which happens when no
+   * visible pane can be mounted (the caller's project is backgrounded). It is
+   * the same value as `pane.sessionId`; both name the task's one surface.
    */
   laneId?: string;
+  /**
+   * True when `laneId` is set: the surface is real and driveable, but the user
+   * cannot see it. Named so the agent can say so rather than reporting a
+   * visible browser the user is not looking at.
+   */
+  offscreen?: boolean;
 }
 
 export interface ClosePaneInput {
@@ -201,6 +193,160 @@ function resurfaceLivePane(host: BrowserPaneOpenerHost, projectId: string, taskI
   host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, taskId);
 }
 
+/** The task's live OFFSCREEN surface, or null. At most one, by construction. */
+function liveOffscreenSurface(taskId: string, projectId: string) {
+  return (
+    browserPaneRegistry
+      .getByTaskId(taskId, projectId)
+      .find((entry) => entry.kind === 'lane' && browserPaneRegistry.resolveLiveGuest(entry).ok) ?? null
+  );
+}
+
+/**
+ * Where the task's offscreen surface is RIGHT NOW, for a pane about to replace it.
+ *
+ * Read from the registry's `list()`, which reads the live guest, rather than
+ * from `browserUrlStore`. The store is written by the PANE on its own
+ * `did-navigate`, and an offscreen surface has no renderer to write it - and
+ * main's guest-side `did-navigate` bridge is gated on `getType() === 'webview'`,
+ * so it never fires for one either. Without this the reclaim mounts a pane on
+ * whatever page the task last had a visible pane on, which can be many
+ * navigations behind the agent.
+ */
+export function offscreenSurfaceUrl(taskId: string, projectId: string): string | null {
+  const entry = liveOffscreenSurface(taskId, projectId);
+  if (!entry) return null;
+  return paneStatus(entry.sessionId)?.url ?? entry.url;
+}
+
+/**
+ * Bring the task's one surface up OFFSCREEN, because no visible pane can mount.
+ *
+ * Reached ONLY from the cold path's backgrounded-project branch. It is not an
+ * agent choice: `kangentic_browser_open_pane` had an `isolated` argument until
+ * 2026-09-21 and it came out, because a surface the user cannot see, cannot
+ * close, and cannot supervise is not something an agent should be able to ask
+ * for. See `browser-lane-manager.ts` for the full reasoning.
+ *
+ * It stays as a FALLBACK because the alternative is a dead end with no way out.
+ * Close a task's detail window and its `<webview>` guest is destroyed
+ * (correctly; the node unmounted). Switch projects too, and an agent still
+ * running in the backgrounded project has no pane AND cannot open one: every
+ * drive returns `no-pane-open`, whose hint says to call open_pane, which
+ * refused with `project-not-open`. The two composed into a loop.
+ *
+ * Like the warm path, this reaches no project-scoped state: `callerTaskId` came
+ * from the session registry (so a live session is already proof the task is
+ * real) and the surface's cookie jar is keyed by that task id, which is what
+ * keeps `host.taskExists` - and its stray-database precondition - out of here.
+ *
+ * KNOWN GAP, stated rather than found later: that also means the project's
+ * `browser.enabled` override is not consulted, because reading it needs the
+ * project's path and the whole reason this path exists is that the project is
+ * not the open one. A project that turned the Browser pane off therefore still
+ * gets an offscreen surface while it is backgrounded. The cold pane path above
+ * does enforce the gate, so the pane it reclaims into never appears. Closing
+ * this needs the host to resolve an arbitrary project's overrides, which it
+ * deliberately cannot do today.
+ */
+async function openOffscreenSurface(
+  input: OpenPaneInput & { callerTaskId: string },
+): Promise<DriverResult<OpenPaneData>> {
+  const { projectId, callerSessionId, callerTaskId, config } = input;
+
+  const existing = liveOffscreenSurface(callerTaskId, projectId);
+  if (existing) {
+    if (input.url) {
+      const validatedLive = validateNavigationUrl(input.url, config);
+      if (!validatedLive.ok) return { ok: false, error: validatedLive.error };
+      const navigateResult = await withGuest<true>(
+        {
+          selector: { sessionId: existing.sessionId, projectId, callerSessionId, callerTaskId },
+          capability: input.capability,
+          config,
+        },
+        async (webContents) => {
+          await navigateGuest(webContents, validatedLive.url);
+          return true;
+        },
+      );
+      if (!navigateResult.ok) return { ok: false, error: navigateResult.error };
+      const navigated = paneStatus(existing.sessionId);
+      if (!navigated) return failure('pane-destroyed', 'The browser surface closed while navigating. Retry.');
+      return {
+        ok: true,
+        data: {
+          opened: false,
+          navigated: true,
+          url: validatedLive.url,
+          pane: navigated,
+          laneId: existing.sessionId,
+          offscreen: true,
+        },
+      };
+    }
+
+    const pane = paneStatus(existing.sessionId);
+    if (!pane) return failure('pane-destroyed', 'The browser surface closed while opening. Retry.');
+    if (pane.url) {
+      return {
+        ok: true,
+        data: { opened: false, navigated: false, url: pane.url, pane, laneId: existing.sessionId, offscreen: true },
+      };
+    }
+    return failure(
+      'no-url',
+      'Your task has a browser surface but it is on no page. Pass the `url` argument (for example http://localhost:5173).',
+    );
+  }
+
+  // A surface for this task exists but has not REGISTERED yet.
+  //
+  // `openLane` enters its bookkeeping map before it loads the first URL and
+  // registers only after, so for up to `LANE_LOAD_TIMEOUT_MS` a surface is
+  // neither driveable nor absent - most often because the hand-off just stood
+  // one up for a window the user closed. Falling through here would reach
+  // `openLane`'s `surface-exists`, whose advice (pass that handle as
+  // sessionId) answers `no-pane-open` for as long as the load takes. Say retry
+  // instead, which is the thing that actually works.
+  if (hasLaneForTask(callerTaskId)) {
+    return failure(
+      'surface-opening',
+      'Your task already has a browser surface and it is still loading its first page. Retry in a moment. If that page never loads, the surface is abandoned and a retry opens a new one.',
+    );
+  }
+
+  if (!input.url) {
+    return failure(
+      'no-url',
+      'Pass an explicit `url`. Your project is not the one currently open in Kangentic, so its saved Browser URL and project default cannot be read - but the browser itself will open fine.',
+    );
+  }
+  const validated = validateNavigationUrl(input.url, config);
+  if (!validated.ok) return { ok: false, error: validated.error };
+
+  const lane = await openLane({
+    taskId: callerTaskId,
+    projectId,
+    ownerSessionId: callerSessionId,
+    url: validated.url,
+  });
+  if (!lane.ok) return failure(lane.kind, lane.detail);
+  const lanePane = paneStatus(lane.laneId);
+  if (!lanePane) return failure('pane-destroyed', 'The browser surface closed immediately after opening. Retry.');
+  return {
+    ok: true,
+    data: {
+      opened: true,
+      navigated: true,
+      url: validated.url,
+      pane: lanePane,
+      laneId: lane.laneId,
+      offscreen: true,
+    },
+  };
+}
+
 /**
  * Open (and navigate) the Browser pane for the CALLER's own task.
  *
@@ -240,68 +386,6 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     callerTaskId,
   });
 
-  // ISOLATED LANE - handled FIRST, ahead of both the shared-pane lookup and the
-  // project-not-open guard.
-  //
-  // Ahead of the pane lookup because a caller asking for isolation must never be
-  // handed the shared pane instead; that would silently give it the opposite of
-  // what it asked for.
-  //
-  // Ahead of the project-not-open guard because a lane needs NO task-detail
-  // window: it is an offscreen window main owns outright, so the board layer
-  // rendering only the open project is irrelevant to it. That guard exists for
-  // the cold pane path, which genuinely cannot mount a window for a backgrounded
-  // project, and applying it here would block the one recovery that does work.
-  //
-  // That recovery is the real-world failure this ordering fixes. Close a task's
-  // detail window and its `<webview>` guest is destroyed - correctly; the node
-  // unmounted. Switch projects too, and the agent still running in the
-  // backgrounded project now has no pane AND cannot open one: every drive
-  // returns `no-pane-open`, whose hint says to call open_pane, which used to
-  // refuse with `project-not-open`. A lane is the way out, so it must not be
-  // behind the same guard.
-  //
-  // Like the warm path, this reaches no project-scoped state: `callerTaskId`
-  // came from the session registry (so a live session is already proof the task
-  // is real) and the lane's jar is keyed by that task id, which is what keeps
-  // `host.taskExists` - and its stray-database precondition - out of this path.
-  if (input.isolated) {
-    const projectIsOpen = host.currentProjectId === projectId && Boolean(host.currentProjectPath);
-    const laneUrl =
-      input.url
-      ?? (projectIsOpen
-        ? browserUrlStore.get(host.currentProjectPath!, callerTaskId)
-          ?? host.browserOverrides(host.currentProjectPath!)?.defaultUrl
-          ?? null
-        : null);
-
-    if (!laneUrl) {
-      return failure(
-        'no-url',
-        projectIsOpen
-          ? 'No URL to load: this task has no saved Browser URL and the project has no default. Pass the `url` argument (for example http://localhost:5173).'
-          : 'Pass an explicit `url` for an isolated lane while your project is backgrounded. Your project is not the one currently open, so its saved Browser URL and project default cannot be read - but the lane itself will open fine.',
-      );
-    }
-
-    const validatedLane = validateNavigationUrl(laneUrl, config);
-    if (!validatedLane.ok) return { ok: false, error: validatedLane.error };
-
-    const lane = await openLane({
-      taskId: callerTaskId,
-      projectId,
-      ownerSessionId: callerSessionId,
-      url: validatedLane.url,
-    });
-    if (!lane.ok) return failure(lane.kind, lane.detail);
-    const lanePane = paneStatus(lane.laneId);
-    if (!lanePane) return failure('pane-destroyed', 'The browser lane closed immediately after opening. Retry.');
-    return {
-      ok: true,
-      data: { opened: true, navigated: true, url: validatedLane.url, pane: lanePane, laneId: lane.laneId },
-    };
-  }
-
   // WARM PATH FIRST: is this task's pane already up and driveable?
   //
   // This lookup has to precede the project-not-open guard below, and the
@@ -327,12 +411,12 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // renderer registered it, and main backfilled its `projectId` from the
   // session registry.
   //
-  // Visible PANES only. A task whose sole live surface is a hand-off lane
-  // (main stood it up when the user closed the task window) is not "already
-  // open" for this tool's purposes: the caller asked for its pane, so the cold
-  // path below mounts the visible one, and its registration stands the lane
-  // down. Handing the lane back here would report `opened: false` for a
-  // surface the agent cannot see and never asked for.
+  // Visible PANES only. A task whose surface is currently OFFSCREEN is not
+  // "already open" for this tool's purposes: the caller asked for its pane, so
+  // the cold path below mounts the visible one and its registration reclaims
+  // the offscreen form. Handing the offscreen surface back here would report
+  // `opened: false` for a browser the user cannot see, which is exactly the
+  // failure that ended isolated lanes.
   const live = browserPaneRegistry
     .getByTaskId(callerTaskId, projectId)
     .filter((entry) => entry.kind === 'pane')
@@ -376,24 +460,16 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   }
 
   // COLD PATH: no live pane, so a window has to be mounted. The board window
-  // layer renders only the OPEN project's tasks, so this genuinely cannot work
-  // for a backgrounded project. Refusing here is honest and immediate; pushing
-  // anyway would just time out with a vaguer message.
+  // layer renders only the OPEN project's tasks, so a backgrounded project
+  // genuinely cannot mount one.
+  //
+  // That used to be a flat `project-not-open` refusal, and it composed with the
+  // `no-pane-open` hint into a loop an agent could not get out of. It now opens
+  // the task's one surface OFFSCREEN instead: driveable, reported as
+  // `offscreen: true`, visible to the user on the card globe and the Browser
+  // pill, and reclaimed into a real pane the moment one can mount.
   if (host.currentProjectId !== projectId || !host.currentProjectPath) {
-    // A hand-off lane may be standing in for this task's pane while the project
-    // is backgrounded. It cannot be turned back into a visible pane from here,
-    // but the driving tools still reach it, and the agent deserves to know that
-    // rather than being sent to the user for a browser it already has.
-    const standIn = browserPaneRegistry
-      .getByTaskId(callerTaskId, projectId)
-      .find((entry) => entry.kind === 'lane' && entry.handoff && browserPaneRegistry.resolveLiveGuest(entry).ok);
-    return failure(
-      'project-not-open',
-      'Your project is not the one currently open in Kangentic, so a Browser pane cannot be opened for it. Ask the user to switch to it, then retry. (A pane that is ALREADY open stays driveable while its project is backgrounded.)' +
-        (standIn
-          ? ` A hand-off lane (${standIn.sessionId}) is standing in for this task's pane: the driving tools reach it when you omit sessionId, or by that handle.`
-          : ''),
-    );
+    return openOffscreenSurface({ ...input, callerTaskId });
   }
   const projectPath = host.currentProjectPath;
 
@@ -416,8 +492,17 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // A pane with no URL renders the empty state and registers no guest, so it is
   // invisible to every other tool in this family. "Open" and "navigate"
   // therefore cannot be two calls.
+  // The OFFSCREEN surface's live URL outranks the saved one. Reaching here with
+  // one alive means this call is a RECLAIM: the pane about to mount replaces
+  // it, so it must land on the page the agent left it on, not on wherever a
+  // visible pane last was. See `offscreenSurfaceUrl` for why the saved value
+  // cannot be trusted for an offscreen surface at all.
   const resolvedUrl =
-    input.url ?? browserUrlStore.get(projectPath, callerTaskId) ?? overrides?.defaultUrl ?? null;
+    input.url
+    ?? offscreenSurfaceUrl(callerTaskId, projectId)
+    ?? browserUrlStore.get(projectPath, callerTaskId)
+    ?? overrides?.defaultUrl
+    ?? null;
   if (!resolvedUrl) {
     return failure(
       'no-url',
@@ -552,8 +637,8 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   // A lane is an offscreen window main owns outright: there is no task-detail
   // window hosting it and no `browserOpenTasks` flag to clear, so the push
   // would do nothing and the lane would be reported "still registered" - a
-  // skipped close, forever. Destroying it directly is also what makes this tool
-  // the working escape hatch the lane-limit error points callers at.
+  // skipped close, forever. Destroying it directly is also what makes this the
+  // one tool that can put an offscreen surface away.
   const laneTargets = targets.filter((pane) => pane.kind === 'lane');
   const paneTargets = targets.filter((pane) => pane.kind !== 'lane');
   const closedLanes = laneTargets.filter((lane) => destroyLane(lane.sessionId)).map(summarize);

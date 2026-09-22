@@ -1,6 +1,10 @@
 import { webContents as electronWebContents, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
+// The STORE, deliberately, not `viewport-override.ts`: the mechanisms module
+// reaches the lane manager, which imports this registry, so importing it here
+// would close a runtime cycle. The store imports nothing.
+import { forgetViewportOverride } from './viewport-override-store';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { BrowserPaneVisibility } from '../../shared/types';
 
@@ -46,10 +50,10 @@ import type { BrowserPaneVisibility } from '../../shared/types';
  * A lane deliberately lives in THIS registry rather than a parallel one: it
  * keeps a single resolver, a single liveness self-heal, and a single shutdown
  * path, so `withGuest` needed no change at all to drive one. The resolver DOES
- * rank by kind (a visible pane wins over a hand-off lane, which wins over a
- * lane the agent asked for), because the ranking is what keeps an implicit
- * call deterministic while a hand-off lane and the returning pane briefly
- * coexist. `close_pane` destroys lanes in main instead of pushing a close to
+ * rank by kind (a visible pane wins over a lane), because the ranking is what
+ * keeps an implicit call deterministic in the one window where a task holds
+ * both: the returning pane registers before the reclaim destroys the offscreen
+ * surface it replaces. `close_pane` destroys lanes in main instead of pushing a close to
  * the renderer: a lane has no task-detail window and no `browserOpenTasks`
  * flag, so the push would do nothing and report the lane still registered.
  */
@@ -78,11 +82,20 @@ export interface BrowserPaneEntry {
   registeredAt: number;
   kind: BrowserSurfaceKind;
   /**
-   * True only for a lane main opened to stand in for a closed pane (see
-   * `browser-lane-handoff.ts`). Always false for a pane. Recorded here rather
-   * than looked up from the lane manager, which imports this module.
+   * The size of the `<webview>` element itself, in CSS pixels, as the renderer
+   * measures it. Null for a lane, which has no element, and until the pane's
+   * first report.
+   *
+   * Reported rather than derived because main CANNOT see it. The obvious
+   * main-side answer, `BrowserWindow.fromWebContents(...).getContentSize()`,
+   * returns the whole Kangentic window: the pane is one side of a split inside
+   * a task-detail window inside that window, so the number is several times
+   * too large. Fitting a requested viewport against it computed a zoom of 1
+   * and left the page cropped, which is the bug this field exists to fix. It
+   * also moves when the user drags the split, so a one-time capture is not
+   * enough either.
    */
-  handoff: boolean;
+  widgetSize: { width: number; height: number } | null;
   /**
    * Where the surface is on the user's screen. A pane is `showing` until the
    * renderer says otherwise (`hidden` behind the terminal after the Browser
@@ -93,7 +106,7 @@ export interface BrowserPaneEntry {
   visibility: BrowserPaneVisibility;
 }
 
-/** Input to `register()`. The renderer path never supplies `handle`, `kind`, or `handoff`. */
+/** Input to `register()`. The renderer path never supplies `handle` or `kind`. */
 export interface RegisterSurfaceInput {
   ownerSessionId: string | null;
   taskId: string;
@@ -104,8 +117,6 @@ export interface RegisterSurfaceInput {
   handle?: string;
   /** Defaults to `pane`, which is what every renderer registration is. */
   kind?: BrowserSurfaceKind;
-  /** Defaults to false. */
-  handoff?: boolean;
   /** Defaults to `showing` for a pane and `offscreen` for a lane. */
   visibility?: BrowserPaneVisibility;
 }
@@ -213,7 +224,7 @@ export type PaneUnregisterReason =
   | 'user-closed'
   /**
    * Main destroyed an offscreen lane (agent closed it, its session ended, it
-   * went idle, or a hand-off lane stood down because the visible pane returned).
+   * went idle, or it was reclaimed because the visible pane returned).
    *
    * Distinct from `renderer-unmount` even though both run through `unregister`:
    * a lane has no renderer to unmount, and reporting one would point an
@@ -259,15 +270,21 @@ export type ResolveGuestResult =
   | { ok: true; entry: BrowserPaneEntry; webContents: WebContents }
   | { ok: false; kind: 'pane-destroyed'; detail: string };
 
-/** Lower is better: the visible pane, then the hand-off stand-in, then a lane the agent asked for. */
-function surfaceRank(entry: BrowserPaneEntry): 0 | 1 | 2 {
-  if (entry.kind === 'pane') return 0;
-  return entry.handoff ? 1 : 2;
+/**
+ * Lower is better: the visible pane, then the offscreen form of it.
+ *
+ * A task has one surface, so in practice only one of these exists at a time.
+ * The rank still matters for the moment they overlap: a pane registers before
+ * the reclaim destroys the offscreen one, and the visible surface must win that
+ * window rather than resolving `multiple-panes`.
+ */
+function surfaceRank(entry: BrowserPaneEntry): 0 | 1 {
+  return entry.kind === 'pane' ? 0 : 1;
 }
 
 /** The entries sharing the best rank. Empty in, empty out. */
 function bestRanked(entries: readonly BrowserPaneEntry[]): BrowserPaneEntry[] {
-  let bestRank = 3;
+  let bestRank = 2;
   const winners: BrowserPaneEntry[] = [];
   for (const entry of entries) {
     const rank = surfaceRank(entry);
@@ -281,8 +298,9 @@ function bestRanked(entries: readonly BrowserPaneEntry[]): BrowserPaneEntry[] {
 }
 
 function describeSurface(entry: BrowserPaneEntry): string {
-  if (entry.kind === 'pane') return `${entry.sessionId} (pane)`;
-  return entry.handoff ? `${entry.sessionId} (hand-off lane)` : `${entry.sessionId} (isolated lane)`;
+  return entry.kind === 'pane'
+    ? `${entry.sessionId} (pane)`
+    : `${entry.sessionId} (offscreen surface)`;
 }
 
 function formatElapsed(milliseconds: number): string {
@@ -301,8 +319,8 @@ export class BrowserPaneRegistry {
 
   /**
    * Handles whose upcoming unregister is the caller's own doing (an agent's
-   * `close_pane`), so the hand-off must not resurrect the page in a lane the
-   * agent never asked for. Consumed by `forget()`.
+   * `close_pane`), so the hand-off must not resurrect the page offscreen after
+   * the agent asked for it to go away. Consumed by `forget()`.
    */
   private readonly deliberateCloses = new Set<string>();
 
@@ -356,14 +374,13 @@ export class BrowserPaneRegistry {
       url: input.url,
       registeredAt: Date.now(),
       kind: input.kind ?? 'pane',
-      handoff: input.handoff === true,
+      widgetSize: null,
       visibility: input.visibility ?? (input.kind === 'lane' ? 'offscreen' : 'showing'),
     };
     this.panes.set(entry.sessionId, entry);
     console.log(
       `[browser-pane] bound handle=${entry.sessionId} owner=${shortId(entry.ownerSessionId)} ` +
-        `task=${entry.taskId.slice(0, 8)} wc=${entry.webContentsId} kind=${entry.kind}` +
-        (entry.handoff ? ' handoff' : ''),
+        `task=${entry.taskId.slice(0, 8)} wc=${entry.webContentsId} kind=${entry.kind}`,
     );
     // Adoption signal for user-visible panes only: offscreen lanes are the
     // driver's plumbing, not a user opening the Browser pane. New-entry branch
@@ -421,6 +438,11 @@ export class BrowserPaneRegistry {
       retiredAt: Date.now(),
     });
     while (this.retiredSurfaces.length > RETIRED_SURFACE_MEMORY) this.retiredSurfaces.shift();
+    // A viewport override is keyed by guest id, and a guest id dies with its
+    // guest. Dropping it here rather than only on an explicit reset is what
+    // stops the override map growing one dead entry per pane the user closes
+    // and reopens over a long session.
+    forgetViewportOverride(entry.webContentsId);
     console.log(
       `[browser-pane] unregister handle=${handle} owner=${shortId(entry.ownerSessionId)} ` +
         `task=${entry.taskId.slice(0, 8)} wc=${entry.webContentsId} project=${entry.projectId ?? 'none'} ` +
@@ -452,8 +474,8 @@ export class BrowserPaneRegistry {
     this.paneClosedHandler = handler;
   }
 
-  /** Observe pane REGISTRATION, so a hand-off lane can stand down when the
-   *  user's own pane comes back. Also fires for an in-place rebind. */
+  /** Observe pane REGISTRATION, so the task's offscreen surface is reclaimed
+   *  when the visible pane comes back. Also fires for an in-place rebind. */
   setPaneRegisteredHandler(handler: ((entry: BrowserPaneEntry) => void) | null): void {
     this.paneRegisteredHandler = handler;
   }
@@ -500,6 +522,24 @@ export class BrowserPaneRegistry {
     const entry = this.findByWebContentsId(webContentsId);
     if (!entry || entry.visibility === visibility) return false;
     entry.visibility = visibility;
+    return true;
+  }
+
+  /**
+   * Record the `<webview>` element's own size, reported by the renderer.
+   *
+   * The only source for it: see `BrowserPaneEntry.widgetSize`. Rounded and
+   * change-gated so a splitter drag does not churn the entry on every frame.
+   */
+  setWidgetSize(webContentsId: number, width: number, height: number): boolean {
+    const entry = this.findByWebContentsId(webContentsId);
+    if (!entry) return false;
+    const next = { width: Math.round(width), height: Math.round(height) };
+    if (next.width <= 0 || next.height <= 0) return false;
+    if (entry.widgetSize?.width === next.width && entry.widgetSize?.height === next.height) {
+      return false;
+    }
+    entry.widgetSize = next;
     return true;
   }
 
@@ -590,9 +630,9 @@ export class BrowserPaneRegistry {
    * `kangentic_browser_list_panes`.
    *
    * Precedence: an explicit handle, then an explicit taskId, then the caller's
-   * OWN task's surfaces (visible pane first, then a hand-off lane, then an
-   * isolated lane), and only for a caller with NO task the single pane open in
-   * the caller's project.
+   * OWN task's surface (its visible pane, else the offscreen form of it), and
+   * only for a caller with NO task the single pane open in the caller's
+   * project.
    *
    * A caller bound to a task never falls through to another task's pane. That
    * fall-through was observed live: an agent whose own pane had died navigated
@@ -667,8 +707,8 @@ export class BrowserPaneRegistry {
     if (selector.callerTaskId) {
       // A caller WITH a task resolves only among that task's own surfaces. No
       // owner-session preference inside the pool: the visible pane IS the
-      // caller's, and preferring the owner would let an isolated lane beat it
-      // in the one render before a `/clear` re-registers the pane's owner.
+      // caller's, and preferring the owner would let the offscreen surface beat
+      // it in the one render before a `/clear` re-registers the pane's owner.
       const ownTask = inScopePanes.filter((entry) => entry.taskId === selector.callerTaskId);
       const best = bestRanked(ownTask);
       if (best.length === 1) return { ok: true, entry: best[0] };
@@ -881,11 +921,11 @@ export class BrowserPaneRegistry {
    * dead end the open tool exists to remove.
    *
    * A lane never satisfies it: the opener's cold path is waiting for the
-   * renderer pane it just pushed, and a hand-off lane standing in for that
-   * pane is the thing the pane's arrival stands down.
+   * renderer pane it just pushed, and the offscreen surface standing in for
+   * that pane is the thing the pane's arrival reclaims.
    */
   async waitForLivePane(
-    target: { taskId: string; projectId: string },
+    target: { taskId: string; projectId: string; excludeWebContentsId?: number },
     timeoutMs: number,
   ): Promise<BrowserPaneEntry | null> {
     const findLive = (): BrowserPaneEntry | null => {
@@ -893,6 +933,15 @@ export class BrowserPaneRegistry {
         if (entry.kind !== 'pane') continue;
         if (entry.taskId !== target.taskId) continue;
         if (entry.projectId !== target.projectId) continue;
+        // Detaching and docking REPLACE the guest: the old `<webview>` unmounts
+        // as the new document mounts, and for a moment both are registered. A
+        // caller moving the pane between windows must wait for the successor,
+        // so it names the predecessor and this skips it. Without that the wait
+        // resolves instantly against the guest that is on its way out, and the
+        // handle handed back is dead before it is used.
+        if (target.excludeWebContentsId !== undefined && entry.webContentsId === target.excludeWebContentsId) {
+          continue;
+        }
         const guest = electronWebContents.fromId(entry.webContentsId);
         if (!guest || guest.isDestroyed()) continue;
         return entry;

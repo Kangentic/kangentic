@@ -72,6 +72,18 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // reverted, and a further edit made in that reverted state persisted the
     // stale base. Value equality re-hydrates only when the monitor view truly
     // changed on disk (i.e. the main window wrote it).
+    // Which tasks hold their one browser surface OFFSCREEN. A task detail hosted
+    // in this window renders the Browser pill, whose alive dot reads that set,
+    // and this renderer never mounts App.tsx - so without seeding and
+    // subscribing here the pill reads dark for a browser that exists. Read once
+    // (the set can predate this window by hours), then live on the push, which
+    // this surface declares in its `channels`.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
+    const unsubscribeOffscreen = window.electronAPI.browser?.onOffscreenSurfaces?.((taskIds) => {
+      useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
+    });
+    if (unsubscribeOffscreen) signal.addEventListener('abort', unsubscribeOffscreen);
+
     const unsubscribeConfig = useConfigStore.subscribe((state, previous) => {
       if (deepEqual(state.config.monitor, previous.config.monitor)) return;
       useMonitorStore.getState().hydrateView(state.config.monitor);
@@ -81,6 +93,10 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
 
   hmrResync: () => {
     void useMonitorStore.getState().loadSnapshot();
+    // Pattern B for this window: main is the only authority for the offscreen
+    // set, and a surface can sit unchanged across the whole session, so the
+    // push alone leaves a hosted pill dark after a Fast Refresh.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
   },
 
   inAppSurface: 'monitor-overlay',

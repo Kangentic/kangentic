@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { escapeForDoubleQuotedShell, isCmdShell, isUnixLikeShell } from '../../shared/shell-quote';
 import type { PastedImageCapability } from '../../shared/types';
+import { useAgentDriveStore } from '../stores/agent-drive-store';
 
 // ---------------------------------------------------------------------------
 // OSC 52 clipboard sequence handling
@@ -420,6 +421,14 @@ export function enableTerminalClipboard(
     // its default \x03 behavior. Mac sends Cmd+C only as a copy
     // shortcut, never as SIGINT, so we restrict this to ctrlKey.
     if (event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === 'c' && !terminal.hasSelection() && sessionId) {
+      // Release the Browser pane's drive veil NOW, locally, without waiting
+      // for the engine to agree. The engine's answer is correct but slow:
+      // measured 3067ms from this keypress to the veil clearing, which is the
+      // coordinator's 3000ms settle window. That window is right for what it
+      // does, and far too long to hold a POINTER BLOCK for - the veil makes
+      // the page unclickable, so waiting it out means the user pressed stop
+      // and then sat unable to touch their own browser for three seconds.
+      useAgentDriveStore.getState().noteUserInterrupt(sessionId);
       window.electronAPI.sessions.notifyUserInterrupt(sessionId).catch(() => {
         // Best-effort. The engine's 5-min stuck-pending-tools hatch
         // is the safety backstop if this IPC fails.
