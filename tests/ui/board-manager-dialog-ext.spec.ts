@@ -619,11 +619,18 @@ test.describe('BoardManagerDialog extended', () => {
     });
     expect(saved).toBe('claude');
 
-    // Cleanup: restore to inherit.
+    // Cleanup: restore to inherit. A raw electronAPI call bypasses the board
+    // store (the mock has no push - same reasoning as the loadBoard() sync
+    // above), so without the resync the store's cached swimlanes list keeps
+    // serving the stale 'claude' override to every later test that reopens
+    // this dialog on the same worker's page, even though the mock's own
+    // swimlanes array is correctly reset.
     await page.evaluate(async () => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((s) => s.name === 'Code Review');
       if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, agent_override: null });
+      const store = (window as unknown as { __zustandStores?: { board: { getState: () => { loadBoard: () => void } } } }).__zustandStores;
+      if (store?.board) store.board.getState().loadBoard();
     });
   });
 
@@ -740,6 +747,59 @@ test.describe('BoardManagerDialog extended', () => {
       // The draft is discarded by afterEach, so no column keeps Codex.
     } finally {
       await setAgentListOverrides({});
+    }
+  });
+
+  // The test above drives the OVERRIDE half of `laneAgentInfo`'s lookup
+  // (`overrideName ?? projectDefaultAgent`, BoardManagerDialog.tsx). This
+  // drives the fallback half: a column with no agent_override of its own
+  // still has an effective agent, the PROJECT's default. Before this diff
+  // the Permissions cell always spelled a value in Claude's own words
+  // (`DEFAULT_PERMISSIONS`, unconditionally) - invisible in every other spec
+  // here because every other project defaults to Claude, whose mock
+  // `permissions` list is byte-identical to `DEFAULT_PERMISSIONS`. A project
+  // whose default agent is NOT Claude is the only way to tell the fix from
+  // the bug it fixed.
+  test('overview permission cell reads the project default agent, not Claude, when no column override is set', async () => {
+    const projectId = await page.evaluate(async () => (await window.electronAPI.projects.list())[0].id);
+
+    async function setProjectDefaultAgent(agent: string): Promise<void> {
+      const resolved = await page.evaluate(async ({ id, agentName }) => {
+        await window.electronAPI.projects.setDefaultAgent(id, agentName);
+        const projectStore = (window as unknown as {
+          __zustandStores?: { project: { getState: () => { loadCurrent: () => Promise<void>; currentProject: { default_agent?: string } | null } } };
+        }).__zustandStores?.project;
+        await projectStore?.getState().loadCurrent();
+        return projectStore?.getState().currentProject?.default_agent ?? null;
+      }, { id: projectId, agentName: agent });
+      if (resolved !== agent) {
+        throw new Error(`setProjectDefaultAgent: expected default_agent "${agent}" after loadCurrent(), got "${String(resolved)}"`);
+      }
+    }
+
+    await setProjectDefaultAgent('codex');
+    try {
+      await openManagerByHeader('Code Review');
+      const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+      // No agent override on this column (the fixture's Code Review lane
+      // ships agent_override: null): the effective agent already falls back
+      // to the project's now-Codex default, so the Permission field already
+      // lists Codex's own modes with no override step needed first.
+      const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
+      await permissionInput.click();
+      await page.locator('[data-testid="column-permission-mode-option-default"]').click();
+      await expect(permissionInput).toHaveValue('Automatically Edit, Ask for Untrusted');
+
+      await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+      const cells = dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).locator('td');
+      // Column order: name, Start, Agent, Model, Effort, Permissions.
+      const permission = cells.nth(5).locator('[data-state="changed"]');
+      await expect(permission).toHaveText('Automatically Edit, Ask for Untrusted');
+
+      await closeManager();
+    } finally {
+      await setProjectDefaultAgent('claude');
     }
   });
 
