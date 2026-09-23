@@ -2706,6 +2706,31 @@ describe('getFirstOutputCache', () => {
     expect(Object.keys(cache).sort()).toEqual([session1.id, session2.id].sort());
   });
 
+  it('keeps a resumed session marked resuming after its first output', async () => {
+    // The card and the context bar label their spinner from this flag until the model name
+    // lands. Clearing it at first output flipped a resumed card to "Starting agent...", which
+    // reads as the resume having failed; the flag means "spawned as a resume" for the session's
+    // whole life, and first output is not a reason to push the row again.
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-first-output-resumed',
+      command: '',
+      cwd: tmpDir,
+      resuming: true,
+    });
+    spawnedIds.push(session.id);
+    const changed: string[] = [];
+    manager.on('session-changed', (changedSessionId: string) => { changed.push(changedSessionId); });
+
+    mock.feedData('resumed transcript repaint');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(manager.getFirstOutputCache()[session.id]).toBe(true);
+    expect(manager.getSession(session.id)?.resuming).toBe(true);
+    expect(changed).not.toContain(session.id);
+  });
+
   it('removes a session from the cache after remove() is called', async () => {
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
