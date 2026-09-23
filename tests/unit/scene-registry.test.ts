@@ -13,13 +13,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
-import { DEMO_SESSIONS, DEMO_TASKS, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_SESSIONS, DEMO_TASKS, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const DEMO_BOOT_PATH = path.join(REPO_ROOT, 'demo/boot.js');
+const AGENT_ADAPTERS_ROOT = path.join(REPO_ROOT, 'src/main/agent/adapters');
 const DEMO_VITE_CONFIG_PATH = path.join(REPO_ROOT, 'demo/vite.config.mts');
 const SHARED_TYPES_PATH = path.join(REPO_ROOT, 'src/shared/types.ts');
 
@@ -51,6 +52,26 @@ function declaredAppConfigKeys(): Set<string> {
     'scene-registry: no top-level `interface AppConfig` with members in src/shared/types.ts. '
     + 'If it moved or was renamed, update declaredAppConfigKeys() in tests/unit/scene-registry.test.ts.',
   );
+}
+
+/**
+ * The agent ids whose adapter defines `probeAuth`, read from each `*-adapter.ts` file's own
+ * `readonly name`. listAgents calls the probe only where an adapter has one, so every other
+ * agent reports no auth state and the desktop can never show it as signed out.
+ */
+function agentsWithAuthProbe(): Set<string> {
+  const probed = new Set<string>();
+  for (const folder of fs.readdirSync(AGENT_ADAPTERS_ROOT, { withFileTypes: true })) {
+    if (!folder.isDirectory()) continue;
+    const folderPath = path.join(AGENT_ADAPTERS_ROOT, folder.name);
+    for (const fileName of fs.readdirSync(folderPath)) {
+      if (!fileName.endsWith('-adapter.ts')) continue;
+      const source = fs.readFileSync(path.join(folderPath, fileName), 'utf-8');
+      const agentName = source.match(/readonly name = '([^']+)'/)?.[1];
+      if (agentName && /^\s+(?:async\s+)?probeAuth\s*\(/m.test(source)) probed.add(agentName);
+    }
+  }
+  return probed;
 }
 
 const DEMO_STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
@@ -257,6 +278,30 @@ describe('scene registry', () => {
         expect(key.startsWith('__mock'), `${scene.name}.seeds.${key}`).toBe(true);
       }
     }
+  });
+
+  it('signs out only an agent whose adapter can report it', () => {
+    // v0.43.0 shipped welcome-setup with Gemini CLI signed out. Gemini has no auth probe, so the
+    // desktop never draws that row, and a docs figure held on a state the app cannot produce.
+    const probed = agentsWithAuthProbe();
+    expect(probed.size, 'no adapter defines probeAuth; was the method renamed?').toBeGreaterThan(0);
+    const agentReports: Array<{ where: string; agents: Record<string, Record<string, unknown>> }> = [
+      { where: 'DEMO_AGENT_OVERRIDES', agents: DEMO_AGENT_OVERRIDES },
+      ...scenes.map((scene) => ({
+        where: `${scene.name}.seeds.__mockAgentListOverrides`,
+        agents: (scene.seeds?.__mockAgentListOverrides ?? {}) as Record<string, Record<string, unknown>>,
+      })),
+    ];
+    let checked = 0;
+    for (const { where, agents } of agentReports) {
+      for (const [agentName, override] of Object.entries(agents)) {
+        if (override.authenticated !== false) continue;
+        checked += 1;
+        expect(probed.has(agentName), `${where} signs out ${agentName}, whose adapter has no probeAuth`).toBe(true);
+      }
+    }
+    // Vacuity guard: welcome-setup is the scene that seeds a signed-out agent.
+    expect(checked).toBeGreaterThanOrEqual(1);
   });
 
   it('has one settings scene per settings tab, and no other', () => {
