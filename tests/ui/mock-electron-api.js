@@ -46,13 +46,14 @@
   let eventCache = {};
   let summaryCache = {};
   let currentProjectId = null;
-  // The archived rows the current project owns, by the rule tasks.list uses: a
-  // row tagged with a projectId belongs to that project alone, the way each
-  // project's archive lives in its own DB, and an untagged row shows everywhere.
+  // A row tagged with a projectId belongs to that project alone, the way each
+  // project's tasks and archive live in its own DB, and an untagged row shows
+  // everywhere. tasks.list and the archived lists both filter by this rule.
+  function belongsToCurrentProject(row) {
+    return !row.projectId || row.projectId === currentProjectId;
+  }
   function visibleArchivedTasks() {
-    return archivedTasks.filter(function (t) {
-      return !t.projectId || t.projectId === currentProjectId;
-    });
+    return archivedTasks.filter(belongsToCurrentProject);
   }
   let projectConfigs = {};
   let nextDisplayId = 1;
@@ -1074,10 +1075,7 @@
         // (mirrors the real per-project DBs, where switching projects swaps the
         // whole task set). Untagged tasks are returned for every project, so the
         // many single-project specs that never set a projectId are unaffected.
-        // visibleArchivedTasks applies the same rule to the archived list.
-        var visible = tasks.filter(function (t) {
-          return !t.projectId || t.projectId === currentProjectId;
-        });
+        var visible = tasks.filter(belongsToCurrentProject);
         // withAttachmentCounts copies each row (Object.assign), so this payload
         // is a genuine snapshot of the board AT CALL TIME and cannot be mutated
         // by a later move.
@@ -2072,8 +2070,11 @@
           isolatedSwimlaneId: null,
           agentSessionId: null,
         };
-        // Main's respawn deletes the task's paused rows (session-spawn-flow.ts), so the
-        // resumed session is the task's only one and the renderer hears the old one leave.
+        // Main's respawn drops the task's paused rows from its registry
+        // (session-spawn-flow.ts), so the resumed session is the task's only one. Main
+        // sends no removal push for them: the renderer drops its copy when the new row's
+        // status push lands (withSessionUpserted keeps one row per task). The removal
+        // push below is the mock's own, not main's.
         // Spliced in place, not reassigned: __mockPreConfigure hands callers this array.
         for (var pausedIndex = sessions.length - 1; pausedIndex >= 0; pausedIndex--) {
           var paused = sessions[pausedIndex];
