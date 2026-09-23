@@ -554,8 +554,11 @@ export function getNetworkEntries(webContents: WebContents): NetworkEntry[] {
 export interface ScreenshotOptions {
   format?: 'png' | 'jpeg';
   quality?: number;
+  /** DIP (CSS pixels times the page zoom), document-relative. See `capture-bounds.ts`. */
   clip?: { x: number; y: number; width: number; height: number; scale?: number };
   fullPage?: boolean;
+  /** Paint outside the viewport. Defaults to `fullPage`. */
+  captureBeyondViewport?: boolean;
 }
 
 /**
@@ -597,7 +600,7 @@ export async function captureScreenshot(
     clip: options.clip
       ? { ...options.clip, scale: options.clip.scale ?? 1 }
       : undefined,
-    captureBeyondViewport: options.fullPage ?? false,
+    captureBeyondViewport: options.captureBeyondViewport ?? options.fullPage ?? false,
   }) as Promise<{ data: string }>;
   const bounded = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new ScreenshotNotComposited()), SCREENSHOT_TIMEOUT_MS);

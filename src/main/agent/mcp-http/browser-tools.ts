@@ -41,10 +41,12 @@ import {
 import {
   captureScreenshotWithBudget,
   captureElementClip,
+  describeViewportCapture,
 } from '../../browser/cdp/screenshot';
 import {
   applyViewport,
   clearViewport,
+  guestCaptureSurface,
   MAX_VIEWPORT_DIMENSION,
   MIN_VIEWPORT_DIMENSION,
   WINDOW_ANCHORS,
@@ -356,10 +358,10 @@ export function registerBrowserTools(
     'kangentic_browser_screenshot',
     {
       description:
-        "Capture a screenshot of the task's Browser pane (the loaded dev server). Returns an inline image. Defaults to JPEG; the response includes viewport + scale metadata for mapping image coordinates back to the page.",
+        "Capture a screenshot of the task's Browser pane (the loaded dev server). Returns an inline image. Defaults to JPEG; the response includes viewport + scale metadata for mapping image coordinates back to the page: divide an image coordinate by `pixelsPerCssPixel` for the CSS one. A pane's screenshot can hold no more pixels than the pane itself, so a viewport wider than the pane comes back scaled down to fit, and `note` says so.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
-        fullPage: z.boolean().optional().describe('Capture the full scrollable page instead of just the viewport.'),
+        fullPage: z.boolean().optional().describe('Capture the full scrollable page instead of just the viewport. On a pane this is scaled down to fit the pane\'s own pixels, so a long page comes back small; scroll and take viewport screenshots for detail.'),
         format: z.enum(['png', 'jpeg']).optional().describe('Image format. Default jpeg.'),
         quality: z.number().int().min(1).max(100).optional().describe('JPEG quality 1-100 (ignored for png).'),
         maxBytes: z.number().int().positive().optional().describe('Soft cap on decoded image bytes; the capture downscales/recompresses to fit.'),
@@ -377,7 +379,7 @@ export function registerBrowserTools(
         | { blocked: DevServerError }
         | { blocked: null; shot: Awaited<ReturnType<typeof captureScreenshotWithBudget>> };
 
-      const result = await drive<ScreenshotOutcome>('observe', { sessionId, taskId }, async (webContents) => {
+      const result = await drive<ScreenshotOutcome>('observe', { sessionId, taskId }, async (webContents, entry) => {
         const devServerError = await detectDevServerError(webContents);
         if (devServerError) return { blocked: devServerError };
         return {
@@ -387,6 +389,7 @@ export function registerBrowserTools(
             quality: quality ?? (format === 'png' ? undefined : 80),
             fullPage: fullPage === true,
             maxBytes,
+            surface: guestCaptureSurface(webContents, entry),
           }),
         };
       });
@@ -402,7 +405,7 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_screenshot_element',
     {
-      description: "Capture a screenshot clipped to a single element in the task's Browser pane.",
+      description: "Capture a screenshot clipped to a single element in the task's Browser pane, at up to 1:1 (one image pixel per CSS pixel, or the page's own devicePixelRatio if higher) even when the page is zoomed out to fit a wide viewport. The right tool for reading detail in a desktop-width layout. An element too large for the pane at 1:1 comes back scaled to fit, and `note` says so.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         selector: z.string().describe('CSS selector (or text=/aria= form) of the element to capture.'),
@@ -413,8 +416,13 @@ export function registerBrowserTools(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ sessionId, taskId, selector, format, quality, maxBytes }) => {
-      const result = await drive('observe', { sessionId, taskId }, (webContents) =>
-        captureElementClip(webContents, selector, { format: format ?? 'png', quality, maxBytes }),
+      const result = await drive('observe', { sessionId, taskId }, (webContents, entry) =>
+        captureElementClip(webContents, selector, {
+          format: format ?? 'png',
+          quality,
+          maxBytes,
+          surface: guestCaptureSurface(webContents, entry),
+        }),
       );
       if (!result.ok) return errorToolResult(result.error);
       if (!result.data) return errorToolResult({ kind: 'screenshot-failed', detail: 'Element clip capture returned no data.' });
@@ -618,12 +626,12 @@ export function registerBrowserTools(
         selector: z.string().optional().describe('CSS selector (or text=/aria= form) to click at its center.'),
         x: z.number().optional().describe('Viewport X (use with y instead of selector).'),
         y: z.number().optional().describe('Viewport Y.'),
-        coordSpace: z.enum(['viewport', 'image']).optional().describe('Coordinate space for x/y. Default viewport. "image" maps screenshot pixels back via the device scale factor.'),
+        coordSpace: z.enum(['viewport', 'image']).optional().describe('Coordinate space for x/y. Default viewport. "image" maps pixels of a full-viewport kangentic_browser_screenshot back to the page, through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. If the screenshot shrank to fit maxBytes (`scale` below 1), divide by its `pixelsPerCssPixel` yourself and pass viewport coordinates.'),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
     async ({ sessionId, taskId, selector, x, y, coordSpace }) => {
-      const result = await drive<ClickOutcome>('interact', { sessionId, taskId }, async (webContents) => {
+      const result = await drive<ClickOutcome>('interact', { sessionId, taskId }, async (webContents, entry) => {
         if (typeof selector === 'string') {
           const ok = await clickAtCenterOfSelector(webContents, selector);
           if (!ok) return { error: 'selector-not-found' as const };
@@ -633,10 +641,16 @@ export function registerBrowserTools(
           let targetX = x;
           let targetY = y;
           if (coordSpace === 'image') {
-            const layout = await getLayoutMetrics(webContents);
-            if (!layout) return { error: 'coord-mapping-failed' as const };
-            targetX = x / layout.deviceScaleFactor;
-            targetY = y / layout.deviceScaleFactor;
+            // The density the screenshot was TAKEN at, not the page's ratio:
+            // a pane scales a wide viewport down to fit its pixels, and a
+            // point read off that image divided by the page's ratio lands
+            // somewhere else. The same planner answers both, for a screenshot
+            // with no byte-budget downscale; this call cannot know about one.
+            const capture = await describeViewportCapture(webContents, guestCaptureSurface(webContents, entry));
+            const density = capture?.pixelsPerCssPixel ?? (await getLayoutMetrics(webContents))?.deviceScaleFactor;
+            if (!density) return { error: 'coord-mapping-failed' as const };
+            targetX = x / density;
+            targetY = y / density;
           }
           await dispatchMouseEvent(webContents, { type: 'mousePressed', x: targetX, y: targetY });
           await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: targetX, y: targetY });
@@ -649,7 +663,7 @@ export function registerBrowserTools(
         const detail = kind === 'selector-not-found'
           ? `No element matched ${selector}.`
           : kind === 'coord-mapping-failed'
-            ? 'Could not read deviceScaleFactor for image-space coordinate mapping.'
+            ? 'Could not read the screenshot density for image-space coordinate mapping.'
             : 'Provide either selector or both x and y.';
         return errorToolResult({ kind, detail });
       }
@@ -956,7 +970,7 @@ export function registerBrowserTools(
     'kangentic_browser_set_viewport',
     {
       description:
-        "Set the viewport the task's Browser surface lays out against, so you can verify a responsive layout at a real desktop width instead of guessing from CSS. A docked pane is only as wide as the task window leaves it, which is usually below every desktop breakpoint. Pass width and height in CSS pixels; the response reports the viewport you actually GOT, measured from the page. `exact` tolerates 2px, so a requested 1080 reported as 1079 with `exact: true` is a correct result, not a clamp - the fit rounds to whole pixels. `exact: false` means a real shortfall, and `note` says what caused it. On an offscreen lane or a popped-out window this resizes the real surface, un-maximizing it first if it has to. On a docked pane it overrides the viewport in place, which is the option that KEEPS YOUR PAGE: no reload, sessionStorage and in-memory state survive, and your surface handle stays valid. The pane is zoomed out to fit, so the user sees the whole layout you asked for rather than a corner of it, and your screenshots still come back at full resolution. Pass `reset: true` to put both the viewport and the zoom back. An override survives navigation and lasts until you reset it, your session ends, or the user clears it from the pane.",
+        "Set the viewport the task's Browser surface lays out against, so you can verify a responsive layout at a real desktop width instead of guessing from CSS. A docked pane is only as wide as the task window leaves it, which is usually below every desktop breakpoint. Pass width and height in CSS pixels; the response reports the viewport you actually GOT, measured from the page. `exact` tolerates 2px, so a requested 1080 reported as 1079 with `exact: true` is a correct result, not a clamp - the fit rounds to whole pixels. `exact: false` means a real shortfall, and `note` says what caused it. On an offscreen lane or a popped-out window this resizes the real surface, un-maximizing it first if it has to. On a docked pane it overrides the viewport in place, which is the option that KEEPS YOUR PAGE: no reload, sessionStorage and in-memory state survive, and your surface handle stays valid. The pane is zoomed out to fit, so the user sees the whole layout you asked for rather than a corner of it. Screenshots show that whole layout too, but a screenshot can hold no more pixels than the pane has, so a 1600-wide layout in a 740px pane comes back about 740 wide; `note` gives the exact size. For readable detail, kangentic_browser_screenshot_element captures a region at up to 1:1, and kangentic_browser_pop_out gives a real window for 1:1 captures of everything. Pass `reset: true` to put both the viewport and the zoom back. An override survives navigation and lasts until you reset it, your session ends, or the user clears it from the pane.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         width: z
@@ -979,7 +993,7 @@ export function registerBrowserTools(
           .max(4)
           .optional()
           .describe(
-            'Device pixel ratio for the emulated viewport. 0 (the default) keeps the display\'s own, which is what you want unless you are testing hidpi assets. Note 2 quadruples screenshot bytes and will push a wide capture out to a file.',
+            'The devicePixelRatio the page sees, for testing hidpi assets; the response reports the ratio measured from the page. 0 (the default) keeps the display\'s own, scaled by the zoom like any zoomed page. Docked panes only. It changes what the page loads, not the screenshot size: a screenshot still holds only the pixels the pane has. Leave it out otherwise: an emulated ratio can make canvases sized from device pixels draw blank (xterm\'s WebGL renderer does).',
           ),
         zoom: z
           .number()
@@ -987,7 +1001,7 @@ export function registerBrowserTools(
           .max(5)
           .optional()
           .describe(
-            'Page zoom factor, the same one the pane\'s zoom pill shows. Omit it and a docked pane is zoomed to FIT the width and height above, which is almost always what you want. Pass 1 to render 1:1 instead, which crops a wide layout to the pane but is the sharpest capture. The width and height mean the same thing either way: the layout is always the size you asked for.',
+            'Page zoom factor, the same one the pane\'s zoom pill shows. Omit it and a docked pane is zoomed to FIT the width and height above, which is almost always what you want. Pass 1 to show the USER a 1:1 crop of a wide layout instead. Your screenshots are the whole viewport either way. The width and height mean the same thing either way: the layout is always the size you asked for.',
           ),
         position: z
           .enum(WINDOW_ANCHORS)

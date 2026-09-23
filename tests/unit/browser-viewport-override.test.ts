@@ -67,15 +67,20 @@ let windowBounds = { x: 0, y: 0, width: 1280, height: 800 };
  */
 const webContentsFromId = vi.fn((_id: number): unknown => null);
 
+/** The display's scale factor, which bounds a pane's screenshots. */
+let displayScaleFactor = 1;
+
 vi.mock('electron', () => ({
   screen: {
     getDisplayMatching: () => ({
       workAreaSize: { width: 2560, height: 1392 },
       workArea: { x: 0, y: 0, width: 2560, height: 1392 },
+      scaleFactor: displayScaleFactor,
     }),
     getPrimaryDisplay: () => ({
       workAreaSize: { width: 2560, height: 1392 },
       workArea: { x: 0, y: 0, width: 2560, height: 1392 },
+      scaleFactor: displayScaleFactor,
     }),
   },
   BrowserWindow: {
@@ -121,6 +126,7 @@ vi.mock('../../src/main/pop-out/pop-out-window-manager', () => ({
 import {
   applyViewport,
   clearViewport,
+  guestCaptureSurface,
   resolveMechanism,
   releaseViewportOverride,
   releaseViewportOverridesForSession,
@@ -181,6 +187,25 @@ function metricsAlways(width: number, height: number) {
     viewportWidth: width,
     viewportHeight: height,
     deviceScaleFactor: 1,
+    contentWidth: width,
+    contentHeight: height,
+  });
+}
+
+/**
+ * The page answering with a fixed viewport AND its own devicePixelRatio, which
+ * is what the capture description and the reported ratio are read from.
+ * `metricsAlways` leaves the ratio out, which models a page that cannot say.
+ */
+function metricsWithRatio(width: number, height: number, devicePixelRatio: number) {
+  runtimeEvaluate.mockResolvedValue({
+    value: { width, height, devicePixelRatio, scrollX: 0, scrollY: 0, contentWidth: width, contentHeight: height },
+    error: null,
+  });
+  getLayoutMetrics.mockResolvedValue({
+    viewportWidth: width,
+    viewportHeight: height,
+    deviceScaleFactor: devicePixelRatio,
     contentWidth: width,
     contentHeight: height,
   });
@@ -273,6 +298,7 @@ beforeEach(() => {
   webContentsFromId.mockReset();
   webContentsFromId.mockReturnValue(null);
   setViewportOverrideSender(null);
+  displayScaleFactor = 1;
 });
 
 afterEach(() => {
@@ -799,8 +825,9 @@ describe('the reported viewport is measured, not echoed', () => {
 describe('an emulated pane says when it is showing a crop', () => {
   it('names pop_out when an explicit zoom re-creates the crop', async () => {
     // With the default fit there IS no crop, so this is the case an agent opts
-    // into by pinning zoom to 1 for a 1:1 capture: the pane is 740 wide (see
-    // the electron mock), 1920 does not fit, and the user sees a third of it.
+    // into by pinning zoom to 1 to show the user a 1:1 crop: the pane is 740
+    // wide (see the electron mock), 1920 does not fit, and the user sees a
+    // third of it. The agent's screenshots are still the whole viewport.
     metricsAlways(1920, 1080);
 
     const outcome = await applyViewport(
@@ -815,6 +842,27 @@ describe('an emulated pane says when it is showing a crop', () => {
     // And does NOT offer an offscreen surface as the way out of a crop: the
     // user would see none of it at all, which is worse than a third of it.
     expect(outcome.note).not.toContain('lane');
+  });
+
+  it('keeps every note instead of dropping one when two conditions fire together', async () => {
+    // Two note-producing conditions fire on the SAME call: the explicit zoom
+    // re-creates a crop (the "USER's pane shows only about" sentence) and the
+    // page's own low density means a screenshot of it is also below 1:1 (the
+    // "Screenshots of this viewport come back at" sentence). Before notes
+    // were collected into an array, a single `note` variable guarded by
+    // `note === null` kept only the first sentence and silently dropped the
+    // second.
+    metricsWithRatio(1920, 1080, 0.3);
+
+    const outcome = await applyViewport(
+      guestOf(),
+      entryOf(),
+      { width: 1920, height: 1080, zoom: 1 },
+      'agent-1',
+    );
+
+    expect(outcome.note).toContain("The USER's pane shows only about");
+    expect(outcome.note).toContain('Screenshots of this viewport come back at');
   });
 
   it('reports the whole viewport visible on a real window resize', async () => {
@@ -922,30 +970,104 @@ describe('asking for a size fits it into the pane', () => {
     expect(metrics.height).toBe(Math.round(1080 * fit));
   });
 
-  it('raises deviceScaleFactor by 1/zoom so the capture keeps its resolution', async () => {
-    // Without this the capture shrinks with the zoom (measured 740x416 for a
-    // 1920 request), which hands the agent an unreadable screenshot. 1/zoom
-    // restores it AND lands devicePixelRatio back on 1.0, since dpr is
-    // dsf x zoom - so the page does not think it is on a hidpi display.
+  it('sends the display\'s own scale factor by default, so a fitted capture fits the pane', async () => {
+    // It used to send 1/zoom to keep the capture at the requested resolution,
+    // and that TILED every screenshot: a guest's capture holds no more pixels
+    // than its pane, and Chromium fills a larger request by repeating the pane.
+    // The fitted override is the pane's own size, so at the display's own
+    // factor the capture is exactly the pane's pixels.
     metricsAlways(1920, 1080);
-    const fit = expectedFitZoom(1920, 1080);
 
     await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080 }, 'agent-1');
 
     const [, metrics] = setDeviceMetrics.mock.calls[0] as unknown as [unknown, { deviceScaleFactor: number }];
-    expect(metrics.deviceScaleFactor).toBeCloseTo(1 / fit, 4);
+    expect(metrics.deviceScaleFactor).toBe(0);
   });
 
-  it('reports the deviceScaleFactor it SENT, not the one that was asked for', async () => {
-    // Observed live: the response said `deviceScaleFactor: 0` for a call that
-    // sent 2.59. A number the tool did not use has no business in a response
-    // whose whole contract is "this is what actually happened".
+  it('sends an explicit deviceScaleFactor divided by the zoom, so the page sees exactly that ratio', async () => {
+    // devicePixelRatio is the sent factor times the zoom, so a hidpi asset test
+    // at dpr 2 on a pane fitted to 0.39 has to send 2 / 0.39.
     metricsAlways(1920, 1080);
     const fit = expectedFitZoom(1920, 1080);
 
+    await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080, deviceScaleFactor: 2 }, 'agent-1');
+
+    const [, metrics] = setDeviceMetrics.mock.calls[0] as unknown as [unknown, { deviceScaleFactor: number }];
+    expect(metrics.deviceScaleFactor).toBeCloseTo(2 / fit, 4);
+  });
+
+  it('reports the devicePixelRatio the page measured, not the value it sent', async () => {
+    // Reported: `deviceScaleFactor: 1` came back as 2.16, the value sent to
+    // Chromium, and the agent read its request as ignored. The page's own
+    // ratio is the number that means what the agent asked about.
+    metricsWithRatio(1920, 1080, 1);
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080, deviceScaleFactor: 1 }, 'agent-1');
+
+    expect(outcome.deviceScaleFactor).toBe(1);
+  });
+
+  it('reports 0 rather than a guess when the page cannot say', async () => {
+    metricsAlways(1920, 1080);
+
     const outcome = await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080 }, 'agent-1');
 
-    expect(outcome.deviceScaleFactor).toBeCloseTo(1 / fit, 4);
+    expect(outcome.deviceScaleFactor).toBe(0);
+  });
+
+  it('says up front what a screenshot of the fitted viewport will hold', async () => {
+    // A 1920x1080 layout fitted into the 740x749 pane at display scale 1 is
+    // 740x416 of pixels, and the agent should learn that here rather than from
+    // its first capture.
+    const fit = expectedFitZoom(1920, 1080);
+    metricsWithRatio(1920, 1080, fit);
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080 }, 'agent-1');
+
+    expect(outcome.note).toMatch(/Screenshots of this viewport come back at 740x416/);
+    expect(outcome.note).toContain('kangentic_browser_screenshot_element');
+  });
+
+  it('names the pane in DIP through the host zoom, matching the screenshot note', async () => {
+    // The planner's widget is `entry.widgetSize` times the HOST's zoom
+    // (`guestCaptureSurface`), because the host document can be zoomed
+    // independently of the guest. Before, this sentence formatted the raw
+    // widgetSize (740x749) and disagreed with the screenshot's own note,
+    // which already goes through the scaled surface.
+    const fit = expectedFitZoom(1920, 1080);
+    metricsWithRatio(1920, 1080, fit);
+    const guest = { ...(guestOf() as object), hostWebContents: { getZoomFactor: () => 1.25 } } as never;
+
+    const outcome = await applyViewport(guest, entryOf(), { width: 1920, height: 1080 }, 'agent-1');
+
+    expect(outcome.note).toContain('this 925x936 pane');
+    expect(outcome.note).not.toContain('740x749');
+  });
+
+  it('says a ratio above what the pane holds changes the assets, not the screenshot', async () => {
+    metricsWithRatio(1920, 1080, 2);
+    // What `setDeviceMetrics` records on success, and what makes the capture
+    // planner treat a clip-free capture as an emulated request.
+    getDeviceMetrics.mockReturnValue({ width: 740, height: 416 });
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080, deviceScaleFactor: 2 }, 'agent-1');
+
+    expect(outcome.note).toMatch(/devicePixelRatio 2\.00 and loads its assets for it/);
+  });
+
+  it('says deviceScaleFactor was ignored on a real window rather than dropping it', async () => {
+    laneWindow.mockReturnValue(windowStub());
+    metricsFromContent({ width: 0, height: 0 });
+
+    const outcome = await applyViewport(
+      guestOf(),
+      entryOf({ kind: 'lane', sessionId: 'lane_deadbeef' }),
+      { width: 1920, height: 1080, deviceScaleFactor: 2 },
+      'agent-1',
+    );
+
+    expect(setDeviceMetrics).not.toHaveBeenCalled();
+    expect(outcome.note).toContain('`deviceScaleFactor` was ignored');
   });
 
   it('fits against the PANE, not the window main can see', async () => {
@@ -982,7 +1104,7 @@ describe('asking for a size fits it into the pane', () => {
     expect(guest.setZoomFactor).toHaveBeenCalledWith(1);
     const [, metrics] = setDeviceMetrics.mock.calls[0] as unknown as [unknown, { width: number; deviceScaleFactor: number }];
     expect(metrics.width).toBe(600);
-    expect(metrics.deviceScaleFactor).toBeCloseTo(1, 4);
+    expect(metrics.deviceScaleFactor).toBe(0);
   });
 
   it('an explicit zoom wins over the fit, so a 1:1 crop is still reachable', async () => {
@@ -1036,6 +1158,26 @@ describe('asking for a size fits it into the pane', () => {
     expect(clearDeviceMetrics).toHaveBeenCalled();
     expect(vi.mocked(guest.setZoomFactor).mock.lastCall?.[0]).toBeCloseTo(0.9, 5);
     expect(getViewportOverride(42)).toBeNull();
+  });
+
+  it('reports the page devicePixelRatio it measured after clearing, not a constant', async () => {
+    // Read back through the SAME evaluate the emulation path already uses, so
+    // the ratio the chip shows after a reset is what the page actually
+    // has, not a hardcoded placeholder.
+    metricsWithRatio(1600, 900, 1.25);
+
+    const outcome = await clearViewport(guestOf(), entryOf());
+
+    expect(outcome.deviceScaleFactor).toBe(1.25);
+  });
+
+  it('reports 0 after clearing when the page cannot be read', async () => {
+    runtimeEvaluate.mockResolvedValue({ value: null, error: 'evaluation error' });
+    getLayoutMetrics.mockResolvedValue(null);
+
+    const outcome = await clearViewport(guestOf(), entryOf());
+
+    expect(outcome.deviceScaleFactor).toBe(0);
   });
 
   it('reset on a pane that was never overridden leaves the zoom alone', async () => {
@@ -1166,5 +1308,41 @@ describe('releasing a pane viewport override when its owning agent session ends'
     expect(clearDeviceMetrics).toHaveBeenCalledWith(guest);
     expect(getViewportOverride(42)).toBeNull();
     expect(pushSpy).toHaveBeenCalledWith(guest, null);
+  });
+});
+
+describe('the pane a screenshot is bounded by', () => {
+  // The capture planner is only as right as this: a pane that looks larger
+  // than it is lets a capture ask for more pixels than the guest holds, and
+  // Chromium tiles it. The probe matrix covered the planner at display scales
+  // 1 to 2; these cover the numbers that reach it.
+
+  it('is the renderer\'s reported widget at the display\'s own scale factor', () => {
+    displayScaleFactor = 1.5;
+
+    const surface = guestCaptureSurface(guestOf(), entryOf());
+
+    expect(surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1.5 });
+  });
+
+  it('converts the host document\'s CSS pixels to DIP through the host\'s zoom', () => {
+    const guest = { ...(guestOf() as object), hostWebContents: { getZoomFactor: () => 1.25 } } as never;
+
+    const surface = guestCaptureSurface(guest, entryOf());
+
+    expect(surface?.widget.width).toBeCloseTo(740 * 1.25, 6);
+    expect(surface?.widget.height).toBeCloseTo(749 * 1.25, 6);
+  });
+
+  it('bounds nothing for a lane, a real window Chromium can grow for a capture', () => {
+    expect(guestCaptureSurface(guestOf(), entryOf({ kind: 'lane' }))).toBeNull();
+  });
+
+  it('falls back to the host window before the pane has reported, and says so by being larger', () => {
+    // An overestimate, which is why screenshot.ts also refuses an image larger
+    // than the bound rather than trusting the plan alone.
+    const surface = guestCaptureSurface(guestOf(), entryOf({ widgetSize: null }));
+
+    expect(surface?.widget).toEqual({ width: 2545, height: 1272 });
   });
 });
