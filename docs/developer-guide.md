@@ -246,9 +246,11 @@ of its own; `demo/boot.js` is the applier for both consumers. `npm run demo:post
 and `rust` themes at the frame's 2x (`CAPTURE_THEMES`, `CAPTURE_RESOLUTIONS`, and
 `CAPTURE_OUTPUT_ROOT` into `dist/demo-posters/`), checked against the build's own `scenes.json`
 (every scene at every theme, every PNG 3200 by 2000, the build's version equal to
-`package.json`'s) and zipped with a `manifest.json` as `dist/demo-posters-<version>.zip`.
-`release.yml`'s `demo-posters` job runs it after `publish-release` and attaches the zip to the
-release; `demo/README.md` ("The poster set") carries the manifest shape and the reasons.
+`package.json`'s) and zipped with a `manifest.json` as `dist/demo-posters-<version>.zip`. The
+manifest also carries each poster's `focus` rect, which the rig measures on the still and writes
+beside it as a `.focus.json` sidecar. `release.yml`'s `demo-posters` job installs Roboto, runs it
+after `publish-release`, and attaches the zip to the release; `demo/README.md` ("The poster set")
+carries the manifest shape and the reasons.
 
 ### Worktree Dev
 

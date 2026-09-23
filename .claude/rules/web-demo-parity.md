@@ -56,7 +56,9 @@ three things staying in step, and each is enforced rather than remembered.
   app version. A vendored or packaged copy can lag what is deployed; a URL cannot. The poster set
   the site's figures fall back to (`demo/posters.mjs`, attached to every release as
   `demo-posters-<version>.zip`) is shot by the rig from that same build, and its `manifest.json`
-  carries that same `version`, so the site can refuse a set that is not the demo it deploys.
+  carries that same `version`, so the site can refuse a set that is not the demo it deploys. It
+  also carries each poster's `focus` rect, measured through `boot.js`'s own
+  `__demoBoot.focusRectOf`, so a poster crop and the live frame's ready message are one measure.
 - **The sample install is one dataset.** The marketing captures and the web build both seed
   `demo-dataset.ts`; terminal content comes from recordings in `tests/captures/fixtures/demo/`
   made by `scripts/capture-agent-scrollback.js` and sanitized at record time. There is no
@@ -170,7 +172,8 @@ three things staying in step, and each is enforced rather than remembered.
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
   full-frame backdrop, which crops to nothing), that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host
-  carries a dialog scene's focus rect and null for a scene without one, the embed and theme
+  carries a dialog scene's focus rect (the same rect `__demoBoot.focusRectOf` hands the poster
+  rig) and null for a scene without one, the embed and theme
   parameters, the error card for an
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
   recording, that the live frame fetches its session's recording, that a live Monitor's output

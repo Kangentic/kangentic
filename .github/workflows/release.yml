@@ -675,7 +675,8 @@ jobs:
   # by version: one 3200 by 2000 still per registry scene in the clay and rust
   # themes, driver scenes included, shot by the capture rig from the same dist/demo
   # build the demo deploy publishes (demo/posters.mjs; demo/README.md, "The poster
-  # set").
+  # set"). The job installs Roboto first, so the text renders in a face the app's
+  # font stack names rather than the runner's fallback.
   #
   # After publish-release on purpose, beside deploy-demo: the release stands, and
   # a failure here marks the run red while the site's own sync fails loudly on the
@@ -739,6 +740,33 @@ jobs:
       # apt install is a cheap guarantee the rig can launch at all.
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+
+      # kangentic.com's landing page shows these posters with no live frame beside
+      # them, so they have to render a face the app's own stack names. The app sets
+      # no UI font; its text is Tailwind's default --font-sans: -apple-system,
+      # BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial.
+      # The runner has none of the first five, so Chromium falls through to Arial's
+      # metric alias, Liberation Sans, which has no medium weight and set an 11px
+      # Column Manager label 17 percent wider than Segoe UI. Roboto is the first
+      # family in the stack a runner can have, so installing it decides the face,
+      # and it ships the medium weight font-medium asks for. Noto Sans would only
+      # fill a later slot. fc-match answers with SOME font for any name (WenQuanYi
+      # Zen Hei for Roboto on a bare image), so the gate compares the family exactly.
+      # tests/unit/release-workflow-gates.test.ts fails if a Tailwind bump drops the
+      # family from the stack, which would otherwise revert the posters silently.
+      - name: Install the poster font
+        env:
+          POSTER_FONT_FAMILY: Roboto
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fontconfig fonts-roboto
+          resolved=$(fc-match --format '%{family[0]}' "$POSTER_FONT_FAMILY")
+          if [ "$resolved" != "$POSTER_FONT_FAMILY" ]; then
+            echo "::error::fontconfig resolves $POSTER_FONT_FAMILY to $resolved after installing fonts-roboto, so the posters would render in the runner's fallback face. Check that the package still ships the $POSTER_FONT_FAMILY family."
+            exit 1
+          fi
+          echo "fontconfig resolves $POSTER_FONT_FAMILY to $resolved; the posters render in it."
 
       # Default base: demo/static-server.mjs reads the base out of index.html, and
       # the pixels do not depend on it. deploy-demo already smoke-tests this ref.

@@ -272,6 +272,54 @@ describe('release.yml job graph', () => {
     // because parseJobs files a job's header comment under the PRECEDING job's body.
     expect(workflowSource).toContain('It is NOT in scripts/release-assets.js');
   });
+
+  // The landing page shows the posters with no live frame beside them, so the job installs a face
+  // the app's own font stack names before it shoots. Two ways that goes quiet: the install
+  // resolving to something else (fc-match answers with SOME font for any name), and a Tailwind
+  // bump dropping the family from the stack, after which the posters revert to the runner's
+  // fallback with every step green. The first is the step's own gate; the second is pinned here.
+  it('installs a font the app stack names before the shoot, and fails when it does not resolve', () => {
+    const posters = jobs.find((job) => job.name === 'demo-posters');
+    const stepLines = posters?.body.split('\n') ?? [];
+    const fontIndex = stepLines.indexOf('      - name: Install the poster font');
+    const shootIndex = stepLines.indexOf('      - name: Shoot, verify, and pack the poster set');
+    expect(fontIndex, 'the poster job has no "Install the poster font" step').toBeGreaterThan(-1);
+    expect(fontIndex).toBeLessThan(shootIndex);
+
+    const fontStep = stepBody('demo-posters', 'Install the poster font');
+    expect(fontStep).toContain('set -euo pipefail');
+    expect(fontStep).toContain('fc-match');
+    expect(fontStep).toContain('::error::');
+    expect(fontStep).toContain('exit 1');
+    const family = fontStep.match(/^ {10}POSTER_FONT_FAMILY: (.+)$/m)?.[1]?.trim();
+    expect(family, 'the font step names no POSTER_FONT_FAMILY').toBeDefined();
+
+    // The app sets no UI font of its own, so its text is Tailwind's default --font-sans.
+    const themeSource = fs.readFileSync(path.join(REPO_ROOT, 'node_modules', 'tailwindcss', 'theme.css'), 'utf8');
+    const stackText = themeSource.match(/--font-sans:([^;]+);/)?.[1];
+    expect(stackText, 'tailwindcss/theme.css no longer declares --font-sans').toBeDefined();
+    const stack = (stackText ?? '').split(',').map((entry) => entry.trim().replace(/^['"]|['"]$/g, ''));
+    expect(stack).toContain(family);
+    // Being in the stack is not enough. The family decides the face only while every entry ahead of
+    // it is one a Linux runner cannot have, so a bump that puts system-ui or ui-sans-serif first
+    // fails here and asks for a re-measure instead of shooting the runner's default face.
+    expect(
+      stack.slice(0, stack.indexOf(family ?? '')),
+      'Tailwind changed the families ahead of the poster font; re-measure the posters on a runner',
+    ).toEqual(['-apple-system', 'BlinkMacSystemFont', 'Segoe UI']);
+
+    // ...which holds only while the renderer's CSS overrides neither the stack nor the body
+    // font: every font-family it declares is a monospace one (the terminal and code blocks).
+    const rendererDir = path.join(REPO_ROOT, 'src', 'renderer');
+    const cssFiles = fs.readdirSync(rendererDir, { recursive: true, encoding: 'utf8' }).filter((name) => name.endsWith('.css'));
+    expect(cssFiles).toContain('index.css');
+    const rendererCss = cssFiles.map((name) => fs.readFileSync(path.join(rendererDir, name), 'utf8')).join('\n');
+    expect(rendererCss).not.toMatch(/--font-sans\s*:/);
+    expect(rendererCss).not.toMatch(/--default-font-family\s*:/);
+    const fontFamilies = [...rendererCss.matchAll(/font-family:\s*([^;]+);/g)].map((match) => match[1]);
+    expect(fontFamilies.length).toBeGreaterThan(0);
+    for (const value of fontFamilies) expect(value).toMatch(/mono/);
+  });
 });
 
 // v0.39.0 sat published and empty because its draft was published by hand while the three

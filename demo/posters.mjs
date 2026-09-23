@@ -26,6 +26,7 @@ import {
   posterPixelSize,
   posterZipName,
   readBuildScenes,
+  readPosterFocus,
   resolvePlaywrightCli,
   verifyPosterSet,
 } from '../scripts/lib/demo-posters.mjs';
@@ -92,9 +93,14 @@ function main() {
   }
 
   const zipPath = path.join(repoRoot, 'dist', posterZipName(scenesJson.version));
-  fs.writeFileSync(zipPath, packPosterSet(scenesJson, shotsDir));
+  const focus = readPosterFocus(scenesJson, shotsDir);
+  fs.writeFileSync(zipPath, packPosterSet(scenesJson, shotsDir, focus));
   const megabytes = (fs.statSync(zipPath).size / (1024 * 1024)).toFixed(1);
   log(`${scenesJson.scenes.length} scenes x ${POSTER_THEMES.length} themes = ${posters.length} posters at ${width}x${height}, ${megabytes} MB, ${zipPath}`);
+  const focusRects = Object.values(focus)
+    .flatMap((byTheme) => Object.values(byTheme))
+    .filter((rect) => rect !== null).length;
+  log(`${focusRects} of ${posters.length} posters carry a focus rect in manifest.json; the rest name no focus element.`);
 }
 
 try {

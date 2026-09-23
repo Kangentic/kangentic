@@ -54,7 +54,12 @@ Any step in the release path that exists to guarantee something must fail when i
   did, that its version gate can fail, that it uploads with `--clobber` and says whether it
   attached or replaced, and that the file still carries the decision keeping the zip out of
   `scripts/release-assets.js` (a twelfth expected asset would fail the verify that runs before
-  the job).
+  the job). Its font step is pinned too: it runs before the shoot, it can fail when `fc-match`
+  resolves another family, and the family it installs is still in Tailwind's default
+  `--font-sans`, with no renderer stylesheet overriding the stack. The families ahead of it are
+  pinned as well, since a runner can resolve a generic like `system-ui` placed first. A Tailwind
+  bump that dropped the family or put one of those ahead of it would otherwise put the posters
+  back in the runner's fallback face with every step green.
   It also pins the two shapes v0.39.0 and v0.40.0 broke:
   `create-draft-release` must be able to FAIL on a release that is already published and
   incomplete (rather than reusing it, which lets electron-builder skip every upload while the
