@@ -793,6 +793,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #650 (this change) | 6f +1450 | 219KB, 3175 lines | 4 (1) | 2 | 0 | 7 | 0 of 6 pack-carrying | 11 / 6 |
 | #686 | 39f +2367 | 214KB, 3610 lines | 14 (5) | 25 | 0 | 8 | 21 of 7 pack-carrying | 11 / 10 |
 | #710 | 4f +116 | 31KB, 513 lines | 4 (4) | 0 | 0 | 7 | 17 of 6 pack-carrying | 5 / 4 |
+| #711 | 12f +344 | 81KB, 1325 lines | 7 (6) | 5 | 0 | 7 | 4 of 6 pack-carrying | 9 / 5 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -819,3 +820,12 @@ lines 78-142), which sat just past the 20-line window of the prop the change add
 same file for the panel width, one read the spec's launch helper, and one read the `seeds` type in
 `scenes.ts`. So the partial tier's 20 lines stopped short of the component a changed prop feeds
 twice on this diff.
+
+Row four is the first sample where the body budget, not the file, decided the tier. The pack
+counted 198KB of full-body cost against the 200KB cap but wrote 69KB, because 6 of its 7 bodies
+were windowed. That left no room for `demo/posters.mjs`, a 110-line file, so it went in as hunks.
+Three of the 4 reads beyond the pack were re-reads of hunk-tier files: `demo/posters.mjs` in full
+by two finders that needed its call order, and the gap above a changed assertion in
+`tests/demo/static-demo.spec.ts` once. The fourth was `.gitattributes`, outside the changed set,
+for a line-ending question. A small file squeezed out by windowed bodies that were billed at full
+cost is the case to watch here.
