@@ -308,7 +308,7 @@ export class SessionManager extends EventEmitter {
         // terminal mounting onto a just-spawned session samples exactly
         // across that chunk - the replay hold window keeps those bytes out
         // of onFlush, so skipping them here would strand the shimmer
-        // overlay and the resuming label until the marker happens to recur.
+        // overlay until the marker happens to recur.
         // consume() is a one-shot latch, so feeding both the flushed and
         // the drained stream can never double-fire 'first-output'.
         this.consumeFirstOutput(sessionId, data);
