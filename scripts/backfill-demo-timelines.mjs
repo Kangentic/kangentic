@@ -9,7 +9,11 @@
  * - the peek and frame timelines (recordings made before the capture script computed them);
  * - the final frame (`serialized`) and the open frame (`openFrame.serialized`, at the cut the
  *   recording was made with), re-serialized as physical rows with an absolute cursor
- *   (scripts/lib/demo-frame-serializer.js), which every consumer of a frame now expects;
+ *   (scripts/lib/demo-frame-serializer.js), which every consumer of a frame now expects. A
+ *   working session's TILED recording gets an open frame too, which the capture script cannot
+ *   write (it is cut where the single recording's clock opens the session, and the single is
+ *   another run): the still a tiled window paints (loadDemoTiledFrames), with every row above
+ *   the screen, so a pane taller than the recording shows them rather than blank rows;
  * - the stored peeks, which come from the same chrome filter as the peek timeline.
  *
  * Usage:
@@ -20,13 +24,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { computeReplayTimelines, createReplayTerminal, peekFromTerminal } = require('./lib/demo-replay-timelines.js');
 const { serializePhysicalRows, CURSOR_SUFFIX } = require('./lib/demo-frame-serializer.js');
 
-const fixturesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'tests', 'captures', 'fixtures', 'demo');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
+// Node strips the types itself; the dataset module has no Node imports by design.
+const dataset = await import(pathToFileURL(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts')).href);
 const force = process.argv.includes('--force');
 const checkOnly = process.argv.includes('--check');
 
@@ -55,12 +62,43 @@ async function serializeFrames(record) {
   return { serialized, peek, openFrame };
 }
 
-/** A recording is current when it has both timelines and its frames are physical rows. */
-function isCurrent(record) {
+/**
+ * A recording is current when it has both timelines and its frames are physical rows, and a
+ * tiled recording a still opens mid-run carries its open frame at that moment.
+ */
+function isCurrent(record, expectedOpenBeforeEndMs) {
   return Array.isArray(record.peekTimeline)
     && Array.isArray(record.frameTimeline)
     && typeof record.serialized === 'string' && CURSOR_SUFFIX.test(record.serialized)
-    && (record.openFrame == null || CURSOR_SUFFIX.test(String(record.openFrame.serialized)));
+    && (record.openFrame == null || CURSOR_SUFFIX.test(String(record.openFrame.serialized)))
+    && (expectedOpenBeforeEndMs === undefined || (record.openFrame != null && record.openFrame.beforeEndMs === expectedOpenBeforeEndMs));
+}
+
+function streamEndMs(record) {
+  const stream = Array.isArray(record.stream) ? record.stream : [];
+  return stream.length > 0 ? stream[stream.length - 1].t : 0;
+}
+
+/**
+ * For each tiled recording a still paints mid-run, how long before its own end its open frame
+ * is cut: the single recording's clock opens a working session its live tail before the single's
+ * end, and the tiled run starts where the single's clock does (loadDemoTiledFrames). A tiled run
+ * that has ended by then paints its final frame, and needs none.
+ */
+function tiledOpenFrameCuts() {
+  const cuts = new Map();
+  for (const entry of manifest.captures) {
+    if (!entry.tiled) continue;
+    const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+    if (!session || session.activity !== 'thinking') continue;
+    const singlePath = path.join(fixturesDir, entry.file);
+    const tiledPath = path.join(fixturesDir, entry.tiled);
+    if (!fs.existsSync(singlePath) || !fs.existsSync(tiledPath)) continue;
+    const opensAtMs = Math.max(0, streamEndMs(JSON.parse(fs.readFileSync(singlePath, 'utf-8'))) - (session.liveTailMs ?? manifest.liveTailMs));
+    const tiledEndMs = streamEndMs(JSON.parse(fs.readFileSync(tiledPath, 'utf-8')));
+    if (opensAtMs < tiledEndMs) cuts.set(entry.tiled, tiledEndMs - opensAtMs);
+  }
+  return cuts;
 }
 
 /**
@@ -88,10 +126,11 @@ function rebuild(record, frames, timelines) {
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8'));
-const files = new Set(manifest.captures.map((entry) => entry.file));
+const files = new Set(manifest.captures.flatMap((entry) => (entry.tiled ? [entry.file, entry.tiled] : [entry.file])));
 for (const file of fs.readdirSync(fixturesDir)) {
   if (/^(spawn|terminal)-.+\.json$/.test(file)) files.add(file);
 }
+const openFrameCuts = tiledOpenFrameCuts();
 
 let written = 0;
 let skipped = 0;
@@ -102,10 +141,13 @@ for (const file of [...files].sort()) {
     continue;
   }
   const record = JSON.parse(fs.readFileSync(recordPath, 'utf-8'));
-  if (isCurrent(record) && !force) {
+  const openFrameCut = openFrameCuts.get(file);
+  if (isCurrent(record, openFrameCut) && !force) {
     skipped += 1;
     continue;
   }
+  // The cut serializeFrames makes the open frame at; rebuild writes it where the key sits.
+  if (openFrameCut !== undefined) record.openFrame = { beforeEndMs: openFrameCut };
   if (typeof record.cols !== 'number' || typeof record.rows !== 'number') {
     throw new Error(`[backfill] ${file} carries no cols/rows, so its stream cannot be replayed at the recorded grid`);
   }

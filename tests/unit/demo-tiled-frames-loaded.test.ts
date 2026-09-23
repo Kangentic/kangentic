@@ -1,7 +1,8 @@
 /**
  * loadDemoTiledFrames paints a still for a session whose window mounted at the tiled width: the
  * tiled recording's own final frame, and for a thinking session the frame at the moment the live
- * frame opens it, walked from the SINGLE recording's own clock (tests/captures/helpers/demo-scrollback.ts).
+ * frame opens it, on the SINGLE recording's own clock (tests/captures/helpers/demo-scrollback.ts),
+ * with every row above the screen that the backfill cut it with.
  * A named tiled sibling whose recording carries no serialized frame is refused rather than
  * silently falling back to the single recording's frame, which would paint the wrong terminal in
  * every tiled scene with no visible sign anything was wrong.
@@ -10,8 +11,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { Terminal } from '@xterm/headless';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { loadDemoTiledFrames } from '../captures/helpers/demo-scrollback';
 import { DEMO_SESSIONS, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_MIDDLEWARE } from '../captures/helpers/demo-dataset';
+import { serializePhysicalRows } from '../../scripts/lib/demo-frame-serializer.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FIXTURES_DIR = path.join(REPO_ROOT, 'tests', 'captures', 'fixtures', 'demo');
@@ -28,6 +32,8 @@ interface DemoManifestFixture {
 }
 
 interface RawCaptureRecordFixture {
+  cols: number;
+  rows: number;
   serialized: string;
   stream?: Array<{ t: number; data: string }>;
   frameTimeline?: Array<{ t: number; frame: string }>;
@@ -42,15 +48,16 @@ function readRawRecording(file: string): RawCaptureRecordFixture {
 }
 
 /**
- * Reproduces the loader's own walk over the tiled recording's frame timeline, from the raw
- * fixture data on disk rather than through loadDemoTiledFrames, so the expectation is not
- * anchored on the loader's own arithmetic.
+ * The tiled recording at the moment the single recording's clock opens the session, replayed
+ * from the raw stream on disk in a headless terminal and serialized with every row above the
+ * screen, rather than read through loadDemoTiledFrames, so the expectation is not anchored on the
+ * loader's own arithmetic or on the backfill that cut the stored frame.
  */
-function computeExpectedOpenFrame(
+async function computeExpectedOpenFrame(
   baseFile: string,
   tiledFile: string,
   liveTailMs: number,
-): { opensAtMs: number; tiledDurationMs: number; serialized: string } {
+): Promise<{ opensAtMs: number; tiledDurationMs: number; serialized: string }> {
   const base = readRawRecording(baseFile);
   const tiled = readRawRecording(tiledFile);
   const stream = Array.isArray(base.stream) ? base.stream : [];
@@ -59,12 +66,15 @@ function computeExpectedOpenFrame(
   const timeline = Array.isArray(tiled.frameTimeline) ? tiled.frameTimeline : [];
   if (timeline.length === 0) throw new Error(`${tiledFile} carries no frame timeline`);
   const tiledDurationMs = timeline[timeline.length - 1].t;
-  let currentFrame = timeline[0].frame;
-  for (const step of timeline) {
-    if (step.t > opensAtMs) break;
-    currentFrame = step.frame;
-  }
-  const serialized = opensAtMs >= tiledDurationMs ? tiled.serialized : currentFrame;
+  if (opensAtMs >= tiledDurationMs) return { opensAtMs, tiledDurationMs, serialized: tiled.serialized };
+  const terminal = new Terminal({ cols: tiled.cols, rows: tiled.rows, allowProposedApi: true, scrollback: 5000 });
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = '11';
+  const tiledStream = Array.isArray(tiled.stream) ? tiled.stream : [];
+  const played = tiledStream.filter((window) => window.t <= opensAtMs).map((window) => window.data).join('');
+  await new Promise<void>((resolve) => terminal.write(played, () => resolve()));
+  const serialized = serializePhysicalRows(terminal, { scrollback: 5000 });
+  terminal.dispose();
   return { opensAtMs, tiledDurationMs, serialized };
 }
 
@@ -94,13 +104,13 @@ describe('loadDemoTiledFrames', () => {
   ];
 
   for (const thinkingSession of thinkingSessions) {
-    it(`opens the thinking session ${thinkingSession.sessionId} at the tiled frame the single recording's clock points to`, () => {
+    it(`opens the thinking session ${thinkingSession.sessionId} at the tiled frame the single recording's clock points to`, async () => {
       const manifest = readManifestFixture();
       expect(typeof manifest.liveTailMs).toBe('number');
       const session = DEMO_SESSIONS.find((candidate) => candidate.id === thinkingSession.sessionId);
       expect(session).toBeDefined();
       const liveTailMs = session?.liveTailMs ?? (manifest.liveTailMs as number);
-      const expected = computeExpectedOpenFrame(thinkingSession.baseFile, thinkingSession.tiledFile, liveTailMs);
+      const expected = await computeExpectedOpenFrame(thinkingSession.baseFile, thinkingSession.tiledFile, liveTailMs);
 
       // Not vacuous: the opening moment falls inside the tiled recording's own timeline, so the
       // opening frame below has to be a real mid-timeline frame rather than the fallback to the
@@ -236,6 +246,48 @@ describe('loadDemoTiledFrames', () => {
 
       expect(() => loadDemoTiledFrames(temporaryFixturesDir as string)).toThrow(
         /carries no frame timeline.*backfill-demo-timelines\.mjs/,
+      );
+    });
+  });
+
+  describe('a thinking session whose tiled recording has no open frame for the moment it opens at', () => {
+    let temporaryFixturesDir: string | null = null;
+
+    afterEach(() => {
+      if (temporaryFixturesDir) {
+        fs.rmSync(temporaryFixturesDir, { recursive: true, force: true });
+        temporaryFixturesDir = null;
+      }
+    });
+
+    it('is refused with the backfill command, rather than painting a screen-only timeline frame', () => {
+      temporaryFixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-tiled-frames-no-open-frame-'));
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'manifest.json'),
+        JSON.stringify({
+          liveTailMs: 1000,
+          captures: [{ file: 'base.json', sessionId: SESSION_MIDDLEWARE, tiled: 'tiled.json', agent: 'claude', project: 'test-project' }],
+        }),
+      );
+      // singleDurationMs = 10000, liveTailMs = 1000 -> opensAtMs = 9000, inside the tiled run.
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'base.json'),
+        JSON.stringify({ agent: 'claude', serialized: 'BASE_FRAME', rawBytes: 10, stream: [{ t: 0, data: 'x' }, { t: 10000, data: 'y' }] }),
+      );
+      // A re-recorded tiled run, which the capture script writes with no open frame of its own.
+      fs.writeFileSync(
+        path.join(temporaryFixturesDir, 'tiled.json'),
+        JSON.stringify({
+          agent: 'claude',
+          serialized: 'TILED_FINAL_SERIALIZED',
+          rawBytes: 10,
+          stream: [{ t: 0, data: 'x' }, { t: 20000, data: 'y' }],
+          frameTimeline: [{ t: 0, frame: 'EARLY' }, { t: 20000, frame: 'LAST' }],
+        }),
+      );
+
+      expect(() => loadDemoTiledFrames(temporaryFixturesDir as string)).toThrow(
+        /tiled\.json carries no open frame cut 11000 ms before its end.*backfill-demo-timelines\.mjs/,
       );
     });
   });

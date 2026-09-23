@@ -24,7 +24,7 @@
  * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
  * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_COLUMN_MODELS, PROJECT_CONTOSO, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_COLUMN_MODELS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -116,24 +116,43 @@ export function isRigStep(step: DemoBootStep | RigStep): step is RigStep {
 }
 
 /**
- * The floating window's rect, centred like the window manager's default (`defaultWindowGeometry`
- * in window-manager/store/geometry.ts) but 0.64 of the frame wide where the default is 0.58. Every
- * task recording is 154 columns, and at the rig's launch (a real 2x scale, where the renderer
- * rounds the 12px Consolas cell to 6.5 CSS px) the default window fits 142, so the seed HOLDS the
- * recording's grid at 0.92 of the type size; at 0.64 the window fits 157, the hold lands at 154
- * with the native cell (a held grid never scales up), and the terminal reads at exactly the size
- * the board's bottom panel does. A floating terminal is the SUBJECT of its scene, which is why it
- * gets the width; a terminal beside a panel (the Browser pane, the Changes panel) is context and
- * stays held, see the Browser scene below.
+ * A floating window's rect, centred like the window manager's default (`defaultWindowGeometry`
+ * in window-manager/store/geometry.ts) but 0.64 of the frame wide where the default is 0.58: the
+ * rect a window restores to from maximized or tiled, and the one the conversation viewer opens at.
  */
 const MIDDLEWARE_FLOATING_GEOMETRY = { x: 0.18, y: 0.15, w: 0.64, h: 0.7 };
+
+/**
+ * A floating TERMINAL window's rect. Its width is only the fallback: the window also names its
+ * session in `fitToRecording`, and the seed (demo-dataset.ts, fitLayoutBlob) sets `w` and `x` so
+ * the window is exactly as wide as that session's recording at the visitor's own terminal cell.
+ * No fixed fraction can be: xterm floors the cell to device pixels, so the 12px Consolas cell is
+ * 6.0 CSS px at 100 percent and 6.5 at 200, and a machine without Consolas draws a 7.0 px cell.
+ * A pane wider than the 154-column recording left an empty band on the right (a held grid never
+ * scales up), and one narrower held it at a smaller type. Fitted, the terminal is at native type
+ * and fills its pane on every display; at 100 percent the window comes out at about the window
+ * manager's own 0.58. A floating terminal is the SUBJECT of its scene, which is why it gets this;
+ * a terminal beside a panel (the Browser pane, the Changes panel) is context and stays narrow, see
+ * the Browser scene below.
+ *
+ * The height carries about a row and a half of margin over the recording's 37 rows. At 125
+ * percent a cell is 14.4 px against 14 at 100 and 200, and at the 0.7 height the window fitted
+ * 36 rows there: a hold that the ROWS decide drops the font a quarter pixel, and the device-pixel
+ * floor then takes the cell a whole pixel narrower, a band as wide as the one this exists to
+ * remove. The spare rows sit below the grid as terminal background.
+ */
+const FITTED_FLOATING_GEOMETRY = { x: 0.18, y: 0.14, w: 0.64, h: 0.72 };
 
 /**
  * One task-detail window restored on cold boot. `maximized` takes the full frame and ignores the
  * window's own geometry, so the floating rect rides along as `restoreGeometry`: un-maximizing lands
  * exactly where a floating window would have opened, which is what `maximizeWindow` itself stores.
+ * A floating one is fitted to the middleware session's recording (FITTED_FLOATING_GEOMETRY).
  */
 function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
+  const placement = state === 'floating'
+    ? { geometry: FITTED_FLOATING_GEOMETRY, restoreGeometry: null, fitToRecording: SESSION_MIDDLEWARE }
+    : { geometry: MIDDLEWARE_FLOATING_GEOMETRY, restoreGeometry: MIDDLEWARE_FLOATING_GEOMETRY };
   return {
     version: 1,
     windows: [
@@ -141,8 +160,7 @@ function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
         taskId: TASK_MIDDLEWARE,
         kind: 'task-detail',
         title: 'Extract auth middleware',
-        geometry: MIDDLEWARE_FLOATING_GEOMETRY,
-        restoreGeometry: state === 'maximized' ? MIDDLEWARE_FLOATING_GEOMETRY : null,
+        ...placement,
         state,
       },
     ],
@@ -199,8 +217,9 @@ function tiledPairWorkspace() {
 
 /**
  * The conversation viewer on the middleware session, restored as a conversation window
- * (anchored on the session id, which the workspace restore always treats as known) at the same
- * rect as the task window, for the same reason: the board around it is the point. The transcript
+ * (anchored on the session id, which the workspace restore always treats as known) at the plain
+ * floating rect, since the board around it is the point. It has no terminal to fit, so it is not
+ * sized to a recording the way the task window is. The transcript
  * it shows is the one recorded beside the session (transcripts/contoso-web-claude-middleware.json,
  * main's own parser over the agent's history file), fetched when the viewer mounts.
  */
@@ -228,26 +247,34 @@ const COMMAND_TERMINAL_SLOT = 'slot-1';
 
 /**
  * The GLOBAL Command Terminal layout blob (`AppConfig.commandTerminalWorkspace`), one floating
- * window at the same rect as the task window and for the same reason: the contoso terminal
- * recording is 154 columns too, and the layer's default window (the same 0.58) would hold it at
- * 0.92. The layer restores this on its first open and re-pairs the slot to the live session.
+ * window. The layer restores this on its first open and re-pairs the slot to the live session.
+ * `fitted` sizes the window to the contoso terminal session's recording, for the same reason as
+ * the task window (FITTED_FLOATING_GEOMETRY). The tiled scene takes the plain rect instead: New
+ * terminal docks a second window beside this one and grows the pair to the dock's 750px pane
+ * minimum, so its panes are that width whatever the first window's, and a fitted first window
+ * would only move the footprint the tiled recordings were measured in.
  */
-const COMMAND_TERMINAL_WORKSPACE = {
-  version: 1,
-  windows: [
-    {
-      taskId: COMMAND_TERMINAL_SLOT,
-      kind: 'command-terminal' as const,
-      title: commandTerminalTitle(COMMAND_TERMINAL_SLOT),
-      geometry: MIDDLEWARE_FLOATING_GEOMETRY,
-      restoreGeometry: null,
-      state: 'floating' as const,
-    },
-  ],
-  tileTree: null,
-  tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
-  focusedTaskId: COMMAND_TERMINAL_SLOT,
-};
+function commandTerminalWorkspace(fitted: boolean) {
+  const placement = fitted
+    ? { geometry: FITTED_FLOATING_GEOMETRY, fitToRecording: SESSION_CONTOSO_TERMINAL }
+    : { geometry: MIDDLEWARE_FLOATING_GEOMETRY };
+  return {
+    version: 1,
+    windows: [
+      {
+        taskId: COMMAND_TERMINAL_SLOT,
+        kind: 'command-terminal' as const,
+        title: commandTerminalTitle(COMMAND_TERMINAL_SLOT),
+        ...placement,
+        restoreGeometry: null,
+        state: 'floating' as const,
+      },
+    ],
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+    focusedTaskId: COMMAND_TERMINAL_SLOT,
+  };
+}
 
 /** The Changes panel open on one scope with the middleware session's routes.ts selected. */
 function middlewareChangesStateWith(extra: Record<string, unknown>) {
@@ -540,8 +567,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'state',
     description: 'A task-detail window open on "Extract auth middleware", its agent working in the terminal.',
     alt: 'A task window floating over the board. Claude Code is extracting the auth middleware in the terminal, and the context bar under it reports the model, the context window used, and the cost so far.',
-    // Floating on purpose: the board around it is the point. The rect is the wider one
-    // MIDDLEWARE_FLOATING_GEOMETRY explains, so the terminal is at native type.
+    // Floating on purpose: the board around it is the point, so the scene names no focus to crop
+    // to. The window is fitted to the session's recording (FITTED_FLOATING_GEOMETRY), so the
+    // terminal is at native type and fills its pane.
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
     ready: '[data-testid="task-title-text"]',
   },
@@ -553,18 +581,19 @@ export const SCENES: Record<string, SceneDefinition> = {
     config: { workspaceByProject: { [PROJECT_CONTOSO]: tiledPairWorkspace() } },
     ready: '[data-testid^="tile-splitter-"]',
   },
-  // The Browser and Changes scenes below keep a held terminal on purpose. There the PANEL is the
+  // The Browser and Changes scenes below keep a narrow terminal on purpose. There the PANEL is the
   // subject and the terminal beside it is context, and giving the terminal the width its native
   // type needs squeezes the subject instead (the address bar and the note field truncate, a split
-  // diff clips mid-line). A pane narrower than the single recording takes the tiled one (the
-  // seed's layoutFor), so these terminals hold the middleware session's tiled recording at about
-  // 0.9 of the type size rather than the single at 0.67. The seed's floor (HOLD_MIN_SCALE in
-  // demo-dataset.ts) is what keeps that context legible: below 0.6 the terminal would play frames
-  // at native type, which in a narrow pane cuts every row at the edge.
+  // diff clips mid-line). A pane that narrow is shown better by the tiled recording (the seed's
+  // layoutFor): about 110 to 118 columns against its 115, so at the configured type where the pane
+  // is at least 113 columns and at about 0.85 of it where it is narrower, rather than the single
+  // at 0.67. Either way it fills the tall pane with the rows above the recording's screen. The
+  // seed's floor (HOLD_MIN_SCALE in demo-dataset.ts) is what keeps that context legible: below 0.6
+  // the terminal would keep the configured type, which in a narrow pane cuts every row at the edge.
   browser: {
     name: 'browser',
     reach: 'state',
-    description: 'The task window with the Browser pane open on the project\'s dev URL. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it is held at 0.71 type (the comment above).',
+    description: 'The task window with the Browser pane open on the project\'s dev URL. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it shows the session\'s tiled recording, filling the narrow pane (the comment above).',
     alt: 'A task window with the Browser pane open beside the agent\'s terminal: an address bar on the project\'s local dev server, the page it serves loaded beneath, zoom and Close browser controls above, and Draw, Inspect, and a note field for the agent below.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
@@ -591,7 +620,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   conversation: {
     name: 'conversation',
     reach: 'state',
-    description: 'The conversation viewer open on the middleware session, floating over the board at the task window\'s rect. The transcript is the one recorded beside the session (the manifest\'s transcript flag; main\'s own parser over the agent\'s history file), so the viewer shows what the desktop would for this run.',
+    description: 'The conversation viewer open on the middleware session, floating over the board at the plain floating rect. The transcript is the one recorded beside the session (the manifest\'s transcript flag; main\'s own parser over the agent\'s history file), so the viewer shows what the desktop would for this run.',
     alt: 'The conversation viewer floating over the board, open on Extract auth middleware and scrolled to Claude Code\'s closing message: what changed in the middleware and the routes, the choices it made, and a caveat on the test run, with a search field above.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: conversationWindowWorkspace() } },
     // An assistant row exists only once the transcript has been fetched and rendered, so the
@@ -610,7 +639,8 @@ export const SCENES: Record<string, SceneDefinition> = {
     // terminal, the file tree, the hunks), and in the floating rect at the frame's 1600x1000 the
     // diff pane clips mid-line. The maximize control is right there in the header, so a visitor
     // can put it back; this only picks the state the panel is legible in. The terminal takes
-    // 0.42 of the width and is held at 0.67 type (the comment above the Browser scene).
+    // 0.42 of the width and shows the session's tiled recording (the comment above the Browser
+    // scene).
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesViewedFiles: ['server/middleware/auth.ts'] }) }],
     ready: '[data-testid="changes-scope-branch"][aria-checked="true"]',
@@ -687,9 +717,9 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal': {
     name: 'command-terminal',
     reach: 'boot',
-    description: 'One Command Terminal window over the blurred board, on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click; the window\'s rect is the global layout blob (COMMAND_TERMINAL_WORKSPACE), restored on that open.',
+    description: 'One Command Terminal window over the blurred board, on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click; the window\'s rect is the global layout blob (commandTerminalWorkspace), restored on that open and fitted to the session\'s recording like the task window.',
     alt: 'A Command Terminal window open over the blurred board, running Claude Code in the project root, which has just summarized the repository and listed its npm scripts; the header carries the branch pill and the window controls.',
-    config: { commandTerminalWorkspace: COMMAND_TERMINAL_WORKSPACE },
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(true) },
     ready: '[data-testid="command-terminal-window"]',
     steps: [{ click: '[data-testid="quick-session-button"]', waitFor: '[data-testid="command-terminal-window"]' }],
   },
@@ -698,7 +728,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'Two Command Terminals tiled in one footprint: the toggle reattaches the contoso terminal session, then New terminal docks a second beside it and boots the project default agent from the boot recorded at the tiled width. The first window switches to its own tiled recording as it narrows (the seed\'s layoutFor), so both are at native type. The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
     alt: 'Two Command Terminal windows tiled side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
-    config: { commandTerminalWorkspace: COMMAND_TERMINAL_WORKSPACE },
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(false) },
     // The second window's model pill, which the context bar shows only once the session's first
     // usage lands, a beat after its terminal mounts (the seed pushes it 1.2 s after the boot's
     // first output, as main's status-line push would): a still shot before that would show the

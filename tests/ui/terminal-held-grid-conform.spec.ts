@@ -124,6 +124,50 @@ test('a held answer conforms the terminal to the held grid at a smaller font', a
   }
 });
 
+test('a held answer conforms at the LARGEST font that fits, not the first one the linear proposal names', async () => {
+  // The proposal scales the font by the ratio of the grid to the box, as if a cell scaled with it.
+  // It does not: the renderer floors a cell's width to device pixels, so several quarter-pixel sizes
+  // draw the same width, and the proposal lands on the smallest of them. At that size the held grid
+  // fits with rows to spare that a larger size would have filled, and the terminal letterboxed
+  // them: in the web demo, three empty rows under a tiled window in the posters' face. Pinned by
+  // measuring the box and the cell one quarter step up the way the fit addon and xterm do: that
+  // step must either pass the configured size or no longer hold the grid.
+  const { browser, page } = await launch(preConfig(JSON.stringify({ colsChanged: false, refused: true, held: HELD })));
+  try {
+    await openTaskWindow(page);
+    await expect.poll(async () => (await readGrid(page)) ?? undefined, { timeout: 15000 }).toMatchObject(HELD);
+    const conforms = await readEvents(page, 'conform');
+    const fontSize = conforms[conforms.length - 1].detail?.fontSize as number;
+    expect(fontSize).toBeLessThan(CONFIGURED_FONT_PX);
+    const nextStep = fontSize + 0.25;
+    const fitsOneStepUp = await page.evaluate(async ({ larger, grid }) => {
+      const api = (window as unknown as { electronAPI: { config: { getGlobal: () => Promise<{ terminal: { fontFamily: string } }> } } }).electronAPI;
+      const fontFamily = (await api.config.getGlobal()).terminal.fontFamily;
+      const xterm = document.querySelector<HTMLElement>('[data-testid="task-detail-terminal-dim"] .xterm');
+      const parent = xterm?.parentElement;
+      const viewport = xterm?.querySelector<HTMLElement>('.xterm-viewport');
+      if (!xterm || !parent || !viewport) throw new Error('no conformed terminal to measure');
+      const parentStyle = getComputedStyle(parent);
+      const elementStyle = getComputedStyle(xterm);
+      const availableWidth = parseInt(parentStyle.width, 10) - parseInt(elementStyle.paddingLeft, 10) - parseInt(elementStyle.paddingRight, 10)
+        - (viewport.offsetWidth - viewport.clientWidth);
+      const availableHeight = parseInt(parentStyle.height, 10) - parseInt(elementStyle.paddingTop, 10) - parseInt(elementStyle.paddingBottom, 10);
+      // xterm's CharSizeService and the WebGL renderer's rounding (WebglRenderer._updateDimensions).
+      const context = new OffscreenCanvas(16, 16).getContext('2d');
+      if (!context) throw new Error('no 2d context to measure a cell with');
+      context.font = `${larger}px ${fontFamily}`;
+      const metrics = context.measureText('W');
+      const scale = window.devicePixelRatio;
+      const cellWidth = Math.floor(metrics.width * scale) / scale;
+      const cellHeight = Math.ceil((metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) * scale) / scale;
+      return grid.cols * cellWidth <= availableWidth && grid.rows * cellHeight <= availableHeight;
+    }, { larger: nextStep, grid: HELD });
+    expect(nextStep > CONFIGURED_FONT_PX || !fitsOneStepUp, `the grid still fits at ${nextStep}px, a quarter step above the ${fontSize}px it conformed at`).toBe(true);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('an accepted probe releases the hold and the terminal returns to its own fit', async () => {
   const { browser, page } = await launch(preConfig(JSON.stringify({ colsChanged: false, refused: true, held: HELD })));
   try {

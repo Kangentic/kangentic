@@ -14,14 +14,14 @@
  *
  * Every test owns its own page (the built-in fixture), so nothing leaks between cases.
  */
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { test, expect, chromium, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { SCENES } from '../captures/scenes';
 import {
   DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, PROJECT_CONTOSO,
-  SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE,
+  SESSION_CONTOSO_TERMINAL, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE,
 } from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
@@ -47,9 +47,10 @@ interface DemoBootGlobal {
 let server: DemoServer;
 
 // The site frame's size, which every terminal recording was made for (demo/README.md,
-// geometry): the task-detail window geometry in the scenes is fractional, so this is what
-// gives the window its recorded 154 by 37 grid, and it is wide enough for the Changes panel's
-// file tree and split diff to lay out side by side.
+// geometry): the window geometry in the scenes and the state blobs below is fractional, so this
+// is what gives a default-rect window its recorded 154 by 37 grid (a fitted floating window takes
+// its recording's grid at any display scale), and it is wide enough for the Changes panel's file
+// tree and split diff to lay out side by side.
 test.use({ viewport: { width: 1600, height: 1000 } });
 
 test.beforeAll(async () => {
@@ -637,31 +638,49 @@ async function countTrailChanges(page: Page, sessionId: string, spanMs: number):
   }), { id: sessionId, span: spanMs });
 }
 
+interface WindowGeometry { x: number; y: number; w: number; h: number }
+
+/** The window manager's DEFAULT rect (defaultWindowGeometry: 0.58 of the frame, centred). */
+const DEFAULT_WINDOW_GEOMETRY: WindowGeometry = { x: 0.21, y: 0.15, w: 0.58, h: 0.7 };
+
 /**
- * A task-detail window on "Add rate limiting", whose session the board seeds IDLE. Same shape as
- * the task scene's workspace, so the window mounts its terminal on the grid the recording fits
- * and takes the live path rather than the frame fallback.
+ * One floating task-detail window, by default at the window manager's default rect: the window a
+ * visitor's own click opens and the one each task session was recorded at. Unlike the fitted
+ * `task` scene it is a fixed fraction, so its grid moves with the display, which is what the hold
+ * cases below need.
  */
-const RATE_LIMIT_WINDOW_STATE = {
-  config: {
-    workspaceByProject: {
-      'proj-contoso-web': {
-        version: 1,
-        windows: [{
-          taskId: 'task-cw-rate-limit',
-          kind: 'task-detail',
-          title: 'Add rate limiting',
-          geometry: { x: 0.21, y: 0.15, w: 0.58, h: 0.7 },
-          restoreGeometry: null,
-          state: 'floating',
-        }],
-        tileTree: null,
-        tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
-        focusedTaskId: 'task-cw-rate-limit',
+function floatingWindowState(taskId: string, title: string, geometry: WindowGeometry = DEFAULT_WINDOW_GEOMETRY) {
+  return {
+    config: {
+      workspaceByProject: {
+        'proj-contoso-web': {
+          version: 1,
+          windows: [{
+            taskId,
+            kind: 'task-detail',
+            title,
+            geometry,
+            restoreGeometry: null,
+            state: 'floating',
+          }],
+          tileTree: null,
+          tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+          focusedTaskId: taskId,
+        },
       },
     },
-  },
-};
+  };
+}
+
+/**
+ * A task-detail window on "Add rate limiting", whose session the board seeds IDLE, at the default
+ * rect, so the window mounts its terminal on the grid the recording fits and takes the live path
+ * rather than the frame fallback.
+ */
+const RATE_LIMIT_WINDOW_STATE = floatingWindowState('task-cw-rate-limit', 'Add rate limiting');
+
+/** The middleware task at the default rect, where a display at another scale fits another grid. */
+const MIDDLEWARE_DEFAULT_WINDOW_STATE = floatingWindowState(TASK_MIDDLEWARE, 'Extract auth middleware');
 
 function encodeState(state: unknown): string {
   return Buffer.from(JSON.stringify(state)).toString('base64url');
@@ -743,6 +762,127 @@ const MIDDLEWARE_RECORDED_GRID: Grid = { cols: 154, rows: 37 };
 const MIDDLEWARE_TILED_GRID: Grid = { cols: 115, rows: 37 };
 
 /**
+ * The most a terminal may leave empty around its screen, beside it and below it: the leftover of
+ * whole cells a fit always has, twice over, since a held pane is taken at the least its natural
+ * grid allows and then filled at a smaller cell (displayFor in demo-dataset.ts). A letterboxed
+ * recording left 56px beside and 23px below every card window at 125 percent, and 314px below the
+ * Browser scene's terminal at 100; a pane the seed fills stays inside these on every display.
+ */
+const MAX_EMPTY_BESIDE_PX = 16;
+const MAX_EMPTY_BELOW_PX = 30;
+
+interface PaneBands { right: number; below: number }
+
+/** The empty band beside and below the screen of every terminal on the page, as the fit addon measures its box. */
+function paneBands(page: Page): Promise<PaneBands[]> {
+  return page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.xterm')).flatMap((xterm) => {
+    const parent = xterm.parentElement;
+    const viewport = xterm.querySelector<HTMLElement>('.xterm-viewport');
+    const screen = xterm.querySelector<HTMLElement>('.xterm-screen');
+    if (!parent || !viewport || !screen) return [];
+    const parentBox = parent.getBoundingClientRect();
+    if (parentBox.width === 0 || parentBox.height === 0) return [];
+    const style = getComputedStyle(xterm);
+    const screenBox = screen.getBoundingClientRect();
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    return [{
+      right: Math.round(parentBox.width - padding - (viewport.offsetWidth - viewport.clientWidth) - screenBox.width),
+      below: Math.round(parentBox.height - screenBox.height),
+    }];
+  }));
+}
+
+/**
+ * Every terminal on the page fills its pane. Polled, because a held terminal conforms a resize
+ * debounce after it mounts, and a window's layout lands a frame after its first report.
+ */
+async function expectPanesFilled(page: Page, label: string): Promise<void> {
+  await expect.poll(async () => {
+    const bands = await paneBands(page);
+    if (bands.length === 0) return ['no terminal on the page'];
+    return bands.filter((band) => band.right > MAX_EMPTY_BESIDE_PX || band.below > MAX_EMPTY_BELOW_PX);
+  }, { timeout: 15_000, message: `${label}: a terminal left its pane empty around it` }).toEqual([]);
+}
+
+interface ReplayState { mode: 'bytes' | 'frames' | null; held: Grid | null }
+
+/** How the seed is feeding a session's terminal (window.__demoReplayMode) and the grid it holds it at, if any (window.__demoHeldGrid). */
+function replayState(page: Page, sessionId: string): Promise<ReplayState> {
+  return page.evaluate((id) => {
+    const demo = window as unknown as { __demoReplayMode?: Record<string, 'bytes' | 'frames'>; __demoHeldGrid?: Record<string, Grid | null> };
+    return { mode: demo.__demoReplayMode?.[id] ?? null, held: demo.__demoHeldGrid?.[id] ?? null };
+  }, sessionId);
+}
+
+/** The grids a session was recorded at: its single recording's, and its tiled sibling's when it has one. */
+function recordingGridsOf(page: Page, sessionId: string): Promise<Grid[]> {
+  return page.evaluate((id) => {
+    interface Indexed { cols: number; rows: number; tiled?: Indexed }
+    const sessions = (window as unknown as { __demoRecordings?: { sessions: Record<string, Indexed> } }).__demoRecordings?.sessions ?? {};
+    const indexed = sessions[id];
+    if (!indexed) return [];
+    return [indexed, ...(indexed.tiled ? [indexed.tiled] : [])].map((entry) => ({ cols: entry.cols, rows: entry.rows }));
+  }, sessionId);
+}
+
+/**
+ * The replay invariant: bytes reach a terminal only on its recording's grid, and every other grid
+ * plays frames from the page's emulator. A session the seed holds at a smaller type has to see
+ * the terminal report the held grid back, which is the conform landing: a hold with no report back
+ * is the decline that wrapped every padded row into a blank one and put Copilot's scrollbar in
+ * column zero. Which path a pane takes rides on the platform's font metrics, so this asserts
+ * whichever one the seed took rather than predicting it.
+ */
+async function expectFaithfulReplay(page: Page, sessionId: string): Promise<ReplayState> {
+  await expect.poll(async () => (await replayState(page, sessionId)).mode, { timeout: 15_000, message: `${sessionId} was never fed` }).not.toBeNull();
+  const state = await replayState(page, sessionId);
+  if (state.held) {
+    await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000, message: `${sessionId} was held at ${state.held.cols}x${state.held.rows} and never conformed` }).toContainEqual(state.held);
+  }
+  if (state.mode === 'bytes') {
+    const recorded = await recordingGridsOf(page, sessionId);
+    const terminalGrid = state.held ?? await naturalGrid(page, sessionId);
+    if (recorded.length > 0) expect(recorded, `${sessionId} was handed bytes on a grid none of its recordings has`).toContainEqual(terminalGrid);
+  }
+  return state;
+}
+
+/** The natural grid the seed last recorded for a session (window.__demoNaturalGeometry): what its window fits, before any hold. */
+function naturalGrid(page: Page, sessionId: string): Promise<Grid | null> {
+  return page.evaluate((id) => {
+    const natural = (window as unknown as { __demoNaturalGeometry?: Record<string, Grid> }).__demoNaturalGeometry ?? {};
+    return natural[id] ?? null;
+  }, sessionId);
+}
+
+/**
+ * The floating terminal scenes, each with the session its window is fitted to
+ * (FITTED_FLOATING_GEOMETRY in scenes.ts) and that session's single recording, whose grid the
+ * window must take: 154 columns and 37 rows, both Claude sessions recorded at the task window.
+ */
+const FITTED_WINDOW_SCENES = [
+  { view: 'task', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware' },
+  { view: 'command-terminal', sessionId: SESSION_CONTOSO_TERMINAL, fileStem: 'contoso-web-claude-terminal' },
+] as const;
+
+/**
+ * Opens a fitted scene and asserts its window's terminal took exactly the recording's columns,
+ * rows to spare, and the SINGLE recording's bytes. Polls for the columns because a terminal
+ * reports once at a transitional size before its window's layout lands (demo/measure.mjs); a
+ * window that never lands on the recording's width fails the poll.
+ */
+async function expectFittedToRecording(page: Page, scene: typeof FITTED_WINDOW_SCENES[number], label: string): Promise<void> {
+  const getRecordingRequests = recordingRequests(page);
+  await page.goto(demoUrl({ view: scene.view, embed: '1' }));
+  await waitForDemoReady(page);
+  await expect.poll(async () => (await naturalGrid(page, scene.sessionId))?.cols, { timeout: 10_000, message: `${label}: the window's terminal columns` })
+    .toBe(MIDDLEWARE_RECORDED_GRID.cols);
+  expect((await naturalGrid(page, scene.sessionId))?.rows ?? 0, `${label}: the window's terminal rows`).toBeGreaterThanOrEqual(MIDDLEWARE_RECORDED_GRID.rows);
+  await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/${scene.fileStem}-`) && !url.includes('-tiled-')), { timeout: 15_000 }).toBe(true);
+  await expectFaithfulReplay(page, scene.sessionId);
+}
+
+/**
  * The same, for the Copilot rate-limit session. Claude's context bar wraps to two rows and every
  * other agent's does not, so a non-Claude session records two rows taller (manifest geometry,
  * rowsByAgent).
@@ -752,7 +892,9 @@ const RATE_LIMIT_RECORDED_GRID: Grid = { cols: 154, rows: 39 };
 /**
  * Every frame the mock paints into a terminal on the frames path, parsed: the rows between the
  * autowrap-off and autowrap-on brackets, each measured in cells (code points plus cursor-forward
- * gaps; the sample install's frames carry no wide glyph). What the bottom-panel case asserts on.
+ * gaps; the sample install's frames carry no wide glyph). A full paint joins its rows with line
+ * breaks; a repaint that builds on the last one redraws each screen row in place behind a cursor
+ * move to its first column. What the bottom-panel case asserts on.
  */
 function paintedFrameRowWidths(page: Page, sessionId: string, spanMs: number): Promise<number[][]> {
   return page.evaluate(({ id, span }) => new Promise<number[][]>((resolve) => {
@@ -763,7 +905,7 @@ function paintedFrameRowWidths(page: Page, sessionId: string, spanMs: number): P
       const start = data.indexOf('\x1b[?7l');
       const end = data.lastIndexOf('\x1b[?7h');
       if (start === -1 || end === -1 || end < start) return;
-      frames.push(data.slice(start + 5, end).split('\r\n').map((row) => {
+      frames.push(data.slice(start + 5, end).split(/\r\n|\x1b\[\d+;1H/).filter((row, index) => index > 0 || row !== '').map((row) => {
         const text = row.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
         const gaps = (row.match(/\x1b\[(\d*)C/g) ?? []).reduce((sum, move) => sum + Number(move.replace(/\D/g, '') || '1'), 0);
         return Array.from(text).length + gaps;
@@ -867,25 +1009,20 @@ test('the conversation scene shows the transcript recorded beside the middleware
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('the tiled task windows take each session\'s tiled recording, held at its grid, on the session\'s own clock', async ({ page }) => {
+test('the tiled task windows take each session\'s tiled recording, fill their panes, on the session\'s own clock', async ({ page }) => {
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   const getRecordingRequests = recordingRequests(page);
   await gotoScene(page, { view: 'windows-tiled', embed: '1' });
   for (const [sessionId, fileStem] of [['sess-cw-middleware', 'contoso-web-claude-middleware'], ['sess-cw-api-client', 'contoso-web-claude-api-client']] as const) {
     await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).not.toHaveLength(0);
-    // The pane's natural width decides the layout (a pane narrower than the single recording
-    // takes the tiled one); the font metrics decide the natural width, and they differ between
-    // Windows and CI's Linux, so the expectation follows the width the page measured.
-    const natural = (await sentGrids(page, sessionId))[0];
-    const tiled = natural.cols < MIDDLEWARE_RECORDED_GRID.cols;
-    const expectedGrid = tiled ? MIDDLEWARE_TILED_GRID : MIDDLEWARE_RECORDED_GRID;
-    if (natural.cols !== expectedGrid.cols || natural.rows !== expectedGrid.rows) {
-      await expect.poll(() => sentGrids(page, sessionId), { timeout: 10_000 }).toContainEqual(expectedGrid);
-    }
-    const expectedFile = tiled ? `${fileStem}-tiled-` : `${fileStem}-`;
-    await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/${expectedFile}`)), { timeout: 15_000 }).toBe(true);
-    if (tiled) expect(getRecordingRequests().some((url) => url.includes(`/recordings/${fileStem}-`) && !url.includes('-tiled-'))).toBe(false);
+    // A tiled pane is within about eight columns either side of the tiled recording's 115 on every
+    // platform (123 at 100 percent on Windows, 107 on this runner's Liberation Mono), and the tiled
+    // recording shows it at a larger type than the single one could (layoutFor).
+    await expectFaithfulReplay(page, sessionId);
+    await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/${fileStem}-tiled-`)), { timeout: 15_000 }).toBe(true);
+    expect(getRecordingRequests().some((url) => url.includes(`/recordings/${fileStem}-`) && !url.includes('-tiled-'))).toBe(false);
   }
+  await expectPanesFilled(page, 'windows-tiled');
   // A variant is a second run with its own length, played from the moment the SESSION's clock
   // began, and the clock stays the single recording's. A tiled window therefore opens partway
   // into the variant and the session goes on working for the stretch its single recording has
@@ -896,6 +1033,157 @@ test('the tiled task windows take each session\'s tiled recording, held at its g
     expect((await monitorRow(page, sessionId))?.activity, `${sessionId} finished when its tiled window opened`).toBe('thinking');
   }
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+// The floating terminal scenes size their window to the recording at the visitor's own cell
+// (FITTED_FLOATING_GEOMETRY in scenes.ts, fitLayoutBlob in demo-dataset.ts), so the terminal takes
+// exactly the recording's columns and fills its pane at native type on every display. At a fixed
+// 0.64 of the frame it did not: at 100 percent the 6.0 px Consolas cell fitted 170 columns and left
+// about 100px empty on the right, and at a 7.0 px cell (Liberation Mono on this runner, where the
+// release posters are shot) the window fitted 146, took the 115-column tiled recording, and left a
+// fifth of the pane empty. Each scale here rounds the cell to device pixels differently (6.0, 6.4,
+// 6.5 CSS px for Consolas), which is what a fixed fraction cannot follow.
+for (const deviceScaleFactor of [1, 1.25, 2]) {
+  test(`a floating terminal window fits its recording's columns at device scale ${deviceScaleFactor}`, async ({ browser }) => {
+    test.setTimeout(120_000);
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor });
+    try {
+      for (const scene of FITTED_WINDOW_SCENES) {
+        const page = await context.newPage();
+        const getUnexpectedErrors = collectUnexpectedErrors(page);
+        await expectFittedToRecording(page, scene, `${scene.view} at scale ${deviceScaleFactor}`);
+        await expectPanesFilled(page, `${scene.view} at scale ${deviceScaleFactor}`);
+        expect(getUnexpectedErrors()).toEqual([]);
+        await page.close();
+      }
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+// Every scene with a terminal in it, at the display scales a visitor has: the terminal fills its
+// pane, wider or narrower than its recording, taller or shorter. Before the fill, the Browser
+// scene's terminal left 314px below it at 100 percent, the tiled windows 52px beside them, and
+// the Changes scene 300px below at 125. A still fills too, since the posters are stills, shot at
+// twice scale; this runner's Liberation Mono is the face whose heights round unevenly, the case
+// the renderer's conform used to stop short on.
+const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'changes', 'command-terminal', 'command-terminal-tiled', 'board'] as const;
+for (const [deviceScaleFactor, still] of [[1, false], [1.25, false], [2, false], [2, true]] as const) {
+  test(`every terminal scene fills its panes at device scale ${deviceScaleFactor}${still ? ', as a still' : ''}`, async ({ browser }) => {
+    test.setTimeout(180_000);
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor });
+    try {
+      for (const view of TERMINAL_SCENES) {
+        const page = await context.newPage();
+        const getUnexpectedErrors = collectUnexpectedErrors(page);
+        await gotoScene(page, { view, embed: '1', ...(still ? { still: '1' } : {}) });
+        await expectPanesFilled(page, `${view} at scale ${deviceScaleFactor}${still ? ' (still)' : ''}`);
+        expect(getUnexpectedErrors()).toEqual([]);
+        await page.close();
+      }
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test('a card opened on a desktop browser at 100 percent replays its terminal on the grid the terminal has', async () => {
+  // A desktop browser reserves the app's 8px scrollbar gutter, which leaves the default task
+  // window a column short of a 154-column recording on Consolas. The seed used to hold that pane
+  // anyway; the conform declined (four quarter-pixel font steps cannot move a 6px cell to 5), the
+  // terminal kept its own 153 columns, and the bytes it was sent addressed 154: every padded row
+  // wrapped into a blank one and Copilot's right-edge scrollbar landed in column zero. A near
+  // miss now plays frames at the pane's grid, and anything held has to land. Copilot and Claude,
+  // the two renderers the report showed, opened the way a visitor opens them: a click on the card.
+  test.setTimeout(120_000);
+  const browserWithScrollbars = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });
+  try {
+    const context = await browserWithScrollbars.newContext({ viewport: { width: 1600, height: 1000 } });
+    for (const [taskId, sessionId] of [['task-cw-rate-limit', SESSION_RATE_LIMIT], [TASK_MIDDLEWARE, SESSION_MIDDLEWARE]] as const) {
+      const page = await context.newPage();
+      const getUnexpectedErrors = collectUnexpectedErrors(page);
+      await gotoScene(page, { view: 'board', embed: '1' });
+      await page.locator(`[data-task-id="${taskId}"]`).first().click();
+      await expect(page.locator('[data-testid^="window-frame-"] .xterm-screen')).toBeVisible({ timeout: 15_000 });
+      await expectFaithfulReplay(page, sessionId);
+      await expectPanesFilled(page, `${taskId} at 100 percent`);
+      expect(getUnexpectedErrors()).toEqual([]);
+      await page.close();
+    }
+  } finally {
+    await browserWithScrollbars.close();
+  }
+});
+
+test('a window one column short of its recording plays frames at its own grid rather than holding', async ({ browser }) => {
+  // The case above reaches one column short only on Windows' Consolas; this runner's Liberation
+  // Mono floors to a wider cell, the default window fits far fewer columns, and the pane holds.
+  // So this builds the near miss on any font: the fitted window, one cell narrower. The fit leaves
+  // half a cell of slack, so that floors to exactly one column under the recording. Smaller type
+  // is not worth a column (NEAR_MISS_COLUMNS in demo-dataset.ts), so the seed plays frames at the
+  // pane's grid at the configured type, with nothing held.
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  try {
+    const fittedPage = await context.newPage();
+    await expectFittedToRecording(fittedPage, FITTED_WINDOW_SCENES[0], 'the fitted task window');
+    const fitted = await fittedPage.evaluate(async (taskId) => {
+      // The stored workspace, which the seed rewrote with the fitted rect on the renderer's first read.
+      const api = (window as unknown as { electronAPI: { config: { getGlobal: () => Promise<{
+        workspaceByProject: Record<string, { windows: Array<{ taskId: string; geometry: WindowGeometry }> }>;
+      }> } } }).electronAPI;
+      const config = await api.config.getGlobal();
+      const managedWindow = config.workspaceByProject['proj-contoso-web'].windows.find((candidate) => candidate.taskId === taskId);
+      const screen = document.querySelector<HTMLElement>('[data-testid="task-detail-dialog"] .xterm-screen');
+      return { geometry: managedWindow?.geometry ?? null, screenWidth: screen ? screen.getBoundingClientRect().width : null };
+    }, TASK_MIDDLEWARE);
+    await fittedPage.close();
+    expect(fitted.geometry, 'the fitted window geometry').not.toBeNull();
+    expect(fitted.screenWidth, 'the fitted terminal screen').not.toBeNull();
+    const cellWidth = (fitted.screenWidth ?? 0) / MIDDLEWARE_RECORDED_GRID.cols;
+    const fittedGeometry = fitted.geometry as WindowGeometry;
+    const width = fittedGeometry.w - cellWidth / 1600;
+    const shortGeometry: WindowGeometry = { x: (1 - width) / 2, y: fittedGeometry.y, w: width, h: fittedGeometry.h };
+
+    const page = await context.newPage();
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    await gotoScene(page, { view: 'task', embed: '1', state: encodeState(floatingWindowState(TASK_MIDDLEWARE, 'Extract auth middleware', shortGeometry)) });
+    // Not vacuous: the pane really is one column short, with the recording's rows to spare.
+    await expect.poll(async () => (await naturalGrid(page, SESSION_MIDDLEWARE))?.cols, { timeout: 10_000, message: 'the narrowed window\'s terminal columns' })
+      .toBe(MIDDLEWARE_RECORDED_GRID.cols - 1);
+    expect((await naturalGrid(page, SESSION_MIDDLEWARE))?.rows ?? 0).toBeGreaterThanOrEqual(MIDDLEWARE_RECORDED_GRID.rows);
+    await expect.poll(() => replayState(page, SESSION_MIDDLEWARE), { timeout: 15_000, message: 'a near miss was held rather than left on frames' })
+      .toEqual({ mode: 'frames', held: null });
+    expect(getUnexpectedErrors()).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test('a floating terminal window fits its recording with the scrollbar gutter a desktop browser reserves', async () => {
+  // Headless Chromium hides scrollbars, so every other case here measures a zero gutter. A browser
+  // on Windows reserves the app's 8px (index.css), and the fitted width has to carry it or the
+  // window lands a column short. The seed measures the gutter the way fit-addon.ts does; this is
+  // the one launch that exercises that measurement with a gutter to measure.
+  test.setTimeout(120_000);
+  const browserWithScrollbars = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });
+  try {
+    const context = await browserWithScrollbars.newContext({ viewport: { width: 1600, height: 1000 } });
+    const page = await context.newPage();
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    const scene = FITTED_WINDOW_SCENES[0];
+    await expectFittedToRecording(page, scene, 'task with visible scrollbars');
+    // Not vacuous: the gutter this case exists for is really there.
+    const gutter = await page.evaluate(() => {
+      const viewport = document.querySelector<HTMLElement>('[data-testid="task-detail-dialog"] .xterm-viewport');
+      return viewport ? viewport.offsetWidth - viewport.clientWidth : null;
+    });
+    expect(gutter).toBeGreaterThan(0);
+    expect(getUnexpectedErrors()).toEqual([]);
+  } finally {
+    await browserWithScrollbars.close();
+  }
 });
 
 test('a still paints a working session at the moment the live frame opens it', async ({ page }) => {
@@ -1053,51 +1341,61 @@ test('loop=1 leaves a session that was never working alone', async ({ page }) =>
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+/**
+ * The rate-limit window in the 1233px frame, wide enough that the seed HOLDS it on either runner
+ * font: 139 columns in Consolas's 6px cell and 119 in Liberation Mono's 7px one, inside the bands
+ * displayFor holds a 154-column recording at (102 to 151 columns and 109 to 151). The default
+ * rect fits 101 in Liberation Mono there, below its band, so nothing would be held on CI.
+ */
+const RATE_LIMIT_HELD_WINDOW_STATE = floatingWindowState('task-cw-rate-limit', 'Add rate limiting', { x: 0.16, y: 0.15, w: 0.68, h: 0.7 });
+
 test('a held terminal reporting its conformed grid is not a resize, so a finished session stays silent', async ({ browser }) => {
-  // The case above runs at the frame size, where the task window already fits 154 by 39 and the
-  // hold never engages. Narrow the frame and it does: the terminal takes the held grid and its own
-  // xterm resize reports that grid straight back. That report is the conform landing, not the
-  // window moving, and reading it as a resize repaints a session whose replay is at its end,
-  // which is a whole frame arriving in a terminal that should get nothing. It reached CI as one
-  // retried run out of many, because whether the hold engages at all rides on the runner's font
-  // metrics; this viewport puts the natural grid a fifth of the columns short on every platform.
+  // The case above runs at the frame size, where the default-rect window fits the recording's
+  // columns or a near miss of them and the hold never engages. Narrow the frame and it does: the
+  // terminal takes the held grid and its own xterm resize reports that grid straight back. That
+  // report is the conform landing, not the window moving, and reading it as a resize repaints a
+  // session whose replay is at its end, which is a whole frame arriving in a terminal that should
+  // get nothing. It reached CI as one retried run out of many, because whether the hold engages
+  // at all rides on the runner's font metrics; the window is sized to be held on both faces
+  // (RATE_LIMIT_HELD_WINDOW_STATE).
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1233, height: 771 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1', state: encodeState(RATE_LIMIT_WINDOW_STATE) }));
+  await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1', state: encodeState(RATE_LIMIT_HELD_WINDOW_STATE) }));
   await waitForDemoReady(page);
   await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Add rate limiting');
-  await expect.poll(() => sentGrids(page, 'sess-cw-rate-limit'), { timeout: 10_000 }).toContainEqual(RATE_LIMIT_RECORDED_GRID);
+  const state = await expectFaithfulReplay(page, 'sess-cw-rate-limit');
+  expect(state.held, 'the narrowed window was not held').not.toBeNull();
   expect((await sentGrids(page, 'sess-cw-rate-limit'))[0].cols).toBeLessThan(RATE_LIMIT_RECORDED_GRID.cols);
+  await expectPanesFilled(page, 'the narrowed window');
   expect(await streamedBytes(page, 'sess-cw-rate-limit', 15_000)).toBe(0);
   expect(getUnexpectedErrors()).toEqual([]);
   await context.close();
 });
 
-test('a display that fits another grid holds the task window at the recording\'s grid and streams its bytes', async ({ browser }) => {
-  // A display at 125 percent scaling fits fewer columns and rows in the task window than the
-  // recorded 154 by 37 (144 by 36 on Windows, 141 by 36 on CI's Linux fonts), and a recording's
-  // bytes address rows for their own grid. The mock answers the terminal's resize with the grid it
-  // holds and the terminal conforms: it takes that grid and scales its font to fit the pane, so
-  // the bytes replay exactly here too. Which recording is held follows the width the page
-  // measured: a pane narrower than the single recording takes the session's tiled one (the seed's
-  // layoutFor), played from the moment the session's clock began. Either recording has a stretch
-  // left when the page opens (the single 38 s, the variant 26 s), so its bytes stream on either
-  // layout, and the session goes on working through it on its own clock, as an agent does on the
-  // desktop when its window is resized.
+test('a display that fits another grid replays the task window on the grid it shows, and the session keeps streaming', async ({ browser }) => {
+  // A display at 125 percent scaling fits fewer columns and rows in the default-rect window than
+  // the recorded 154 by 37 (143 by 36 on Windows, 128 by 36 on CI's Linux fonts), and a
+  // recording's bytes address rows for their own grid. The pane is held at a smaller type, at the
+  // grid the WHOLE pane takes there, and the page's emulator plays the recording into it, so the
+  // terminal fills the window where the recording held at its own grid left 56px beside it and
+  // 23px below. The window is the default rect rather than the `task` scene's, which is fitted to
+  // the recording at every scale. Which recording plays follows the grid the page measured (the
+  // seed's layoutFor), from the moment the session's clock began, and the session goes on working
+  // through it on its own clock, as an agent does on the desktop when its window is resized.
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1.25 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1' }));
+  await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1', state: encodeState(MIDDLEWARE_DEFAULT_WINDOW_STATE) }));
   await waitForDemoReady(page);
   await SCENE_MARKERS.task(page);
   await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toHaveLength(0);
   const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
   expect(natural.rows).toBeLessThan(MIDDLEWARE_RECORDED_GRID.rows);
-  const heldGrid = natural.cols < MIDDLEWARE_RECORDED_GRID.cols ? MIDDLEWARE_TILED_GRID : MIDDLEWARE_RECORDED_GRID;
-  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(heldGrid);
+  await expectFaithfulReplay(page, 'sess-cw-middleware');
+  await expectPanesFilled(page, 'the default window at 125 percent');
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000);
   expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBeGreaterThan(0);
@@ -1336,15 +1634,17 @@ test('opened directly, the page hosts the frame at the site size and scales it t
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
-test('the site\'s take-control dialog at a 1440 by 900 display holds the task window at the recording\'s grid', async ({ browser }) => {
+test('the site\'s take-control dialog at a 1440 by 900 display fills the task window', async ({ browser }) => {
   // kangentic.com gives the dialog's frame a 1233 by 771 box there, where the task window fits
   // well under the recording's columns and 26 rows: the case in which every wrapped row used to
-  // spill (task #673). The pane can show the recording's grid at about 70 percent of the type,
-  // above the hold's floor, so the terminal conforms and the bytes replay. Which recording that
-  // is follows the width the page measured: a pane narrower than the single recording takes the
-  // session's tiled one (the seed's layoutFor), played from the moment the session's clock
-  // began; either has a stretch left when the page opens, so its bytes stream, and the session's
-  // own clock keeps it working.
+  // spill (task #673). The scene's window is fitted against the 1600px frame the recordings were
+  // measured at, so in this smaller frame it keeps the stage's proportions, about 118 columns on
+  // Windows. The session's tiled recording is laid out for 115, so the pane shows it at the
+  // configured type (layoutFor), widened to the pane, where the single recording held at its own
+  // grid left the width beside it empty. A face that measures the pane narrower than 113 holds
+  // the tiled recording at a smaller type instead; either way the terminal fills the pane and the
+  // emulator plays the recording into it from the moment the session's clock began, which keeps
+  // the session working.
   const context = await browser.newContext({ viewport: { width: 1233, height: 771 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const getUnexpectedErrors = collectUnexpectedErrors(page);
@@ -1353,9 +1653,10 @@ test('the site\'s take-control dialog at a 1440 by 900 display holds the task wi
   await SCENE_MARKERS.task(page);
   await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toHaveLength(0);
   const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
-  const heldGrid = natural.cols < MIDDLEWARE_RECORDED_GRID.cols ? MIDDLEWARE_TILED_GRID : MIDDLEWARE_RECORDED_GRID;
-  await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).toContainEqual(heldGrid);
-  expect(natural.rows).toBeLessThan(heldGrid.rows);
+  expect(natural.cols).toBeLessThan(MIDDLEWARE_RECORDED_GRID.cols * 0.9);
+  const state = await expectFaithfulReplay(page, 'sess-cw-middleware');
+  expect(state.mode).toBe('frames');
+  await expectPanesFilled(page, 'the take-control dialog');
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
   expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);

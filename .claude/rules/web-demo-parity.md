@@ -93,27 +93,50 @@ three things staying in step, and each is enforced rather than remembered.
   no recording. `loop=1` restarts a finished session on its own clock and repaints a mounted
   terminal from the opening frame rather than re-feeding its history; it is off by default, and
   a still frame arms no timer at all.
-- **A terminal is brought to the recording's grid, or plays frames; it is never left dead or
-  finished.** A recording's bytes address rows for their own grid, which no page can promise: the
-  board's bottom panel is 15 rows against a session's 37, and a grid moves with the host's frame
-  size and the visitor's display scale. Wherever the pane can show the recording's grid at a
-  readable size, the seed answers the terminal's resize the way main answers one it refuses, with
-  the grid it holds (`SessionResizeResult.held`), and the terminal conforms to it (`useTerminal`'s
-  `conformToHeldGrid`: that grid, the font scaled to fit, letterboxed), so the bytes replay
-  exactly. Where it cannot (the panel), every recording carries a `frameTimeline` beside its
-  stream, PHYSICAL rows with an absolute cursor (`scripts/lib/demo-frame-serializer.js`), and the
-  applier fits each row to the grid: cut at the edge, never wrapped; only a horizontal rule
-  stretched; gaps never grown. A grid mismatch is also not an ending: main routes a
-  geometry-changed session to its parsed frame on the desktop and the agent goes on working, so a
-  working session here keeps its clock, its card and its Monitor peeks. Never conflate "cannot
+- **A terminal fills its pane, plays its recording's bytes only on the recording's grid, and is
+  never left dead or finished.** A recording's bytes address rows for their own grid, which no
+  page can promise: the board's bottom panel is 15 rows against a session's 37, and a grid moves
+  with the host's frame size and the visitor's display scale. Bytes go only to a terminal on the
+  recording's grid. Every other grid plays the recording through the page's own emulator
+  (`demo/replay-emulator.ts`): the bytes written into a terminal at the RECORDED grid on the
+  session's clock, and the visitor's terminal repainted from it as PHYSICAL rows with an absolute
+  cursor (`scripts/lib/demo-frame-serializer.js`), with the rows above the screen a taller grid
+  shows. A repaint builds on the last one (rows scrolled into the terminal's own scrollback, the
+  screen redrawn in place), so a visitor scrolled up through the history stays there. The
+  terminal is never letterboxed, since that empty band was on nearly every surface at some scale.
+  A pane at least the recording's width, or a column or two short (`NEAR_MISS_COLUMNS`), keeps the
+  configured type at its own grid; one further short is HELD at a smaller type
+  (`SessionResizeResult.held`, `useTerminal`'s `conformToHeldGrid`) at the grid the WHOLE pane
+  takes there (`displayFor`), predicted from the conform's rule, which lands on the largest size
+  that fits; below `HOLD_MIN_SCALE` it keeps the configured type and is cut. Rows never set the
+  type. The applier fits each row to the grid: cut at the edge, never wrapped; a row ending in a
+  vertical border or scrollbar keeps that glyph at the edge; on a WIDER grid, what the CLI drew to
+  its own edge (a border or scrollbar, a background band, a rule, a panel's padding, right-aligned
+  text after a wide gap) is drawn to the new one, and only from rows that reached the recorded
+  edge or its padding; text the CLI filled the width with (a row to the edge itself, a line cut
+  with an ellipsis, code after an indentation gap) stays as recorded; a vertical bar is never
+  extended sideways and a one-cell gap never grown; a TALLER
+  alternate screen grows its rows above its footer. A grid mismatch is also not an ending: main
+  routes a geometry-changed session to its parsed frame on the desktop and the agent goes on
+  working, so a working session here keeps its clock, its card and its Monitor peeks, and the
+  emulator plays on that clock from a spawn's start and through a resize. Never conflate "cannot
   replay these bytes" with "the agent finished", never answer a grid mismatch with a second
   recording at that grid (the grid is not stable enough to record against), and never hand the
   serialize addon's joined rows to a terminal of another width. A tiled LAYOUT is a surface, not
   a mismatch: the matrix records a session at the tiled width too when the manifest names a
   `tiled` sibling, at the grid `node demo/measure.mjs --geometry` measures for that surface at the
   launch the manifest's `geometry` names, and the seed shows whichever of the two the window's
-  width asks for. The sibling is a second run of the prompt, so it supplies the terminal's bytes
-  only; the session's clock, trail, diff, and peeks stay the single recording's.
+  pane shows better (`layoutFor`). The sibling is a second run of the prompt, so it supplies the
+  terminal's bytes only; the session's clock, trail, diff, and peeks stay the single recording's.
+  A still a tiled window paints is the sibling's own open frame, cut by the backfill at the moment
+  the single's clock opens the session, with the rows above its screen.
+- **A floating terminal window that is the subject of its scene is sized to its recording, not
+  given a fixed fraction.** The cell's width depends on the display (xterm floors it to device
+  pixels) and on the font the visitor has, so no fraction of the frame fits every visitor, and a
+  pane of any other width shows the recording widened or scaled rather than as recorded. The scene marks
+  the window `fitToRecording` with its session, and the seed sets its width before the renderer
+  mounts from the cell and the scrollbar gutter measured the way the renderer measures them. A
+  marker naming a session with no recording is a console error, never a quiet fallback.
 - **The conversation viewer shows a recorded transcript, or the mock's empty answer, never a
   written one.** A session the manifest marks `transcript` carries the agent's own transcript
   beside its recording (`transcripts/<file>`, main's parsers over the history file the agent
@@ -150,11 +173,21 @@ three things staying in step, and each is enforced rather than remembered.
   `tests/unit/demo-frame-serializer.test.ts` round-trips the serializer, including the two
   recordings from task #673, and `tests/unit/demo-frame-fit.test.ts` runs the applier lifted out
   of the GENERATED seed over those recordings at the grids that broke (no spill, no stripe, the
-  cursor on its row); `tests/unit/demo-cell-widths.test.ts` pins the applier's width table to
-  `wcwidthV11`. Run via `npm run test:unit`.
+  cursor on its row, Copilot's scrollbar one unbroken line at 153 columns), runs EVERY recording
+  1, 9 and 64 columns wider and holds it to drawing at the new last column whatever it drew at its
+  own (border, scrollbar, rule, background), and grows a taller Copilot frame above its footer;
+  `tests/unit/demo-cell-widths.test.ts` pins the applier's width table to
+  `wcwidthV11`; `tests/unit/demo-layout-choice.test.ts` lifts `displayFor` and `layoutFor` out of
+  the same generated seed with the cell measurement injected (a linear face and one whose heights
+  round unevenly) and pins that every held pane lands, under the conform's rule, on the cell the
+  seed predicted and fills its pane to within a cell each way at 100, 125, 150 and 200 percent,
+  plus which recording a pane takes; `tests/unit/demo-tiled-frames-loaded.test.ts` checks each
+  tiled still against an independent replay of the tiled stream and refuses a tiled recording
+  whose open frame is missing or cut for another moment. Run via `npm run test:unit`.
 - **Test (behavior, CI):** `tests/ui/terminal-held-grid-conform.spec.ts` drives the renderer's
-  conform against the mock's held answer: a held grid is taken at a smaller font, an accepted probe
-  releases it, and a plain refusal conforms nothing.
+  conform against the mock's held answer: a held grid is taken at a smaller font, at the LARGEST
+  quarter-pixel size that still holds it (one step up must not fit), an accepted probe releases
+  it, and a plain refusal conforms nothing.
 - **Test (mechanical, CI):** `tests/unit/scene-registry.test.ts` runs over the real `SCENES`
   and fails when a reach tag disagrees with the steps (a `state` scene with steps, a `boot` scene
   with a rig step, a `driver` scene with none), when `alt`, `ready`, or `description` is missing
@@ -162,7 +195,8 @@ three things staying in step, and each is enforced rather than remembered.
   the only check the alts get), when a patched task or session id is not one the sample install
   seeds, when a config key is not an `AppConfig` key (the mock's `Object.assign` accepts any key
   and the renderer never reads it), when the settings scenes stop matching `SETTINGS_TABS` one to
-  one or a `setting-row-<id>` marker names a row that is not on that tab, and when `boot.js`'s
+  one or a `setting-row-<id>` marker names a row that is not on that tab, when a `fitToRecording`
+  names a session the recordings index does not carry, and when `boot.js`'s
   `STATE_KEYS` or `demo/vite.config.mts`'s `scenes.json` fields drift from the type. Runs via
   `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
@@ -178,9 +212,11 @@ three things staying in step, and each is enforced rather than remembered.
   unknown scene, a clean console, zero off-origin requests, that a still frame fetches no
   recording, that the live frame fetches its session's recording, that a live Monitor's output
   peeks change while a still frame's do not, that `loop=1` brings a finished session back and its
-  absence leaves it finished, that a terminal on a grid its recording does not fit plays its
-  frames and leaves its session working (including the board's bottom panel, where no grid could
-  fit), that a held terminal reporting its conformed grid back is read as the conform landing
+  absence leaves it finished, that a terminal on a grid its recording does not fit plays through
+  the emulator and leaves its session working (including the board's bottom panel, where no grid
+  could fit), that every terminal scene fills its panes at device scale 1, 1.25 and 2 and as a
+  still at 2, and that bytes reach a terminal only on one of its recordings' grids, that a held
+  terminal reporting its conformed grid back is read as the conform landing
   rather than a resize, so a session already at its recording's end receives nothing,
   that a board card and a Monitor card draw the agent message trail in place of the
   description and the output peek while a session with no trail still draws its peek, that a
@@ -188,8 +224,12 @@ three things staying in step, and each is enforced rather than remembered.
   auto-spawn column and a new Command Terminal each start a session whose bytes arrive through
   the mock's data path, that a still whose terminal is narrower than its recording and not held
   paints its frame cut to the grid rather than raw, that the conversation scene renders the
-  recorded transcript from one `transcripts/` fetch and no recording, and that the tiled task
-  windows take each session's tiled recording. Runs as the `demo` job in `.github/workflows/ci.yml`
+  recorded transcript from one `transcripts/` fetch and no recording, that the tiled task
+  windows take each session's tiled recording and fill their panes, that a fitted floating window
+  takes exactly its recording's columns at device scale 1, 1.25, and 2 and in a launch whose
+  scrollbars reserve a gutter, that a window built one cell narrower than its fitted width (one
+  column short on any font) keeps the configured type with nothing held, and that a card opened
+  in that launch at 100 percent fills its window. Runs as the `demo` job in `.github/workflows/ci.yml`
   and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.

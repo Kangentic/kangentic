@@ -14,11 +14,13 @@
         mock-electron-api-<hash>.js tests/ui/mock-electron-api.js, verbatim
         demo-seed-<hash>.js         the sample install and the scene applier (generated at build time)
       A classic script runs while the parser reaches it; the module script is deferred, so the
-      bridge is always in place before the first renderer module evaluates.
+      bridge is always in place before the first renderer module evaluates. The first module
+      only defines the loader the seed fetches its replay emulator with (demo/replay-emulator.ts).
     -->
   </head>
   <body class="bg-surface text-fg overflow-hidden">
     <div id="root"></div>
+    <script type="module" src="/demo/replay-emulator-entry.ts"></script>
     <script type="module" src="/src/renderer/index.tsx"></script>
   </body>
 </html>
