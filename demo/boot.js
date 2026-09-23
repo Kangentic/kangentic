@@ -406,13 +406,14 @@
   }
 
   /**
-   * The rect of the scene's `focus` element as fractions of the frame, so a host can crop a
-   * dialog scene to the dialog without knowing the layout. Null when the scene names none or the
-   * element is not on screen; a host crops nothing on null.
+   * The rect of the element a selector names, as fractions of the frame, so a host can crop a
+   * dialog scene to the dialog without knowing the layout. Null when nothing matches or the
+   * element is not on screen; a host crops nothing on null. Exposed as `__demoBoot.focusRectOf`
+   * for the capture rig, which measures the same rect for each poster (after its gesture, on a
+   * driver scene that booted from `state=` and so has no `scene` here).
    */
-  function focusRect() {
-    if (!scene || !scene.focus) return null;
-    var element = document.querySelector(scene.focus);
+  function rectOf(selector) {
+    var element = document.querySelector(selector);
     if (!element) return null;
     var rect = element.getBoundingClientRect();
     var width = window.innerWidth;
@@ -420,6 +421,11 @@
     if (!width || !height || !rect.width || !rect.height) return null;
     var round = function (value) { return Math.round(value * 10000) / 10000; };
     return { x: round(rect.left / width), y: round(rect.top / height), w: round(rect.width / width), h: round(rect.height / height) };
+  }
+
+  /** The rect of the scene's `focus` element, which the ready message carries; null without one. */
+  function focusRect() {
+    return scene && scene.focus ? rectOf(scene.focus) : null;
   }
 
   /**
@@ -539,5 +545,6 @@
     params: { theme: theme, embed: embed, still: still, loop: loop, fontSize: fontSize },
     errors: errors,
     afterSeed: applyScene,
+    focusRectOf: rectOf,
   };
 })();

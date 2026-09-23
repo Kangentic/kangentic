@@ -396,7 +396,9 @@ demo-posters-<version>.zip
 
 ```json
 { "version": "0.42.0", "frame": { "width": 1600, "height": 1000 }, "scale": 2,
-  "scenes": { "board": { "clay": "board.clay.frame.png", "rust": "board.rust.frame.png" }, ... } }
+  "scenes": { "board": { "clay": "board.clay.frame.png", "rust": "board.rust.frame.png" }, ... },
+  "focus": { "board": { "clay": null, "rust": null },
+             "new-task": { "clay": { "x": 0.2375, "y": 0.1735, "w": 0.525, "h": 0.653 }, "rust": { ... } }, ... } }
 ```
 
 The themes are `clay` and `rust`, the product pair the site embeds with (the rig's own default is
@@ -406,14 +408,25 @@ site fails its build when the two differ, when a figure names a scene the manife
 a named file is absent, so a stale or partial set cannot ship quietly. That is the
 `sync-brand.mjs` precedent with its failure mode fixed.
 
+`focus` gives every poster the rect of its scene's `focus` element as fractions of the frame, the
+same `{ x, y, w, h }` the ready message posts, so one crop routine serves the live frame and the
+poster. It is `null` for a scene that names no focus element. The rig measures it on the still it
+just shot, through `boot.js`'s own `__demoBoot.focusRectOf`, so a driver scene gets its rect after
+its gesture, and it writes one `<scene>.<theme>.frame.focus.json` beside each PNG. A scene that
+names a focus element the rig cannot find fails the run instead of writing `null`. The map sits
+beside `scenes` rather than inside it, so a `scenes` entry still holds only theme keys. The rect
+is only as tight as the element the scene names: the Column Manager scenes name the whole dialog,
+so a crop to one row of it is still the site's to choose.
+
 `npm run demo:posters` (`demo/posters.mjs`) is the command. It refuses a missing or stale build
 (`dist/demo/scenes.json` has to carry `package.json`'s version), runs
 `tests/captures/features/scenes.capture.ts` with `CAPTURE_THEMES=clay,rust`,
 `CAPTURE_RESOLUTIONS=frame`, and `CAPTURE_OUTPUT_ROOT=dist/demo-posters/` (so the shots land in
 one known directory instead of a timestamped `captures/` run, which a Playwright retry would
 otherwise split), then checks the shots against `scenes.json` (every scene at every theme, every
-PNG exactly 3200 by 2000 by its header and whole by its IEND trailer, nothing the manifest would
-not name) and zips them, posters stored rather than deflated, as
+PNG exactly 3200 by 2000 by its header and whole by its IEND trailer, every focus sidecar present
+and either `null` or a rect with a positive size, nothing the manifest would not name) and zips
+them, posters stored rather than deflated and the sidecars folded into the manifest, as
 `dist/demo-posters-<version>.zip`. Nothing decodes a poster along the way; the two ends are what
 a header-only check misses when a shot is cut short. The pure half is
 `scripts/lib/demo-posters.mjs`, covered by `tests/unit/demo-posters.test.ts`.
@@ -425,11 +438,26 @@ verified before the job runs, and a twelfth expected asset would fail every rele
 publish also means the release stands when the job fails; the run goes red and the site's own
 sync fails on the missing asset.
 
-The posters are shot on `ubuntu-latest`, so they render with that runner's system fonts, where a
-reader on Windows or macOS sees Segoe or SF in the live frame. No single poster matches every
-reader's fonts (a set shot on Windows mismatches every Mac), the terminals' held grid keeps their
-layout right whatever the font, and a set shot on CI is at least the same from release to
-release. Installing a font package in the job is a later polish if the swap ever reads badly.
+The posters are shot on `ubuntu-latest` in Roboto, which the job installs (`fonts-roboto`) before
+it shoots. The app sets no UI font of its own, so its text is Tailwind's default `--font-sans`:
+`-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial`.
+A bare runner has none of the first five, so Chromium fell through to Arial's metric alias,
+Liberation Sans. That face has no medium weight, so every `font-medium` label rendered Regular,
+and it set the Column Manager's 11px Profile label 17 percent wider than Segoe UI does. Since
+kangentic.com's landing page shows the posters with no live frame beside them, that swap was the
+app's face as a visitor saw it. Roboto is the first family in the stack a runner can have, so
+installing it decides the face, and it ships the medium weight. Measured on the same dialog,
+Roboto's labels land within 6 percent of Segoe UI's widths. Noto Sans, the other candidate, ran
+up to 9 percent wide and `fonts-noto-core` rendered medium labels Regular. The job's gate compares
+`fc-match`'s family exactly, because `fc-match` answers with some font for any name, and
+`tests/unit/release-workflow-gates.test.ts` fails when a Tailwind bump drops Roboto from the stack.
+
+No single poster matches every reader's fonts: a reader on Windows or macOS sees Segoe or SF in
+the live frame. The live frame renders Roboto on Android and ChromeOS, and the desktop app renders
+it on Linux when the font is installed. The terminals' held grid keeps their layout right whatever
+the font. A local
+`npm run demo:posters` on Windows still renders Segoe UI, so a set shot there is not the release
+set.
 
 A scoped run for a look at one scene, from PowerShell at the repository root (a relative
 `CAPTURE_OUTPUT_ROOT` resolves against the shell's working directory, so run it from the root;

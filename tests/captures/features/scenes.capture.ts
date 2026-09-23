@@ -9,7 +9,11 @@
  * reports ready, which is what no page can do for itself.
  *
  * Output: captures/<timestamp>/scenes/<scene>.<theme>.<resolution>.png, in the same gitignored,
- * per-run directory the marketing captures use. Axes are env-selectable for a quick single run,
+ * per-run directory the marketing captures use, and beside each still a
+ * <scene>.<theme>.<resolution>.focus.json holding the rect of the scene's `focus` element as
+ * measured on that still (demo/boot.js's own measure, the one the ready message reports), or
+ * null for a scene that names none. demo/posters.mjs reads those into the poster manifest.
+ * Axes are env-selectable for a quick single run,
  * and every axis refuses a name it does not know rather than shooting the page's error card:
  *   CAPTURE_SCENES=board,usage        only these scenes (default: all)
  *   CAPTURE_THEMES=clay,rust          default: night,sand (the poster set shoots the product pair)
@@ -19,6 +23,7 @@
  *                                     known place (tests/captures/helpers/output-dir.ts)
  */
 import { test } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { startDemoServer } from '../../../demo/static-server.mjs';
 import { SCENES } from '../scenes';
@@ -58,6 +63,9 @@ for (const name of sceneNames) {
 type DemoServer = Awaited<ReturnType<typeof startDemoServer>>;
 let server: DemoServer;
 
+interface FocusRect { x: number; y: number; w: number; h: number }
+interface DemoBootWindow { __demoBoot: { focusRectOf(selector: string): FocusRect | null } }
+
 test.beforeAll(async () => {
   // Throws naming `npm run build:demo` when dist/demo is absent; nothing here shoots the dev server.
   server = await startDemoServer({ distDir: DIST_DIR, port: 0 });
@@ -84,6 +92,20 @@ test.describe('Scene captures', () => {
               path: path.join(OUTPUT_DIR, `${name}.${theme}.${resolution.name}.png`),
               fullPage: false,
             });
+            // Measured on the frame just shot, after any gesture, so a crop fits this still. A
+            // named focus that measures nothing throws rather than writing a null that reads as
+            // "this scene has no focus".
+            const focusSelector = scene.focus;
+            const focus = focusSelector
+              ? await page.evaluate((selector) => (window as unknown as DemoBootWindow).__demoBoot.focusRectOf(selector), focusSelector)
+              : null;
+            if (focusSelector && !focus) {
+              throw new Error(`Scene ${name} names focus ${focusSelector}, which measured no on-screen element in ${theme}`);
+            }
+            fs.writeFileSync(
+              path.join(OUTPUT_DIR, `${name}.${theme}.${resolution.name}.focus.json`),
+              `${JSON.stringify(focus)}\n`,
+            );
           } finally {
             await browser.close();
           }

@@ -38,7 +38,10 @@ const MONITOR_ROW_COUNT = DEMO_SESSIONS.length;
 type DemoServer = Awaited<ReturnType<typeof startDemoServer>>;
 
 interface DemoBootGlobal {
-  __demoBoot?: { sceneName: string | null };
+  __demoBoot?: {
+    sceneName: string | null;
+    focusRectOf(selector: string): { x: number; y: number; w: number; h: number } | null;
+  };
 }
 
 let server: DemoServer;
@@ -276,6 +279,13 @@ test('the ready message carries the focus rect of a dialog scene, and null for a
   const area = (focused.focus?.w ?? 0) * (focused.focus?.h ?? 0);
   expect(area, 'the dialog covers a real region of the frame').toBeGreaterThan(0.1);
   expect(area, 'the dialog is not the whole frame').toBeLessThan(0.9);
+
+  // The capture rig measures each poster's focus through this same function, so the rect in the
+  // poster manifest and the rect a live frame posts are one measure (demo/posters.mjs).
+  const frame = await (await page.locator('#demo').elementHandle())?.contentFrame();
+  if (!frame) throw new Error('the demo iframe has no content frame');
+  const rigRect = await frame.evaluate((selector) => (window as DemoBootGlobal).__demoBoot?.focusRectOf(selector) ?? null, focusScene.focus ?? '');
+  expect(rigRect).toEqual(focused.focus);
 
   const plain = await readyMessageFor(page, 'board');
   expect(plain.scene).toBe('board');
