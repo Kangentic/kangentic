@@ -359,16 +359,22 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'welcome-setup',
     reach: 'state',
     description: 'The welcome screen with the setup list open on a not-installed row and a not-signed-in one, for the Installation and Troubleshooting pages. The default welcome scene reports everything found, so the rows those pages describe never appear there. No click: the screen opens the list itself when anything is missing or signed out, which is exactly the state seeded here.',
-    alt: 'The welcome screen with its setup list open: a line asking the reader to sign in to Gemini CLI, git and two agent CLIs found with their versions, Gemini CLI marked Not signed in, and three more agents marked Not installed beside an Install link.',
+    alt: 'The welcome screen with its setup list open: a prompt to sign in to OpenCode, OpenCode on top marked Not signed in with its login command to copy, git and three agents found with versions, and three more marked Not installed beside an Install link.',
     install: 'empty',
     // Replaces the dataset's own overrides whole (boot.js assigns a scene's seeds after the seed
     // script has set them), so this map is the entire agent report, not a patch on it.
+    //
+    // Only an agent whose adapter defines probeAuth can read Not signed in (listAgents in
+    // src/main/agent/agent-list.ts): grok, kimi, and opencode. OpenCode is the one the sample
+    // install already records at a version. Gemini stays found so the three Not installed rows
+    // are the ones this scene has always shown; RECOMMENDED_AGENT_ORDER would rank a missing
+    // Gemini first among them.
     seeds: {
       __mockAgentListOverrides: {
         claude: { version: '2.1.270' },
         codex: { found: true, path: '/usr/local/bin/codex', version: '0.141.0' },
-        gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0', authenticated: false },
-        opencode: { found: false, path: null, version: null },
+        gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0' },
+        opencode: { found: true, path: '/usr/local/bin/opencode', version: '1.18.30', authenticated: false },
       },
     },
     ready: '#welcome-setup-panel',

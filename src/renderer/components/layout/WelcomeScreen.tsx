@@ -16,7 +16,7 @@ import brandLogoUrl from '@kangentic/branding/assets/brandmark-small.svg?url';
 const CURATED_NOT_FOUND_LIMIT = 3;
 
 /** Reusable detection row used for both the Git and agent entries */
-function DetectionRow({ name, testId, found, version, installUrl, loading, authenticated, loginCommand }: {
+function DetectionRow({ name, testId, found, version, installUrl, loading, authenticated, loginCommand, className }: {
   name: string;
   testId?: string;
   found: boolean;
@@ -25,6 +25,8 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
   loading: boolean;
   authenticated?: boolean | null;
   loginCommand?: string;
+  /** Extra classes for the row's root, such as a grid span. */
+  className?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -52,7 +54,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
     : 'border-edge';
 
   return (
-    <div className={`border rounded-lg p-3 ${borderClass}`} data-testid={testId}>
+    <div className={`border rounded-lg p-3 ${borderClass}${className ? ` ${className}` : ''}`} data-testid={testId}>
       <div className="flex items-start gap-2">
         <div className="w-4 h-5 flex items-center justify-center shrink-0">
           {loading ? (
@@ -158,7 +160,12 @@ export function WelcomeScreen() {
   const detectionResolved = gitInfo !== null && agentListLoaded;
 
   const foundAgents = agentList.filter((agent) => agent.found);
-  const signedOutAgent = foundAgents.find((agent) => agent.authenticated === false);
+  // A signed-out row carries "Not signed in" plus a control to copy the login command, which is
+  // wider than a third of the grid and wrapped over the agent's name there. It is also the one row
+  // the readiness line asks the reader to act on, so it leads the grid at full width.
+  const signedOutAgents = foundAgents.filter((agent) => agent.authenticated === false);
+  const orderedFoundAgents = [...signedOutAgents, ...foundAgents.filter((agent) => agent.authenticated !== false)];
+  const signedOutAgent = signedOutAgents[0];
   const gitReady = gitInfo?.found ?? false;
   const readyToRun = detectionResolved && gitReady && foundAgents.length > 0 && !signedOutAgent;
   const blocked = detectionResolved && !readyToRun;
@@ -370,7 +377,7 @@ export function WelcomeScreen() {
                   </>
                 ) : (
                   <>
-                    {foundAgents.map((agent) => (
+                    {orderedFoundAgents.map((agent) => (
                       <DetectionRow
                         key={agent.name}
                         name={agent.displayName}
@@ -381,6 +388,7 @@ export function WelcomeScreen() {
                         loading={refreshing}
                         authenticated={agent.authenticated}
                         loginCommand={agentLoginCommand(agent.name)}
+                        className={agent.authenticated === false ? 'col-span-full' : undefined}
                       />
                     ))}
                     {visibleNotFound.map((agent) => (
