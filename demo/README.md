@@ -346,7 +346,8 @@ Three constraints hold whatever the page shows. It fetches nothing off-origin, l
 build (the smoke tier asserts that on the `board` scene, which never loads this page), so no remote
 font or icon can land late or fail. It has one fixed light palette and no `prefers-color-scheme`,
 because the iframe sees the visitor's OS setting and not the frame's `theme=`. And it never
-animates, so stills and posters stay deterministic.
+animates, so stills and posters stay deterministic. `tests/unit/demo-guest-pages.test.ts` holds
+every page `DEMO_PROJECTS` names to all three.
 
 ### Dictation
 
