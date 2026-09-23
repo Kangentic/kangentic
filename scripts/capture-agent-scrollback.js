@@ -30,6 +30,9 @@
  *                                   and MessageTrailTracker skips those
  *          --transcript-out <path>  also write the agent's whole transcript there, sanitized, for
  *                                   the conversation viewer (tests/captures/fixtures/demo/transcripts/)
+ *          --resume <session id>    resume that conversation instead of starting one (claude only):
+ *                                   the launch Kangentic's Resume makes, no prompt, so the recording
+ *                                   is the CLI reprinting the conversation and waiting for the user
  *
  * The agent's own transcript is read once at the end for the board card's message trail, which the
  * terminal bytes cannot supply. A failure there is reported but never loses the recording; CI
@@ -49,7 +52,7 @@ const path = require('node:path');
 const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanitizer');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null, resume: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -74,6 +77,7 @@ function parseArgs(argv) {
       // recording must carry an empty trail however much prose the agent produced.
       case '--no-message-trail': options.messageTrail = false; break;
       case '--transcript-out': options.transcriptOut = path.resolve(next()); break;
+      case '--resume': options.resume = next(); break;
       default: throw new Error(`Unknown argument ${argument}`);
     }
   }
@@ -81,6 +85,7 @@ function parseArgs(argv) {
   for (const required of ['agent', 'cwd', 'project', 'out']) {
     if (!options[required]) throw new Error(`--${required} is required`);
   }
+  if (options.resume && options.prompt) throw new Error('--resume takes no --prompt: a resumed conversation waits for the user');
   return options;
 }
 
@@ -88,10 +93,13 @@ function parseArgs(argv) {
  * The interactive launch shape of each adapter, minus the session and MCP extras. An empty prompt
  * is the Command Terminal shape: the agent started interactively with nothing to do yet.
  */
-function buildCommand(agent, cwd, prompt, mode, model) {
+function buildCommand(agent, cwd, prompt, mode, model, resume) {
   const withPrompt = (args, positional) => (prompt ? [...args, ...positional] : args);
+  // Kangentic resumes a Claude session with --resume and no prompt (claude/command-builder.ts).
+  if (resume && agent !== 'claude') throw new Error(`No resume launch shape for agent "${agent}"`);
   switch (agent) {
     case 'claude':
+      if (resume) return { exe: 'claude', args: ['--permission-mode', mode || 'acceptEdits', '--resume', resume], exit: ['\x03', '/exit\r'] };
       return { exe: 'claude', args: withPrompt(['--permission-mode', mode || 'acceptEdits'], ['--', prompt]), exit: ['\x03', '/exit\r'] };
     case 'codex':
       // The adapter's acceptEdits and bypass mappings (src/main/agent/adapters/codex/command-builder.ts).
@@ -354,7 +362,7 @@ async function main() {
     console.error('Failed to load node-pty. Try: npm rebuild node-pty');
     throw error;
   }
-  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model);
+  const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume);
   if (options.trust) seedTrust(options.agent, options.cwd);
   const sanitizer = buildSanitizer(options);
 

@@ -222,9 +222,10 @@ per-commit diffs from `tests/captures/fixtures/demo/history/`, captured by
 out of the scaffold's `commits.json`). The
 plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
-mounts to replay the session as it happened, and the agent boots a drag or a new Command
+mounts to replay the session as it happened, the agent boots a drag or a new Command
 Terminal starts (recorded per task and per project by `scripts/capture-demo-sessions.mjs` from
-the dataset), plus the agent transcript behind a session under `transcripts/` (from
+the dataset), and the `claude --resume` boot a Resume replays for a session paused at its
+recording's end (recorded by the same script as `resume-<sessionId>.json`), plus the agent transcript behind a session under `transcripts/` (from
 `tests/captures/fixtures/demo/transcripts/`, derived by main's own parsers), which the
 conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, and the guest pages carry a content hash in their
 names, as Vite's own chunks do, so a copy GitHub Pages cached from an earlier release is never

@@ -187,6 +187,18 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     // stopped as the board does. Applied to the rows afterwards, both rows still read running.
     expect((await monitorFields(page, SESSION_EMPTY_STATES))?.status).toBe('suspended');
     expect((await monitorFields(page, SESSION_RATE_LIMIT))?.status).toBe('queued');
+    // A card that is not live shows its task's description (monitorSlotKind), which main's
+    // snapshot always carries; without it the paused and queued cards printed agent output.
+    const description = (taskId: string) => DEMO_TASKS.find((task) => task.id === taskId)?.description;
+    expect((await monitorFields(page, SESSION_EMPTY_STATES))?.description).toBe(description('task-cw-empty-states'));
+    expect((await monitorFields(page, SESSION_RATE_LIMIT))?.description).toBe(description('task-cw-rate-limit'));
+    // A queued session has never started, so it has no usage: no model and no context.
+    expect(await monitorFields(page, SESSION_RATE_LIMIT)).toMatchObject({ modelDisplayName: null, contextPercent: null });
+    const queuedUsage = await page.evaluate(async (sessionId) => {
+      const usage = await (window as unknown as { electronAPI: { sessions: { getUsage: () => Promise<Record<string, unknown>> } } }).electronAPI.sessions.getUsage();
+      return usage[sessionId] ?? null;
+    }, SESSION_RATE_LIMIT);
+    expect(queuedUsage).toBeNull();
   },
   'session-resume': async (page) => {
     // The resuming card draws the spinner footer rather than a model: main has no usage for a
@@ -621,15 +633,17 @@ interface DemoElectronWindow {
 interface DemoMonitorWindow {
   __mockMonitorRows?: Array<{
     sessionId: string; activity: string; outputPeek?: string[];
-    status?: string; modelDisplayName?: string | null; contextPercent?: number | null;
+    status?: string; modelDisplayName?: string | null; contextPercent?: number | null; description?: string | null;
   }>;
 }
 
-/** The Monitor snapshot fields a row carries beyond its activity: the status, model, and context. */
-function monitorFields(page: Page, sessionId: string): Promise<{ status?: string; modelDisplayName?: string | null; contextPercent?: number | null } | null> {
+interface MonitorFields { status?: string; modelDisplayName?: string | null; contextPercent?: number | null; description?: string | null }
+
+/** The Monitor snapshot fields a row carries beyond its activity: the status, model, context, and description. */
+function monitorFields(page: Page, sessionId: string): Promise<MonitorFields | null> {
   return page.evaluate((id) => {
     const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
-    return row ? { status: row.status, modelDisplayName: row.modelDisplayName, contextPercent: row.contextPercent } : null;
+    return row ? { status: row.status, modelDisplayName: row.modelDisplayName, contextPercent: row.contextPercent, description: row.description } : null;
   }, sessionId);
 }
 
@@ -755,6 +769,22 @@ function recordingRequests(page: Page): () => string[] {
     if (request.url().includes('/recordings/')) urls.push(request.url());
   });
   return () => urls.slice();
+}
+
+/**
+ * A terminal frame as plain text. A frame spells runs of spaces as cursor-forward moves, so those
+ * become a space before the rest of the escapes go.
+ */
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[\d*C/g, ' ').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/ +/g, ' ');
+}
+
+/** The ids of every session row the mock lists for one task. */
+function sessionIdsForTask(page: Page, taskId: string): Promise<string[]> {
+  return page.evaluate(async (wantedTaskId) => {
+    const sessions = await (window as unknown as DemoElectronWindow).electronAPI.sessions.list();
+    return sessions.filter((session) => session.taskId === wantedTaskId).map((session) => session.id);
+  }, taskId);
 }
 
 /**
@@ -1541,9 +1571,16 @@ test('a resuming card comes back in the live frame the way a Resume click does',
   // first output a beat after page open, then the status line's usage, so the card ends on its
   // model and the Monitor row gains its model and context with it.
   const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
   await gotoScene(page, { view: 'session-resume', embed: '1' });
   const card = page.locator(`[data-task-id="${TASK_WEBSOCKET}"]`);
+  // The resume starts when the frame reveals, as auto-resume starts once the desktop's window is
+  // up, so a live visitor sees the moment the scene is named for. Started at page open, it had
+  // already resolved by the reveal.
+  expect(await card.locator('[data-testid="usage-bar"]').textContent()).toContain('Resuming agent...');
   await expect(card.locator('[data-testid="usage-bar-model"]')).toBeVisible({ timeout: 10_000 });
+  // Its first output is timed off the recorded resume boot, so the frame fetched it.
+  expect(getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-'))).toBe(true);
   await expect(card.locator('[data-testid="usage-bar"]')).not.toContainText('Resuming agent...');
   const websocket = DEMO_SESSIONS.find((session) => session.id === SESSION_WEBSOCKET);
   await expect.poll(() => monitorFields(page, SESSION_WEBSOCKET)).toMatchObject({
@@ -1585,6 +1622,7 @@ test('pausing and resuming a working agent brings back the same session and view
   // Resume, and the respawn carries the paused terminal's scrollback over. The demo once read
   // only the pointer, so a Pause then Resume started the task's recorded boot from scratch.
   const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
   await gotoScene(page, { view: 'task', embed: '1' });
   const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
   await expect(toggle).toHaveAttribute('title', 'Pause session');
@@ -1611,9 +1649,6 @@ test('pausing and resuming a working agent brings back the same session and view
   expect(rows[0].id).toContain('-resumed-');
 
   // The terminal opens on the conversation the paused one showed, not on a fresh CLI's prompt.
-  // A frame spells runs of spaces as cursor-forward moves, so those become a space before the
-  // rest of the escapes go.
-  const stripAnsi = (text: string) => text.replace(/\x1b\[\d*C/g, ' ').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/ +/g, ' ');
   const handed = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), rows[0].id));
   expect(handed).toContain('routes file');
   expect(handed).not.toContain('Try "');
@@ -1622,6 +1657,161 @@ test('pausing and resuming a working agent brings back the same session and view
   expect(handedAgain).toBe(handed);
   // The usage carries over once the resumed agent's status line lands.
   await expect.poll(() => monitorFields(page, rows[0].id), { timeout: 10_000 }).toMatchObject({ status: 'running', contextPercent: DEMO_SESSIONS.find((session) => session.id === SESSION_MIDDLEWARE)?.contextPercent });
+  // Paused mid-recording, so the recorded resume boot, which reprints the WHOLE conversation,
+  // would show what the frame had not reached: it is never fetched.
+  expect(getRecordingRequests().filter((url) => url.includes('/recordings/resume-'))).toEqual([]);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('resuming a session paused at its recording\'s end replays the recorded resume boot', async ({ page }) => {
+  // The WebSocket session waits on the user at its recording's end, so the conversation a real
+  // resume reprints is exactly the one the frame showed: Resume plays the boot the capture matrix
+  // recorded (claude --resume, resume-<sessionId>.json) rather than freezing the paused frame.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
+  await gotoScene(page, { view: 'board', embed: '1' });
+  const card = page.locator(`[data-task-id="${TASK_WEBSOCKET}"]`);
+  const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
+  await card.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await toggle.click();
+  await expect.poll(async () => (await monitorFields(page, SESSION_WEBSOCKET))?.status).toBe('suspended');
+  await card.click();
+  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+
+  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-')), { timeout: 10_000 }).toBe(true);
+  const resumedId = await sessionIdsForTask(page, TASK_WEBSOCKET);
+  expect(resumedId).toHaveLength(1);
+  // The card goes from Resuming to its model once the boot's first output and usage land.
+  await expect(card.locator('[data-testid="usage-bar-model"]')).toBeVisible({ timeout: 10_000 });
+  // The terminal was handed the resumed CLI reprinting the session's own conversation.
+  const handed = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), resumedId[0]));
+  expect(handed).toContain('exponential');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a second Pause then Resume on that same session replays the recorded resume boot again', async ({ page }) => {
+  // The sibling test above resumes a session paused at its own recording's end, and that resume
+  // boot itself counts as "at its end" the moment it starts (resumeBootEntry's endMs: 0), so a
+  // SECOND Pause then Resume must replay the same recorded resume boot again rather than freezing
+  // whatever frame the resumed terminal happened to show. The lookup for which resume-*.json to
+  // fetch has to walk back through recordedIdBySession to the ORIGINAL dataset session
+  // (sess-cw-websocket): the first resumed session's own id has no resume-*.json recording of its
+  // own, since only an original seeded session was ever captured pausing at a recording's end.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
+  await gotoScene(page, { view: 'board', embed: '1' });
+  const card = page.locator(`[data-task-id="${TASK_WEBSOCKET}"]`);
+  const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
+
+  // First cycle: identical to the sibling test above.
+  await card.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await toggle.click();
+  await expect.poll(async () => (await monitorFields(page, SESSION_WEBSOCKET))?.status).toBe('suspended');
+  await card.click();
+  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/resume-sess-cw-websocket-')), { timeout: 10_000 }).toBe(true);
+  const firstResumedIds = await sessionIdsForTask(page, TASK_WEBSOCKET);
+  expect(firstResumedIds).toHaveLength(1);
+  const firstResumed = firstResumedIds[0];
+  expect(firstResumed).toContain('-resumed-');
+  await expect(card.locator('[data-testid="usage-bar-model"]')).toBeVisible({ timeout: 10_000 });
+
+  // Second cycle, on the resumed session. The window stays open across a resume (only a pause
+  // closes it), so there is no card click to reopen it before pausing again here.
+  await toggle.click();
+  await expect.poll(async () => (await monitorFields(page, firstResumed))?.status).toBe('suspended');
+  await card.click();
+  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  // Listen for streamed bytes BEFORE the click that starts the second resume: the resume-boot
+  // path streams the recording live through onData, while a frozen fallback emits nothing at all,
+  // so which one (if either) streams for the new session id is the direct signal that the second
+  // resume took the boot-replay branch rather than silently falling back to a frozen frame.
+  const pendingStreamedSessionId = firstStreamedSession(page, 8000);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+
+  const secondResumedIds = await sessionIdsForTask(page, TASK_WEBSOCKET);
+  expect(secondResumedIds).toHaveLength(1);
+  const secondResumed = secondResumedIds[0];
+  expect(secondResumed).not.toBe(firstResumed);
+  expect(secondResumed).toContain('-resumed-');
+
+  expect(await pendingStreamedSessionId).toBe(secondResumed);
+  await expect(card.locator('[data-testid="usage-bar-model"]')).toBeVisible({ timeout: 10_000 });
+
+  const handedSecond = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), secondResumed));
+  expect(handedSecond).toContain('exponential');
+
+  const description = DEMO_TASKS.find((task) => task.id === TASK_WEBSOCKET)?.description;
+  expect((await monitorFields(page, secondResumed))?.description).toBe(description);
+
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a second Pause then Resume on a working agent frozen mid-recording opens on the same frame, not a later one', async ({ page }) => {
+  // The middleware session pauses mid-recording (the sibling test above), so its resume takes the
+  // frozen-frame path rather than replaying a recorded resume boot. A session resumed that way is
+  // itself pausable and resumable again, and on a SECOND cycle the seed must carry the ORIGINAL
+  // freeze forward rather than re-deriving a later one from a fresh wall-clock elapsed time: "a
+  // session already frozen by an earlier resume stays on its frame". So the second resumed
+  // terminal must open on exactly the frame the first one did, not one further into the recording.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const getRecordingRequests = recordingRequests(page);
+  await gotoScene(page, { view: 'task', embed: '1' });
+  const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
+  const readScrollback = async (sessionId: string): Promise<string> => {
+    // Read only once the renderer has resized this session's own terminal: getScrollback fits its
+    // frozen frame to the LAST grid it was told about (mountedGeometry), which is unset until that
+    // resize call lands. A read before it returns the raw frame and a read after returns the
+    // grid-fitted one, a difference the fitter introduces on its own and not the bug this guards.
+    await expect.poll(() => mountedGrid(page, sessionId), { timeout: 10_000 }).not.toBeNull();
+    return stripAnsi(await page.evaluate((id) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(id), sessionId));
+  };
+
+  // First cycle.
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await toggle.click();
+  await expect.poll(async () => (await monitorFields(page, SESSION_MIDDLEWARE))?.status).toBe('suspended');
+  await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
+  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+
+  const firstResumedIds = await sessionIdsForTask(page, TASK_MIDDLEWARE);
+  expect(firstResumedIds).toHaveLength(1);
+  const firstResumed = firstResumedIds[0];
+  const firstView = await readScrollback(firstResumed);
+  expect(firstView).toContain('routes file');
+
+  // A fixed wait, not a poll: the divergence a wrong re-derivation would introduce grows with REAL
+  // wall-clock time since the ORIGINAL session's own start, so the gap between cycles has to be an
+  // actual span of elapsed time, not a condition to poll for.
+  await page.waitForTimeout(4000);
+
+  // Second cycle, on the resumed session.
+  await toggle.click();
+  await expect.poll(async () => (await monitorFields(page, firstResumed))?.status).toBe('suspended');
+  await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
+  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+
+  const secondResumedIds = await sessionIdsForTask(page, TASK_MIDDLEWARE);
+  expect(secondResumedIds).toHaveLength(1);
+  const secondResumed = secondResumedIds[0];
+  expect(secondResumed).not.toBe(firstResumed);
+  const secondView = await readScrollback(secondResumed);
+  expect(secondView).toBe(firstView);
+
+  // No recorded resume boot was fetched at either cycle: the session paused before its recording
+  // reached its own end, so both resumes carried the frozen frame over instead.
+  expect(getRecordingRequests().filter((url) => url.includes('/recordings/resume-'))).toEqual([]);
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

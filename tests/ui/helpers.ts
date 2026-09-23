@@ -73,6 +73,30 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
   throw new Error(`Vite dev server at ${url} not ready after ${timeoutMs}ms`);
 }
 
+const VITE_GOTO_ATTEMPTS = 3;
+
+/**
+ * `page.goto` against the Vite dev server, retrying only a refused TCP connect.
+ *
+ * Seen in a full 3-worker UI run: waitForViteReady's fetch probe got its 200, then Chromium's
+ * navigation a moment later failed with `net::ERR_CONNECTION_REFUSED`, while the same server went
+ * on serving every other test with no restart or reload in its log. A refused connect is what
+ * waitForViteReady already exists to absorb, so it gets the same treatment here. No assertion is
+ * ever retried: any other navigation error, and a refusal on the last attempt, is rethrown.
+ */
+export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await page.goto(url);
+      return;
+    } catch (error) {
+      const refused = error instanceof Error && error.message.includes('net::ERR_CONNECTION_REFUSED');
+      if (!refused || attempt >= VITE_GOTO_ATTEMPTS) throw error;
+      await waitForViteReady(url);
+    }
+  }
+}
+
 /**
  * Chromium flags for a spec that asserts on terminal CONTENT as text. Under
  * WebGL, xterm draws rows to a canvas and `.xterm` innerText is empty; with
@@ -290,7 +314,7 @@ export async function launchPage(): Promise<{ browser: Browser; page: Page }> {
   // Inject the mock before any page scripts run
   await page.addInitScript({ path: MOCK_SCRIPT });
 
-  await page.goto(VITE_URL);
+  await gotoVite(page);
   await page.waitForLoadState('load');
   // Wait for React to render the app shell
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });

@@ -954,23 +954,31 @@ export function buildDemoPreConfig(options: {
         if (open) return open.peek;
         return peeks[session.id] || session.peek;
       }
+      // A session with no usage yet has no model and no context in main's snapshot
+      // (monitor-aggregator.ts reads both from the usage cache, the model falling back to the one
+      // it was started with, which the sample install never sets): one resuming, whose status line
+      // has not painted, and one queued, which has not started at all.
+      function hasUsageYet(session) {
+        return !session.resuming && session.status !== 'queued';
+      }
       window.__mockMonitorRows = (emptyInstall ? [] : data.sessions).map(function (session) {
         var project = projectsById[session.projectId];
         var task = session.taskId ? tasksById[session.taskId] : null;
         return {
           sessionId: session.id, projectId: session.projectId, projectName: project.name,
           taskId: session.taskId || session.id, taskTitle: task ? task.title : 'Command Terminal 1',
+          // What a card that is not live shows (monitorSlotKind), as main's snapshot carries it.
+          description: task && task.description ? task.description : null,
           outputPeek: seededPeek(session), displayId: task ? task.display_id : null,
           columnName: task ? laneName(task.projectId, task.lane) : '',
           commandTerminalBranch: session.commandTerminalBranch || null,
           labels: task ? task.labels : [], prUrl: task ? task.pr_url : null, prNumber: task ? task.pr_number : null,
           prState: task ? task.pr_state : null, prMergeReadiness: task ? task.pr_merge_readiness : null,
-          // A resuming session has no usage yet, so main's snapshot has no model or context for it.
-          agentName: session.agent, modelDisplayName: session.model && !session.resuming ? session.model.displayName : null,
+          agentName: session.agent, modelDisplayName: session.model && hasUsageYet(session) ? session.model.displayName : null,
           effort: session.effort, permissionMode: session.permissionMode,
           startedAt: minutesAgo(session.startedMinutesAgo), exitedAt: null,
           status: session.status, activity: session.activity, activityReason: null,
-          lastEvent: null, contextPercent: session.resuming ? null : session.contextPercent, isolated: session.isolated || false,
+          lastEvent: null, contextPercent: hasUsageYet(session) ? session.contextPercent : null, isolated: session.isolated || false,
           isCommandTerminal: session.transient || false,
         };
       });
@@ -980,7 +988,8 @@ export function buildDemoPreConfig(options: {
       // would deliver it (fireFirstOutput), so getUsage has nothing for it before then.
       var heldUsageBySession = {};
       data.sessions.forEach(function (session) {
-        if (!session.model || session.contextPercent === null) return;
+        // A queued session has not started, so it has no usage at all.
+        if (!session.model || session.contextPercent === null || session.status === 'queued') return;
         var used = Math.round(session.contextWindowSize * session.contextPercent / 100);
         var usageMap = session.resuming ? heldUsageBySession : usageBySession;
         usageMap[session.id] = {
@@ -2400,14 +2409,41 @@ export function buildDemoPreConfig(options: {
           setTimeout(function () { fireFirstOutput(sessionId); }, RESUMED_FIRST_OUTPUT_MS);
         }
       }
-      // A session a scene marks as resuming is the board just after a relaunch. In the live frame
-      // it comes back the way a visitor's Resume does: first output a beat after page open, usage
-      // a beat after that, when the card trades "Resuming agent..." for its model. A still arms no
-      // timer and holds the moment, and this has to check \`live\` itself: a still stubs
-      // setInterval, not setTimeout.
+      // The moment a visitor first sees the board: the frame stamps data-demo-ready on <html> when
+      // it reveals (demo/boot.js, markReady). A seed with no boot script (the captures) never
+      // gets here, since it is never live.
+      function whenFrameRevealed(callback) {
+        var root = document.documentElement;
+        if (root.getAttribute('data-demo-ready') === '1') { callback(); return; }
+        var observer = new MutationObserver(function () {
+          if (root.getAttribute('data-demo-ready') !== '1') return;
+          observer.disconnect();
+          callback();
+        });
+        observer.observe(root, { attributes: true, attributeFilter: ['data-demo-ready'] });
+      }
+      // A session a scene marks as resuming is the board just after a relaunch. On the desktop
+      // the window is up before auto-resume respawns its agents, so the resume starts when the
+      // frame reveals, not at page open: started at page open, it resolved before the stage had
+      // revealed the board, and a live visitor never saw "Resuming agent...". It then comes back
+      // the way a visitor's Resume does: where its resume was recorded, its terminal plays that
+      // boot and first output lands at the boot's first byte; otherwise first output lands a
+      // beat later. Usage follows a beat after that, when the card trades "Resuming agent..."
+      // for its model. A still arms no timer and holds the moment, and this has to check
+      // \`live\` itself: a still stubs setInterval, not setTimeout.
       if (live) {
         data.sessions.forEach(function (session) {
-          if (session.resuming) setTimeout(function () { fireFirstOutput(session.id); }, RESUMED_FIRST_OUTPUT_MS);
+          if (!session.resuming) return;
+          whenFrameRevealed(function () {
+            var resumeBoot = recordings.resumes ? recordings.resumes[session.id] : null;
+            var seededEntry = replays[session.id];
+            if (resumeBoot && seededEntry && pausedAtRecordingEnd(seededEntry, session.id)) {
+              replays[session.id] = resumeBootEntry(resumeBoot, session.projectId);
+              scheduleFirstOutput(session.id);
+            } else {
+              setTimeout(function () { fireFirstOutput(session.id); }, RESUMED_FIRST_OUTPUT_MS);
+            }
+          });
         });
       }
       function announceSession(row, activity) {
@@ -2424,6 +2460,7 @@ export function buildDemoPreConfig(options: {
         var rows = (window.__mockMonitorRows || []).concat([{
           sessionId: row.id, projectId: row.projectId, projectName: project.name,
           taskId: mockTask ? mockTask.id : row.id, taskTitle: mockTask ? mockTask.title : 'Command Terminal',
+          description: mockTask && mockTask.description ? mockTask.description : null,
           outputPeek: [], displayId: mockTask ? mockTask.display_id : null, columnName: lane ? lane.name : '',
           commandTerminalBranch: row.branch || null,
           labels: mockTask ? mockTask.labels : [], prUrl: mockTask ? mockTask.pr_url : null, prNumber: mockTask ? mockTask.pr_number : null,
@@ -2488,16 +2525,47 @@ export function buildDemoPreConfig(options: {
       };
       // The frame a paused terminal was showing, which a resumed one opens on and keeps: a
       // resumed agent reprints its conversation and waits for the user, so nothing plays on.
+      // Paused mid-recording, that is the recording's stream up to the pause, played through the
+      // page's emulator with the rows above its screen, as frameScrollback paints it; paused at
+      // or past its end, the final frame.
       function frozenFrame(entry, grid) {
         return fetchRecording(entry.file).then(function (recording) {
-          var frame = recording.serialized;
-          if (entry.frozenElapsedMs < recordingEndMs(recording)) {
-            var timeline = recording.frameTimeline || [];
-            frame = timeline.length > 0 ? timeline[0].frame : '';
-            timeline.forEach(function (step) { if (step.t <= entry.frozenElapsedMs) frame = step.frame; });
-          }
-          return grid ? fitFrameToGrid(frame, grid, recording) : frame;
+          var target = grid || { cols: recording.cols, rows: recording.rows };
+          if (entry.frozenElapsedMs >= recordingEndMs(recording)) return fitFrameToGrid(recording.serialized, target, recording);
+          return loadEmulatorModule().then(function (module) {
+            var emulator = module.createReplayEmulator(recording.cols, recording.rows);
+            var head = '';
+            recording.stream.forEach(function (chunk) { if (chunk.t <= entry.frozenElapsedMs) head += chunk.data; });
+            return emulator.write(head).then(function () {
+              var snapshot = emulator.frame(Math.max(0, target.rows - recording.rows, FULL_PAINT_ROWS_ABOVE));
+              emulator.dispose();
+              return fitFrameToGrid(snapshot.frame, target, recording);
+            });
+          }, function (error) {
+            console.error('[demo] the replay emulator did not load, so a resumed session shows its recorded frame', error);
+            return fitFrameToGrid(recording.serialized, target, recording);
+          });
         });
+      }
+      // A resumed session's id maps back to the dataset session it continues, which is what a
+      // resume boot is recorded against (resume-<sessionId>.json).
+      var recordedIdBySession = {};
+      // How far into its recording a paused session had played. A session never mounted and never
+      // clocked sits at its recording's end already.
+      function elapsedAtPause(entry) {
+        return entry.startedAt === null ? Infinity : (entry.pausedAt || Date.now()) - entry.startedAt;
+      }
+      // Had the paused session played its whole recording? Only then does a real resume's
+      // reprint of the full recorded conversation match what the frame showed.
+      function pausedAtRecordingEnd(entry, recordedId) {
+        if (entry.frozenElapsedMs !== undefined) return entry.frozenElapsedMs === Infinity;
+        var end = entry.endMs !== undefined ? entry.endMs : (data.ends[recordedId] ? data.ends[recordedId].durationMs : Infinity);
+        return elapsedAtPause(entry) >= end;
+      }
+      // A resume boot replayed from its first byte. It is short and ends waiting for the user, so
+      // it counts as at its end the moment it starts: pausing and resuming again replays it again.
+      function resumeBootEntry(resumeBoot, projectId) {
+        return { file: resumeBoot.file, grid: gridOf(resumeBoot), startedAt: Date.now(), tail: 0, projectId: projectId, endMs: 0 };
       }
       function resumeTaskSession(mockTask, suspended) {
         var project = projectsById[mockTask.projectId];
@@ -2508,26 +2576,45 @@ export function buildDemoPreConfig(options: {
           status: 'running', shell: 'bash', cwd: mockTask.worktree_path || project.path, startedAt: isoNow(), exitCode: null,
           resuming: true, transient: false, branch: null, isolatedSwimlaneId: null, agentSessionId: null,
         };
-        // Main's respawn deletes the task's old rows (session-spawn-flow.ts), so the resumed
-        // session is the task's only one, and the renderer hears the old one leave.
+        // Main's respawn drops the task's old rows from its registry (session-spawn-flow.ts), so
+        // the resumed session is the task's only one. Main sends no removal push for them: the
+        // renderer drops its copy when the new row's status push lands (withSessionUpserted keeps
+        // one row per task). The removal push below is the mock's own, not main's.
         var pausedIndex = mockState.sessions.indexOf(suspended);
         if (pausedIndex !== -1) mockState.sessions.splice(pausedIndex, 1);
         if (window.__mockFireRemoved) window.__mockFireRemoved(suspended.id, Object.assign({}, suspended), suspended.projectId);
         mockState.sessions.push(row);
         mockTask.session_id = id;
         mockTask.updated_at = isoNow();
-        // The new terminal carries the paused one's scroll history, as main carries the old
-        // scrollback over on a respawn, so it opens on the frame the paused terminal showed. It
-        // keeps the paused session's recording and grid, frozen at the moment of the pause, so it
-        // is held at the grid it had and nothing streams on. A still paints that same frame.
-        scrollback[id] = scrollback[suspended.id] || '';
+        // Which recorded session this continues, through any number of pause and resume cycles:
+        // the resume boot is recorded against the dataset's session.
+        var recordedId = recordedIdBySession[suspended.id] || suspended.id;
+        recordedIdBySession[id] = recordedId;
         var pausedEntry = replays[suspended.id];
-        if (pausedEntry) {
+        var resumeBoot = recordings && recordings.resumes ? recordings.resumes[recordedId] : null;
+        if (pausedEntry && resumeBoot && pausedAtRecordingEnd(pausedEntry, recordedId)) {
+          // The session had played its whole recording, so the conversation the real resume
+          // reprints is exactly the one the frame showed: the terminal plays that recorded boot,
+          // its first output lands when the recording's first byte did, and it ends waiting for
+          // the user. A still paints the boot's last frame (fetched, as a visitor's spawn is).
+          replays[id] = resumeBootEntry(resumeBoot, pausedEntry.projectId);
+        } else if (pausedEntry) {
+          // Paused mid-recording: a real resume would reprint the WHOLE recorded conversation,
+          // including what this frame had not reached yet. The new terminal carries the paused
+          // one's scroll history instead, as main carries the old scrollback over on a respawn:
+          // the paused session's recording and grid, frozen at the moment of the pause, so it is
+          // held at the grid it had and nothing streams on. A still paints that same frame.
+          scrollback[id] = scrollback[suspended.id] || '';
+          // A session already frozen by an earlier resume stays on its frame: its startedAt is the
+          // original session's, so re-deriving from the new pause would jump the view ahead.
+          var frozenElapsedMs = pausedEntry.frozenElapsedMs !== undefined ? pausedEntry.frozenElapsedMs : elapsedAtPause(pausedEntry);
           replays[id] = {
             file: pausedEntry.file, grid: pausedEntry.grid, startedAt: pausedEntry.startedAt, tail: 0,
             projectId: pausedEntry.projectId, layouts: pausedEntry.layouts,
-            frozenElapsedMs: pausedEntry.startedAt === null ? Infinity : (pausedEntry.pausedAt || Date.now()) - pausedEntry.startedAt,
+            frozenElapsedMs: frozenElapsedMs,
           };
+        } else {
+          scrollback[id] = scrollback[suspended.id] || '';
         }
         // Main has no usage for the new PTY until its status line paints, so the paused
         // session's usage is held back until the resumed agent's first output.

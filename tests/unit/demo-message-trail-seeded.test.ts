@@ -77,6 +77,10 @@ describe('demo recordings carry the agent message trail a board card renders', (
       const trail = readRecording(file).messageTrail ?? [];
       // A Command Terminal boot is transient by construction, like the named session above.
       if (file.startsWith('terminal-')) return false;
+      // A resume boot is the CLI reprinting a conversation the paused session's card already
+      // carries the trail of: the resumed card keeps that trail (resumeTaskSession in the seed),
+      // so the boot records none (capture-demo-sessions.mjs passes --no-message-trail for it).
+      if (file.startsWith('resume-')) return false;
       // A tiled variant is a second run of a session's prompt at the tiled width, never a
       // session: the card follows the single recording's trail, so the variant records none
       // (capture-demo-sessions.mjs passes --no-message-trail for it).

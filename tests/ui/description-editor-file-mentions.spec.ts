@@ -472,14 +472,20 @@ test.describe('DescriptionEditor file mentions', () => {
     await openNewTaskDialog();
 
     const textarea = page.locator('[data-testid="task-description"]');
+    // offsetHeight, not getBoundingClientRect().height: the dialog plays a
+    // 200ms entrance transform (dialog-content-in in index.css scales from
+    // 0.96 to 1 and translates 8px), and getBoundingClientRect reports the
+    // transformed box, so a reading taken while that animation is still
+    // running lands a fraction of a pixel short of the settled size.
+    // offsetHeight is a pre-transform layout measurement (the border-box
+    // height computed during layout, before the paint-time transform is
+    // applied), so it reads the same value whether the animation is mid-flight
+    // or finished and needs no settle wait.
     const editorHeight = () =>
-      page.locator('[data-testid="description-editor-body"]').evaluate((node) => node.getBoundingClientRect().height);
+      page.locator('[data-testid="description-editor-body"]').evaluate((node) => (node as HTMLElement).offsetHeight);
 
     // Heights are font- and platform-dependent, so this asserts relationships
-    // (unchanged / still reachable), never a pixel literal. Both readings are
-    // taken after the dialog's entrance animation has settled - measuring an
-    // empty editor the instant the dialog opens catches it mid-scale-transform,
-    // and getBoundingClientRect reports the transformed size.
+    // (unchanged / still reachable), never a pixel literal.
     await textarea.fill(Array.from({ length: 400 }, (_, index) => `Line ${index + 1}`).join('\n'));
     const filledHeight = await editorHeight();
 
