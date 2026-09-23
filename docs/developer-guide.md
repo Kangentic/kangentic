@@ -211,7 +211,7 @@ boot script (`demo/boot.js`: the URL contract, config overrides, still and embed
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
 pre-reveal step runner, and a silent microphone in place of `getUserMedia`), the webview shim
 (`demo/webview-shim.js`: an iframe standing in for Electron's `<webview>` in the Browser pane,
-onto a bundled copy of what the project renders at its dev URL), `tests/ui/mock-electron-api.js`
+onto a bundled page with the project's own data at its dev URL), `tests/ui/mock-electron-api.js`
 verbatim, and the generated seed (the sample install from `tests/captures/helpers/demo-dataset.ts`
 plus, per recording under `tests/captures/fixtures/demo/`, its opening and final terminal frames,
 its working-tree diff split into the three scopes, the last output peek its Monitor row shows and,

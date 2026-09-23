@@ -12,9 +12,9 @@
  *
  * What the iframe loads is decided by window.__demoGuestPages, built at build time from the
  * sample install: the dev URL a project's tasks open (http://localhost:5173/) maps to a bundled
- * copy of what that project renders there, so the address bar shows the desktop's URL and the
- * page shows the desktop's page. Any other URL loads nothing (about:blank), stated rather than
- * spoofed: the pane's own empty state and error paths are the renderer's.
+ * page with that project's own data (demo/README.md, Browser guest), so the address bar shows the
+ * desktop's URL and the pane shows that app's page. Any other URL loads nothing (about:blank),
+ * stated rather than spoofed: the pane's own empty state and error paths are the renderer's.
  *
  * Inert here: capturePage (rejects), executeJavaScript (resolves undefined, so Inspect finds
  * nothing), and history (canGoBack is always false). Each is a real method that does less,

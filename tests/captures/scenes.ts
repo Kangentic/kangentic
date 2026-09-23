@@ -523,7 +523,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   browser: {
     name: 'browser',
     reach: 'state',
-    description: 'The task window with the Browser pane open on the project\'s dev URL. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled copy of what the scaffold app renders at that URL, since no browser has Electron\'s webview. The terminal beside it is held at 0.71 type (the comment above).',
+    description: 'The task window with the Browser pane open on the project\'s dev URL. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it is held at 0.71 type (the comment above).',
     alt: 'A task window with the Browser pane open beside the agent\'s terminal: an address bar on the project\'s local dev server, the page it serves loaded beneath, zoom and Close browser controls above, and Draw, Inspect, and a note field for the agent below.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
