@@ -318,11 +318,35 @@ events the pane waits on as the iframe loads. The renderer is untouched (a custo
 do this, since `webview` has no hyphen). What the iframe loads is `window.__demoGuestPages`,
 built at build time from the sample install: a project's Browser default URL (`dev_url` on the
 project, which the seed writes into its project config) maps to a bundled page under
-`demo/guest/` that is what the project renders there (`guest_page`), so the address bar shows the
-desktop's URL and the page shows the desktop's page. `demo/guest/contoso-web.html` is what
-`scripts/demo-repos/contoso-web`'s `src/App.tsx` renders signed in as the store's admin user,
-unstyled because the scaffold ships no stylesheet. Any other URL loads nothing. Inert: Inspect
-(finds nothing), Draw capture (rejects), history (always empty), and the agent driving the pane.
+`demo/guest/` that stands in for what the project serves there (`guest_page`), so the address bar
+shows the desktop's URL and the pane shows that app's page. Any other URL loads nothing. Inert:
+Inspect (finds nothing), Draw capture (rejects), history (always empty), and the agent driving the
+pane.
+
+`demo/guest/contoso-web.html` has the scaffold's data and an authored presentation. The data is
+`scripts/demo-repos/contoso-web`'s, signed in as the store's admin user (`server/store.ts`): that
+user, the one team subscription, and the two invoices, with a nav and a button that name the
+routes in `server/routes.ts`. No value on the page is invented. The layout and the styling are not
+the scaffold's. The scaffold ships no stylesheet, and its `src/App.tsx` renders a serif heading and
+one bullet, with no header and no invoices. That matters because kangentic.com's landing page shows
+this scene as its Embedded Browser panel, where the page is most of the picture.
+
+Building that presentation into `App.tsx` would have kept the page and the scaffold identical, and
+three recordings rule it out. The api-client session edits that file in both its single and its
+tiled recording, and each recorded diff carries the old file whole. The auth task's accept-edits
+boot (`spawn-task-cw-auth-acceptEdits.json`) reads it with the other front-end files and prints
+their combined line count. Changing the file means re-recording all three on Claude, and the new
+runs would change the api-client card's message trail, its Monitor peeks, and the `windows-tiled`
+scene. Regenerating the history fixture without them would also leave the api-client blame marking
+untouched lines as the agent's. So the guest drifts from the scaffold in presentation only. The
+next time those sessions are re-recorded, give `App.tsx` this page's header, subscription card, and
+invoices list plus a stylesheet, and rebuild the guest from what it renders.
+
+Three constraints hold whatever the page shows. It fetches nothing off-origin, like the rest of the
+build (the smoke tier asserts that on the `board` scene, which never loads this page), so no remote
+font or icon can land late or fail. It has one fixed light palette and no `prefers-color-scheme`,
+because the iframe sees the visitor's OS setting and not the frame's `theme=`. And it never
+animates, so stills and posters stay deterministic.
 
 ### Dictation
 
@@ -509,6 +533,9 @@ TUI only reproduces at the geometry it was recorded at, the serialization render
 Only the serialized stream is kept, with the raw byte count beside it: the raw stream holds every
 wrapped fragment of every path the agent ever printed, and a recording is a tenth of the size
 without it.
+
+Before re-recording the contoso-web api-client session (single or tiled) or the auth task's
+accept-edits boot, read Browser guest above, which asks for an `App.tsx` change in the same pass.
 
 Each recording also carries the working tree the agent left behind (`changes`, in the shape
 `git.diffFiles` returns), and the dataset seeds it per task through the mock's
@@ -962,7 +989,7 @@ every bridge method (`tests/unit/mock-electron-api-parity.test.ts` keeps that tr
 | Command Terminal | The window opens on the project's default agent booting, from its recording; typing into it reaches no process. |
 | Drag into an auto-spawn column, Resume | The agent starts from the boot recorded for that task and mode, or resumes on its transcript (Live replay above). |
 | Add project | The mock's folder dialog returns a fixed path; a fourth project appears in the sidebar. |
-| Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled copy of what the project renders at its dev URL (Browser guest below). Inspect finds nothing, capture rejects, and history is empty. |
+| Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled page with the project's own data at its dev URL (Browser guest below). Inspect finds nothing, capture rejects, and history is empty. |
 | Folder pill, PR links, external links | Inert: `shell.openPath` and `openExternal` are logged by the mock. |
 | Pop-out (Monitor, Changes, Stats) | Inert: the in-app surface stays where it is. |
 | Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state. The words land in the terminal on release as the CLI's echo, which cannot be shown (Dictation below). |
@@ -1004,7 +1031,7 @@ mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim
 demo-seed-<hash>.js              the sample install, final frames, diffs, and history embedded
 recordings/<name>-<hash>.json    one timed stream per recording, fetched when a terminal mounts
 transcripts/<session>-<hash>.json  the agent transcript behind a session, fetched when a conversation viewer opens
-guest/<name>-<hash>.html         what a project renders at its dev URL, for the Browser pane
+guest/<name>-<hash>.html         the page a project's dev URL shows in the Browser pane
 assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```
 

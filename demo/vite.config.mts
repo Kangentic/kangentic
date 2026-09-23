@@ -133,7 +133,7 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
   };
   const tiledCount = Object.values(index.sessions).filter((entry) => entry.tiled).length;
   console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(transcripts).length} transcripts`);
-  // The guest pages: what each project renders at its dev URL, for the Browser pane's iframe
+  // The guest pages: what each project's dev URL shows, for the Browser pane's iframe
   // stand-in (demo/webview-shim.js). Keyed by the URL the pane shows, valued by the hashed file.
   const guestPages: Record<string, string> = {};
   for (const project of DEMO_PROJECTS) {

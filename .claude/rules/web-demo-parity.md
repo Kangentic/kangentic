@@ -38,9 +38,12 @@ three things staying in step, and each is enforced rather than remembered.
   capture rig plays it.
 - **A surface Electron alone provides is mocked as a surface, never faked as content.** The
   `<webview>` tag has an iframe standing in for it (`demo/webview-shim.js`), loading a bundled
-  copy of what the project really renders at its dev URL; the microphone is a silent stream so
-  dictation's real pipeline runs, and no transcript is authored because the desktop draws the
-  words through the CLI's echo. Git history is a real repository built from a commit plan and
+  page at the project's dev URL whose data is the project's own and nothing invented. Its
+  presentation, the layout and the styling, is the one authored part: the scaffold's
+  `src/App.tsx` renders a bare heading and list, and rebuilding it would invalidate the
+  recordings that edit that file (`demo/README.md`, Browser guest). The microphone is a silent
+  stream so dictation's real pipeline runs, and no transcript is authored because the desktop draws
+  the words through the CLI's echo. Git history is a real repository built from a commit plan and
   read with git. The line is the same one the terminal rule draws: mock the bridge, record or
   derive the content, and where content cannot be honest, show the surface without it. Every entry carries the three fields that leave this repo: `alt`, the
   reader-facing text a docs figure carries; `ready`, the selector the frame is built at; and an

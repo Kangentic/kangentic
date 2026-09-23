@@ -4,21 +4,202 @@
     <meta charset="UTF-8" />
     <title>Contoso</title>
     <!--
-      What scripts/demo-repos/contoso-web renders at its dev server once the API has answered:
-      src/App.tsx signed in as the store's admin user (server/store.ts, one team subscription).
-      The scaffold ships no stylesheet, so this page has none either. It stands in for the
-      Vite dev server the Browser pane would show on the desktop, where the guest is a real
+      The Contoso customer portal as the Browser pane shows it at the project's dev URL. It stands
+      in for the Vite dev server the pane would load on the desktop, where the guest is a real
       <webview>; here the pane's iframe loads this file instead (demo/webview-shim.js).
+
+      The DATA is scripts/demo-repos/contoso-web's, signed in as the store's admin user
+      (server/store.ts): the user, the one team subscription, and that user's two invoices, and
+      the nav and the button name the routes in server/routes.ts. The PRESENTATION is authored
+      here: the header, the card, the invoices list, and the styling. The scaffold's src/App.tsx
+      renders a bare heading and list, and rebuilding it would invalidate the recordings that
+      edit or print that file (demo/README.md, Browser guest). Nothing here may fetch
+      off-origin, follow the OS color scheme, or animate: the build fetches nothing off-origin,
+      the frame's theme is not the visitor's OS, and stills must be deterministic.
     -->
+    <style>
+      :root {
+        --page: #f3f5f9;
+        --surface: #ffffff;
+        --border: #dbe1ec;
+        --text: #15203a;
+        --muted: #5a6582;
+        --header: #12306b;
+        --header-text: #ffffff;
+        --header-link: #c3d2f2;
+        --accent: #5b9dff;
+        --good-surface: #dcf4e5;
+        --good-text: #13673a;
+        --due-surface: #fdefd3;
+        --due-text: #875400;
+        --danger: #b42318;
+        --danger-border: #e5b4ae;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: var(--page);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.45;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        height: 60px;
+        padding: 0 28px;
+        background: var(--header);
+        color: var(--header-text);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+      .brand svg { display: block; }
+      .nav { display: flex; align-self: stretch; gap: 22px; }
+      .nav a {
+        display: flex;
+        align-items: center;
+        border-bottom: 3px solid transparent;
+        color: var(--header-link);
+        font-size: 15px;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .nav a[aria-current="page"] { color: var(--header-text); border-bottom-color: var(--accent); }
+      .account { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 14px; }
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: var(--header-text);
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .role {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.16);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      main { max-width: 820px; margin: 0 auto; padding: 30px 28px 40px; }
+      h1 { margin: 0; font-size: 26px; line-height: 1.2; }
+      h2 { margin: 34px 0 12px; font-size: 18px; }
+      .lede { margin: 4px 0 20px; color: var(--muted); }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 1px 2px rgba(18, 48, 107, 0.06);
+      }
+      .subscription { padding: 20px 22px; }
+      .subscription-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+      .label { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+      .plan { margin-top: 2px; font-size: 22px; font-weight: 700; }
+      .renews { margin-top: 6px; color: var(--muted); }
+      .renews strong { color: var(--text); font-weight: 600; }
+      .subscription-foot {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+      }
+      .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .badge-good { background: var(--good-surface); color: var(--good-text); }
+      .badge-due { background: var(--due-surface); color: var(--due-text); }
+      .button {
+        padding: 8px 16px;
+        border: 1px solid var(--danger-border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--danger);
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .invoices { width: 100%; border-collapse: collapse; }
+      .invoices td { padding: 14px 22px; border-top: 1px solid var(--border); }
+      .invoices tr:first-child td { border-top: 0; }
+      .invoices .invoice-id { color: var(--muted); font-size: 14px; }
+      .invoices .amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .invoices .status { text-align: right; }
+    </style>
   </head>
   <body>
     <div id="root">
+      <header class="topbar">
+        <div class="brand">
+          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+            <rect width="28" height="28" rx="7" fill="#5b9dff" />
+            <path d="M18.6 9.6a6 6 0 1 0 0 8.8" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+          </svg>
+          Contoso
+        </div>
+        <nav class="nav">
+          <a aria-current="page">Subscriptions</a>
+          <a>Invoices</a>
+        </nav>
+        <div class="account">
+          <span class="avatar" aria-hidden="true">A</span>
+          <span>ada@example.com</span>
+          <span class="role">Admin</span>
+        </div>
+      </header>
       <main>
-        <h1>Contoso</h1>
-        <p>1 subscriptions</p>
-        <ul>
-          <li>team (active) renews 2026-10-01</li>
-        </ul>
+        <h1>Subscriptions</h1>
+        <p class="lede">1 active subscription</p>
+        <section class="card subscription">
+          <div class="subscription-head">
+            <div>
+              <div class="label">Plan</div>
+              <div class="plan">Team</div>
+              <div class="renews">Renews <strong>Oct 1, 2026</strong></div>
+            </div>
+            <span class="badge badge-good">Active</span>
+          </div>
+          <div class="subscription-foot">
+            <button class="button" type="button">Cancel subscription</button>
+          </div>
+        </section>
+        <h2>Invoices</h2>
+        <section class="card">
+          <table class="invoices">
+            <tbody>
+              <tr>
+                <td>Sep 1, 2026</td>
+                <td class="invoice-id">inv_9002</td>
+                <td class="amount">$49.00</td>
+                <td class="status"><span class="badge badge-due">Due</span></td>
+              </tr>
+              <tr>
+                <td>Aug 1, 2026</td>
+                <td class="invoice-id">inv_9001</td>
+                <td class="amount">$49.00</td>
+                <td class="status"><span class="badge badge-good">Paid</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
       </main>
     </div>
   </body>

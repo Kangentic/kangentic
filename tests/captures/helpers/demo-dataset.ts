@@ -95,8 +95,9 @@ interface DemoProject {
   createdDaysAgo: number;
   /** The project's Browser default URL (Settings, Browser): where a task's Browser pane opens. */
   dev_url?: string;
-  /** A page under demo/guest/ that is what the project renders at `dev_url`, for the web build's
-   *  iframe stand-in of the desktop's webview (demo/webview-shim.js). */
+  /** A page under demo/guest/ that stands in for what the project serves at `dev_url`, for the web
+   *  build's iframe stand-in of the desktop's webview (demo/webview-shim.js). Its data is the
+   *  project's and its presentation is authored (demo/README.md, Browser guest). */
   guest_page?: string;
 }
 
@@ -223,7 +224,7 @@ export const DEMO_GROUPS: DemoProjectGroup[] = [
 
 export const DEMO_PROJECTS: DemoProject[] = [
   // The dev URL is the scaffold's own Vite port (its `dev` script, which the Command Terminal
-  // recording lists); the guest page is what src/App.tsx renders there.
+  // recording lists); the guest page shows the scaffold's store data there, in an authored layout.
   { id: PROJECT_CONTOSO, name: 'contoso-web', path: `${HOME}\\work\\contoso-web`, github_url: 'https://github.com/contoso/contoso-web', default_agent: 'claude', group_id: GROUP_CONTOSO, position: 0, lastOpenedMinutesAgo: 2, createdDaysAgo: 140, dev_url: 'http://localhost:5173/', guest_page: 'contoso-web.html' },
   { id: PROJECT_PETCLINIC, name: 'spring-petclinic', path: `${HOME}\\oss\\spring-petclinic`, github_url: 'https://github.com/spring-projects/spring-petclinic', default_agent: 'codex', group_id: GROUP_OSS, position: 1, lastOpenedMinutesAgo: 35, createdDaysAgo: 61 },
   { id: PROJECT_BOUTIQUE, name: 'online-boutique', path: `${HOME}\\oss\\online-boutique`, github_url: 'https://github.com/GoogleCloudPlatform/microservices-demo', default_agent: 'codex', group_id: GROUP_OSS, position: 2, lastOpenedMinutesAgo: 90, createdDaysAgo: 24 },
