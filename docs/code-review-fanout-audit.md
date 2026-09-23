@@ -795,6 +795,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #710 | 4f +116 | 31KB, 513 lines | 4 (4) | 0 | 0 | 7 | 17 of 6 pack-carrying | 5 / 4 |
 | #711 | 12f +344 | 81KB, 1325 lines | 7 (6) | 5 | 0 | 7 | 4 of 6 pack-carrying | 9 / 5 |
 | #715 | 10f +270 | 63KB, 973 lines | 4 (4) | 6 | 0 | 7 | 30 of 6 pack-carrying | 9 / 5 |
+| #713 | 22f +2290 | 285KB, 3870 lines | 2 (1) | 20 | 0 | 7 | 17 of 6 pack-carrying | 19 / 13 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -843,3 +844,12 @@ hunk's 3-line window, so a 20-line window would have carried it. This is the fir
 Codex hunk for the other agents' entries, which run about 140 lines, so no context width covers
 them. The last 3 were a render-branch read in the windowed `DataTable.tsx`, a grep of the UI spec
 outside its window, and one finder's dash scan over files the pack already carried.
+
+Row six is the first pack past the Read tool's output cap. The skill sizes the load at one call
+per 2000 lines, but the first 2000 lines of this 285KB pack came back as 58,377 tokens against the
+tool's 25,000, so the call failed and the finders were told to read it in six 650-line calls. The
+pack is still read once per finder; only the call count changed, and a pack this wide will need
+the same until the skill sizes calls by bytes. Of the 17 reads beyond the pack, 4 were files
+outside the changed set (the capture rig, to learn whether it runs the seed without a recordings
+index) and 13 were the conventions finder's, 9 of them re-reads of pack-carried files to check a
+comment against the code around its hunk.
