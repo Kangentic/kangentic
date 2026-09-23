@@ -49,6 +49,12 @@ vi.mock('../../src/main/transcription/hardware/detect-hardware', () => ({
   selectTier: vi.fn(() => 'accurate-base'),
 }));
 
+// getInfo's tier comes from dictation-info.ts, which imports the pure select-tier module
+// directly rather than through detect-hardware's re-export, so the stub goes on both.
+vi.mock('../../src/main/transcription/hardware/select-tier', () => ({
+  selectTier: vi.fn(() => 'accurate-base'),
+}));
+
 vi.mock('../../src/main/transcription/models/model-manager', () => ({
   ensureModel: vi.fn(),
   isModelInstalled: vi.fn(() => true),

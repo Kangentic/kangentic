@@ -269,6 +269,17 @@ for (const scene of BOOTABLE_SCENES) {
     // boot.js waited for this before it revealed; asserting it VISIBLE is the half boot.js cannot
     // see, since it polls for existence and a mounted-but-hidden element would pass it.
     await expect(page.locator(scene.ready).first()).toBeVisible();
+    // A field-focusing step swaps the boot veil from `visibility: hidden` to `opacity: 0` plus
+    // `pointer-events: none` on #root (clickTarget), and unveil() then clears all three inline
+    // styles on both its success and error paths. toBeVisible() above ignores opacity and
+    // pointer-events entirely, so a regression that left #root at opacity: 0 (the veil never
+    // lifted) would still pass it; this reads the inline styles boot.js itself sets and clears.
+    const rootVeilStyles = await page.evaluate(() => {
+      const root = document.getElementById('root');
+      return root ? { visibility: root.style.visibility, opacity: root.style.opacity, pointerEvents: root.style.pointerEvents } : null;
+    });
+    expect(rootVeilStyles, `${scene.name} has no #root`).not.toBeNull();
+    expect(rootVeilStyles, `${scene.name} left the boot veil applied to #root`).toEqual({ visibility: '', opacity: '', pointerEvents: '' });
     const deepMarker = SCENE_MARKERS[scene.name];
     if (deepMarker) await deepMarker(page);
     if (scene.focus) {
@@ -604,6 +615,36 @@ test('the board scene makes no request off the serving origin', async ({ page })
   expect(requestUrls.length).toBeGreaterThan(0);
   const offOrigin = requestUrls.filter((url) => !url.startsWith(`${server.origin}/`));
   expect(offOrigin).toEqual([]);
+});
+
+test('releasing push-to-talk over the focused Settings search box lands no text in it', async ({ page }) => {
+  // The dictation-field scene's own steps only PRESS Mouse:Back over the Settings search box and
+  // never release it (tests/captures/scenes.ts), so nothing before this exercised the release.
+  // demo-dataset.ts overrides window.electronAPI.dictation.stop to resolve '' rather than the
+  // mock's stock 'This is a test of dictation.' (tests/ui/mock-electron-api.js), because a
+  // silent microphone transcribes to nothing and no transcript is authored here - so releasing
+  // over a focused field must leave it exactly as the visitor found it.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'dictation-field', embed: '1', still: '1' });
+  const searchInput = page.locator('[data-testid="settings-search"]');
+  await expect(searchInput).toHaveValue('');
+
+  // The release half of the same gesture boot.js's pressCombo started: a pointerup on the same
+  // button (Mouse:Back is button 3, src/shared/keybindings.ts), dispatched on `document` the way
+  // boot.js dispatches its pointerdown, which useDictation's capture-phase `window` listener
+  // (src/renderer/hooks/useDictation.ts) matches via matchesMouseRelease(event, 'Mouse:Back').
+  await page.evaluate(() => {
+    document.dispatchEvent(new PointerEvent('pointerup', {
+      button: 3, buttons: 0, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+    }));
+  });
+
+  // LiveDictationChip renders null once the dictation store is back to 'idle', which
+  // finalizeOnRelease reaches only after stop() has resolved and the input sink's submit() has
+  // run - the observable end of the release, not a fixed wait for it.
+  await expect(page.locator('[data-testid="dictation-live-chip"]')).toHaveCount(0, { timeout: 5000 });
+  await expect(searchInput).toHaveValue('');
+  expect(getUnexpectedErrors()).toEqual([]);
 });
 
 // ---- live replay and what a visitor can start ----------------------------------------------
