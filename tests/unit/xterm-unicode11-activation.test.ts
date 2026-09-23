@@ -12,6 +12,7 @@
  * Three checks keep every parser on one table:
  * 1. Site scan: every `new Terminal(` under src/ (INCLUDING src/devtools -
  *    the forensics re-parse diagnoses the other parsers and must not lie)
+ *    and demo/ (the web build's replay emulator, which ships to visitors)
  *    calls activateUnicode11 from src/shared/xterm-unicode11.ts.
  * 2. The helper actually switches the table (loadAddon alone is a no-op).
  * 3. virtual-screen.ts takes its widths from wcwidthV11, not its own ranges.
@@ -32,6 +33,8 @@ import { activateUnicode11, wcwidthV11 } from '../../src/shared/xterm-unicode11'
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SOURCE_ROOT = path.join(REPO_ROOT, 'src');
+/** Every tree the site scan walks: the app, and the web build's own terminals. */
+const SCAN_ROOTS = [SOURCE_ROOT, path.join(REPO_ROOT, 'demo')];
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 const HELPER_RELATIVE_PATH = 'src/shared/xterm-unicode11.ts';
 
@@ -76,7 +79,7 @@ function countMatches(lines: string[], pattern: RegExp): number {
 describe('xterm Unicode 11 activation', () => {
   it('every `new Terminal(` construction site activates Unicode 11 via the shared helper', () => {
     const violations: string[] = [];
-    for (const filePath of collectSourceFiles(SOURCE_ROOT)) {
+    for (const filePath of SCAN_ROOTS.flatMap((root) => collectSourceFiles(root))) {
       const relativePath = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
       if (relativePath === HELPER_RELATIVE_PATH) continue;
       const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
