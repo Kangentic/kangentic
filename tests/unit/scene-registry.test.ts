@@ -76,6 +76,12 @@ function agentsWithAuthProbe(): Set<string> {
 }
 
 const DEMO_STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
+/** What a session patch may carry, and the values each field takes (DemoState.sessions). */
+const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
+  activity: ['thinking', 'idle', 'permission'],
+  status: ['running', 'suspended', 'queued'],
+  resuming: [true],
+};
 /** The keys a boot step may carry: a click, typed text, or a held hotkey, each with an optional wait. */
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
@@ -166,6 +172,28 @@ describe('scene registry', () => {
         expect(sessionIds.has(sessionId), `${scene.name} patches unknown session ${sessionId}`).toBe(true);
       }
     }
+  });
+
+  it('patches a session only with fields the seed folds in, and resumes only a running one', () => {
+    // The seed reads exactly these three fields (demo-dataset.ts, the sessionPatches fold), so an
+    // extra key or an off-list value is a patch that quietly does nothing, and a resume on a
+    // paused or queued session is a state main never produces: it marks only a live respawn.
+    const sessionStatus = new Map(DEMO_SESSIONS.map((session) => [session.id, session.status]));
+    let resuming = 0;
+    for (const scene of scenes) {
+      for (const [sessionId, patch] of Object.entries(scene.sessions ?? {})) {
+        for (const [field, value] of Object.entries(patch)) {
+          const allowed = SESSION_PATCH_VALUES[field];
+          expect(allowed, `${scene.name} patches ${sessionId}.${field}, which the seed does not read`).toBeDefined();
+          expect(allowed, `${scene.name} patches ${sessionId}.${field} to ${String(value)}`).toContain(value);
+        }
+        if (!patch.resuming) continue;
+        resuming += 1;
+        expect(patch.status ?? sessionStatus.get(sessionId), `${scene.name} resumes ${sessionId}, which is not running`).toBe('running');
+      }
+    }
+    // Vacuity guard: session-resume is the scene that resumes one.
+    expect(resuming).toBeGreaterThanOrEqual(1);
   });
 
   it('restores windows only on rows the sample install seeds, and tiles only windows it restores', () => {
@@ -359,6 +387,19 @@ describe('scene registry', () => {
     if (!stepKeysMatch) throw new Error('BOOT_STEP_KEYS not found in demo/boot.js');
     const bootStepKeys = Array.from(stepKeysMatch[1].matchAll(/'([a-zA-Z]+)'/g), (match) => match[1]);
     expect(bootStepKeys.sort()).toEqual([...BOOT_STEP_KEYS].sort());
+    // A session patch in a blob is held to the same fields and values a scene is (above).
+    const readList = (name: string): string[] => {
+      const listMatch = boot.match(new RegExp(`var ${name} = \\[([^\\]]*)\\]`));
+      if (!listMatch) throw new Error(`${name} not found in demo/boot.js`);
+      return Array.from(listMatch[1].matchAll(/'([a-zA-Z]+)'/g), (match) => match[1]);
+    };
+    expect(readList('SESSION_PATCH_KEYS').sort()).toEqual(Object.keys(SESSION_PATCH_VALUES).sort());
+    expect(readList('SESSION_ACTIVITIES').sort()).toEqual([...SESSION_PATCH_VALUES.activity].sort());
+    expect(readList('SESSION_STATUSES').sort()).toEqual([...SESSION_PATCH_VALUES.status].sort());
+    // The seed is what applies a patch, so it has to read the global boot.js publishes.
+    expect(boot, 'boot.js publishes the session patches before the seed runs').toContain('window.__demoSessionPatches = effective.sessions');
+    const dataset = fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/helpers/demo-dataset.ts'), 'utf-8');
+    expect(dataset, 'the seed folds the session patches in').toContain('window.__demoSessionPatches');
     // The two fields the consumers wait on and report are read by name.
     expect(boot).toContain('scene.ready');
     expect(boot).toContain('scene.focus');

@@ -107,8 +107,8 @@ On success the frame stamps `data-demo-ready="1"` and `data-demo-scene` on `<htm
 `{ type: 'kangentic-demo-ready', scene, version, focus }` to its parent; a page fades the frame in
 on that message. Ready fires only once the scene's `ready` element exists (a restored task window
 mounts a beat after the swimlanes, and a page lifting its poster on the message must not see the
-board without the window the caption describes). `focus` is the rect of the scene's `focus`
-element as fractions of the frame (`{ x, y, w, h }`), or null when the scene names none: a dialog
+board without the window the caption describes). `focus` is the rect around the scene's `focus`
+elements as fractions of the frame (`{ x, y, w, h }`), or null when the scene names none: a dialog
 scene is small inside a 1600 by 1000 frame scaled into a docs column, and the rect is what lets the
 page crop to the dialog without knowing the layout. It is posted once, at ready, and that is
 enough: the frame is a fixed 1600 by 1000 inside the iframe whatever the host does, so the
@@ -148,9 +148,10 @@ A `DemoState` (also the shape of every registry entry) is:
 {
   config?: Record<string, unknown>;     // merged into window.__mockConfigOverrides; a nested block REPLACES the default
   tasks?: Array<{ id: string } & Record<string, unknown>>;   // patches merged by id into the sample install's rows
-  sessions?: Record<string, {                   // patches on rows the sample install seeds
-    activity?: 'thinking' | 'idle' | 'permission';    // written to the mock's activityCache
-    status?: 'running' | 'suspended' | 'queued';      // written onto the row: a paused or queued card
+  sessions?: Record<string, {                   // patches on sessions the sample install seeds
+    activity?: 'thinking' | 'idle' | 'permission';    // the session's activity state
+    status?: 'running' | 'suspended' | 'queued';      // a paused or queued card
+    resuming?: true;                                  // a running session respawned on relaunch, not yet printing
   }>;
   seeds?: Record<`__mock${string}`, unknown>;   // window globals the mock reads (diffs, branch summary, ...)
   steps?: Array<                                        // played before the reveal, in order
@@ -160,6 +161,19 @@ A `DemoState` (also the shape of every registry entry) is:
   >;
 }
 ```
+
+A session patch is an input to the seed, not a pass over its output. `boot.js` publishes the
+merged patches as `window.__demoSessionPatches` before the seed runs, and the seed folds each one
+into its session before it derives anything from it: the row, the Monitor row, the usage, the
+activity stats, and a working session's clock. Applied to the rows afterwards, as it once was, a
+paused card's Monitor row still read working. `resuming` is the moment after a relaunch, when main
+has respawned the agent on its own conversation and it has not printed yet: the seed holds the
+session's usage back, so the card and the context bar read "Resuming agent..." rather than a
+model. A still holds that moment. The live frame plays what main sends next, the same way a
+visitor's Resume click does: first output a beat after page open, then the usage, which is when
+the card trades "Resuming agent..." for its model. The flag itself stays set, as it does in main:
+it means the session was spawned as a resume. `validateState` refuses a field outside these
+three, a value outside its set, and a resume on a session it also stops.
 
 A nested config block replaces the default rather than merging into it: the merge is a shallow
 `Object.assign` here and again in the mock. So naming one field of `monitor` would leave the other
@@ -196,7 +210,11 @@ beside the state it describes (nobody else knows what the frame shows) and emitt
 the boot script waits for it before the reveal, the smoke tier asserts it visible for every
 bootable entry, and the rig shoots after it. `focus`, when set, is the element whose rect rides
 the ready message; name the box a reader would crop to, never an overlay's backdrop (the smoke
-tier fails a focus that matches nothing, is empty, or is the whole frame). A scene may also say
+tier fails a focus that matches nothing, is empty, or is the whole frame). A selector list
+(`a, b`) names several elements and the rect is the box around all of them, which is how
+`session-resume` crops to its two cards; the smoke tier fails a list whose selectors do not each
+match exactly one element, so a single selector that starts matching a second one cannot quietly
+widen a figure's crop. A scene may also say
 `install: 'empty'`, which seeds no project at all (the
 welcome screen). `tests/unit/scene-registry.test.ts` pins the rest: a `state` scene has no
 steps, a `boot` scene carries only boot steps (a `click`, a `type` with `text`, or a `press` of a
@@ -215,7 +233,8 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `welcome` | state | `install: 'empty'`: no project seeded, so the boot gate is the app having rendered at all |
 | `welcome-setup` | state | the same empty install plus `__mockAgentListOverrides`, one agent signed out and several not installed. No click: the screen opens its own setup list whenever anything is missing, which is what the seed produces |
 | `board` | boot | one click on the panel tab for the working middleware session |
-| `session-states` | boot | `sessions` patches: one row to `suspended` (a paused card in Planning), one to `queued` (Code Review). Both columns are in frame at 1600px, which Merge is not |
+| `session-states` | boot | `sessions` patches: one session to `suspended` (a paused card in Planning), one to `queued` (Code Review). Both columns are in frame at 1600px, which Merge is not |
+| `session-resume` | boot | `sessions` patches: the Planning WebSocket session `resuming` and `idle` (a resumed agent starts idle and keeps its trail), the card below it `suspended`. `focus` names both cards, so the rect is the box around the pair. Show it as a still or its poster: live, the resume resolves about 1.5 seconds after page open, as the desktop's does |
 | `activity-overlay` | state | `config.developer.activityDebugOverlay`; the snapshot each panel draws is derived from that session's own seeded events by `activityStatsFor` (Activity stats below) |
 | `notification-toast` | state | `__mockInitialExit`, fired once when `sessions.onExit` registers, so App.tsx raises the toast itself; `notifications.toasts.durationSeconds` holds it up |
 | `board-config-change` | state | `__mockBoardConfigChanged`, fired once when `boardConfig.onChanged` registers, which App.tsx turns into its own reconciliation dialog |
@@ -430,7 +449,7 @@ site fails its build when the two differ, when a figure names a scene the manife
 a named file is absent, so a stale or partial set cannot ship quietly. That is the
 `sync-brand.mjs` precedent with its failure mode fixed.
 
-`focus` gives every poster the rect of its scene's `focus` element as fractions of the frame, the
+`focus` gives every poster the rect around its scene's `focus` elements as fractions of the frame, the
 same `{ x, y, w, h }` the ready message posts, so one crop routine serves the live frame and the
 poster. It is `null` for a scene that names no focus element. The rig measures it on the still it
 just shot, through `boot.js`'s own `__demoBoot.focusRectOf`, so a driver scene gets its rect after
@@ -564,6 +583,14 @@ Every timestamp is an offset from boot, so cards read "3 min ago" whenever the f
 Sessions cover every state the app distinguishes (thinking, needs-you, a permission prompt,
 suspended, queued) plus a Command Terminal; Monitor rows are derived from the session rows so the
 two views cannot disagree; the usage dashboard is a seeded, deterministic fourteen-day series.
+Each archived task carries the stats its last session left (`DEMO_ARCHIVED_SUMMARIES`, what the
+Completed Tasks dialog lists). No recording stands behind an archived task, so these are authored
+and were reviewed as a set: the model is the project's default agent's, the tool count is the sum
+of the breakdown, and every cost sits under the lightest weekday the dashboard draws for one
+project. They do not reconcile with the dashboard beyond that. Its series is seeded noise with idle
+and weekend days far below any of these costs, and the weekday an archive date lands on moves with
+the day the frame is opened. The mock answers the archived list per project, as each project's
+own DB does on the desktop, so contoso-web's dialog lists its three, not all seven.
 
 ### Terminal recordings
 
@@ -596,8 +623,10 @@ would show too. The one recording without a `changes` field is the Gemini sessio
 the rig captured diffs and not repeatable until its quota resets; re-run it with
 `--only gemini` to fill it in. The Monitor's output peek is each recording's own last displayed
 lines (`peek`, read from the rendered headless terminal at record time, with each CLI's footer
-and status chrome skipped), never authored; the concurrency cap is set to the number of running
-sessions, so the one queued spawn is waiting on a genuinely full set of slots.
+and status chrome skipped), never authored. The concurrency cap is the number of running sessions
+plus four, so a visitor's drag into an auto-spawn column starts an agent the way it does on the
+desktop rather than queueing it. The sample install queues nothing: the one Queued card, in
+`session-states`, is a scene patch, and it waits with free slots.
 
 A manifest entry with `tiled` is recorded a second time at the tiled surface's width, under the
 file it names: the same prompt run again, in a PTY the size of one pane of a tiled pair. The seed
@@ -824,6 +853,16 @@ too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a 
   header, the prompt Kangentic's default template sends, its first tool calls). A live session
   follows the card, as the engine's create-or-resume does; a paused one resumes on its own
   transcript and waits.
+- Pause stops a session where it is: its clock stops, so the card's trail, the Monitor's peek, and
+  the finish hold, and the Monitor shows it paused. Resume, from the task window or a drag into an
+  auto-spawn column, finds that paused session the way main does. Main clears the task's session
+  pointer on a pause and resumes the task's latest paused record, so the demo does not read the
+  pointer either; reading only the pointer is what once made Pause then Resume start the task's
+  recorded boot from scratch. The paused row is retired and the resumed session is the task's
+  only one, as main's respawn leaves it. Its terminal carries the paused one's view over, as main
+  carries the scrollback: the same recording at the same grid, frozen on the frame the paused
+  terminal showed, since a resumed agent reprints its conversation and waits for the user. Its
+  trail and its usage carry over too, the usage once the resumed agent's first output lands.
 - A new Command Terminal boots the project's default agent with no prompt, which is what the
   desktop starts: `terminal-<projectId>.json` when its window opens alone,
   `terminal-<projectId>-tiled.json` when it opens beside the project's running terminal. When a

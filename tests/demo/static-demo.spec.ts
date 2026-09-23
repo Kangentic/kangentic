@@ -20,8 +20,8 @@ import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { SCENES } from '../captures/scenes';
 import {
-  DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, PROJECT_CONTOSO,
-  SESSION_CONTOSO_TERMINAL, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE,
+  DEMO_ARCHIVED_SUMMARIES, DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
+  SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
@@ -183,6 +183,37 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     const middlewareCard = page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`);
     await expect(middlewareCard.locator('[data-testid="usage-bar"]')).toBeVisible();
     await expect(middlewareCard.locator('[data-testid="status-bar"]')).toHaveCount(0);
+    // The seed folds the patches in before it builds the Monitor, so the Monitor shows the two
+    // stopped as the board does. Applied to the rows afterwards, both rows still read running.
+    expect((await monitorFields(page, SESSION_EMPTY_STATES))?.status).toBe('suspended');
+    expect((await monitorFields(page, SESSION_RATE_LIMIT))?.status).toBe('queued');
+  },
+  'session-resume': async (page) => {
+    // The resuming card draws the spinner footer rather than a model: main has no usage for a
+    // respawned agent until its status line paints, and the seed holds the session's back.
+    const resumingCard = page.locator(`[data-task-id="${TASK_WEBSOCKET}"]`);
+    await expect(resumingCard.locator('[data-testid="usage-bar"]')).toContainText('Resuming agent...');
+    await expect(resumingCard.locator('[data-testid="usage-bar-model"]')).toHaveCount(0);
+    // A resumed agent keeps what its previous run said (message-trail-tracker.ts reads it at once).
+    await expect(resumingCard.locator('[data-testid="task-card-trail"]')).toBeVisible();
+    const pausedCard = page.locator('[data-task-id="task-cw-empty-states"]');
+    await expect(pausedCard.locator('[data-testid="status-bar"]')).toContainText('Paused');
+    // Sibling negative: a session the scene does not patch keeps its model footer, so the held
+    // usage landed on the resuming session alone.
+    await expect(page.locator(`[data-task-id="${TASK_MIDDLEWARE}"] [data-testid="usage-bar-model"]`)).toBeVisible();
+    // The Monitor row agrees with the card: no model and no context before the usage arrives.
+    expect(await monitorFields(page, SESSION_WEBSOCKET)).toMatchObject({ status: 'running', modelDisplayName: null, contextPercent: null });
+  },
+  'completed-tasks': async (page) => {
+    // Only the open project's archive, as the desktop's per-project DB answers, and every row
+    // carries the stats its last session left, so the footer is not "$0.00 total cost".
+    const contosoArchived = DEMO_TASKS.filter((task) => task.projectId === PROJECT_CONTOSO && task.archivedDaysAgo);
+    const dialog = page.locator('[data-testid="completed-tasks-dialog"]');
+    await expect(dialog).toContainText(`Completed Tasks (${contosoArchived.length})`);
+    await expect(dialog).toContainText(`${contosoArchived.length} tasks`);
+    await expect(dialog).not.toContainText('$0.00 total cost');
+    const summarized = new Set(DEMO_ARCHIVED_SUMMARIES.map((summary) => summary.taskId));
+    for (const task of contosoArchived) expect(summarized.has(task.id), `${task.id} has no summary`).toBe(true);
   },
   'activity-overlay': async (page) => {
     const overlay = page.locator('[data-testid="activity-debug-overlay"]');
@@ -231,14 +262,23 @@ for (const scene of BOOTABLE_SCENES) {
     if (scene.focus) {
       // A focus the site crops to must be a real region: not a missing element (the ready
       // message would carry null), not a zero box, and not the whole frame (the Quick Find
-      // scenes once named the palette's full-frame backdrop, which crops to nothing).
+      // scenes once named the palette's full-frame backdrop, which crops to nothing). The rect is
+      // the box around every element the selector names, which is how boot.js measures it.
       const focusRect = await page.evaluate((selector) => {
-        const element = document.querySelector(selector);
-        if (!element) return null;
-        const box = element.getBoundingClientRect();
-        return { w: box.width / window.innerWidth, h: box.height / window.innerHeight };
+        const elements = Array.from(document.querySelectorAll(selector));
+        if (elements.length === 0) return null;
+        const boxes = elements.map((element) => element.getBoundingClientRect());
+        const left = Math.min(...boxes.map((box) => box.left));
+        const top = Math.min(...boxes.map((box) => box.top));
+        const right = Math.max(...boxes.map((box) => box.right));
+        const bottom = Math.max(...boxes.map((box) => box.bottom));
+        return { w: (right - left) / window.innerWidth, h: (bottom - top) / window.innerHeight, count: elements.length };
       }, scene.focus);
       expect(focusRect, `${scene.name}.focus (${scene.focus}) matches no element`).not.toBeNull();
+      // Each selector in the list names exactly one element. A single selector that began matching
+      // a second element would widen that figure's crop to take both in without failing anything.
+      const selectorCount = scene.focus.split(',').length;
+      expect(focusRect?.count, `${scene.name}.focus should name ${selectorCount} element(s)`).toBe(selectorCount);
       const focusArea = (focusRect?.w ?? 0) * (focusRect?.h ?? 0);
       expect(focusArea, `${scene.name}.focus is an empty box`).toBeGreaterThan(0);
       expect(focusArea, `${scene.name}.focus is the whole frame`).toBeLessThan(0.95);
@@ -579,7 +619,18 @@ interface DemoElectronWindow {
 }
 
 interface DemoMonitorWindow {
-  __mockMonitorRows?: Array<{ sessionId: string; activity: string; outputPeek?: string[] }>;
+  __mockMonitorRows?: Array<{
+    sessionId: string; activity: string; outputPeek?: string[];
+    status?: string; modelDisplayName?: string | null; contextPercent?: number | null;
+  }>;
+}
+
+/** The Monitor snapshot fields a row carries beyond its activity: the status, model, and context. */
+function monitorFields(page: Page, sessionId: string): Promise<{ status?: string; modelDisplayName?: string | null; contextPercent?: number | null } | null> {
+  return page.evaluate((id) => {
+    const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
+    return row ? { status: row.status, modelDisplayName: row.modelDisplayName, contextPercent: row.contextPercent } : null;
+  }, sessionId);
 }
 
 /** The Monitor row state the mock publishes: what a card shows without opening a terminal. */
@@ -1470,10 +1521,114 @@ test('a state= blob naming only part of a nested config block is refused', async
   await expect(page.locator('html')).toHaveAttribute('data-demo-scene', 'state');
 });
 
+test('a state= blob that resumes a stopped session is refused', async ({ page }) => {
+  // Main marks only a live respawn as resuming, so a resume on a paused session is a state the
+  // desktop never draws. validateState refuses it before anything is seeded.
+  const stoppedResumeBlob = encodeState({ sessions: { [SESSION_WEBSOCKET]: { resuming: true, status: 'suspended' } } });
+  await page.goto(demoUrl({ state: stoppedResumeBlob, embed: '1', still: '1' }));
+  const errorCard = page.locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible();
+  await expect(errorCard).toContainText('a resuming session is running');
+  await expect(page.locator('[data-swimlane-name]')).toHaveCount(0);
+
+  // Positive control, same plumbing: a resume alone boots, and the card reads it.
+  await gotoScene(page, { state: encodeState({ sessions: { [SESSION_WEBSOCKET]: { resuming: true } } }), embed: '1', still: '1' });
+  await expect(page.locator(`[data-task-id="${TASK_WEBSOCKET}"] [data-testid="usage-bar"]`)).toContainText('Resuming agent...');
+});
+
+test('a resuming card comes back in the live frame the way a Resume click does', async ({ page }) => {
+  // A still holds the moment (the per-scene boot above). Live, the seed plays what main sends:
+  // first output a beat after page open, then the status line's usage, so the card ends on its
+  // model and the Monitor row gains its model and context with it.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'session-resume', embed: '1' });
+  const card = page.locator(`[data-task-id="${TASK_WEBSOCKET}"]`);
+  await expect(card.locator('[data-testid="usage-bar-model"]')).toBeVisible({ timeout: 10_000 });
+  await expect(card.locator('[data-testid="usage-bar"]')).not.toContainText('Resuming agent...');
+  const websocket = DEMO_SESSIONS.find((session) => session.id === SESSION_WEBSOCKET);
+  await expect.poll(() => monitorFields(page, SESSION_WEBSOCKET)).toMatchObject({
+    modelDisplayName: websocket?.model?.displayName, contextPercent: websocket?.contextPercent,
+  });
+  // The paused card stays paused: a session paused on purpose does not come back on relaunch.
+  await expect(page.locator('[data-task-id="task-cw-empty-states"] [data-testid="status-bar"]')).toContainText('Paused');
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('resuming a paused card keeps what its agent last said, and the card never reads Starting agent', async ({ page }) => {
+  // A resume continues the paused session's transcript, and main's trail tracker reads its tail on
+  // the new session's first read, so the card shows the previous run's last line at once rather
+  // than falling back to the task description. The resume goes through the bridge method the
+  // task window's Resume control calls.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'session-resume', embed: '1', still: '1' });
+  const pausedCard = page.locator('[data-task-id="task-cw-empty-states"]');
+  await expect(pausedCard.locator('[data-testid="task-card-trail"]')).toHaveCount(0);
+  const footerLabels: string[] = [];
+  await page.exposeFunction('__recordFooter', (label: string) => { footerLabels.push(label); });
+  await page.evaluate(() => {
+    const read = () => document.querySelector('[data-task-id="task-cw-empty-states"] [data-testid="usage-bar"]')?.textContent ?? '';
+    new MutationObserver(() => { (window as unknown as { __recordFooter: (label: string) => void }).__recordFooter(read()); })
+      .observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  await page.evaluate(() => (window as unknown as { electronAPI: { sessions: { resume: (taskId: string) => Promise<unknown> } } })
+    .electronAPI.sessions.resume('task-cw-empty-states'));
+  await expect(pausedCard.locator('[data-testid="task-card-trail"]')).toBeVisible({ timeout: 10_000 });
+  await expect(pausedCard.locator('[data-testid="usage-bar-model"]')).toBeVisible({ timeout: 10_000 });
+  // Between the resume and the model, the spinner says Resuming the whole way through.
+  expect(footerLabels.some((label) => label.includes('Resuming agent...'))).toBe(true);
+  expect(footerLabels.some((label) => label.includes('Starting agent...'))).toBe(false);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('pausing and resuming a working agent brings back the same session and view, not a fresh boot', async ({ page }) => {
+  // Main clears the task's session pointer on a pause and finds the paused record again on
+  // Resume, and the respawn carries the paused terminal's scrollback over. The demo once read
+  // only the pointer, so a Pause then Resume started the task's recorded boot from scratch.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'task', embed: '1' });
+  const toggle = page.locator('[data-testid="header-toggle-session-btn"]');
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+  await toggle.click();
+  await expect.poll(async () => (await monitorFields(page, SESSION_MIDDLEWARE))?.status).toBe('suspended');
+  // A paused agent stops: its Monitor peek, which changes every 2.5 to 6 seconds while the
+  // recording plays, holds still for longer than the longest gap.
+  expect(await countPeekChanges(page, SESSION_MIDDLEWARE, 7000)).toBe(0);
+
+  // Pausing closed the window; the card reopens it on the Resume prompt.
+  await page.locator(`[data-task-id="${TASK_MIDDLEWARE}"]`).click();
+  await expect(toggle).toHaveAttribute('title', 'Resume session');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('title', 'Pause session');
+
+  const readRows = () => page.evaluate(async (taskId) => {
+    const sessions = await (window as unknown as { electronAPI: { sessions: { list: () => Promise<Array<{ id: string; taskId: string; status: string; resuming: boolean }>> } } }).electronAPI.sessions.list();
+    return sessions.filter((session) => session.taskId === taskId).map((session) => ({ id: session.id, status: session.status, resuming: session.resuming }));
+  }, TASK_MIDDLEWARE);
+  // The task's only row is the resume: main deletes the paused row when it respawns.
+  const rows = await readRows();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ status: 'running', resuming: true });
+  expect(rows[0].id).toContain('-resumed-');
+
+  // The terminal opens on the conversation the paused one showed, not on a fresh CLI's prompt.
+  // A frame spells runs of spaces as cursor-forward moves, so those become a space before the
+  // rest of the escapes go.
+  const stripAnsi = (text: string) => text.replace(/\x1b\[\d*C/g, ' ').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/ +/g, ' ');
+  const handed = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), rows[0].id));
+  expect(handed).toContain('routes file');
+  expect(handed).not.toContain('Try "');
+  // And it stays there: a resumed agent waits for the user, so nothing streams on.
+  const handedAgain = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), rows[0].id));
+  expect(handedAgain).toBe(handed);
+  // The usage carries over once the resumed agent's status line lands.
+  await expect.poll(() => monitorFields(page, rows[0].id), { timeout: 10_000 }).toMatchObject({ status: 'running', contextPercent: DEMO_SESSIONS.find((session) => session.id === SESSION_MIDDLEWARE)?.contextPercent });
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 test('a state= blob patching a session the sample install does not seed throws rather than silently no-op-ing', async ({ page }) => {
-  // Unlike the two refusals above, this is NOT a validateState() check: `sessions` is validated
-  // only for SHAPE up front ("must be an object keyed by session id"), so a bad id sails through
-  // that gate with nothing pushed to `errors`. The "is this id one the sample install seeds" check
+  // Unlike the refusals above, this is NOT a validateState() check: `sessions` is validated up
+  // front for its shape and its fields, not its ids, so a bad id sails through that gate with
+  // nothing pushed to `errors`. The "is this id one the sample install seeds" check
   // happens later, inside applyScene()'s __mockPreConfigure callback, called from the generated
   // seed script's bare top-level `window.__demoBoot.afterSeed();` (demo/vite.config.mts) with no
   // try/catch anywhere above it. So the throw is an UNCAUGHT exception, not a caught error: it

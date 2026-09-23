@@ -434,6 +434,39 @@ export const DEMO_SESSIONS: DemoSession[] = [
   { id: SESSION_BOUTIQUE_OTEL, taskId: 'task-ob-otel', projectId: PROJECT_BOUTIQUE, agent: 'codex', status: 'running', activity: 'thinking', startedMinutesAgo: 44, model: CODEX, effort: 'medium', permissionMode: 'bypassPermissions', contextPercent: 23, contextWindowSize: 400000, costUsd: 0.21, durationMinutes: 44, peek: ['Read src/shippingservice/main.go', 'rg -n otel src/shippingservice'], events: [{ minutesAgo: 7, tool: 'Read', detail: 'src/shippingservice/main.go' }, { minutesAgo: 2, tool: 'Bash', detail: 'rg -n otel src/shippingservice' }] },
 ];
 
+/**
+ * What each archived task's last session cost and did, which the Completed Tasks dialog lists
+ * (`sessions.listSummaries`, keyed by task id). Main captures this at suspend from the session's
+ * own telemetry; an archived task here has no recording behind it, so these are authored, and
+ * were reviewed as a set. The model is the project's default agent's (MODEL_BY_AGENT), and the tool
+ * count is the sum of the breakdown. Every cost sits under the lightest WEEKDAY the usage dashboard
+ * draws for one project. That is all the two can promise each other: the dashboard's series is
+ * seeded noise with idle and weekend days far below any of these, and which weekday "3 days ago"
+ * lands on depends on the day the frame is opened, so a task can read more than its day's bar.
+ */
+export interface DemoArchivedSummary {
+  taskId: string;
+  costUsd: number;
+  durationMinutes: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Calls per tool, in the names each agent's sessions report above. */
+  tools: Record<string, number>;
+  filesChanged: number;
+  linesAdded: number;
+  linesRemoved: number;
+}
+
+export const DEMO_ARCHIVED_SUMMARIES: DemoArchivedSummary[] = [
+  { taskId: 'task-cw-done-deploy', costUsd: 1.84, durationMinutes: 38, inputTokens: 412000, outputTokens: 38000, tools: { Read: 18, Bash: 16, Edit: 14, Write: 5, Grep: 4 }, filesChanged: 4, linesAdded: 186, linesRemoved: 12 },
+  { taskId: 'task-cw-done-schema', costUsd: 2.35, durationMinutes: 52, inputTokens: 538000, outputTokens: 51000, tools: { Read: 22, Edit: 19, Bash: 17, Write: 8, Grep: 8 }, filesChanged: 7, linesAdded: 312, linesRemoved: 48 },
+  { taskId: 'task-cw-done-logging', costUsd: 1.12, durationMinutes: 24, inputTokens: 266000, outputTokens: 22000, tools: { Edit: 15, Read: 12, Grep: 7, Bash: 5, Write: 2 }, filesChanged: 9, linesAdded: 148, linesRemoved: 61 },
+  { taskId: 'task-pc-done-java21', costUsd: 0.64, durationMinutes: 17, inputTokens: 148000, outputTokens: 11000, tools: { Read: 9, Bash: 8, Edit: 6 }, filesChanged: 3, linesAdded: 9, linesRemoved: 9 },
+  { taskId: 'task-pc-done-postgres', costUsd: 1.08, durationMinutes: 29, inputTokens: 231000, outputTokens: 19000, tools: { Read: 13, Bash: 12, Edit: 11 }, filesChanged: 4, linesAdded: 96, linesRemoved: 3 },
+  { taskId: 'task-ob-done-go124', costUsd: 0.92, durationMinutes: 26, inputTokens: 204000, outputTokens: 15000, tools: { Edit: 22, Bash: 15, Read: 11 }, filesChanged: 22, linesAdded: 44, linesRemoved: 44 },
+  { taskId: 'task-ob-done-skaffold', costUsd: 0.41, durationMinutes: 12, inputTokens: 87000, outputTokens: 7000, tools: { Read: 6, Bash: 5, Edit: 3 }, filesChanged: 2, linesAdded: 18, linesRemoved: 11 },
+];
+
 export const DEMO_BACKLOG: DemoBacklogItem[] = [
   { id: 'backlog-cw-dark-mode', projectId: PROJECT_CONTOSO, title: 'Dark mode for the dashboard', description: 'Token pass over the dashboard cards and charts; the marketing site already ships both themes', priority: 2, labels: ['design'], position: 0, external_source: null, external_id: null, external_url: null, createdDaysAgo: 9 },
   { id: 'backlog-cw-invoice-pdf', projectId: PROJECT_CONTOSO, title: 'Invoice PDF export', description: 'Customers ask for a downloadable invoice from the billing page', priority: 1, labels: ['feature'], position: 1, external_source: 'github', external_id: '112', external_url: 'https://github.com/contoso/contoso-web/issues/112', createdDaysAgo: 15 },
@@ -531,6 +564,7 @@ export function buildDemoPreConfig(options: {
     ),
     tasks: DEMO_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
     sessions: DEMO_SESSIONS,
+    archivedSummaries: DEMO_ARCHIVED_SUMMARIES,
     backlog: DEMO_BACKLOG,
     labelColors: DEMO_LABEL_COLORS,
     agentOverrides: DEMO_AGENT_OVERRIDES,
@@ -591,6 +625,24 @@ export function buildDemoPreConfig(options: {
       var messageTrailMaxEntries = ${JSON.stringify(messageTrailMaxEntries)};
       var cellWidths = ${JSON.stringify(options.cellWidths ?? { wide: [], zero: [] })};
       var history = ${JSON.stringify(options.history ?? {})};
+      // A scene's session patches (demo/boot.js publishes them before calling this) are folded
+      // into the sessions HERE, before anything is derived from one, so the row, the Monitor row,
+      // the usage, the activity stats, and the clock all describe the patched session. A patch
+      // applied to the rows afterwards left the rest describing the dataset's. The captures seed
+      // publishes none, so the sample install is exactly the dataset there.
+      var sessionPatches = window.__demoSessionPatches || {};
+      data.sessions = data.sessions.map(function (session) {
+        var patch = sessionPatches[session.id];
+        if (!patch) return session;
+        var patched = Object.assign({}, session);
+        if (patch.status) patched.status = patch.status;
+        if (patch.activity) patched.activity = patch.activity;
+        // The moment after a relaunch: main has respawned the agent on its own conversation
+        // (resume-suspended.ts) and it has not printed yet. Main has no usage for the new PTY
+        // until its status line paints, so the card reads "Resuming agent..." rather than a model.
+        if (patch.resuming) patched.resuming = true;
+        return patched;
+      });
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
@@ -755,6 +807,30 @@ export function buildDemoPreConfig(options: {
           };
           if (task.archivedDaysAgo) state.archivedTasks.push(row); else state.tasks.push(row);
         });
+        // The Completed Tasks dialog's cost, duration, token, tool, file, and line cells. The run
+        // ended ten minutes before the task was archived, as a Done move suspends a finished agent.
+        var TOOL_MEAN_MS = { Read: 300, Grep: 250, Edit: 400, Write: 350, Bash: 6000 };
+        data.archivedSummaries.forEach(function (summary) {
+          var task = tasksById[summary.taskId];
+          var project = projectsById[task.projectId];
+          var model = data.modelByAgent[task.agent || project.default_agent] || null;
+          var exitedAtMs = now - task.archivedDaysAgo * 1440 * 60000 - 10 * 60000;
+          var toolBreakdown = Object.keys(summary.tools).map(function (toolName) {
+            var calls = summary.tools[toolName];
+            return { toolName: toolName, callCount: calls, totalDurationMs: calls * (TOOL_MEAN_MS[toolName] || 500), interruptedCount: 0 };
+          });
+          state.summaryCache[summary.taskId] = {
+            sessionId: 'sess-' + summary.taskId.replace(/^task-/, ''),
+            totalCostUsd: summary.costUsd, totalInputTokens: summary.inputTokens, totalOutputTokens: summary.outputTokens,
+            modelDisplayName: model ? model.displayName : '', durationMs: summary.durationMinutes * 60000,
+            toolCallCount: toolBreakdown.reduce(function (sum, tool) { return sum + tool.callCount; }, 0),
+            compactionCount: 0, linesAdded: summary.linesAdded, linesRemoved: summary.linesRemoved, filesChanged: summary.filesChanged,
+            taskCreatedAt: daysAgo(task.createdDaysAgo),
+            startedAt: new Date(exitedAtMs - summary.durationMinutes * 60000).toISOString(),
+            exitedAt: new Date(exitedAtMs).toISOString(), exitCode: 0,
+            toolBreakdown: toolBreakdown,
+          };
+        });
         data.sessions.forEach(function (session, index) {
           var project = projectsById[session.projectId];
           var task = session.taskId ? tasksById[session.taskId] : null;
@@ -762,7 +838,7 @@ export function buildDemoPreConfig(options: {
             id: session.id, taskId: session.taskId, projectId: session.projectId, pid: 20000 + index,
             status: session.status, shell: 'bash',
             cwd: task && task.worktree_folder ? project.path + worktreeSubpath + task.worktree_folder : project.path,
-            startedAt: minutesAgo(session.startedMinutesAgo), exitCode: null,
+            startedAt: minutesAgo(session.startedMinutesAgo), exitCode: null, resuming: !!session.resuming,
             transient: session.transient || false, branch: session.commandTerminalBranch || null,
           });
           if (session.activity) {
@@ -889,20 +965,25 @@ export function buildDemoPreConfig(options: {
           commandTerminalBranch: session.commandTerminalBranch || null,
           labels: task ? task.labels : [], prUrl: task ? task.pr_url : null, prNumber: task ? task.pr_number : null,
           prState: task ? task.pr_state : null, prMergeReadiness: task ? task.pr_merge_readiness : null,
-          agentName: session.agent, modelDisplayName: session.model ? session.model.displayName : null,
+          // A resuming session has no usage yet, so main's snapshot has no model or context for it.
+          agentName: session.agent, modelDisplayName: session.model && !session.resuming ? session.model.displayName : null,
           effort: session.effort, permissionMode: session.permissionMode,
           startedAt: minutesAgo(session.startedMinutesAgo), exitedAt: null,
           status: session.status, activity: session.activity, activityReason: null,
-          lastEvent: null, contextPercent: session.contextPercent, isolated: session.isolated || false,
+          lastEvent: null, contextPercent: session.resuming ? null : session.contextPercent, isolated: session.isolated || false,
           isCommandTerminal: session.transient || false,
         };
       });
 
       var usageBySession = {};
+      // A resuming session's usage is held back until its first output, when the status line
+      // would deliver it (fireFirstOutput), so getUsage has nothing for it before then.
+      var heldUsageBySession = {};
       data.sessions.forEach(function (session) {
         if (!session.model || session.contextPercent === null) return;
         var used = Math.round(session.contextWindowSize * session.contextPercent / 100);
-        usageBySession[session.id] = {
+        var usageMap = session.resuming ? heldUsageBySession : usageBySession;
+        usageMap[session.id] = {
           model: session.model,
           contextWindow: {
             usedPercentage: session.contextPercent, usedTokens: used, cacheTokens: Math.round(used * 0.42),
@@ -911,7 +992,7 @@ export function buildDemoPreConfig(options: {
           cost: { totalCostUsd: session.costUsd, totalDurationMs: session.durationMinutes * 60000 },
         };
         if (session.rateLimits) {
-          usageBySession[session.id].rateLimits = [
+          usageMap[session.id].rateLimits = [
             { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 20, resetsAt: Math.floor(now / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
             { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 8, resetsAt: Math.floor(now / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
           ];
@@ -2143,6 +2224,11 @@ export function buildDemoPreConfig(options: {
       }
       window.electronAPI.sessions.getScrollback = function (sessionId) {
         var entry = replays[sessionId];
+        if (live && entry && entry.frozenElapsedMs !== undefined) {
+          var frozenNatural = naturalGeometry[sessionId] || mountedGeometry[sessionId];
+          if (frozenNatural) applyLayout(entry, frozenNatural.cols, frozenNatural.rows);
+          return frozenFrame(entry, mountedGeometry[sessionId]);
+        }
         if (live && entry) {
           // The layout follows the window's natural grid, as the resize that held it did; the
           // mounted grid is the held one when there is a hold.
@@ -2270,25 +2356,59 @@ export function buildDemoPreConfig(options: {
       // spinner once main pushes the session's first usage snapshot, which the CLI's status
       // line delivers a beat after it starts painting. Same order here, from the seeded usage.
       var USAGE_AFTER_FIRST_OUTPUT_MS = 1200;
+      function patchMonitorRow(sessionId, fields) {
+        var rows = (window.__mockMonitorRows || []).map(function (monitorRow) {
+          return monitorRow.sessionId === sessionId ? Object.assign({}, monitorRow, fields) : monitorRow;
+        });
+        window.__mockMonitorRows = rows;
+        if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
+      }
       function fireFirstOutput(sessionId) {
         firstOutputFired[sessionId] = true;
         if (window.__mockFireFirstOutput) window.__mockFireFirstOutput(sessionId);
-        var usage = usageBySession[sessionId];
-        if (!usage || !window.__mockFireUsage) return;
+        // A resumed session keeps its resuming flag, as it does in main (consumeFirstOutput in
+        // session-manager.ts): the card reads "Resuming agent..." until the usage below lands.
         var row = sessionById(sessionId);
+        var held = heldUsageBySession[sessionId];
+        var usage = usageBySession[sessionId] || held;
+        if (!usage) return;
         var projectId = row ? row.projectId : (replays[sessionId] ? replays[sessionId].projectId : undefined);
-        setTimeout(function () { window.__mockFireUsage(sessionId, usage, projectId); }, USAGE_AFTER_FIRST_OUTPUT_MS);
+        setTimeout(function () {
+          if (held) {
+            usageBySession[sessionId] = held;
+            delete heldUsageBySession[sessionId];
+            patchMonitorRow(sessionId, {
+              modelDisplayName: held.model ? held.model.displayName : null,
+              contextPercent: held.contextWindow ? held.contextWindow.usedPercentage : null,
+            });
+          }
+          if (window.__mockFireUsage) window.__mockFireUsage(sessionId, usage, projectId);
+        }, USAGE_AFTER_FIRST_OUTPUT_MS);
       }
+      // A resumed agent reprints a transcript it already has rather than booting from a prompt,
+      // and there is no recording of that, so its first output lands after this beat.
+      var RESUMED_FIRST_OUTPUT_MS = 300;
       function scheduleFirstOutput(sessionId) {
         var entry = replays[sessionId];
-        if (live && entry) {
+        // A resumed session's entry is frozen on the paused frame: it has no boot to time.
+        if (live && entry && entry.frozenElapsedMs === undefined) {
           fetchRecording(entry.file).then(function (recording) {
             var first = recording.stream[0];
             setTimeout(function () { fireFirstOutput(sessionId); }, Math.max(0, entry.startedAt + (first ? first.t : 0) - Date.now()));
           }).catch(function () { fireFirstOutput(sessionId); });
         } else {
-          setTimeout(function () { fireFirstOutput(sessionId); }, 300);
+          setTimeout(function () { fireFirstOutput(sessionId); }, RESUMED_FIRST_OUTPUT_MS);
         }
+      }
+      // A session a scene marks as resuming is the board just after a relaunch. In the live frame
+      // it comes back the way a visitor's Resume does: first output a beat after page open, usage
+      // a beat after that, when the card trades "Resuming agent..." for its model. A still arms no
+      // timer and holds the moment, and this has to check \`live\` itself: a still stubs
+      // setInterval, not setTimeout.
+      if (live) {
+        data.sessions.forEach(function (session) {
+          if (session.resuming) setTimeout(function () { fireFirstOutput(session.id); }, RESUMED_FIRST_OUTPUT_MS);
+        });
       }
       function announceSession(row, activity) {
         mockState.activityCache[row.id] = activity;
@@ -2337,6 +2457,48 @@ export function buildDemoPreConfig(options: {
         announceMonitorRow(row, mockTask, agent, permissionMode);
         return row;
       }
+      // Main clears task.session_id when it pauses a session and finds the paused record again
+      // on Resume (SESSION_RESUME, then resumeSuspendedSession on the task's latest record), so
+      // the task's pointer is not how a paused session is found. Reading only the pointer is
+      // what made a Pause then Resume here start a fresh agent from its recorded boot.
+      function suspendedSessionFor(mockTask) {
+        var latest = null;
+        mockState.sessions.forEach(function (session) {
+          if (session.taskId !== mockTask.id || session.status !== 'suspended') return;
+          if (!latest || (session.startedAt || '') > (latest.startedAt || '')) latest = session;
+        });
+        return latest;
+      }
+      // A paused agent stops: its replay clock stops with it, so the card's trail, the Monitor's
+      // peek, and the finish all hold where they were, and the moment it stopped is kept, since
+      // that is the view a resume brings back.
+      var originalSuspend = window.electronAPI.sessions.suspend;
+      window.electronAPI.sessions.suspend = function (taskId) {
+        var mockTask = mockState ? mockState.tasks.find(function (task) { return task.id === taskId; }) : null;
+        var row = mockTask && mockTask.session_id ? sessionById(mockTask.session_id) : null;
+        var pausedAt = Date.now();
+        return originalSuspend.apply(this, arguments).then(function (result) {
+          if (row) {
+            clearReplayTimers(row.id);
+            if (replays[row.id]) replays[row.id].pausedAt = pausedAt;
+            patchMonitorRow(row.id, { status: 'suspended' });
+          }
+          return result;
+        });
+      };
+      // The frame a paused terminal was showing, which a resumed one opens on and keeps: a
+      // resumed agent reprints its conversation and waits for the user, so nothing plays on.
+      function frozenFrame(entry, grid) {
+        return fetchRecording(entry.file).then(function (recording) {
+          var frame = recording.serialized;
+          if (entry.frozenElapsedMs < recordingEndMs(recording)) {
+            var timeline = recording.frameTimeline || [];
+            frame = timeline.length > 0 ? timeline[0].frame : '';
+            timeline.forEach(function (step) { if (step.t <= entry.frozenElapsedMs) frame = step.frame; });
+          }
+          return grid ? fitFrameToGrid(frame, grid, recording) : frame;
+        });
+      }
       function resumeTaskSession(mockTask, suspended) {
         var project = projectsById[mockTask.projectId];
         var agent = mockTask.agent || project.default_agent;
@@ -2346,16 +2508,54 @@ export function buildDemoPreConfig(options: {
           status: 'running', shell: 'bash', cwd: mockTask.worktree_path || project.path, startedAt: isoNow(), exitCode: null,
           resuming: true, transient: false, branch: null, isolatedSwimlaneId: null, agentSessionId: null,
         };
+        // Main's respawn deletes the task's old rows (session-spawn-flow.ts), so the resumed
+        // session is the task's only one, and the renderer hears the old one leave.
+        var pausedIndex = mockState.sessions.indexOf(suspended);
+        if (pausedIndex !== -1) mockState.sessions.splice(pausedIndex, 1);
+        if (window.__mockFireRemoved) window.__mockFireRemoved(suspended.id, Object.assign({}, suspended), suspended.projectId);
         mockState.sessions.push(row);
         mockTask.session_id = id;
         mockTask.updated_at = isoNow();
-        // A resumed agent prints its earlier transcript and waits, so the paused session's final
-        // frame is the new one's scrollback, and the row is idle: it needs the user next.
+        // The new terminal carries the paused one's scroll history, as main carries the old
+        // scrollback over on a respawn, so it opens on the frame the paused terminal showed. It
+        // keeps the paused session's recording and grid, frozen at the moment of the pause, so it
+        // is held at the grid it had and nothing streams on. A still paints that same frame.
         scrollback[id] = scrollback[suspended.id] || '';
-        usageBySession[id] = usageBySession[suspended.id] || usageBySession[id];
-        if (!usageBySession[id]) seedUsage(id, agent);
+        var pausedEntry = replays[suspended.id];
+        if (pausedEntry) {
+          replays[id] = {
+            file: pausedEntry.file, grid: pausedEntry.grid, startedAt: pausedEntry.startedAt, tail: 0,
+            projectId: pausedEntry.projectId, layouts: pausedEntry.layouts,
+            frozenElapsedMs: pausedEntry.startedAt === null ? Infinity : (pausedEntry.pausedAt || Date.now()) - pausedEntry.startedAt,
+          };
+        }
+        // Main has no usage for the new PTY until its status line paints, so the paused
+        // session's usage is held back until the resumed agent's first output.
+        var previousUsage = usageBySession[suspended.id] || heldUsageBySession[suspended.id];
+        if (!previousUsage) {
+          seedUsage(id, agent);
+          previousUsage = usageBySession[id];
+          delete usageBySession[id];
+        }
+        heldUsageBySession[id] = previousUsage;
+        var previousMonitorRow = (window.__mockMonitorRows || []).filter(function (monitorRow) { return monitorRow.sessionId === suspended.id; })[0] || null;
+        window.__mockMonitorRows = (window.__mockMonitorRows || []).filter(function (monitorRow) { return monitorRow.sessionId !== suspended.id; });
         announceSession(row, 'idle');
-        announceMonitorRow(row, mockTask, agent, 'acceptEdits');
+        // The card shows what the previous run said at once: main's trail tracker reads the
+        // transcript's tail on the new session's first read (message-trail-tracker.ts), and a
+        // resume continues the paused session's transcript. Without this the card fell back to
+        // the task description until the agent spoke again.
+        var previousTrail = mockState.messageTrailCache[suspended.id];
+        if (previousTrail && previousTrail.length > 0) {
+          mockState.messageTrailCache[id] = previousTrail.slice();
+          if (window.__mockFireMessageTrail) window.__mockFireMessageTrail(id, previousTrail.slice(), row.projectId);
+        }
+        announceMonitorRow(row, mockTask, agent, previousMonitorRow ? previousMonitorRow.permissionMode : 'acceptEdits');
+        patchMonitorRow(id, {
+          outputPeek: previousMonitorRow ? previousMonitorRow.outputPeek : [],
+          effort: previousMonitorRow ? previousMonitorRow.effort : null,
+          modelDisplayName: null, contextPercent: null,
+        });
         return row;
       }
       var originalMove = window.electronAPI.tasks.move;
@@ -2369,7 +2569,8 @@ export function buildDemoPreConfig(options: {
             // resumes, a card with none gets its agent started in the lane's permission mode.
             var current = mockTask.session_id ? sessionById(mockTask.session_id) : null;
             if (!current || current.status !== 'running') {
-              if (current && current.status === 'suspended') resumeTaskSession(mockTask, current);
+              var paused = suspendedSessionFor(mockTask);
+              if (paused) resumeTaskSession(mockTask, paused);
               else startTaskSession(mockTask, lane.permission_mode || data.defaultPermissionMode);
             }
           }
@@ -2379,10 +2580,13 @@ export function buildDemoPreConfig(options: {
       window.electronAPI.sessions.resume = function (taskId) {
         var mockTask = mockState.tasks.find(function (task) { return task.id === taskId; });
         if (!mockTask) return Promise.reject(new Error('Task not found: ' + taskId));
-        var previous = mockTask.session_id ? sessionById(mockTask.session_id) : null;
+        // A task whose agent is still live gets that session back, as main's self-heal does.
+        var current = mockTask.session_id ? sessionById(mockTask.session_id) : null;
+        if (current && current.status === 'running') return Promise.resolve(current);
+        var paused = suspendedSessionFor(mockTask);
         var lane = laneById(mockTask.swimlane_id);
-        var row = previous
-          ? resumeTaskSession(mockTask, previous)
+        var row = paused
+          ? resumeTaskSession(mockTask, paused)
           : startTaskSession(mockTask, (lane && lane.permission_mode) || data.defaultPermissionMode);
         return Promise.resolve(row);
       };
@@ -2486,8 +2690,13 @@ export function buildDemoPreConfig(options: {
       }
       // A session repainted for its terminal's grid now, as a mount would get it: the bytes when
       // the grid is the recording's, the emulator's frame otherwise, on the session's own clock
-      // (a resize is not the session ending, so the card and the Monitor keep moving).
+      // (a resize is not the session ending, so the card and the Monitor keep moving). A session
+      // resumed in place keeps the frame it was paused on, refitted to the new grid.
       function repaintSession(sessionId, entry, grid) {
+        if (entry.frozenElapsedMs !== undefined) {
+          frozenFrame(entry, grid).then(function (frame) { emitBytes(sessionId, REPAINT + frame, entry.projectId); });
+          return;
+        }
         fetchRecording(entry.file).then(function (recording) {
           if (geometryFits(sessionId, recording)) {
             return liveScrollback(sessionId, entry).then(function (head) { emitBytes(sessionId, REPAINT + head, entry.projectId); });

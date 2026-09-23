@@ -46,6 +46,14 @@
   let eventCache = {};
   let summaryCache = {};
   let currentProjectId = null;
+  // The archived rows the current project owns, by the rule tasks.list uses: a
+  // row tagged with a projectId belongs to that project alone, the way each
+  // project's archive lives in its own DB, and an untagged row shows everywhere.
+  function visibleArchivedTasks() {
+    return archivedTasks.filter(function (t) {
+      return !t.projectId || t.projectId === currentProjectId;
+    });
+  }
   let projectConfigs = {};
   let nextDisplayId = 1;
   let bulkDeleteProgressCallbacks = [];
@@ -1066,6 +1074,7 @@
         // (mirrors the real per-project DBs, where switching projects swaps the
         // whole task set). Untagged tasks are returned for every project, so the
         // many single-project specs that never set a projectId are unaffected.
+        // visibleArchivedTasks applies the same rule to the archived list.
         var visible = tasks.filter(function (t) {
           return !t.projectId || t.projectId === currentProjectId;
         });
@@ -1389,18 +1398,19 @@
         }
       },
       listArchived: async function () {
-        return withAttachmentCounts(archivedTasks);
+        return withAttachmentCounts(visibleArchivedTasks());
       },
       listArchivedPreview: async function (limit) {
         // Mirror the repo: newest-first by archived_at, then LIMIT. Sorting a
         // copy so seeds with more than `limit` archived tasks pick the correct
         // preview subset (the same rows the real SELECT ... ORDER BY DESC would).
         var boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-        var sorted = archivedTasks.slice().sort(function (a, b) {
+        var visible = visibleArchivedTasks();
+        var sorted = visible.slice().sort(function (a, b) {
           return String(b.archived_at || '').localeCompare(String(a.archived_at || ''));
         });
         return {
-          totalCount: archivedTasks.length,
+          totalCount: visible.length,
           tasks: withAttachmentCounts(sorted.slice(0, boundedLimit)),
         };
       },
@@ -2062,6 +2072,17 @@
           isolatedSwimlaneId: null,
           agentSessionId: null,
         };
+        // Main's respawn deletes the task's paused rows (session-spawn-flow.ts), so the
+        // resumed session is the task's only one and the renderer hears the old one leave.
+        // Spliced in place, not reassigned: __mockPreConfigure hands callers this array.
+        for (var pausedIndex = sessions.length - 1; pausedIndex >= 0; pausedIndex--) {
+          var paused = sessions[pausedIndex];
+          if (paused.taskId !== taskId || paused.status !== 'suspended') continue;
+          sessions.splice(pausedIndex, 1);
+          if (typeof window !== 'undefined' && window.__mockFireRemoved) {
+            window.__mockFireRemoved(paused.id, Object.assign({}, paused), paused.projectId);
+          }
+        }
         sessions.push(newSession);
         // Default activity to 'idle' on spawn (matches real backend behavior)
         activityCache[newSession.id] = 'idle';
