@@ -862,7 +862,7 @@ the renderer files behind the new scene's selectors, the UI mock's dictation met
 and the tests around the moved `selectTier`. Of the other 6, one is a second case for a wider
 `HUNK_CONTEXT_LINES`. The correctness finder read `demo/boot.js` for the line that sets the boot
 veil (523), which a changed helper tests for. It sits 14 lines above the 3-line window of the
-hunk that lifts the veil, so a 20-line window would have carried it. The rest are not about
+hunk that routes click steps through that helper, so a 20-line window would have carried it. The rest are not about
 width. Two finders read the gap in the partial-tier `transcription-service.ts` to learn whether
 an import the diff left in place was still used, and the use sits over 100 lines from either
 window. One read a whole rule file for its contract, one grepped every `click:` step in
