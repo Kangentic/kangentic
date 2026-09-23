@@ -3,15 +3,15 @@ import type {
   DictationConfig,
   DictationHardwareProfile,
   DictationInfo,
-  DictationModelOption,
   DictationModelProgress,
   DictationStartOptions,
   DictationStartResult,
 } from '../../shared/types';
 import { detectHardware, selectTier } from './hardware/detect-hardware';
-import { computeEngineKey, listEngineInfos, selectEngine, type EngineSelection } from './engines/engine-selection';
+import { computeEngineKey, selectEngine, type EngineSelection } from './engines/engine-selection';
 import { ensureModel, isModelInstalled, listInstalledModels } from './models/model-manager';
-import { finalCapableModels, isOfflineModel, liveCapableModels, modelLanguages, type ModelDef } from './models/model-registry';
+import type { ModelDef } from './models/model-registry';
+import { buildDictationInfo, primaryModel } from './dictation-info';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { ResolvedModel } from './engines/transcription-engine';
 import { DictationClient, dictationClient } from './dictation-client';
@@ -245,9 +245,9 @@ export class TranscriptionService extends EventEmitter {
   /**
    * Warm-engine cap: 2 on the accurate tier (hold the previously-used model so
    * an A/B switch back to it is instant), 1 on the low-resource tier (do not pin
-   * two large models on a weak machine). Computed here (detectHardware/selectTier
-   * need the `app` module) and passed to the worker rather than re-derived
-   * there.
+   * two large models on a weak machine). Computed here (the profile comes from
+   * detectHardware, which needs the `app` module) and passed to the worker
+   * rather than re-derived there.
    */
   private warmCap(profile: DictationHardwareProfile): number {
     return selectTier(profile) === 'streaming-tiny' ? 1 : 2;
@@ -398,29 +398,8 @@ export class TranscriptionService extends EventEmitter {
 
   /** Hardware profile + available engines for the settings panel. */
   async getInfo(config: DictationConfig): Promise<DictationInfo> {
-    const profile = await detectHardware();
-    const selected = selectEngine(profile, config);
-    // For the on-device hybrid the set is [streaming Zipformer, accurate model];
-    // the accurate model is the one the user picks, so surface it (not models[0],
-    // which is the always-present live model). Streaming-only / cloud have no
-    // offline model and fall back to the first (the Zipformer live model).
-    const primary = primaryModel(selected.models);
-    const finals = finalCapableModels().map(toModelOption);
     return {
-      hardware: profile,
-      tier: selectTier(profile),
-      selectedEngineId: selected.id,
-      engines: listEngineInfos(),
-      installedModels: listInstalledModels(),
-      selectedModelId: primary?.id ?? null,
-      selectedModelSizeMb: selected.models.length > 0
-        ? selected.models.reduce((sum, model) => sum + model.approxSizeMb, 0)
-        : null,
-      availableModels: finals,
-      liveModels: liveCapableModels().map(toModelOption),
-      finalModels: finals,
-      selectedLiveModelId: selected.liveModelId,
-      selectedFinalModelId: selected.finalModelId,
+      ...buildDictationInfo(await detectHardware(), config, listInstalledModels()),
       // The dictation worker gave up after repeated crashes: name why, so the
       // settings panel can say so instead of leaving push-to-talk a silent
       // dead end. Mirrors EmbedClient.crashReason surfaced in the Memory tab.
@@ -438,22 +417,6 @@ export class TranscriptionService extends EventEmitter {
     }
     this.client.dispose();
   }
-}
-
-/** The accurate (offline) model when present, else the first model in the set
- *  (the streaming Zipformer for streaming-only / cloud). The user-meaningful one. */
-function primaryModel(models: ModelDef[]): ModelDef | undefined {
-  return models.find(isOfflineModel) ?? models[0];
-}
-
-function toModelOption(model: ModelDef): DictationModelOption {
-  return {
-    id: model.id,
-    displayName: model.displayName,
-    sizeMb: model.approxSizeMb,
-    engineKind: model.engineKind,
-    languages: modelLanguages(model),
-  };
 }
 
 function normalizeConfig(options: DictationStartOptions): DictationConfig {

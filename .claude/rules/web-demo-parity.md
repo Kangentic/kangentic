@@ -42,9 +42,10 @@ three things staying in step, and each is enforced rather than remembered.
   presentation, the layout and the styling, is the one authored part: the scaffold's
   `src/App.tsx` renders a bare heading and list, and rebuilding it would invalidate the
   recordings that edit that file (`demo/README.md`, Browser guest). The microphone is a silent
-  stream so dictation's real pipeline runs, and no transcript is authored because the desktop draws
-  the words through the CLI's echo. Git history is a real repository built from a commit plan and
-  read with git. The line is the same one the terminal rule draws: mock the bridge, record or
+  stream so dictation's real pipeline runs, and no transcript is authored. A silent microphone
+  transcribes to nothing, so `dictation.stop` answers empty. The Dictation tab's model list is
+  main's own `buildDictationInfo` over a seeded machine. Git history is a real repository built
+  from a commit plan and read with git. The line is the same one the terminal rule draws: mock the bridge, record or
   derive the content, and where content cannot be honest, show the surface without it. Every entry carries the three fields that leave this repo: `alt`, the
   reader-facing text a docs figure carries; `ready`, the selector the frame is built at; and an
   optional `focus`, the element whose rect the ready message reports (a selector list names
@@ -160,6 +161,11 @@ three things staying in step, and each is enforced rather than remembered.
   gone stale, when a line sits outside its recording's span, and when the applier or the loader
   stops reading them. It is the answer to the parity test passing on a mock that answers with
   nothing. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-dictation-info.test.ts` fails when the sample
+  install's `dictation.getInfo` answer stops resolving a live and a refinement model, stops offering
+  either in its dropdown's list, or stops reporting both as cached. It is the same guard as the
+  message trail's, for the Dictation tab: the mock's own answer lists no models, so every structural
+  check passed while both model rows read None. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-transcript-seeded.test.ts` fails when the session
   the `conversation` scene opens has no transcript file, when the file is not a whole conversation
   in the parser's shape, when its entries are not the run the card's trail came from (the trail's

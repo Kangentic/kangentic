@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { app } from 'electron';
-import type { DictationHardwareProfile, DictationEngineTier } from '../../../shared/types';
+import type { DictationHardwareProfile } from '../../../shared/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -169,18 +169,7 @@ function collectVendorIds(raw: unknown): Set<number> {
   return vendors;
 }
 
-/**
- * Map a hardware profile to a coarse engine tier. The single heuristic;
- * `engine-selection.ts#selectEngine` consumes it (with the user's override).
- * Reliable signals only - cores, RAM, and a known GPU backend. AVX2 is NOT a
- * gate (it is undetectable on Windows/macOS and whisper.cpp works without it).
- */
-export function selectTier(profile: DictationHardwareProfile): DictationEngineTier {
-  // A supported GPU backend -> the accurate, punctuated path.
-  if (profile.gpu === 'cuda' || profile.gpu === 'metal') return 'accurate-base';
-  // Genuinely weak: very few cores or very low RAM -> streaming transducer.
-  if (profile.cpuCores <= 2 || profile.totalRamGb < 4) return 'streaming-tiny';
-  // Any reasonable multi-core machine with adequate RAM -> accurate path.
-  if (profile.cpuCores >= 4) return 'accurate-base';
-  return 'streaming-tiny';
-}
+// The tier heuristic is pure and lives in select-tier.ts. transcription-service.ts and the
+// tier tests take it from here, beside detection. engine-selection.ts and dictation-info.ts
+// import select-tier.ts directly, because this module imports electron.
+export { selectTier } from './select-tier';

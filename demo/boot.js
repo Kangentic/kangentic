@@ -196,6 +196,41 @@
     target.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  /**
+   * Click the way a visitor would. A pointer click on a text field puts the caret in it, and
+   * `element.click()` alone does not, so a text field is focused first. Dictation reads its target
+   * from that focus. Only a field is focused this way. A button a pointer clicks takes focus too,
+   * but focusing one from a script can paint a focus ring no visitor's click would. The selector
+   * is the renderer's own test for a typing surface (`focusIsInTypingSurface`), minus `select`,
+   * which a click opens.
+   *
+   * The boot veil hides the app with `visibility: hidden`, and Chromium will not focus anything
+   * under a hidden ancestor, so a field click swaps the veil for opacity in the same task (nothing
+   * paints in between) before it focuses. The swap happens only here, because under the opacity
+   * veil an arriving terminal could take focus too, and every other scene keeps the veil it was
+   * shot under. Once a field holds focus, a terminal that arrives later is refused it (arrival
+   * focus reads it as occupied).
+   */
+  function clickTarget(target) {
+    if (target.matches('input, textarea, [contenteditable="true"]')) {
+      var root = document.getElementById('root');
+      if (root && root.style.visibility === 'hidden') {
+        root.style.visibility = '';
+        root.style.opacity = '0';
+        root.style.pointerEvents = 'none';
+      }
+      target.focus();
+    }
+    target.click();
+  }
+
+  /** Lift the boot veil, in whichever of its two forms the steps left it. */
+  function unveil(root) {
+    root.style.visibility = '';
+    root.style.opacity = '';
+    root.style.pointerEvents = '';
+  }
+
   /** Later sources win per key; arrays concatenate; nested config objects are replaced whole. */
   function mergeStates(sources) {
     var merged = { config: {}, tasks: [], sessions: {}, seeds: {}, steps: [] };
@@ -538,7 +573,7 @@
         // chunk), so it is waited for like anything else, against the same deadline.
         var selector = typeof step.type === 'string' ? step.type : step.click;
         return waitForSelector(selector, deadline).then(function (target) {
-          if (typeof step.type === 'string') typeInto(target, step.text); else target.click();
+          if (typeof step.type === 'string') typeInto(target, step.text); else clickTarget(target);
         });
       }).then(function () {
         return step.waitFor ? waitForSelector(step.waitFor, deadline) : null;
@@ -551,10 +586,10 @@
       chain = chain.then(function () { return waitForSelector(scene.ready, deadline); });
     }
     chain.then(function () {
-      if (veiled && root) root.style.visibility = '';
+      if (veiled && root) unveil(root);
       markReady();
     }).catch(function (error) {
-      if (veiled && root) root.style.visibility = '';
+      if (veiled && root) unveil(root);
       errors.push('Boot step failed: ' + (error && error.message ? error.message : String(error)));
       console.error('[kangentic-demo]', errors[errors.length - 1]);
       renderErrorCard();

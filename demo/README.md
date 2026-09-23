@@ -155,7 +155,7 @@ A `DemoState` (also the shape of every registry entry) is:
   }>;
   seeds?: Record<`__mock${string}`, unknown>;   // window globals the mock reads (diffs, branch summary, ...)
   steps?: Array<                                        // played before the reveal, in order
-    | { click: string; waitFor?: string }               // a selector to click
+    | { click: string; waitFor?: string }               // a selector to click; a text field is focused first
     | { type: string; text: string; waitFor?: string }  // a field selector and the text set in it
     | { press: string; waitFor?: string }               // a hotkey in the registry's spelling, held
   >;
@@ -245,6 +245,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below) |
 | `dictation` | boot | `config.dictation.enabled` and a held `press` of `Mouse:Back` (Dictation below) |
+| `dictation-field` | boot | the same config, the gear and the Dictation tab, a `click` on the Settings search box (which focuses it), then the held `Mouse:Back`, so the chip anchors under a text field instead of a terminal (Dictation below) |
 | `changes`, `changes-working`, `changes-staged`, `changes-history` | state | a maximized window plus `detail_view_state` (`changesScope`, `changesSelectedFile`, `changesViewedFiles`, `changesHistoryOpen`, `changesSelectedCommit`); the scopes, the graph, and the commit diff come from the seed (Git history below) |
 | `changes-blame` | boot | the View options menu, then Show blame (blame is per-file view state, never persisted) |
 | `monitor`, `monitor-table` | boot | one click; the layout is `config.monitor.layout`, which persists |
@@ -252,7 +253,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `command-terminal-tiled` | boot | the toggle, then New terminal, which docks a second window beside the first and boots the project's default agent from the boot recorded at the tiled width; the first switches to its own tiled recording as it narrows |
 | `usage`, `backlog`, `quick-find`, `new-task`, `completed-tasks` | boot | one click each; `usage` also sets `usageStatsScope` and `usageStatsPeriod` |
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
-| `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS` |
+| `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS`. An entry may carry config: `settings-dictation` switches dictation on, since off it greys out every row below the switch |
 | `card-drag`, `card-menu`, `window-dock` | driver | a held drag over Executing, a right-click on a card, a window dragged to the right edge |
 
 Three things the catalog corrected against the source while it was seeded, recorded so the next
@@ -395,11 +396,46 @@ every page `DEMO_PROJECTS` names to all three.
 `demo/boot.js` replaces `getUserMedia` with a silent stream from an audio graph, so a press of
 the push-to-talk hotkey runs the renderer's whole pipeline with no permission prompt: the mock
 grants the mic, starts a stub engine session, and the app's own audio worklet runs over silence.
-The chip appears anchored to the target terminal in its live state, which is what `dictation`
-shows. The words themselves land in the terminal on release (the popup experience), drawn by
-the CLI's own echo of what main typed into the PTY, and no mock can draw that; so nothing is
-transcribed and nothing authored ships. A visitor who presses the button sees the chip and,
-on release, nothing typed, which is the one place the frame is quieter than the desktop.
+The chip appears anchored to the target in its live state: a task terminal in `dictation`, the
+Settings search box in `dictation-field`. The second one is the point of having both. Dictation
+types into any text field in the app, and a figure of the terminal alone reads as a terminal
+feature.
+
+Nothing is transcribed and nothing authored ships. The dataset answers `dictation.stop` with an
+empty string, which is what a silent microphone transcribes to. The mock's stock answer is a
+sentence, and in `dictation-field` a visitor who released the button would have it typed into the
+search box, filtering the tab away. In a terminal the words would be the CLI's own echo of what
+main typed into the PTY, which no mock can draw either. So a visitor who presses the button sees
+the chip and, on release, nothing typed, which is the one place the frame is quieter than the
+desktop.
+
+The Dictation tab reads `dictation.getInfo`, and the mock's own answer lists no models, so both
+model rows read None whatever the config says. The dataset answers it instead with main's
+`buildDictationInfo` (`src/main/transcription/dictation-info.ts`, the same function
+`TranscriptionService.getInfo` calls) over a seeded machine on the accurate tier
+(`DEMO_DICTATION_INFO`). The default config therefore selects what the desktop does: the Best
+accuracy preset, Streaming Zipformer live and Parakeet to refine, both cached and Ready.
+`tests/unit/demo-dictation-info.test.ts` fails if that answer ever loses a model. The answer is
+fixed at the default config: after a visitor changes Mode, the dropdowns follow the new choice
+but the status row under them still names the default pair.
+
+`dictation-field` resolves its target from `document.activeElement`, where `dictation` resolves
+it from the restored window's focus. So the scene needs DOM focus, which a boot `click` on a text
+field gives it. Under the boot veil that needs one more step: the veil hides the app with
+`visibility: hidden`, and Chromium focuses nothing under a hidden ancestor, so a click on a text
+field swaps the veil for opacity before it focuses. Every other scene keeps the visibility veil,
+so none of their terminals or dialogs take focus they did not have before. The scene also waits
+for the settings panel's slide-in to end before it presses: the chip anchors to the field wherever
+the field is at that moment, and the ready message measures the chip once.
+
+Where this scene can boot live, as checked against the build: a top-level page, `stage.html`, and
+a cross-origin iframe on a secure page (the site's case) all focus the field and post the chip's
+rect. Two hosts cannot. An `inert` iframe focuses nothing, so the ready gate times out; the embed
+snippet above uses `inert`. And a page that is not a secure context (plain http, or the
+`about:blank` host the smoke tier builds) has no `navigator.mediaDevices` in its frames, so the
+silent microphone is never installed and the chip shows the error. That second one is shared with
+`dictation`, whose gate is the chip alone and so boots on the error. A poster is shot in a real page
+and is unaffected by either.
 
 ### scenes.json, the hand-off to the site
 
@@ -1186,7 +1222,7 @@ every bridge method (`tests/unit/mock-electron-api-parity.test.ts` keeps that tr
 | Task-detail Browser pane | The pane is the real renderer; its `<webview>` is stood in for by `demo/webview-shim.js`, an iframe onto a bundled page with the project's own data at its dev URL (Browser guest below). Inspect finds nothing, capture rejects, and history is empty. |
 | Folder pill, PR links, external links | Inert: `shell.openPath` and `openExternal` are logged by the mock. |
 | Pop-out (Monitor, Changes, Stats) | Inert: the in-app surface stays where it is. |
-| Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state. The words land in the terminal on release as the CLI's echo, which cannot be shown (Dictation below). |
+| Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state over a terminal or a text field. A silent mic transcribes to nothing, so release types nothing (Dictation below). |
 | Updater | Silent: no update is ever "downloaded". |
 
 Two things stay out of reach of a live frame: the Browser pane's REAL guest (a page the agent is driving) and a dictated transcript landing in the terminal.

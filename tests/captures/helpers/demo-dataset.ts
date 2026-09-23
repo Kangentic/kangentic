@@ -16,6 +16,9 @@
  */
 
 import { buildModelDisplayNames } from '../../../src/main/agent/adapters/claude/model-display-name';
+import { buildDictationInfo } from '../../../src/main/transcription/dictation-info';
+import { selectEngine } from '../../../src/main/transcription/engines/engine-selection';
+import { DEFAULT_CONFIG } from '../../../src/shared/types';
 
 export interface DemoScrollbackMap {
   /** Session id to the serialized terminal stream replayed into that session's xterm. */
@@ -510,6 +513,33 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
   },
 };
 
+/**
+ * What the Dictation tab reads from `dictation.getInfo`, built by main's own `buildDictationInfo`
+ * rather than written here. The mock's default answers with empty model lists, so both model rows
+ * read None whatever the config says, which made the feature look switched off in every figure.
+ *
+ * The machine is the sample install's Windows box, and nothing renders the profile. What matters is
+ * the tier it resolves to: this one is `accurate-base`, so the default config selects the streaming
+ * Zipformer live and Parakeet to refine, which is the Best accuracy preset. A machine on
+ * `streaming-tiny` would select no refinement model at all. The CPU name is detection's own
+ * fallback, and AVX2 is false because detection cannot read it on Windows.
+ *
+ * Both selected models are cached: the sample install has used dictation, which is why the
+ * `dictation` scene's chip reads Listening rather than a model download. The answer is fixed at the
+ * default config, so after a visitor changes Mode the status row still names these two.
+ */
+const DEMO_DICTATION_HARDWARE = {
+  cpuModel: 'Unknown CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: false, gpu: 'none', platform: 'win32', arch: 'x64',
+} as const;
+const DEMO_DICTATION_CONFIG = DEFAULT_CONFIG.dictation ?? {};
+const DEMO_DICTATION_SELECTION = selectEngine(DEMO_DICTATION_HARDWARE, DEMO_DICTATION_CONFIG);
+export const DEMO_DICTATION_INFO = buildDictationInfo(
+  DEMO_DICTATION_HARDWARE,
+  DEMO_DICTATION_CONFIG,
+  [DEMO_DICTATION_SELECTION.liveModelId, DEMO_DICTATION_SELECTION.finalModelId]
+    .filter((modelId): modelId is string => modelId !== null),
+);
+
 // ---------------------------------------------------------------- the applier
 /**
  * The script the page runs after the mock has loaded. Everything above is inlined as JSON; the
@@ -568,6 +598,7 @@ export function buildDemoPreConfig(options: {
     backlog: DEMO_BACKLOG,
     labelColors: DEMO_LABEL_COLORS,
     agentOverrides: DEMO_AGENT_OVERRIDES,
+    dictationInfo: DEMO_DICTATION_INFO,
     modelByAgent: MODEL_BY_AGENT,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     currentProjectId: options.currentProjectId ?? PROJECT_CONTOSO,
@@ -877,11 +908,16 @@ export function buildDemoPreConfig(options: {
       }
       window.__mockAgentListOverrides = data.agentOverrides;
 
-      // Dictation needs nothing seeded. The renderer's whole pipeline runs for real on a press
-      // (the hotkey, the mic request the mock grants, the engine start, the audio worklet over
-      // the silent stream demo/boot.js supplies), and the chip shows its live state. What the
-      // engine would transcribe cannot be shown: with the popup experience the words land in
-      // the terminal on release, drawn by the CLI's own echo, and no mock can produce that.
+      // Dictation runs the renderer's whole pipeline for real on a press (the hotkey, the mic
+      // request the mock grants, the engine start, the audio worklet over the silent stream
+      // demo/boot.js supplies), and the chip shows its live state. Two answers are seeded.
+      // getInfo is main's own selection for this machine (DEMO_DICTATION_INFO), so the Dictation
+      // tab lists the models the desktop would. stop resolves to nothing, which is what a silent
+      // microphone transcribes to. The mock's stock sentence would otherwise be typed into a
+      // focused field on release, and no transcript is authored here. In a terminal the words
+      // are the CLI's own echo, which no mock can draw either.
+      window.__mockDictationInfoOverrides = data.dictationInfo;
+      window.electronAPI.dictation.stop = function () { return Promise.resolve(''); };
 
       // Quick Find answers from the sample install itself: a keyword match over the tasks, the
       // backlog, and each session's events, scoped the way the palette asks (this project or all

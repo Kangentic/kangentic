@@ -39,7 +39,8 @@ export type SceneReach = 'state' | 'boot' | 'driver';
  */
 export type DemoBootStep =
   | {
-      /** A CSS selector to click, usually a data-testid. */
+      /** A CSS selector to click, usually a data-testid. boot.js focuses a text field first, as a
+       *  pointer click would, because `element.click()` alone leaves focus where it was. */
       click: string;
       /** A selector that must appear before the next step (or the reveal). */
       waitFor?: string;
@@ -341,6 +342,15 @@ const REVIEW_PASS_AUTOMATION = {
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
 
 /**
+ * Dictation switched on and nothing else changed. Nested config blocks replace the demo defaults
+ * whole (boot.js merges config shallowly), so the whole block rides along with only `enabled`
+ * flipped. With every other field at its default the Dictation tab reads what a user sees right
+ * after turning it on: the Best accuracy preset, whose models the dataset's getInfo answer names
+ * (DEMO_DICTATION_INFO in demo-dataset.ts).
+ */
+const DICTATION_ON = { ...DEFAULT_CONFIG.dictation, enabled: true };
+
+/**
  * The app's own announcement feed (announcements.json at the repo root), not a line written for
  * the demo, in the shape main's parser hands the renderer: `links` is always an array, on the
  * announcement and on each section (the feed leaves it out where there are none). The
@@ -367,8 +377,10 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
 // The settings panel docks to the right of the frame rather than centring, so each alt opens with
 // the tab and then reads the panel top to bottom. Every line below was checked against the
 // rendered tab in both themes; a row that only shows once a switch is on (the Memory tab's model
-// picker, the Mobile tab's connection test) is left out rather than described.
-const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string }> = {
+// picker, the Mobile tab's connection test) is left out rather than described. An entry may carry
+// `config` to show its tab in use: Dictation is switched on, because off it greys out every row
+// below the switch and reads as a feature that is not there.
+const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?: Record<string, unknown>; note?: string }> = {
   general: { ready: '[data-testid="setting-row-project.location"]', alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.' },
   // `ready` stays on the Theme row rather than the switch that now leads the tab: the grid is the
   // figure's subject, and both rows mount in the same commit.
@@ -387,7 +399,14 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string }> = {
   performance: { ready: '[data-testid="setting-row-graphicsAccelerationEnabled"]', alt: 'Settings on the Performance tab: switches for graphics acceleration and for animations.' },
   hotkeys: { ready: '[data-testid="hotkeys-tab"]', alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.' },
   notifications: { ready: '[data-testid="setting-row-notifications.onAgentIdle"]', alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.' },
-  dictation: { ready: '[data-testid="setting-row-dictation.enabled"]', alt: 'Settings on the Dictation tab: the voice dictation toggle, the language, the live and refinement models, punctuation, push-to-talk, and auto-submit.' },
+  // `ready` is the model status row, which mounts only once getInfo has answered, so the frame is
+  // never shot on the empty model selects of the first render.
+  dictation: {
+    ready: '[data-testid="dictation-model-ready"]',
+    alt: 'Settings on the Dictation tab with voice dictation on: English, the Best accuracy mode with Streaming Zipformer as the live model and Parakeet TDT 0.6B to refine, marked Ready, then punctuation, the push-to-talk key, and the release buffer.',
+    config: { dictation: DICTATION_ON },
+    note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
+  },
   memory: { ready: '[data-testid="setting-row-memory.indexingEnabled"]', alt: 'Settings on the Memory tab: conversation indexing for search, semantic search, and a control to rebuild the index.' },
   mcpServer: { ready: '[data-testid="setting-row-mcpServer.enabled"]', alt: 'Settings on the MCP Server tab: the server toggle and the available tools as pills grouped by area: tasks, board, sessions, and more.' },
   browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: whether agents may drive the embedded browser, and which actions they get: interaction, navigation, eval, and a localhost restriction.' },
@@ -403,8 +422,9 @@ function settingsScenes(): Record<string, SceneDefinition> {
     scenes[name] = {
       name,
       reach: 'boot',
-      description: `The Settings dialog on the ${tab} tab, opened with the gear and the tab button.`,
+      description: `The Settings dialog on the ${tab} tab, opened with the gear and the tab button.${entry.note ? ` ${entry.note}` : ''}`,
       alt: entry.alt,
+      ...(entry.config ? { config: entry.config } : {}),
       ready: entry.ready,
       focus: SETTINGS_PANEL,
       steps: [
@@ -624,15 +644,35 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'Push-to-talk held over the middleware task window, the live chip anchored to its terminal. The hotkey is the default Mouse:Back, pressed and never released, and the whole pipeline runs over a silent microphone (demo/README.md, Dictation). The transcript itself lands in the terminal on release, as the CLI\'s own echo, so it is not part of this frame.',
     alt: 'A task window with the dictation chip anchored to the bottom of its terminal: a live recording dot beside Listening, a hint that releasing the key sends the words to the agent, and a Clear control.',
-    // Nested objects replace the demo defaults whole (boot.js merges config shallowly), so the
-    // whole dictation block rides along with only `enabled` flipped.
     config: {
       workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') },
-      dictation: { ...DEFAULT_CONFIG.dictation, enabled: true },
+      dictation: DICTATION_ON,
     },
     ready: '[data-testid="dictation-live-chip"]',
     focus: '[data-testid="dictation-live-chip"]',
     steps: [{ press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' }],
+  },
+  'dictation-field': {
+    name: 'dictation-field',
+    reach: 'boot',
+    description: 'Push-to-talk held with the caret in the Settings search box, the live chip anchored under the field and the Dictation tab\'s options around it. Dictation types into any text field, not only a terminal. The click on the search box focuses it (boot.js focuses a text field it clicks), and the target is resolved from that focus on the press. A bottom-panel terminal cannot take the focus back once a field holds it (arrival focus denies it as occupied). No transcript lands on release: the dataset answers stop with nothing, which is what a silent microphone transcribes to.',
+    alt: 'The Settings panel on the Dictation tab with its search box focused and the dictation chip under it: a live dot beside Listening, a hint that releasing the key sends the words, and a Clear control, over dictation settings in Best accuracy mode.',
+    config: { dictation: DICTATION_ON },
+    // Below the field, which fails on the fallback: had the search box not held focus, the press
+    // would resolve to the bottom panel's terminal and the chip would mount above that instead.
+    // Not `:focus`, which need not match in a frame the host has not focused (stage.html).
+    ready: '[data-testid="dictation-live-chip"][data-placement="below"] [data-testid="dictation-recording-dot"][data-tone="active"]',
+    focus: '[data-testid="dictation-live-chip"]',
+    // The first wait is for the panel's slide-in to END (useOverlayPhase drops the class on its
+    // animationend), not for the panel to exist. The chip anchors to the field wherever the field
+    // is at the press, and the ready message measures the chip's rect once: pressed mid-slide in a
+    // live frame, the frame posted a rect 220px right of where the chip settles.
+    steps: [
+      { click: '[data-testid="settings-button"]', waitFor: `${SETTINGS_PANEL}:not(.overlay-panel-in)` },
+      { click: '[data-testid="settings-tab-dictation"]', waitFor: '[data-testid="dictation-model-ready"]' },
+      { click: '[data-testid="settings-search"]' },
+      { press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' },
+    ],
   },
 
   // ---------------------------------------------------------------- the conversation viewer
