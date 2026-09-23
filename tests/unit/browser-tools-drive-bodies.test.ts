@@ -11,7 +11,7 @@
  * body against a fake `webContents`, the same pattern
  * `browser-pane-opener.test.ts` uses for the opener.
  *
- * Five behaviors pinned here:
+ * Six behaviors pinned here:
  *
  * 0. `kangentic_browser_set_viewport` validates its dimensions before reaching
  *    the guest, and routes `reset` to the clear path rather than the set one.
@@ -34,10 +34,16 @@
  *    and refusing rather than dividing by nothing when neither is. A capture
  *    scaled to fit the pane or a byte budget holds fewer pixels than the
  *    page's own ratio, so dividing by the wrong one lands the click on the
- *    wrong element.
+ *    wrong element. It also asks `describeViewportCapture` for the CORRECT
+ *    pane, not an unbounded one, since a null surface there would silently
+ *    fall back to the page's own unbounded density.
  * 4. `kangentic_browser_screenshot`'s metadata carries the capture's own
  *    `pixelsPerCssPixel` (never a hardcoded 1) and the capture's `note` when
  *    one is present, and omits `note` when there is none to report.
+ * 5. `kangentic_browser_screenshot_element` passes the pane's own surface to
+ *    `captureElementClip`, exactly as the viewport screenshot does, so an
+ *    element capture is planned to fit the pane rather than tiled by
+ *    Chromium.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -94,12 +100,14 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
 
 const captureScreenshotWithBudget = vi.fn();
 // describeViewportCapture drives the click body's image-space density lookup
-// tested below; the screenshot tests below stay on captureScreenshotWithBudget
-// alone.
+// tested below; captureElementClip drives the screenshot_element surface
+// passthrough tested below; the plain screenshot tests stay on
+// captureScreenshotWithBudget alone.
 const describeViewportCapture = vi.fn();
+const captureElementClip = vi.fn();
 vi.mock('../../src/main/browser/cdp/screenshot', () => ({
   captureScreenshotWithBudget: (...args: unknown[]) => captureScreenshotWithBudget(...args),
-  captureElementClip: vi.fn(),
+  captureElementClip: (...args: unknown[]) => captureElementClip(...args),
   describeViewportCapture: (...args: unknown[]) => describeViewportCapture(...args),
 }));
 
@@ -359,6 +367,56 @@ describe('kangentic_browser_screenshot: dev-server-error short-circuit', () => {
   });
 });
 
+describe('kangentic_browser_screenshot_element: pane surface passthrough', () => {
+  it('passes the pane widget to captureElementClip, so an element capture is planned to fit the pane', async () => {
+    // Mirrors the equivalent kangentic_browser_screenshot assertion above: an
+    // element capture aims for up to 1:1, which is the case most likely to
+    // exceed the pane, so a dropped surface here tiles exactly like a dropped
+    // one on the viewport capture does.
+    captureElementClip.mockResolvedValue({
+      mode: 'inline',
+      format: 'png',
+      base64: 'ZmFrZQ==',
+      byteLength: 4,
+      width: 80,
+      height: 40,
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 1,
+      metricsAvailable: true,
+      pixelsPerCssPixel: 1,
+      scale: 1,
+      fullPage: false,
+      elementClip: { selector: '.thing', box: { x: 10, y: 20, width: 80, height: 40 } },
+      retries: 0,
+      note: null,
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_screenshot_element',
+      arguments: { selector: '.thing' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(captureElementClip).toHaveBeenCalledTimes(1);
+    const [webContentsArg, selectorArg, options] = captureElementClip.mock.calls[0] as [
+      unknown,
+      string,
+      { surface: unknown },
+    ];
+    expect(webContentsArg).toBe(fakeGuest);
+    expect(selectorArg).toBe('.thing');
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
+    // The real captureElementClip response reaches the tool's metadata too.
+    expect(result.structuredContent).toMatchObject({
+      pixelsPerCssPixel: 1,
+      elementClip: { selector: '.thing', box: { x: 10, y: 20, width: 80, height: 40 } },
+    });
+    await close();
+  });
+});
+
 describe('kangentic_browser_click: image-space coordinate mapping', () => {
   // coordSpace: 'image' maps a point off a full-viewport screenshot back to
   // the page. A screenshot scaled to fit the pane or a byte budget holds
@@ -390,6 +448,14 @@ describe('kangentic_browser_click: image-space coordinate mapping', () => {
     // page's deviceScaleFactor here would land the click on the wrong element.
     expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 200, y: 400 });
     expect(dispatchMouseEvent).toHaveBeenNthCalledWith(2, fakeGuest, { type: 'mouseReleased', x: 200, y: 400 });
+    // The density lookup itself is asked about THIS pane, never an unbounded
+    // one - a null surface here would silently widen to the page's own
+    // density instead of the capture's, which is exactly the bug this test
+    // guards against one layer up.
+    expect(describeViewportCapture).toHaveBeenCalledWith(fakeGuest, {
+      widget: { width: 740, height: 749 },
+      displayScale: 1,
+    });
     // The page's deviceScaleFactor is a fallback, not a second source to
     // average or prefer, so it is never even read once a capture density
     // answers the question.
