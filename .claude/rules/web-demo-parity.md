@@ -139,6 +139,9 @@ three things staying in step, and each is enforced rather than remembered.
   in the parser's shape, when its entries are not the run the card's trail came from (the trail's
   uuids are transcript uuids), when a marked manifest entry has no file or a file no mark, and when
   the build or the seed stops reading them. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-guest-pages.test.ts` reads every `guest_page`
+  `DEMO_PROJECTS` names and fails when the file is missing, references anything off-origin, reads
+  `prefers-color-scheme`, or declares an animation or transition. Runs via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-frame-format.test.ts` fails when any recording's
   final frame, open frame, or timeline frame is not physical rows with a cursor suffix, or holds a
   row wider than the recording's columns (the "run the backfill" backstop);
