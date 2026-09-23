@@ -24,7 +24,7 @@
  * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
  * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { PROJECT_CONTOSO, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_COLUMN_MODELS, PROJECT_CONTOSO, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -266,6 +266,47 @@ function middlewareChangesStateWith(extra: Record<string, unknown>) {
 const CONTOSO_HISTORY_COMMITS = contosoHistory.commits;
 const ROUTES_COMMIT = CONTOSO_HISTORY_COMMITS.find((commit) => commit.subject.startsWith('Wire the API routes'));
 if (!ROUTES_COMMIT) throw new Error('tests/captures/fixtures/demo/history/contoso-web.json no longer carries the routes commit; re-run scripts/capture-demo-history.mjs');
+
+/**
+ * The contoso board as someone would configure it, shared by the three Column Manager scenes
+ * (edit-columns, column-automation, column-handoff) so they describe one board. Modelled on this
+ * repo's own kangentic.json (Opus at xhigh plans in plan mode, Sonnet at high builds, an isolated
+ * Code Review with an automation) plus the cross-agent step real teams take: Claude builds, Codex
+ * reviews, because a second model family catches what the first missed.
+ *
+ * Handoff is on exactly where the agent changes: into Code Review (the reviewer knows what was
+ * asked), into Testing (Claude gets the review back), and into Merge (Copilot, which ships GitHub's
+ * own tools, gets the history for the pull request). Executing stays off: it is the same agent as
+ * Planning, which resumes natively and ignores the setting. Codex carries no effort because it takes
+ * none from Kangentic (its effort is config.toml only), so the effort ladder lives on the Claude
+ * columns. Planning's plan mode is already the sample install's.
+ *
+ * Scene data, not the dataset: every other figure shows the board as the sample install leaves
+ * it. Code Review's isolated session writes both fields the Session control writes, so the form
+ * shows a pairing a user can make.
+ */
+const COLUMN_LADDER: Record<string, Record<string, unknown>> = {
+  [demoLaneId(PROJECT_CONTOSO, 'planning')]: { model_override: DEMO_COLUMN_MODELS.opus, effort_override: 'xhigh' },
+  [demoLaneId(PROJECT_CONTOSO, 'executing')]: { model_override: DEMO_COLUMN_MODELS.sonnet, effort_override: 'high', permission_mode: 'acceptEdits' },
+  [demoLaneId(PROJECT_CONTOSO, 'review')]: {
+    agent_override: 'codex',
+    model_override: DEMO_COLUMN_MODELS.codex,
+    handoff_context: true,
+    session_target: 'isolated',
+    session_spawn_strategy: 'always_spawn_new',
+  },
+  [demoLaneId(PROJECT_CONTOSO, 'testing')]: { model_override: DEMO_COLUMN_MODELS.sonnet, effort_override: 'high', permission_mode: 'acceptEdits', handoff_context: true },
+  [demoLaneId(PROJECT_CONTOSO, 'merge')]: { agent_override: 'copilot', handoff_context: true },
+};
+
+/** Code Review's one automation: what the reviewer is asked to do the moment a task arrives. */
+const REVIEW_PASS_AUTOMATION = {
+  swimlane_id: demoLaneId(PROJECT_CONTOSO, 'review'),
+  name: 'Ask for a review pass',
+  type: 'send_message',
+  trigger: 'enter',
+  config: { message: 'Review the diff against main and fix anything you would block a pull request on.', mode: 'immediate' },
+};
 
 const SETTINGS_PANEL = '[data-testid="settings-panel"]';
 
@@ -724,8 +765,9 @@ export const SCENES: Record<string, SceneDefinition> = {
   'edit-columns': {
     name: 'edit-columns',
     reach: 'boot',
-    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column, as the sample install leaves it: no automation configured, so both slots read Add automation. The column-automation scene is the configured counterpart.',
-    alt: 'The Column Manager dialog with the Code Review column selected: its name, icon, and color, the agent that starts when a task enters it, and the automation slots for entering and leaving the column.',
+    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column of the configured board the three Column Manager scenes share, where Codex CLI reviews on its own model. No automation is configured here, so both slots read Add automation. The column-automation scene is the configured counterpart.',
+    alt: 'The Column Manager dialog with the Code Review column selected: its name, icon, and color, Codex CLI on gpt-5.5 as the agent that starts when a task enters it, and empty automation slots for entering and leaving the column.',
+    seeds: { __mockSwimlanePatches: COLUMN_LADDER },
     ready: '[data-testid="board-manager-dialog"]',
     focus: '[data-testid="board-manager-dialog"]',
     steps: [{ click: '[data-swimlane-name="Code Review"] [data-testid="edit-column-btn"]', waitFor: '[data-testid="board-manager-dialog"]' }],
@@ -734,22 +776,16 @@ export const SCENES: Record<string, SceneDefinition> = {
   // An automation and a handed-off context are per-scene seeds, never dataset rows: an automation
   // draws a glyph in the BOARD column header (AutomationGlyph), so seeding one into the sample
   // install would change every docs figure already placed and every poster in the release zip.
-  // The two ids below go through demoLaneId, which the registry test resolves against the install.
+  // COLUMN_LADDER and REVIEW_PASS_AUTOMATION name their columns through demoLaneId, which the
+  // registry test resolves against the install.
   'column-automation': {
     name: 'column-automation',
     reach: 'boot',
-    description: 'The Column Manager on Code Review with a Send message automation configured on enter, for the Workflows page and the Workflow Automation showcase. The sample install configures none, so this is a scene seed.',
-    alt: 'The Column Manager on the Code Review column: its name, icon and color, the agent that starts when a task enters, and an Automations pane holding one Send message row on enter with the message it sends, edit and delete controls, and its switch on.',
+    description: 'The Column Manager on Code Review with a Send message automation configured on enter, for the Workflows page and the Workflow Automation showcase. The sample install configures none, so this is a scene seed, on the same configured board as edit-columns and column-handoff.',
+    alt: 'The Column Manager on the Code Review column: Codex CLI on gpt-5.5 as the agent that starts there, and an Automations pane holding one Send message row on enter with the message it sends, edit and delete controls, and its switch on.',
     seeds: {
-      __mockAutomations: [
-        {
-          swimlane_id: demoLaneId(PROJECT_CONTOSO, 'review'),
-          name: 'Ask for a review pass',
-          type: 'send_message',
-          trigger: 'enter',
-          config: { message: 'Review the diff against main and fix anything you would block a pull request on.', mode: 'immediate' },
-        },
-      ],
+      __mockSwimlanePatches: COLUMN_LADDER,
+      __mockAutomations: [REVIEW_PASS_AUTOMATION],
     },
     ready: '[data-testid="column-automation-row"]',
     focus: '[data-testid="board-manager-dialog"]',
@@ -758,10 +794,11 @@ export const SCENES: Record<string, SceneDefinition> = {
   'column-handoff': {
     name: 'column-handoff',
     reach: 'boot',
-    description: 'The Column Manager\'s All columns table with handoff context on for Code Review, for the Handoff Context showcase. Every lane in the sample install has it off, so this is a scene seed. The TABLE, not the column form: in the form the toggle sits 996px down a 1000px frame, so the figure would show everything except its own subject.',
-    alt: 'The Column Manager on its All columns table: a row per column carrying the agent that starts there, the model, effort and permissions it uses, a handoff switch, the session it runs in, and what runs on enter and on exit. Handoff is on for Code Review alone.',
+    description: 'The Column Manager\'s All columns table on a configured board, for the Handoff Context showcase: Claude Code plans on Opus 5 and builds on Sonnet 5, Codex CLI reviews in an isolated session, Claude tests, and GitHub Copilot CLI merges, with handoff on at each change of agent. The sample install configures none of it, so it is a scene seed. The TABLE, not the column form: in the form the toggle sits 996px down a 1000px frame, so the figure would show everything except its own subject.',
+    alt: 'The Column Manager\'s All columns table: Claude Code plans on Opus 5 at xhigh and builds on Sonnet 5, Codex CLI reviews on gpt-5.5 in an isolated session, and GitHub Copilot CLI merges, with handoff on at each change of agent.',
     seeds: {
-      __mockSwimlanePatches: { [demoLaneId(PROJECT_CONTOSO, 'review')]: { handoff_context: true } },
+      __mockSwimlanePatches: COLUMN_LADDER,
+      __mockAutomations: [REVIEW_PASS_AUTOMATION],
     },
     // `[aria-selected="true"]`, not the bare testid: ColumnRail renders the All columns tab button
     // unconditionally as soon as the dialog mounts, so the bare selector resolves the instant step

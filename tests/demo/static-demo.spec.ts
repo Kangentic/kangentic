@@ -127,16 +127,45 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   },
   'column-handoff': async (page) => {
     // The scene's __mockSwimlanePatches seed only takes effect if hydrateSeededSwimlanePatches
-    // actually finds and patches the Code Review lane; the `ready` selector alone (the tab having
-    // switched) proves nothing about the patch landing. OverviewToggle renders the column page's
-    // own read-only ToggleSwitch, so this is the same aria-checked a visitor would read.
-    const reviewRow = page.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' });
-    await expect(reviewRow.getByRole('switch', { name: 'Hand off context when the agent changes' })).toHaveAttribute('aria-checked', 'true');
-    // Sibling negative: every other lane keeps handoff_context false in the dataset, so this is
-    // what makes the scene's own alt text ("Handoff is on for Code Review alone") falsifiable
-    // rather than the switch simply always reading on.
-    const executingRow = page.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Executing' });
-    await expect(executingRow.getByRole('switch', { name: 'Hand off context when the agent changes' })).toHaveAttribute('aria-checked', 'false');
+    // actually finds and patches the lanes; the `ready` selector alone (the tab having switched)
+    // proves nothing about the patch landing. OverviewToggle renders the column page's own
+    // read-only ToggleSwitch, so this is the same aria-checked a visitor would read.
+    const row = (name: string): Locator => page.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: name });
+    const handoff = (name: string): Locator => row(name).getByRole('switch', { name: 'Hand off context when the agent changes' });
+    // On exactly where the agent changes, as the alt says. The two off are the sibling negatives
+    // that keep the switch from simply always reading on: the dataset leaves every lane off.
+    for (const name of ['Code Review', 'Testing', 'Merge']) await expect(handoff(name)).toHaveAttribute('aria-checked', 'true');
+    for (const name of ['Planning', 'Executing']) await expect(handoff(name)).toHaveAttribute('aria-checked', 'false');
+    await expect(row('Code Review')).toContainText('Codex CLI');
+    await expect(row('Merge')).toContainText('GitHub Copilot CLI');
+    // A model reads the way its column's form reads it: the name Claude reports, Codex's raw id.
+    await expect(row('Planning')).toContainText('Opus 5');
+    await expect(row('Code Review')).toContainText('gpt-5.5');
+    // Every value reads whole at the site's frame. Before DataTable's colgroup carried the widths,
+    // every column was an equal tenth of the table and "Plan (Read-Only)" was cut mid-glyph. The 1px
+    // allowance absorbs sub-pixel rounding between font stacks; a real clip loses whole glyphs.
+    const clipped = await page.evaluate(() => Array.from(document.querySelectorAll(
+      '[data-testid="board-manager-overview-row"] [data-state="changed"] > span, [data-testid="board-manager-overview-row"] [data-state="unchanged"]',
+    )).filter((label) => label.scrollWidth - label.clientWidth > 1).map((label) => label.textContent));
+    expect(clipped).toEqual([]);
+  },
+  'edit-columns': async (page) => {
+    // The Code Review form on the shared ladder: Codex CLI reviews on the model it was recorded on,
+    // and there is no Effort field because Codex takes none from Kangentic. Without the dataset's
+    // Codex capabilities the Model field would be missing too.
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await expect(dialog.locator('input[data-testid="column-agent-override"]')).toHaveValue('Codex CLI');
+    await expect(dialog.locator('input[data-testid="column-model-override"]')).toHaveValue('gpt-5.5');
+    await expect(dialog.locator('[data-testid="column-effort-override"]')).toHaveCount(0);
+    // Automation-free on purpose: column-automation is the configured counterpart.
+    await expect(dialog.locator('[data-testid="column-automation-row"]')).toHaveCount(0);
+  },
+  'column-automation': async (page) => {
+    // The same column as edit-columns, plus the one row column-handoff counts in its On enter cell.
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await expect(dialog.locator('input[data-testid="column-agent-override"]')).toHaveValue('Codex CLI');
+    await expect(dialog.locator('[data-testid="column-automation-row"]')).toHaveCount(1);
+    await expect(dialog.locator('[data-testid="column-automation-row"]')).toContainText('Ask for a review pass');
   },
   'session-states': async (page) => {
     // The scene's `ready` selector (the Onboarding empty states card existing at all) resolves

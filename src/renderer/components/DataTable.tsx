@@ -282,6 +282,22 @@ export function DataTable<TRow, TKey extends string = string>({
     );
   })() : null;
 
+  // Column widths for a GROUPED table. Under `table-fixed` the table's FIRST row
+  // decides every column's width, and with bands that row is the band row,
+  // whose colspan cells carry none: the table split evenly and each column's
+  // `width` class on the label row below was silently ignored (the All columns
+  // table rendered ten equal columns and clipped its longer values). A
+  // <colgroup> is what fixed layout reads first. Emitted only alongside the
+  // bands, so an ungrouped table stays byte-identical.
+  const colGroup = columnGroups ? (
+    <colgroup>
+      {sortableEnabled && <col className="w-[32px]" />}
+      {columns.map((column, columnIndex) => (
+        <col key={`${column.key}-${columnIndex}`} className={column.width} />
+      ))}
+    </colgroup>
+  ) : null;
+
   const headerRow = (
     <tr className="border-b-2 border-edge bg-surface-raised">
       {/* Drag handle header cell (empty) */}
@@ -337,6 +353,7 @@ export function DataTable<TRow, TKey extends string = string>({
     return (
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
         <table className="w-full table-fixed text-sm">
+          {colGroup}
           <thead className="sticky top-0 z-10">
             {groupRow}
             {headerRow}
@@ -420,6 +437,7 @@ export function DataTable<TRow, TKey extends string = string>({
   return (
     <div className="flex-1 min-h-0 overflow-auto">
       <table className="w-full table-fixed text-sm">
+        {colGroup}
         <thead className="sticky top-0 z-10">
           {groupRow}
           {headerRow}
