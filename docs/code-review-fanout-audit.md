@@ -794,7 +794,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #686 | 39f +2367 | 214KB, 3610 lines | 14 (5) | 25 | 0 | 8 | 21 of 7 pack-carrying | 11 / 10 |
 | #710 | 4f +116 | 31KB, 513 lines | 4 (4) | 0 | 0 | 7 | 17 of 6 pack-carrying | 5 / 4 |
 | #711 | 12f +344 | 81KB, 1325 lines | 7 (6) | 5 | 0 | 7 | 4 of 6 pack-carrying | 9 / 5 |
-| #715 | 10f +270 | 63KB, 973 lines | 4 (4) | 6 | 0 | 7 | 29 of 6 pack-carrying | 9 / 5 |
+| #715 | 10f +270 | 63KB, 973 lines | 4 (4) | 6 | 0 | 7 | 30 of 6 pack-carrying | 9 / 5 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -831,13 +831,15 @@ by two finders that needed its call order, and the gap above a changed assertion
 for a line-ending question. A small file squeezed out by windowed bodies that were billed at full
 cost is the case to watch here.
 
-Row five is hunk-heavy on a small diff: 6 of its 10 files were hunk tier, including the two largest,
-the UI mock (5041 lines) and `BoardManagerDialog.tsx` (2627 lines). Of the 29 reads beyond the pack,
-22 were outside the changed set: the Codex adapter behind the mock's KEEP IN SYNC comment (three
-finders), the capability hooks the column form reads, `format-tokens.ts`, `model-id.ts`, and rule
-files. Four of the other 7 went into hunk-tier files. Two finders read past `BoardManagerDialog.tsx`'s
-overview hunks for how the column form resolves its own agent, and two read the mock past its Codex
-hunk for the other agents' entries. Neither question is about the lines beside a change, so a wider
-`HUNK_CONTEXT_LINES` would not have removed them. The last 3 were a render-branch read in the
-windowed `DataTable.tsx`, a grep of the UI spec outside its window, and one finder's dash scan over
-files the pack already carried.
+Row five is hunk-heavy on a small diff. Six of its 10 files were hunk tier, including the two
+largest, the UI mock (5041 lines) and `BoardManagerDialog.tsx` (2627 lines). Of the 30 reads beyond
+the pack, 23 were outside the changed set: the Codex adapter behind the mock's KEEP IN SYNC comment
+(three finders), the capability hooks the column form reads, `format-tokens.ts`, `model-id.ts`, and
+rule files. Four of the other 7 went into hunk-tier files, and they split two ways. Two finders read
+`BoardManagerDialog.tsx` for how the column form resolves its own agent (`effectiveAgent`, its
+display names, and its permissions, lines 1173-1182). That code sits 4 to 13 lines past the overview
+hunk's 3-line window, so a 20-line window would have carried it. This is the first row where
+`HUNK_CONTEXT_LINES` was too narrow for a finder's question. The other two read the mock past its
+Codex hunk for the other agents' entries, which run about 140 lines, so no context width covers
+them. The last 3 were a render-branch read in the windowed `DataTable.tsx`, a grep of the UI spec
+outside its window, and one finder's dash scan over files the pack already carried.
