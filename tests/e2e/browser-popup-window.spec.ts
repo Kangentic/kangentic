@@ -113,7 +113,7 @@ test.describe('Browser pane popups', () => {
     });
   });
 
-  test('the popup shares the guest Session object, so it shares the cookie jar', async ({ freshProject, sharedApp }) => {
+  test('the popup shares the guest Session object, so it shares the cookie jar and the user agent', async ({ freshProject, sharedApp }) => {
     const electronApp = sharedApp.app;
     // The hardest property to verify any other way, and the one OAuth depends
     // on: same Session means same jar AND same browsing context group, which is
@@ -124,6 +124,15 @@ test.describe('Browser pane popups', () => {
     await dragTaskToColumn(page, title, 'Code Review');
     await waitForRunningSession(page);
     await openPaneWithGuest(page, title);
+
+    // The guest presents without the `Electron/` token that some firewalls
+    // reject (decision 41). Read from the page, since `navigator.userAgent` is
+    // what a page script sees. The app's own token is not asserted here: this
+    // launch runs a bare script with no package.json beside it, so Electron
+    // leaves that token out, and the unit test pins that it survives the strip.
+    const guestUserAgent = String(await evalInGuest(electronApp, 'navigator.userAgent'));
+    expect(guestUserAgent).toContain('Chrome/');
+    expect(guestUserAgent).not.toContain('Electron/');
 
     await evalInGuest(electronApp, "String(!!window.open('https://example.com/','_blank','width=420,height=420'))");
 
@@ -142,6 +151,16 @@ test.describe('Browser pane popups', () => {
       return popup.webContents.session === guest.session;
     });
     expect(sameSession).toBe(true);
+
+    // The popup gets no user agent call of its own. It inherits the stripped one
+    // from the Session the guest's call already set, and a sign-in popup is
+    // exactly where a firewall or identity provider would look.
+    const popupUserAgent = await electronApp.evaluate(({ BrowserWindow }) => {
+      const popup = BrowserWindow.getAllWindows().find((window) => window.getTitle() === 'example.com');
+      return popup ? popup.webContents.getUserAgent() : null;
+    });
+    expect(popupUserAgent).toContain('Chrome/');
+    expect(popupUserAgent).not.toContain('Electron/');
 
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()

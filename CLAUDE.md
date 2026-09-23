@@ -231,7 +231,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `bash-single-command.md` - one command per Bash tool call; no `&&` `||` `|` `;` or redirects.
 - `writing-style.md` - no AI tells in authored prose; no em-dashes, en-dashes, `--`, or curly quotes.
 - `typescript-style.md` - TypeScript strict mode; no `any` types; full descriptive names.
-- `no-personal-info.md` - no usernames, emails, or machine paths in committed code (repo is public).
+- `no-personal-info.md` - no usernames, emails, machine paths, client names, or request origins in committed files (repo is public).
 
 **Path-scoped rules (load with their subsystem):**
 - `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock`.

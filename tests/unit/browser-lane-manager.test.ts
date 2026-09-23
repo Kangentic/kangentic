@@ -12,12 +12,21 @@ import { browserPartitionForTask } from '../../src/shared/browser-partition';
  * Electron 41.1.1 build and the results are recorded in the plan.
  */
 
+/** A fresh partition's default user agent: Electron's, token included. */
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Kangentic/0.43.0 Chrome/146.0.7680.216 Electron/41.10.7 Safari/537.36';
+
 interface FakeWindow {
   id: number;
   destroyed: boolean;
   webContents: {
     id: number;
     setFrameRate: (fps: number) => void;
+    setUserAgent: (userAgent: string) => void;
+    session: {
+      getUserAgent: () => string;
+      setUserAgent: (userAgent: string) => void;
+    };
     loadURL: (url: string) => Promise<void>;
     once: (event: string, handler: () => void) => void;
     isDestroyed: () => boolean;
@@ -45,6 +54,11 @@ vi.mock('electron', () => ({
         webContents: {
           id,
           setFrameRate: vi.fn(),
+          setUserAgent: vi.fn(),
+          session: {
+            getUserAgent: () => DEFAULT_USER_AGENT,
+            setUserAgent: vi.fn(),
+          },
           loadURL: vi.fn(async () => {
             if (loadGate) await loadGate();
             if (loadShouldFail) throw new Error('ERR_CONNECTION_REFUSED');
@@ -246,6 +260,24 @@ describe('openLane', () => {
     // 60fps against a lane nobody is watching is the real cost risk.
     await openLane(input());
     expect(created[0].window.webContents.setFrameRate).toHaveBeenCalledWith(LANE_FRAME_RATE);
+  });
+
+  it('presents without the Electron token, set before its first load', async () => {
+    // A lane is not a <webview>, so the guest hook in web-contents-created never
+    // sees it, and it can open before any pane has set this task's jar. A
+    // firewall that rejects `Electron/` would otherwise block it (decision 41).
+    await openLane(input());
+    const guest = created[0].window.webContents;
+    const setUserAgent = vi.mocked(guest.setUserAgent);
+    expect(setUserAgent).toHaveBeenCalledTimes(1);
+    const laneUserAgent = setUserAgent.mock.calls[0][0];
+    expect(laneUserAgent).toContain('Kangentic/0.43.0');
+    expect(laneUserAgent).not.toContain('Electron/');
+    expect(guest.session.setUserAgent).toHaveBeenCalledWith(laneUserAgent);
+    expect(
+      setUserAgent.mock.invocationCallOrder[0],
+      'the user agent must be set before loadURL, or the first request still carries the token',
+    ).toBeLessThan(vi.mocked(guest.loadURL).mock.invocationCallOrder[0]);
   });
 
   it('shares the task cookie jar (keyed by task identity) rather than minting a fresh one', async () => {
