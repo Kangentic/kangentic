@@ -47,6 +47,18 @@ async function openManagerByHeader(columnName: string) {
   await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 3000 });
 }
 
+/** Replace the mock's agent-list overrides and reload the config store's agent list, so a dialog opened afterwards reads them. */
+async function setAgentListOverrides(overrides: Record<string, unknown>) {
+  await page.evaluate(async (nextOverrides) => {
+    const testWindow = window as unknown as {
+      __mockAgentListOverrides?: Record<string, unknown>;
+      __zustandStores?: { config: { getState: () => { loadAgentList: () => Promise<void> } } };
+    };
+    testWindow.__mockAgentListOverrides = nextOverrides;
+    await testWindow.__zustandStores?.config.getState().loadAgentList();
+  }, overrides);
+}
+
 async function closeManager() {
   const dialog = page.locator('[data-testid="board-manager-dialog"]');
   const cancelBtn = dialog.getByRole('button', { name: 'Cancel' });
@@ -659,6 +671,76 @@ test.describe('BoardManagerDialog extended', () => {
     await rows.filter({ hasText: 'Reviewed' }).click();
     await expect(dialog.locator('[data-testid="board-manager-name"]')).toHaveValue('Reviewed');
     // Dirty edit is discarded by afterEach.
+  });
+
+  // The table's first row is the band row (Agent / Conversation / Automations), whose colspan
+  // cells carry no width, and under table-layout: fixed the first row is what sizes the columns.
+  // Until DataTable carried the widths in a <colgroup>, every column was an equal tenth of the
+  // table and "Plan (Read-Only)" was cut mid-glyph. Relative, not pixel-exact: Permissions is
+  // declared at more than twice Start's share, so an even split fails it by a wide margin.
+  test('overview gives each column its declared share of the width', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+    await expect(dialog.locator('[data-testid="board-manager-overview-row"]').first()).toBeVisible();
+
+    const widths = await dialog.locator('table thead tr:last-child th').evaluateAll((cells) => {
+      const byLabel: Record<string, number> = {};
+      for (const cell of cells) byLabel[(cell.textContent ?? '').trim()] = cell.getBoundingClientRect().width;
+      return byLabel;
+    });
+    expect(widths.Start).toBeGreaterThan(0);
+    expect(widths.Permissions).toBeGreaterThan(widths.Start * 1.5);
+    expect(widths.Agent).toBeGreaterThan(widths.Start * 1.5);
+  });
+
+  // A cell prints what the column's own form prints. The form labels a model the way its agent's
+  // picker does (a reported display name, else the raw id) and a permission in its agent's own
+  // words, so the table must too: it used to humanize every id with its own formatter ("Gpt 5.5")
+  // and word every agent's permission in Claude's terms. Codex's 'default' is also longer than the
+  // Permissions column, which is what pins the ellipsis and the full text in the tooltip.
+  test('overview labels a column the way its form does, and ellipsizes what does not fit', async () => {
+    await setAgentListOverrides({
+      codex: { found: true, capabilities: { supportsModelOverride: true, models: ['gpt-5.5'], effortLevels: [] } },
+    });
+
+    try {
+      await openManagerByHeader('Code Review');
+      const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+      // Page-scoped option locators: every combobox menu portals to document.body.
+      await dialog.locator('input[data-testid="column-agent-override"]').click();
+      await page.locator('[data-testid="column-agent-override-option-codex"]').click();
+      const modelInput = dialog.locator('input[data-testid="column-model-override"]');
+      await modelInput.click();
+      await page.locator('[data-model-option][title="gpt-5.5"]').click();
+      await expect(modelInput).toHaveValue('gpt-5.5');
+      const permissionInput = dialog.locator('input[data-testid="column-permission-mode"]');
+      await permissionInput.click();
+      await page.locator('[data-testid="column-permission-mode-option-default"]').click();
+      await expect(permissionInput).toHaveValue('Automatically Edit, Ask for Untrusted');
+
+      await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+      const cells = dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: 'Code Review' }).locator('td');
+      // Column order: name, Start, Agent, Model, Effort, Permissions.
+      await expect(cells.nth(2)).toHaveText('Codex CLI');
+      await expect(cells.nth(3)).toHaveText('gpt-5.5');
+      // Effort is never set here, so its cell stays unchanged and reads 'Default'. An unchanged
+      // value carries its full text in `title` too, the same as the changed Permissions value below.
+      const effort = cells.nth(4).locator('[data-state="unchanged"]');
+      await expect(effort).toHaveText('Default');
+      await expect(effort).toHaveAttribute('title', 'Default');
+      const permission = cells.nth(5).locator('[data-state="changed"]');
+      await expect(permission).toHaveAttribute('title', 'Automatically Edit, Ask for Untrusted');
+      const label = await permission.locator('span').evaluate((element) => ({
+        textOverflow: getComputedStyle(element).textOverflow,
+        clipped: element.scrollWidth > element.clientWidth,
+      }));
+      expect(label).toEqual({ textOverflow: 'ellipsis', clipped: true });
+      // The draft is discarded by afterEach, so no column keeps Codex.
+    } finally {
+      await setAgentListOverrides({});
+    }
   });
 
   // The overview has no single column to remove, so the footer's Remove

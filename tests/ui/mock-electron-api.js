@@ -2944,10 +2944,13 @@
           },
           {
             name: 'codex', displayName: 'Codex CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with CodexAdapter.permissions in src/main/agent/adapters/codex/codex-adapter.ts
             permissions: [
-              { mode: 'plan', label: 'Suggest (Read-Only)' },
-              { mode: 'acceptEdits', label: 'Auto-Edit' },
-              { mode: 'bypassPermissions', label: 'Full Auto (Sandboxed)' },
+              { mode: 'plan', label: 'Safe Read-Only Browsing' },
+              { mode: 'dontAsk', label: 'Read-Only Non-Interactive (CI)' },
+              { mode: 'default', label: 'Automatically Edit, Ask for Untrusted' },
+              { mode: 'acceptEdits', label: 'Auto (Preset)' },
+              { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,

@@ -43,7 +43,7 @@ import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
 import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
 import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
-import { ColumnsOverview, formatModelName, type OverviewRow, type OverviewValue } from './board-manager/ColumnsOverview';
+import { ColumnsOverview, type OverviewRow, type OverviewValue } from './board-manager/ColumnsOverview';
 import { Pill } from '../Pill';
 import { RegistryIcon, getSwimlaneIconName, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
@@ -1102,6 +1102,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const agentLabel = overrideName
         ? (agentList.find((agent) => agent.name === overrideName)?.displayName ?? overrideName)
         : projectDefaultAgentLabel;
+      // Model and Permissions are worded by the column's OWN agent, from the
+      // same sources its form fields read, so a row never names a value the
+      // column page spells differently (a Codex column's acceptEdits is "Auto
+      // (Preset)", not Claude's "Accept Edits").
+      const laneAgentInfo = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent));
       const modelOverride = laneDraft.model_override?.trim();
 
       const rows = automationDrafts[id] ?? [];
@@ -1127,10 +1132,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           ? { on: false, applicable: false, reason: agentReason, ariaLabel: 'Start an agent here' }
           : { on: laneDraft.auto_spawn, applicable: true, ariaLabel: 'Start an agent here' },
         agent: value(agentLabel, !!overrideName),
-        model: value(modelOverride ? formatModelName(modelOverride) : 'Default', !!modelOverride),
+        model: value(
+          modelOverride ? modelRowLabel(modelOverride, laneAgentInfo?.capabilities?.modelDisplayNames ?? {}) : 'Default',
+          !!modelOverride,
+        ),
         effort: value(laneDraft.effort_override || 'Default', !!laneDraft.effort_override),
         permission: value(
-          laneDraft.permission_mode ? getPermissionLabel(DEFAULT_PERMISSIONS, laneDraft.permission_mode) : 'Default',
+          laneDraft.permission_mode
+            ? getPermissionLabel(laneAgentInfo?.permissions ?? DEFAULT_PERMISSIONS, laneDraft.permission_mode)
+            : 'Default',
           !!laneDraft.permission_mode,
         ),
         handoff: agentApplies
@@ -1153,7 +1163,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }];
     });
   }, [
-    laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgentLabel,
+    laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgent, projectDefaultAgentLabel,
     automationDrafts, automationOriginals,
   ]);
 

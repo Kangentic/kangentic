@@ -15,6 +15,8 @@
  * and demo/vite.config.mts serializes this module into the static build.
  */
 
+import { buildModelDisplayNames } from '../../../src/main/agent/adapters/claude/model-display-name';
+
 export interface DemoScrollbackMap {
   /** Session id to the serialized terminal stream replayed into that session's xterm. */
   [sessionId: string]: string;
@@ -400,6 +402,14 @@ const COPILOT = { id: 'gpt-5.6-luna', displayName: 'GPT-5.6 Luna' };
 const CURSOR = { id: 'claude-4.5-sonnet', displayName: 'Claude Sonnet 4.5' };
 /** The model a fresh spawn of each agent runs on, for the context bar of a session a visitor starts. */
 const MODEL_BY_AGENT: Record<string, { id: string; displayName: string }> = { claude: OPUS, codex: CODEX, gemini: GEMINI, opencode: OPENCODE, copilot: COPILOT, cursor: CURSOR };
+/**
+ * The model ids a scene's column patches name, so each is spelled once. Opus 5 and GPT-5.5 are
+ * what the recordings ran on; Sonnet 5 is a column choice (the build step of a board that plans
+ * on Opus, as this repo's own kangentic.json does), not a recorded session.
+ */
+export const DEMO_COLUMN_MODELS = { opus: OPUS.id, sonnet: 'claude-sonnet-5', codex: CODEX.id } as const;
+/** Claude's model list: the mock's aliases plus the two ids the columns name. */
+const CLAUDE_MODELS = ['haiku', 'opus', 'sonnet', DEMO_COLUMN_MODELS.opus, DEMO_COLUMN_MODELS.sonnet];
 /** The mock's global default, which a lane with no permission mode of its own spawns in. */
 const DEFAULT_PERMISSION_MODE = 'acceptEdits';
 
@@ -433,13 +443,38 @@ export const DEMO_BACKLOG: DemoBacklogItem[] = [
   { id: 'backlog-ob-helm', projectId: PROJECT_BOUTIQUE, title: 'Publish the Helm chart to the OCI registry', description: 'The chart lives in the repo but is not pushed on release', priority: 1, labels: [], position: 1, external_source: null, external_id: null, external_url: null, createdDaysAgo: 11 },
 ];
 
-/** Agents the sample install reports as installed: those the boards use, at the versions the recordings were made on. */
+/**
+ * Agents the sample install reports as installed: those the boards use, at the versions the
+ * recordings were made on. `capabilities` is what each adapter's discovery reports for this
+ * install, and the Column Manager reads it: without it a Codex column's form hides its Model
+ * field. Each block is whole, since the mock's merge is shallow.
+ *
+ *   - Claude: its --help effort levels, and display names from the adapter's own
+ *     buildModelDisplayNames, so a column on claude-opus-5 reads "Opus 5" as on the desktop.
+ *   - Codex: no effort levels. Its effort is config.toml only, so Kangentic offers none
+ *     (discoverCodexCapabilities), and its models come from session history: the one recorded.
+ *   - Copilot: the --reasoning-effort choices its help lists, and its recorded model.
+ */
 export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
-  claude: { version: '2.1.270' },
-  codex: { found: true, path: '/usr/local/bin/codex', version: '0.141.0' },
+  claude: {
+    version: '2.1.270',
+    capabilities: {
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      supportsModelOverride: true,
+      models: CLAUDE_MODELS,
+      modelDisplayNames: buildModelDisplayNames(CLAUDE_MODELS),
+    },
+  },
+  codex: {
+    found: true, path: '/usr/local/bin/codex', version: '0.141.0',
+    capabilities: { supportsModelOverride: true, models: [CODEX.id], effortLevels: [] },
+  },
   gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0' },
   opencode: { found: true, path: '/usr/local/bin/opencode', version: '1.18.30' },
-  copilot: { found: true, path: '/usr/local/bin/copilot', version: '1.0.83' },
+  copilot: {
+    found: true, path: '/usr/local/bin/copilot', version: '1.0.83',
+    capabilities: { supportsModelOverride: true, models: [COPILOT.id], effortLevels: ['low', 'medium', 'high', 'xhigh'] },
+  },
 };
 
 // ---------------------------------------------------------------- the applier
