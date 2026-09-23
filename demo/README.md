@@ -859,10 +859,28 @@ too, by `scripts/capture-demo-sessions.mjs` from the dataset rather than from a 
   pointer on a pause and resumes the task's latest paused record, so the demo does not read the
   pointer either; reading only the pointer is what once made Pause then Resume start the task's
   recorded boot from scratch. The paused row is retired and the resumed session is the task's
-  only one, as main's respawn leaves it. Its terminal carries the paused one's view over, as main
-  carries the scrollback: the same recording at the same grid, frozen on the frame the paused
-  terminal showed, since a resumed agent reprints its conversation and waits for the user. Its
-  trail and its usage carry over too, the usage once the resumed agent's first output lands.
+  only one, as main's respawn leaves it. Its trail and its usage carry over, the usage once the
+  resumed agent's first output lands. What its terminal shows depends on where the pause landed:
+  - At the recording's end (a session idle or waiting on the user), the terminal plays that
+    session's recorded resume boot (`resume-<sessionId>.json`): the real `claude --resume`, the CLI
+    reprinting the conversation and stopping at an empty prompt. The reprint covers exactly what
+    the frame had shown, so it is honest, and first output lands at the boot's own first byte.
+    The `session-resume` scene's live frame resolves its resuming card the same way.
+  - Mid-recording (a working session), a real resume would reprint the WHOLE recorded
+    conversation, including what the frame had not reached, so the terminal carries the paused
+    one's view over instead, as main carries the scrollback: the same recording played through
+    the page's emulator to the moment of the pause and frozen there, fitted to whatever grid the
+    new terminal has. Pause mid-turn and that frame still holds the
+    turn's spinner line, where the desktop's resumed CLI would redraw at its prompt.
+
+  The capture matrix records the resume boots (the `resumes` kind in
+  `scripts/capture-demo-sessions.mjs`) for every Claude task session whose conversation is still
+  in Claude's history on the recording machine, found by the recording's own trail uuids. Two
+  things keep them honest. The rig ends every recording by typing `/exit`, and Claude logs that
+  into the conversation, so the driver records against a copy of the history without it (a
+  resume would otherwise end on the rig's "Goodbye!"). And a resume appends to that history,
+  which the committed trails and transcripts were derived from, so the driver puts the file back
+  byte for byte afterwards. Other agents have no resume recording and take the frozen view.
 - A new Command Terminal boots the project's default agent with no prompt, which is what the
   desktop starts: `terminal-<projectId>.json` when its window opens alone,
   `terminal-<projectId>-tiled.json` when it opens beside the project's running terminal. When a
@@ -1084,24 +1102,24 @@ an emulated scale alone is the bug above. WebGL stays on.
 
 ## What the page ships, and what it costs
 
-Measured with `npm run demo:measure` on the build of 2026-09-17, headless Chromium, a plain
+Measured with `npm run demo:measure` on the build of 2026-09-23, headless Chromium, a plain
 static server on localhost, warm disk.
 
 ### Before first paint (gzipped)
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1935 KB | 536 KB |
+| index (the renderer) | 1954 KB | 542 KB |
 | xterm | 435 KB | 110 KB |
-| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 783 KB | 129 KB |
-| mock-electron-api.js (the bridge) | 217 KB | 49 KB |
+| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 809 KB | 136 KB |
+| mock-electron-api.js (the bridge) | 239 KB | 55 KB |
 | react-vendor | 214 KB | 66 KB |
-| index.css + xterm.css | 115 KB | 19 KB |
-| Pill + datetime chunks | 90 KB | 29 KB |
-| demo-boot.js + demo-scenes.js + demo-webview.js | 76 KB | 20 KB |
-| **Eager total** | | **959 KB** |
+| index.css + xterm.css | 117 KB | 19 KB |
+| Pill + datetime chunks | 91 KB | 31 KB |
+| demo-boot.js + demo-scenes.js + demo-webview.js | 95 KB | 26 KB |
+| **Eager total** | | **984 KB** |
 
-The whole `dist/demo/assets` is 16.7 MB raw, almost all of it monaco's lazy language and worker
+The whole `dist/demo/assets` is 16.8 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 4 requests).
 `demo-seed.js` carries each session's terminal frame and the working-tree diff it left behind;
 it is the one eager file that grows with the dataset (112 KB gzipped for 16 sessions and 10
@@ -1114,22 +1132,24 @@ became physical rows and the seed took on the cell-width table the applier clips
 17 KB more for the tiled frames of the three sessions with a tiled recording (a final frame and
 a working session's opening frame each), which is what lets a still of a tiled window paint the
 right recording without a fetch.
-The 39 recordings under `recordings/` (three of them the tiled siblings) are 17.1 MB raw and
-514 KB gzipped in total, fetched one at a time as terminals mount, so none of it is on the boot
-path. Each carries its timed stream, final frame and grid. They were 38.3 MB and 832 KB while
-each also shipped its frame timeline, which the page's emulator made redundant (Live replay); the
-fixtures keep it. The largest single file is the Codex OpenTelemetry session at 70 KB gzipped.
-The emulator is a 4 KB chunk that shares the renderer's xterm, fetched the first time a terminal
-mounts on a grid other than its recording's. The one transcript
-under `transcripts/` is 31 KB raw and 8 KB gzipped, fetched only when a conversation viewer opens.
+The 44 recordings under `recordings/` (six of them tiled siblings, five of them resume boots) are
+17.3 MB raw and 543 KB gzipped in total, fetched one at a time as terminals mount, so none of it
+is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, and one is fetched
+only when a visitor resumes a session paused at its recording's end. Each carries its timed
+stream, final frame and grid. They were 38.3 MB and 832 KB while each also shipped its frame
+timeline, which the page's emulator made redundant (Live replay); the fixtures keep it. The
+largest single file is the Codex OpenTelemetry session at 70 KB gzipped. The emulator is a 4 KB
+chunk that shares the renderer's xterm, fetched the first time a terminal mounts on a grid other
+than its recording's. The one transcript under `transcripts/` is 32 KB raw and 8 KB gzipped,
+fetched only when a conversation viewer opens.
 
 ### Cold boot per scene
 
 | Scene | Requests | Off-origin | First contentful paint | Ready |
 |---|---|---|---|---|
-| board | 14 | 0 | 256 ms | 330 ms |
-| task | 14 | 0 | 248 ms | 380 ms |
-| changes | 19 | 0 | 256 ms | 513 ms |
+| board | 14 | 0 | 292 ms | 354 ms |
+| task | 14 | 0 | 260 ms | 393 ms |
+| changes | 19 | 0 | 128 ms | 544 ms |
 | monitor | 17 | 0 | (paint inside the veil) | 430 ms |
 
 Zero off-origin requests on every scene: the renderer's Sentry SDK has no network path of its
@@ -1141,9 +1161,9 @@ so the site's privacy page needs no line for the frame.
 
 | Frames | All ready | Script time | JS heap |
 |---|---|---|---|
-| 1 | 321 ms | 176 ms | 18 MB |
-| 4 | 707 ms | 368 ms | 36 MB |
-| 8 | 1296 ms | 668 ms | 70 MB |
+| 1 | 310 ms | 171 ms | 16 MB |
+| 4 | 725 ms | 380 ms | 34 MB |
+| 8 | 1321 ms | 695 ms | 66 MB |
 
 The bundle downloads once and caches; each frame parses and executes it again for roughly 70 ms of
 script and 5 to 10 MB of heap. Eight live frames on one docs page cost about 1.3 seconds on a

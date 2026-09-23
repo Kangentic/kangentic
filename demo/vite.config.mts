@@ -129,12 +129,13 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     sessions: Object.fromEntries(Object.entries(recordings.sessions).map(([id, entry]) => [id, indexEntryOf(entry)])),
     spawns: Object.fromEntries(Object.entries(recordings.spawns).map(([key, entry]) => [key, indexEntryOf(entry)])),
     terminals: Object.fromEntries(Object.entries(recordings.terminals).map(([id, entry]) => [id, indexEntryOf(entry)])),
+    resumes: Object.fromEntries(Object.entries(recordings.resumes).map(([id, entry]) => [id, indexEntryOf(entry)])),
     geometry: recordings.geometry,
     transcriptsBase: `${base}transcripts/`,
     transcripts,
   };
   const tiledCount = Object.values(index.sessions).filter((entry) => entry.tiled).length;
-  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(transcripts).length} transcripts`);
+  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(index.resumes).length} resume boots, ${Object.keys(transcripts).length} transcripts`);
   // The guest pages: what each project's dev URL shows, for the Browser pane's iframe
   // stand-in (demo/webview-shim.js). Keyed by the URL the pane shows, valued by the hashed file.
   const guestPages: Record<string, string> = {};

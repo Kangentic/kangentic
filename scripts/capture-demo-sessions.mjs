@@ -15,6 +15,14 @@
  *              executing mode. The web build replays one when a visitor drags the card.
  *   terminals  DERIVED from the dataset: one per project, the default agent started with no
  *              prompt, which is what a new Command Terminal is.
+ *   resumes    DERIVED from the sessions: every Claude task session resumed on its own
+ *              conversation (claude --resume, no prompt), which is what a Resume of a paused
+ *              session starts. The conversation is found by the recording's own trail uuids in
+ *              Claude's history for the scratch repo, so it exists only on the recording machine;
+ *              a session whose conversation is gone is skipped. The web build plays one only for a
+ *              session paused at its recording's end, where the reprint shows nothing the frame
+ *              has not reached. Resuming can append to those history files, which the committed
+ *              trails and transcripts came from: back them up before a run and restore them after.
  *
  * Prepares one scratch repo per project under a SHORT temp path (Windows path limits bite under a
  * deep one): a shallow clone for the two upstream samples, a copy of scripts/demo-repos/contoso-web
@@ -128,6 +136,76 @@ function derivedTerminalEntries() {
     prompt: '',
     stopAfter: TERMINAL_BOOT_SECONDS,
   })));
+}
+
+/**
+ * The resume boots: every Claude task session the manifest records, resumed on its own
+ * conversation. A resume waits for the user once the conversation is reprinted, so it stops on
+ * the output going quiet rather than at a fixed second (a long conversation reprints for longer).
+ */
+function derivedResumeEntries() {
+  return manifest.captures.flatMap((entry) => {
+    const session = dataset.DEMO_SESSIONS.find((candidate) => candidate.id === entry.sessionId);
+    if (entry.agent !== 'claude' || !session || !session.taskId || session.transient) return [];
+    return [{
+      kind: 'resume',
+      file: `resume-${session.id}.json`,
+      sessionId: session.id,
+      recording: entry.file,
+      project: entry.project,
+      agent: 'claude',
+      mode: captureMode('claude', session.permissionMode),
+      prompt: '',
+      min: 5,
+      idle: 4,
+    }];
+  });
+}
+
+/**
+ * The Claude conversation a recording made, found by its trail uuids (each is a transcript entry's
+ * uuid) in Claude's history for the directory the recording ran in. Claude names that history
+ * directory by the path with every non-alphanumeric character replaced by a dash.
+ */
+function recordedClaudeHistory(recordingFile, cwd) {
+  // A session whose own capture failed this run may have no recording yet. That skips its resume,
+  // as a missing conversation does, rather than ending the matrix.
+  let recording;
+  try {
+    recording = JSON.parse(fs.readFileSync(path.join(fixturesDir, recordingFile), 'utf-8'));
+  } catch (error) {
+    console.error(`[matrix] ${recordingFile}: unreadable (${error.message})`);
+    return null;
+  }
+  const uuids = (recording.messageTrail || []).map((line) => line.uuid).filter(Boolean);
+  if (uuids.length === 0) return null;
+  const historyDir = path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  if (!fs.existsSync(historyDir)) return null;
+  for (const name of fs.readdirSync(historyDir)) {
+    if (!name.endsWith('.jsonl')) continue;
+    const historyFile = path.join(historyDir, name);
+    const text = fs.readFileSync(historyFile, 'utf-8');
+    if (uuids.some((uuid) => text.includes(uuid))) return { sessionId: name.slice(0, -'.jsonl'.length), historyFile };
+  }
+  return null;
+}
+
+/**
+ * The rig ends every recording with the adapter's exit sequence, and Claude logs a typed /exit
+ * into the conversation: a caveat entry, the command, and its "Goodbye!". A resume reprints the
+ * conversation, so it would end on the rig's /exit, which was never part of the session (the
+ * recording itself drops the exit sequence's frames). Those three entries close the parent chain,
+ * so dropping them leaves the conversation whole.
+ */
+function withoutRigExit(historyText) {
+  const lines = historyText.split('\n');
+  let exitIndex = -1;
+  lines.forEach((line, index) => { if (line.includes('<command-name>/exit</command-name>')) exitIndex = index; });
+  if (exitIndex === -1) return historyText;
+  const drop = new Set([exitIndex]);
+  if (exitIndex > 0 && lines[exitIndex - 1].includes('local-command-caveat')) drop.add(exitIndex - 1);
+  if (lines[exitIndex + 1] && lines[exitIndex + 1].includes('<local-command-stdout>')) drop.add(exitIndex + 1);
+  return lines.filter((_, index) => !drop.has(index)).join('\n');
 }
 
 function prepareRepo(name, spec) {
@@ -255,6 +333,11 @@ function runCapture(entry, cwd) {
   if (entry.timeout) args.push('--timeout', String(entry.timeout));
   if (entry.stopAfter) args.push('--stop-after', String(entry.stopAfter));
   if (entry.stopWhen) args.push('--stop-when', entry.stopWhen);
+  if (entry.min) args.push('--min', String(entry.min));
+  if (entry.idle) args.push('--idle', String(entry.idle));
+  // A resume boot records the CLI reprinting a conversation the paused session's card already
+  // carries the trail of, so it derives none of its own.
+  if (entry.kind === 'resume') args.push('--resume', entry.resume, '--no-message-trail');
   // Which sessions are transient is the dataset's fact, not something the capture script can see
   // from a prompt, so the decision is made here. MessageTrailTracker skips a transient session, so
   // a Command Terminal shows no message trail on the desktop and must show none in the demo. A
@@ -311,8 +394,9 @@ const entries = [
   ...sessionEntries(),
   ...derivedSpawnEntries(),
   ...derivedTerminalEntries(),
+  ...derivedResumeEntries(),
 ];
-console.error(`[matrix] ${entries.filter((entry) => entry.kind === 'session').length} sessions (${manifest.captures.length} in the manifest, the rest tiled variants), ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots`);
+console.error(`[matrix] ${entries.filter((entry) => entry.kind === 'session').length} sessions (${manifest.captures.length} in the manifest, the rest tiled variants), ${entries.filter((entry) => entry.kind === 'spawn').length} spawn boots, ${entries.filter((entry) => entry.kind === 'terminal').length} terminal boots, ${entries.filter((entry) => entry.kind === 'resume').length} resume boots`);
 
 const refreshed = new Set();
 const results = [];
@@ -330,9 +414,29 @@ for (const entry of entries) {
     refreshScaffold(entry.project, spec, cwd);
     refreshed.add(entry.project);
   }
+  let history = null;
+  if (entry.kind === 'resume') {
+    history = recordedClaudeHistory(entry.recording, cwd);
+    if (!history) {
+      console.error(`[matrix] ${entry.file}: no conversation in Claude's history carries ${entry.recording}'s trail; skipped`);
+      results.push({ file: entry.file, status: 'skipped' });
+      continue;
+    }
+    entry.resume = history.sessionId;
+  }
   await resetRepo(cwd);
   console.error(`\n[matrix] ${entry.file}: ${entry.agent} on ${entry.project}${entry.kind === 'session' ? '' : ` (${entry.kind} boot)`}`);
-  const code = await runCapture(entry, cwd);
+  // A resume records against the history file with the rig's /exit dropped, and the original goes
+  // back byte for byte afterwards, which also undoes whatever the resume appended: the committed
+  // trails and transcripts were derived from that file.
+  const originalHistory = history ? fs.readFileSync(history.historyFile) : null;
+  if (history) fs.writeFileSync(history.historyFile, withoutRigExit(originalHistory.toString('utf-8')));
+  let code;
+  try {
+    code = await runCapture(entry, cwd);
+  } finally {
+    if (history) fs.writeFileSync(history.historyFile, originalHistory);
+  }
   results.push({ file: entry.file, status: code === 0 ? 'captured' : `failed (${code})` });
   await resetRepo(cwd);
 }
