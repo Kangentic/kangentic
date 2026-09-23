@@ -47,7 +47,8 @@ three things staying in step, and each is enforced rather than remembered.
   read with git. The line is the same one the terminal rule draws: mock the bridge, record or
   derive the content, and where content cannot be honest, show the surface without it. Every entry carries the three fields that leave this repo: `alt`, the
   reader-facing text a docs figure carries; `ready`, the selector the frame is built at; and an
-  optional `focus`, the element whose rect the ready message reports. The registry has two
+  optional `focus`, the element whose rect the ready message reports (a selector list names
+  several, and the rect is the box around all of them). The registry has two
   consumers by construction (`demo/boot.js` at `view=`, the rig at
   `tests/captures/features/scenes.capture.ts` against the BUILT demo) and the rig keeps no
   applier of its own, so the two cannot describe one state two ways.
@@ -204,7 +205,8 @@ three things staying in step, and each is enforced rather than remembered.
   test change, and a stale deep marker for a retired scene fails) and asserts its `ready` element
   visible and, where the scene names a `focus`, that the element exists and covers a real region
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
-  full-frame backdrop, which crops to nothing), that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
+  full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
+  element, that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host
   carries a dialog scene's focus rect (the same rect `__demoBoot.focusRectOf` hands the poster
   rig) and null for a scene without one, the embed and theme

@@ -28,8 +28,8 @@
  * A scene the registry does not know, a rig-only scene, or a malformed state= blob renders a
  * full-frame error card and boots nothing: a page must never caption a scene the visitor is not
  * looking at. The parent frame is told either way (kangentic-demo-ready / kangentic-demo-error).
- * Ready fires only once the scene's `ready` element exists, and carries the rect of its `focus`
- * element (fractions of the frame) so a host can crop a dialog scene to the dialog.
+ * Ready fires only once the scene's `ready` element exists, and carries the rect around its `focus`
+ * elements (fractions of the frame) so a host can crop a dialog scene to the dialog.
  */
 (function () {
   'use strict';
@@ -43,6 +43,14 @@
   // kangentic-light / kangentic-dark before being named clay / rust.
   var THEME_ALIASES = { night: 'dark', kangentic: 'clay', 'kangentic-light': 'clay', 'kangentic-dark': 'rust' };
   var STATE_KEYS = ['config', 'tasks', 'sessions', 'seeds', 'steps'];
+  // What a patch may say about a session the sample install seeds, and the values each takes. The
+  // seed folds a patch in before it derives anything from the session, so the row, the Monitor,
+  // the usage, and the clock all describe the same state (tests/captures/helpers/demo-dataset.ts).
+  // `resuming` is the moment after a relaunch: main has respawned the agent on its own
+  // conversation and it has not printed yet, which only a running session can be.
+  var SESSION_PATCH_KEYS = ['activity', 'status', 'resuming'];
+  var SESSION_ACTIVITIES = ['thinking', 'idle', 'permission'];
+  var SESSION_STATUSES = ['running', 'suspended', 'queued'];
   // A boot step clicks, types into a field, or presses a hotkey (a keyboard combo or a mouse
   // button, in the registry's own spelling, held for the frame); anything else (a hover, a
   // drag, a right-click) is the capture rig's and is refused here.
@@ -81,6 +89,18 @@
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
 
+  /** Reject a session patch the seed would misread: an unknown field, a value outside its set, or a resume on a stopped session. */
+  function validateSessionPatch(patch, origin) {
+    if (!isPlainObject(patch)) throw new Error(origin + ' must be an object');
+    Object.keys(patch).forEach(function (key) {
+      if (SESSION_PATCH_KEYS.indexOf(key) === -1) throw new Error(origin + ' has an unknown key "' + key + '" (allowed: ' + SESSION_PATCH_KEYS.join(', ') + ')');
+    });
+    if (patch.activity !== undefined && SESSION_ACTIVITIES.indexOf(patch.activity) === -1) throw new Error(origin + '.activity must be one of ' + SESSION_ACTIVITIES.join(', '));
+    if (patch.status !== undefined && SESSION_STATUSES.indexOf(patch.status) === -1) throw new Error(origin + '.status must be one of ' + SESSION_STATUSES.join(', '));
+    if (patch.resuming !== undefined && patch.resuming !== true) throw new Error(origin + '.resuming can only be true');
+    if (patch.resuming && patch.status !== undefined && patch.status !== 'running') throw new Error(origin + ' resumes a session it also stops; a resuming session is running');
+  }
+
   /** Reject anything a DemoState blob is not allowed to carry. Data only, never code. */
   function validateState(state, origin) {
     if (!isPlainObject(state)) throw new Error(origin + ' must be a JSON object');
@@ -110,7 +130,12 @@
         if (!isPlainObject(task) || typeof task.id !== 'string') throw new Error(origin + '.tasks entries need a string id');
       });
     }
-    if (state.sessions !== undefined && !isPlainObject(state.sessions)) throw new Error(origin + '.sessions must be an object keyed by session id');
+    if (state.sessions !== undefined) {
+      if (!isPlainObject(state.sessions)) throw new Error(origin + '.sessions must be an object keyed by session id');
+      Object.keys(state.sessions).forEach(function (sessionId) {
+        validateSessionPatch(state.sessions[sessionId], origin + '.sessions.' + sessionId);
+      });
+    }
     if (state.seeds !== undefined) {
       if (!isPlainObject(state.seeds)) throw new Error(origin + '.seeds must be an object');
       Object.keys(state.seeds).forEach(function (key) {
@@ -328,6 +353,13 @@
     // open the What's New dialog behind the error card.
     window.electronAPI.app.getVersion = function () { return Promise.resolve(version); };
     if (errors.length > 0) return;
+    // Session patches are the SEED's input, not a pass over its output: the seed derives the
+    // Monitor rows, the usage, the activity stats, and each working session's clock from the
+    // session as it builds it, so a patch applied to the rows afterwards left all of those
+    // describing the unpatched session (a paused card whose Monitor row still read working).
+    // A queued, paused, or resuming card is a patch rather than a dataset row because adding one
+    // to the sample install would change every docs figure already placed.
+    window.__demoSessionPatches = effective.sessions;
     if (typeof window.__demoApplyFixture === 'function') window.__demoApplyFixture();
 
     if (effective.tasks.length > 0 || Object.keys(effective.sessions).length > 0) {
@@ -338,19 +370,10 @@
           if (!row) throw new Error('Scene patches task "' + patch.id + '", which the sample install does not contain');
           Object.assign(row, patch);
         });
+        // The seed applied these; an id it does not seed would otherwise be a silent no-op.
         Object.keys(effective.sessions).forEach(function (sessionId) {
-          var patch = effective.sessions[sessionId];
-          if (!patch) return;
-          if (patch.activity) state.activityCache[sessionId] = patch.activity;
-          // A queued or suspended row is what the board draws its queued and paused cards from
-          // (SessionDisplayState reads the row's status). It is a patch rather than a dataset
-          // row because the sample install has neither on contoso-web, and adding one there
-          // would change every docs figure already placed.
-          if (patch.status) {
-            var row = state.sessions.find(function (session) { return session.id === sessionId; });
-            if (!row) throw new Error('Scene patches session "' + sessionId + '", which the sample install does not contain');
-            row.status = patch.status;
-          }
+          var row = state.sessions.find(function (session) { return session.id === sessionId; });
+          if (!row) throw new Error('Scene patches session "' + sessionId + '", which the sample install does not contain');
         });
       });
     }
@@ -406,24 +429,35 @@
   }
 
   /**
-   * The rect of the element a selector names, as fractions of the frame, so a host can crop a
-   * dialog scene to the dialog without knowing the layout. Null when nothing matches or the
-   * element is not on screen; a host crops nothing on null. Exposed as `__demoBoot.focusRectOf`
-   * for the capture rig, which measures the same rect for each poster (after its gesture, on a
-   * driver scene that booted from `state=` and so has no `scene` here).
+   * The rect of the elements a selector names, as fractions of the frame, so a host can crop a
+   * dialog scene to the dialog without knowing the layout. A selector list (`a, b`) names several,
+   * and the rect is the box around all of them: two cards a figure is about, say. Elements with no
+   * size are left out. Null when nothing on screen matches; a host crops nothing on null. Exposed
+   * as `__demoBoot.focusRectOf` for the capture rig, which measures the same rect for each poster
+   * (after its gesture, on a driver scene that booted from `state=` and so has no `scene` here).
    */
   function rectOf(selector) {
-    var element = document.querySelector(selector);
-    if (!element) return null;
-    var rect = element.getBoundingClientRect();
     var width = window.innerWidth;
     var height = window.innerHeight;
-    if (!width || !height || !rect.width || !rect.height) return null;
+    if (!width || !height) return null;
+    var left = Infinity;
+    var top = Infinity;
+    var right = -Infinity;
+    var bottom = -Infinity;
+    Array.prototype.forEach.call(document.querySelectorAll(selector), function (element) {
+      var rect = element.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      left = Math.min(left, rect.left);
+      top = Math.min(top, rect.top);
+      right = Math.max(right, rect.right);
+      bottom = Math.max(bottom, rect.bottom);
+    });
+    if (left === Infinity) return null;
     var round = function (value) { return Math.round(value * 10000) / 10000; };
-    return { x: round(rect.left / width), y: round(rect.top / height), w: round(rect.width / width), h: round(rect.height / height) };
+    return { x: round(left / width), y: round(top / height), w: round((right - left) / width), h: round((bottom - top) / height) };
   }
 
-  /** The rect of the scene's `focus` element, which the ready message carries; null without one. */
+  /** The rect around the scene's `focus` elements, which the ready message carries; null without one. */
   function focusRect() {
     return scene && scene.focus ? rectOf(scene.focus) : null;
   }

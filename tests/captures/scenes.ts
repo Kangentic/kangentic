@@ -24,7 +24,7 @@
  * No Node imports on purpose: demo/vite.config.mts serializes this module into the static build,
  * and the capture rig reads it as well. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_COLUMN_MODELS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_COLUMN_MODELS, PROJECT_CONTOSO, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_AUTH, TASK_MIDDLEWARE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -77,13 +77,15 @@ export interface DemoState {
   /** Patches merged by id into the sample install's task rows (live or archived). */
   tasks?: Array<{ id: string } & Record<string, unknown>>;
   /**
-   * Per-session patches on rows the sample install seeds. `activity` is written to the mock's
-   * `activityCache`; `status` is written onto the session row, which is where the board reads a
-   * queued or paused card from (`SessionDisplayState`). Both are patches rather than dataset rows
-   * because the sample install has one suspended session and no queued one, and adding either
+   * Per-session patches on rows the sample install seeds. The seed folds each one into its session
+   * before it derives anything, so the row, the Monitor row, the usage, and the clock all agree.
+   * `status` is where the board reads a queued or paused card from (`SessionDisplayState`), and
+   * `resuming` is the moment after a relaunch, when main has respawned the agent on its own
+   * conversation and it has not printed yet: the card reads "Resuming agent..." until its first
+   * output. All three are patches rather than dataset rows because adding one to the sample install
    * would change every docs figure already placed.
    */
-  sessions?: Record<string, { activity?: 'thinking' | 'idle' | 'permission'; status?: 'running' | 'suspended' | 'queued' }>;
+  sessions?: Record<string, { activity?: 'thinking' | 'idle' | 'permission'; status?: 'running' | 'suspended' | 'queued'; resuming?: true }>;
   /** `window.__mock*` globals the mock reads (diff fixtures, monitor rows, branch summary, ...). */
   seeds?: Record<string, unknown>;
   /** Synthetic clicks dispatched after the board renders and before the frame is revealed. */
@@ -99,7 +101,8 @@ interface SceneBase extends DemoState {
   alt: string;
   /** The selector that must exist before the frame is built. */
   ready: string;
-  /** The element a host may crop the figure to; its rect rides the ready message as fractions. */
+  /** The element a host may crop the figure to; its rect rides the ready message as fractions. A
+   *  selector list (`a, b`) names several, and the rect is the box around all of them. */
   focus?: string;
   /** `empty` seeds no project at all: the welcome screen a first launch lands on. Default: the
    *  sample install. */
@@ -483,7 +486,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'session-states': {
     name: 'session-states',
     reach: 'boot',
-    description: 'The contoso-web board with a paused card in Planning and a queued one in Code Review, for the Session Persistence page. The sample install has neither: its one suspended session is in online-boutique and nothing is queued. Both are row patches, not dataset rows, so every other figure is unchanged.',
+    description: 'The contoso-web board with a paused card in Planning and a queued one in Code Review, for the Session Persistence page. The sample install has neither: its one suspended session is in online-boutique and nothing is queued. Both are session patches, not dataset rows, so every other figure is unchanged, and the seed folds them in before it builds the Monitor, which shows the two stopped as the board does.',
     alt: 'The contoso-web board with two agents stopped: the Onboarding empty states card in Planning reads Paused, the Add rate limiting card in Code Review reads Queued, and the status bar counts six agents with one of them queued.',
     // Both columns are in frame at 1600px. Merge is not, which is why the paused card is not the
     // Vite 8 task: its card passed every check and sat off the right edge of the figure.
@@ -495,6 +498,22 @@ export const SCENES: Record<string, SceneDefinition> = {
       [SESSION_RATE_LIMIT]: { status: 'queued' },
     },
     ready: '[data-task-id="task-cw-empty-states"]',
+    steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
+  },
+  'session-resume': {
+    name: 'session-resume',
+    reach: 'boot',
+    description: 'The contoso-web board just after a relaunch, for the Session Persistence panel: the WebSocket agent in Planning is resuming on its own conversation while the card below it stays Paused, as a session paused on purpose does. The resume is a session patch the seed folds in (no usage until first output), so the card draws the same Resuming agent... footer the desktop does. A still holds that moment; the live frame resolves it about 1.5 seconds after page open, the way a Resume click does, so a figure of this scene is the still or its poster, never a live frame.',
+    alt: 'The contoso-web board in Planning: the Fix WebSocket reconnection card shows its agent\'s last message and reads Resuming agent..., the Onboarding empty states card below it reads Paused, and the agents in Executing are working.',
+    // A resumed agent starts idle and waiting for the user (resume-suspended.ts marks the spawn
+    // resuming so the engine seeds idle), and it keeps its trail: the tracker reads the previous
+    // run's messages at once. The paused card is the one session-states pauses, directly below.
+    sessions: {
+      [SESSION_WEBSOCKET]: { resuming: true, activity: 'idle' },
+      [SESSION_EMPTY_STATES]: { status: 'suspended' },
+    },
+    ready: `[data-task-id="${TASK_WEBSOCKET}"] [data-testid="usage-bar"]`,
+    focus: `[data-task-id="${TASK_WEBSOCKET}"], [data-task-id="task-cw-empty-states"]`,
     steps: [{ click: '[data-session-id="sess-cw-middleware"]', waitFor: '[data-session-id="sess-cw-middleware"]' }],
   },
   'activity-overlay': {
