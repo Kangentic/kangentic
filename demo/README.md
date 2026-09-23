@@ -425,7 +425,7 @@ so a crop to one row of it is still the site's to choose.
 one known directory instead of a timestamped `captures/` run, which a Playwright retry would
 otherwise split), then checks the shots against `scenes.json` (every scene at every theme, every
 PNG exactly 3200 by 2000 by its header and whole by its IEND trailer, every focus sidecar present
-and either `null` or a rect with a positive size, nothing the manifest would not name) and zips
+and either `null` or a rect with a positive size, no PNG the manifest would not name) and zips
 them, posters stored rather than deflated and the sidecars folded into the manifest, as
 `dist/demo-posters-<version>.zip`. Nothing decodes a poster along the way; the two ends are what
 a header-only check misses when a shot is cut short. The pure half is
