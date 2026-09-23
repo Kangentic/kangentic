@@ -284,6 +284,18 @@ describe('verifyPosterSet', () => {
     expect(problems[2]).toMatch(/^card-drag\.clay\.frame\.focus\.json is neither null nor/);
   });
 
+  it('names a focus sidecar with an extra key alongside a valid x/y/w/h, not just a wrong or missing one', () => {
+    // A missing or renamed key is already caught by the every() check in isFocusValue (an
+    // absent key reads undefined). An extra key past a fully valid rect is the one shape that
+    // check cannot see on its own; only the exact-key-count check catches it.
+    const shotsDir = scratch('focus-extra-key');
+    writeCompleteSet(shotsDir);
+    fs.writeFileSync(path.join(shotsDir, 'board.clay.frame.focus.json'), JSON.stringify({ ...FOCUS_RECT, label: 'dialog' }));
+    expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
+      `board.clay.frame.focus.json is neither null nor a { x, y, w, h } rect with a positive size: ${JSON.stringify({ ...FOCUS_RECT, label: 'dialog' })}`,
+    ]);
+  });
+
   it('names a focus sidecar that is not JSON, as a rig killed mid-write leaves one', () => {
     const shotsDir = scratch('focus-not-json');
     writeCompleteSet(shotsDir);
@@ -417,6 +429,21 @@ describe('packPosterSet', () => {
     expect(manifest.focus[FOCUS_SCENE].clay).toEqual(FOCUS_RECT);
     expect(manifest.focus.board.clay).toBeNull();
     expect(Buffer.from(unzipped['board.clay.frame.png'])).toEqual(pngFile(3200, 2000));
+  });
+
+  it('packs an already-read focus map instead of re-reading the sidecars, when the caller passes one', () => {
+    // demo/posters.mjs reads the sidecars once via readPosterFocus and hands the map straight to
+    // packPosterSet so packing does not re-read disk. Proven here by writing no .focus.json
+    // sidecars at all: the default parameter would throw "missing ...focus.json" trying to read
+    // them, so a passing run only happens on the explicit-focus branch.
+    const shotsDir = scratch('pack-explicit-focus');
+    fs.mkdirSync(shotsDir, { recursive: true });
+    for (const poster of expectedPosters(FIXTURE_SCENES)) {
+      fs.writeFileSync(path.join(shotsDir, poster.file), pngFile(3200, 2000));
+    }
+    const unzipped = unzipSync(packPosterSet(FIXTURE_SCENES, shotsDir, FIXTURE_FOCUS));
+    const manifest = JSON.parse(strFromU8(unzipped['manifest.json']));
+    expect(manifest.focus).toEqual(FIXTURE_FOCUS);
   });
 
   /**
