@@ -73,8 +73,9 @@ vi.mock('electron', () => ({
         },
       };
       created.push({ options, window: win });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the fake stands in for a BrowserWindow
-      return win as any;
+      // The fake stands in for a BrowserWindow. A constructor may return any
+      // object assignable to its instance type, and this class declares none.
+      return win;
     }
   },
   // openLane now syncs the task jar with the project identity jar before creating
