@@ -14,6 +14,7 @@ import path from 'node:path';
 import * as ts from 'typescript';
 import { SCENES, isRigStep, type DemoBootStep, type RigStep, type SceneDefinition } from '../../tests/captures/scenes';
 import { DEMO_AGENT_OVERRIDES, DEMO_SESSIONS, DEMO_TASKS, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
+import { loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
@@ -193,6 +194,27 @@ describe('scene registry', () => {
     }
     // Vacuity guard: the task, changes, and tiled scenes all restore windows.
     expect(restoredWindows).toBeGreaterThan(5);
+  });
+
+  it('fits a window only to a session the recordings index carries', () => {
+    // The seed sizes a window marked fitToRecording to that session's recording at the visitor's
+    // own cell (demo-dataset.ts, fitLayoutBlob). A marker naming a session with no recording is
+    // refused with a console error in the frame; this says so at the source, before a build.
+    const recorded = new Set(Object.keys(loadDemoRecordings().sessions));
+    let fitted = 0;
+    for (const scene of scenes) {
+      for (const { where, workspace } of workspacesOf(scene)) {
+        for (const window of workspace.windows as Array<SerializedWorkspace['windows'][number] & { fitToRecording?: unknown }>) {
+          if (window.fitToRecording === undefined) continue;
+          fitted += 1;
+          expect(typeof window.fitToRecording, `${scene.name} ${where} names a fitToRecording that is not a session id`).toBe('string');
+          expect(recorded.has(String(window.fitToRecording)), `${scene.name} ${where} fits a window to ${String(window.fitToRecording)}, which has no recording`).toBe(true);
+          expect(window.state, `${scene.name} ${where} fits a window that is not floating; only a floating window keeps its own width`).toBe('floating');
+        }
+      }
+    }
+    // Vacuity guard: the task, dictation, window-dock, and command-terminal scenes are fitted.
+    expect(fitted).toBeGreaterThanOrEqual(4);
   });
 
   it('overrides only real config keys', () => {

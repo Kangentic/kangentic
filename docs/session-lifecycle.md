@@ -922,7 +922,13 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   the terminal CONFORMS to it (`conformToHeldGrid` in `useTerminal.ts`): it resizes its own
   xterm to the held grid and scales its font DOWN to fit that grid into the pane, letterboxed
   and never above the configured size (`CONFORM_MAX_SCALE` is 1), so the frame the PTY paints
-  is the frame the user sees rather than the taller grid clipped. A
+  is the frame the user sees rather than the taller grid clipped. The size it takes is the
+  LARGEST quarter-pixel size at which the grid fits. It proposes one from a linear model of the
+  cell, steps down while rounding leaves the grid over the box, and, when the proposal fit at
+  once, steps back UP while the grid still fits (`CONFORM_MAX_STEP_UPS`): a cell is not linear in
+  the font (the renderer floors its width to device pixels, and a face's height can drop a whole
+  pixel between two sizes), so the proposal alone could stop a size short and letterbox rows the
+  pane had room for. A
   held terminal keeps probing main with the grid it would fit on its own, and the first accepted
   probe releases the hold and restores the configured font. Only the container fit probes
   (`fitTerminal`'s probe argument, passed true by the `fit()` callback alone): a replay, a reload,
@@ -930,8 +936,9 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   A conform that the pane cannot show (the grid needs type below the 4 px floor, the box cannot
   be measured, or the step-down budget runs out before the grid fits) is DECLINED: the hold is
   released and the terminal keeps its own fit, rather than committing a font size nothing
-  verified. The web demo's mock holds a replayed session at its recording's grid through the same
-  answer (demo/README.md, "Live replay"). Gated by `tests/ui/terminal-held-grid-conform.spec.ts`.
+  verified. The web demo's mock holds a replayed session through the same answer, at the grid its
+  pane takes in the smaller type that carries the recording's columns (demo/README.md, "Live
+  replay"). Gated by `tests/ui/terminal-held-grid-conform.spec.ts`.
 
   Every renderer resize sender now traces `resize-request` with an origin
   tag (`mount`/`flush`/`reload`/`echo-reassert`/`debounced-onResize`) and main traces every

@@ -544,6 +544,11 @@ export function resolveReplayWidthAction(input: ReplayWidthInput): ReplayWidthDe
 /** How many quarter-pixel steps conformToHeldGrid takes below its proposal
  *  before giving up on a grid the box will not hold. */
 const CONFORM_MAX_STEPS = 4;
+/** How many quarter-pixel steps conformToHeldGrid takes ABOVE a proposal that
+ *  fit, looking for the largest size that still does. Four pixels of font: far
+ *  more than the gap a linear proposal leaves (Courier New at twice scale needed
+ *  five steps, 10.25 to 11.5). */
+const CONFORM_MAX_STEP_UPS = 16;
 /** A held grid is never shown above the configured font. Scaling DOWN is the
  *  point of conforming (the whole held grid fits a pane too small for it);
  *  scaling UP would put a terminal in bigger type than the panel beside it,
@@ -698,7 +703,8 @@ export function useTerminal(options: UseTerminalOptions) {
    * held grid as its own and picks the font size that fits it into the pane,
    * letterboxed; the picture is then the PTY's picture, scaled. The size is
    * proposed from the current cell metrics and checked after applying, stepping
-   * down while rounding still leaves the grid a pixel over the box.
+   * down while rounding still leaves the grid a pixel over the box, or up while
+   * a larger size still holds it: the size taken is the largest that fits.
    *
    * Returns false, and leaves the hold unset, when the pane cannot show the grid
    * at CONFORM_MIN_FONT_PX or the terminal cannot be measured; the caller keeps
@@ -723,6 +729,7 @@ export function useTerminal(options: UseTerminalOptions) {
     // prove a fit declines below rather than committing a size nothing checked.
     let verifiedFontSize: number | null = null;
     let declineReason = 'steps';
+    let fitOnFirstAttempt = false;
     for (let attempt = 0; attempt < CONFORM_MAX_STEPS; attempt++) {
       // xterm re-measures the cell as soon as the option is assigned, so the
       // proposal right after reads the new metrics.
@@ -737,6 +744,7 @@ export function useTerminal(options: UseTerminalOptions) {
       }
       if (check.cols >= grid.cols && check.rows >= grid.rows) {
         verifiedFontSize = candidateFontSize;
+        fitOnFirstAttempt = attempt === 0;
         break;
       }
       candidateFontSize -= CONFORM_FONT_STEP_PX;
@@ -744,6 +752,27 @@ export function useTerminal(options: UseTerminalOptions) {
         declineReason = 'floor';
         break;
       }
+    }
+    if (verifiedFontSize !== null && fitOnFirstAttempt) {
+      // The proposal is linear in the cell, and a font's cell is not: the renderer
+      // rounds it to device pixels, and a face's height does not shrink in step
+      // with its size (Courier New at 11 px is a whole device pixel shorter than 12
+      // scaled down). So a proposal that fit can sit below the largest size that
+      // still fits, and letterbox rows the pane had room for. Step back UP while
+      // the grid still fits, never past the configured size. Only after a first
+      // fit: when the loop had to step down, the size above already failed.
+      const ceiling = configuredFontRef.current * CONFORM_MAX_SCALE;
+      let largestFittingFontSize: number = verifiedFontSize;
+      for (let attempt = 0; attempt < CONFORM_MAX_STEP_UPS; attempt++) {
+        const larger = largestFittingFontSize + CONFORM_FONT_STEP_PX;
+        if (larger > ceiling) break;
+        terminal.options.fontSize = larger;
+        const check = fitAddon.proposeDimensions();
+        if (!check || check.cols < grid.cols || check.rows < grid.rows) break;
+        largestFittingFontSize = larger;
+      }
+      if (terminal.options.fontSize !== largestFittingFontSize) terminal.options.fontSize = largestFittingFontSize;
+      verifiedFontSize = largestFittingFontSize;
     }
     if (verifiedFontSize === null) {
       // Floor, an unmeasurable box, or a step budget that ran out before the

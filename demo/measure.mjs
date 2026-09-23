@@ -41,9 +41,10 @@ const FRAME_VIEWPORT = { width: 1600, height: 1000 };
 /**
  * The window manager's DEFAULT rect (defaultWindowGeometry in
  * src/renderer/window-manager/store/geometry.ts: 0.58 of the frame, centred), which is the window
- * a session records at. The `task` and `command-terminal` scenes open wider (0.64) for the rig's
- * 2x launch, see MIDDLEWARE_FLOATING_GEOMETRY in tests/captures/scenes.ts, so they are not the
- * surfaces here; the two single surfaces are built from a state blob at the default rect instead.
+ * a session records at. The `task` and `command-terminal` scenes size their window to the
+ * recording at the visitor's own cell instead, see FITTED_FLOATING_GEOMETRY in
+ * tests/captures/scenes.ts, so they fit whatever the recording is and are not the surfaces here;
+ * the two single surfaces are built from a state blob at the default rect instead.
  */
 const DEFAULT_WINDOW_RECT = { x: 0.21, y: 0.15, w: 0.58, h: 0.7 };
 
