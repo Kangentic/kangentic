@@ -11,7 +11,7 @@
  * body against a fake `webContents`, the same pattern
  * `browser-pane-opener.test.ts` uses for the opener.
  *
- * Three behaviors pinned here:
+ * Five behaviors pinned here:
  *
  * 0. `kangentic_browser_set_viewport` validates its dimensions before reaching
  *    the guest, and routes `reset` to the clear path rather than the set one.
@@ -27,6 +27,17 @@
  *    in the SAME drive as the capture, and short-circuits before ever calling
  *    `captureScreenshotWithBudget` when one is present - so an agent is never
  *    handed a picture of a red error overlay to spend a turn interpreting.
+ * 3. `kangentic_browser_click`'s `coordSpace: 'image'` path divides the given
+ *    x/y by the screenshot's own capture density
+ *    (`describeViewportCapture`'s `pixelsPerCssPixel`), falling back to the
+ *    page's `deviceScaleFactor` only when no capture density is available,
+ *    and refusing rather than dividing by nothing when neither is. A capture
+ *    scaled to fit the pane or a byte budget holds fewer pixels than the
+ *    page's own ratio, so dividing by the wrong one lands the click on the
+ *    wrong element.
+ * 4. `kangentic_browser_screenshot`'s metadata carries the capture's own
+ *    `pixelsPerCssPixel` (never a hardcoded 1) and the capture's `note` when
+ *    one is present, and omits `note` when there is none to report.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -54,9 +65,14 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 const getOuterHtml = vi.fn();
 const scrollBy = vi.fn();
 const selectOptionOnSelector = vi.fn();
+// dispatchMouseEvent and getLayoutMetrics drive the click body's image-space
+// coordinate mapping tested below; every other CDP call in this file stays
+// an untracked inline stub.
+const dispatchMouseEvent = vi.fn();
+const getLayoutMetrics = vi.fn();
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
   clickAtCenterOfSelector: vi.fn(),
-  dispatchMouseEvent: vi.fn(),
+  dispatchMouseEvent: (...args: unknown[]) => dispatchMouseEvent(...args),
   dispatchKeyEvent: vi.fn(),
   dispatchKeypress: vi.fn(),
   dragFromTo: vi.fn(),
@@ -66,7 +82,7 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   getOuterHtml: (...args: unknown[]) => getOuterHtml(...args),
   getBoundingBox: vi.fn(),
   getConsoleEntries: vi.fn(),
-  getLayoutMetrics: vi.fn(),
+  getLayoutMetrics: (...args: unknown[]) => getLayoutMetrics(...args),
   hoverSelector: vi.fn(),
   queryAllElements: vi.fn(),
   runtimeEvaluate: vi.fn(),
@@ -77,9 +93,14 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
 }));
 
 const captureScreenshotWithBudget = vi.fn();
+// describeViewportCapture drives the click body's image-space density lookup
+// tested below; the screenshot tests below stay on captureScreenshotWithBudget
+// alone.
+const describeViewportCapture = vi.fn();
 vi.mock('../../src/main/browser/cdp/screenshot', () => ({
   captureScreenshotWithBudget: (...args: unknown[]) => captureScreenshotWithBudget(...args),
   captureElementClip: vi.fn(),
+  describeViewportCapture: (...args: unknown[]) => describeViewportCapture(...args),
 }));
 
 // detectDevServerError is stubbed per test; describeDevServerError stays REAL
@@ -108,6 +129,8 @@ const fakeEntry = {
   webContentsId: 7,
   url: null,
   kind: 'pane',
+  // What a mounted pane reports; the screenshot body bounds its capture by it.
+  widgetSize: { width: 740, height: 749 },
 } as never;
 vi.mock('../../src/main/browser/browser-pane-driver', () => ({
   withGuest: vi.fn(async (
@@ -271,20 +294,144 @@ describe('kangentic_browser_screenshot: dev-server-error short-circuit', () => {
       viewportWidth: 100,
       viewportHeight: 100,
       deviceScaleFactor: 1,
+      pixelsPerCssPixel: 1,
       scale: 1,
       fullPage: false,
       elementClip: null,
       retries: 0,
+      note: null,
     });
     const { client, close } = await connect();
 
     const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
 
     expect(captureScreenshotWithBudget).toHaveBeenCalledTimes(1);
+    // The pane's widget reaches the capture, so it is planned to fit the pane
+    // instead of being tiled by Chromium.
+    const [, options] = captureScreenshotWithBudget.mock.calls[0] as [unknown, { surface: unknown }];
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
     expect(result.isError).toBeUndefined();
     expect(result.content).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'image', mimeType: 'image/jpeg' })]),
     );
+    // The density an image-space kangentic_browser_click divides by, carried
+    // through even when it happens to equal 1, and no note key when the
+    // capture reported none.
+    expect(result.structuredContent).toMatchObject({ pixelsPerCssPixel: 1 });
+    expect(result.structuredContent).not.toHaveProperty('note');
+    await close();
+  });
+
+  it('carries a non-1 pixelsPerCssPixel and the downscale note when the capture reports them', async () => {
+    // Regression guard for screenshotToolResult: the case above pins that a
+    // note-less, 1:1 capture stays that way, and this one pins that a
+    // downscaled capture's real density and reason both reach the metadata
+    // rather than being dropped or hardcoded.
+    detectDevServerError.mockResolvedValue(null);
+    captureScreenshotWithBudget.mockResolvedValue({
+      mode: 'inline',
+      format: 'jpeg',
+      base64: 'ZmFrZQ==',
+      byteLength: 4,
+      width: 342,
+      height: 346,
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 2,
+      metricsAvailable: true,
+      pixelsPerCssPixel: 0.4625,
+      scale: 1,
+      fullPage: false,
+      elementClip: null,
+      retries: 0,
+      note: 'Scaled down to fit the pane; resize the pane to capture at full resolution.',
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      pixelsPerCssPixel: 0.4625,
+      note: 'Scaled down to fit the pane; resize the pane to capture at full resolution.',
+    });
+    await close();
+  });
+});
+
+describe('kangentic_browser_click: image-space coordinate mapping', () => {
+  // coordSpace: 'image' maps a point off a full-viewport screenshot back to
+  // the page. A screenshot scaled to fit the pane or a byte budget holds
+  // fewer pixels than the page's own deviceScaleFactor implies, so the
+  // mapping must divide by the CAPTURE's density when one is known, and only
+  // fall back to the page's deviceScaleFactor when it is not.
+
+  it('divides by the capture density rather than the page deviceScaleFactor when both are available', async () => {
+    describeViewportCapture.mockResolvedValue({
+      image: { width: 370, height: 375 },
+      pixelsPerCssPixel: 0.5,
+    });
+    getLayoutMetrics.mockResolvedValue({
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 2,
+      contentWidth: 740,
+      contentHeight: 749,
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'image' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    // 100 / 0.5 and 200 / 0.5, never 100 / 2 and 200 / 2: dividing by the
+    // page's deviceScaleFactor here would land the click on the wrong element.
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 200, y: 400 });
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(2, fakeGuest, { type: 'mouseReleased', x: 200, y: 400 });
+    // The page's deviceScaleFactor is a fallback, not a second source to
+    // average or prefer, so it is never even read once a capture density
+    // answers the question.
+    expect(getLayoutMetrics).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('falls back to the page deviceScaleFactor when the capture reports no density', async () => {
+    describeViewportCapture.mockResolvedValue(null);
+    getLayoutMetrics.mockResolvedValue({
+      viewportWidth: 740,
+      viewportHeight: 749,
+      deviceScaleFactor: 2,
+      contentWidth: 740,
+      contentHeight: 749,
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'image' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 50, y: 100 });
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(2, fakeGuest, { type: 'mouseReleased', x: 50, y: 100 });
+    await close();
+  });
+
+  it('returns coord-mapping-failed and dispatches nothing when neither density is available', async () => {
+    describeViewportCapture.mockResolvedValue(null);
+    getLayoutMetrics.mockResolvedValue(null);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'image' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { kind: 'coord-mapping-failed' } });
+    expect(dispatchMouseEvent).not.toHaveBeenCalled();
     await close();
   });
 });

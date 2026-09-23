@@ -77,11 +77,16 @@ export function screenshotToolResult(result: DriverResult<ScreenshotResponse>): 
     // scale factor produces confidently wrong element positions.
     metricsAvailable: data.metricsAvailable,
     deviceScaleFactor: data.deviceScaleFactor,
+    // The one to map image coordinates with. `deviceScaleFactor` is the page's
+    // own ratio, and a capture scaled to fit its pane or a byte budget holds
+    // fewer pixels than that.
+    pixelsPerCssPixel: data.pixelsPerCssPixel,
     scale: data.scale,
     fullPage: data.fullPage,
     elementClip: data.elementClip,
     retries: data.retries,
   };
+  if (data.note) meta.note = data.note;
   if (data.mode === 'file') {
     meta.filePath = data.filePath;
     meta.fileUri = data.fileUri;

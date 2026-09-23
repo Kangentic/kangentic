@@ -130,6 +130,17 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   The same physics is why a retained background pane must be hidden with `opacity: 0` rather than
   `visibility: hidden` or offscreen positioning: those stop compositing, an `opacity: 0` subtree
   does not.
+- **A capture of a `<webview>` guest never asks for more pixels than the guest's pane holds.**
+  Chromium sizes a capture from the emulated view, the scale factors and the clip, then grows the
+  view to match. A guest's view cannot grow, and `CreateTiledBitmap` fills the gap by REPEATING
+  the pane, so the agent gets the page tiled in a grid and no error. Every capture is planned by
+  `planCapture` (`src/main/browser/cdp/capture-bounds.ts`), which scales anything past
+  `widget x display scale` down to fit. `ScreenshotCaptureOptions.surface` is required and
+  nullable: a guest caller passes `guestCaptureSurface(webContents, entry)`, and only a surface
+  Chromium can grow (a lane's own window, Kangentic's window under the dev bridge) passes `null`.
+  `captureScreenshotWithBudget` also refuses, rather than returns, an image larger than the pane,
+  which is the backstop if Chromium's sizing ever changes under the planner. Do not "restore
+  resolution" by raising the emulated scale factor: that is exactly what shipped the tiling.
 - **`eval` is gated off by default.** `kangentic_browser_eval` uses the `eval` capability, which the
   driver blocks unless `AppConfig.browserAutomation.allowEval` is on. Do not ship an ungated
   arbitrary-JS path.
@@ -198,6 +209,12 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   over the saved sidecar (red-green: deleting that preference fails the case).
   `tests/unit/mcp-server-instructions-browser.test.ts` fails if `isolated: true` reappears in the
   server instructions, where it would send an agent to a zod schema error instead of a browser.
+- **Test (pane-bounded capture):** `tests/unit/browser-capture-bounds.test.ts` holds its own
+  statement of Chromium's `requested_image_size` rule, checks it reproduces the shipped bug, and
+  asserts no planned capture exceeds its pane across display scales 1 to 2, four pane sizes, and
+  every zoom, ratio and target shape. `tests/unit/devtools-screenshot-budget.test.ts` pins the
+  refusal of an oversized image. The required `surface` field makes a new call site decide at
+  typecheck.
 - **Test (visible in the UI):** `tests/ui/browser-offscreen-surface.spec.ts` drives the real board
   and task detail: the card globe and the pill's alive dot light for an offscreen surface and go
   dark when it closes, only the holding task lights, the set is read on mount as well as pushed,

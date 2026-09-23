@@ -1063,6 +1063,9 @@ async function respondScreenshot(
     quality,
     fullPage,
     maxBytes,
+    // Kangentic's own window, not a <webview> guest: Chromium can grow its
+    // view for a capture, so nothing bounds it.
+    surface: null,
   };
   const result = await captureScreenshotWithBudget(window, captureOptions);
   if (!result) {
@@ -1088,6 +1091,7 @@ async function respondScreenshotElement(
     format: formatParam ?? 'png',
     quality: qualityParam ? Number.parseInt(qualityParam, 10) : undefined,
     maxBytes,
+    surface: null,
   });
   if (!result) {
     return respondError(response, 500, 'screenshot-failed', 'Element clip capture returned no data.');
@@ -1657,6 +1661,7 @@ async function runScriptStep(
         quality: 75,
         // Force file mode by setting a tight inline ceiling.
         inlineCeiling: 1,
+        surface: null,
       });
       if (!captured || captured.mode !== 'file') return;
       return { screenshotPath: captured.filePath, screenshotUri: captured.fileUri };

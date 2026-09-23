@@ -8,6 +8,13 @@ import {
   setDeviceMetrics,
 } from './cdp/cdp';
 import {
+  describeViewportCapture,
+  readPageCaptureState,
+  type GuestCaptureSurface,
+  type ViewportCaptureDescription,
+} from './cdp/screenshot';
+import { BELOW_ONE_TO_ONE } from './cdp/capture-bounds';
+import {
   DEFAULT_LANE_HEIGHT,
   DEFAULT_LANE_WIDTH,
   laneWindow,
@@ -190,6 +197,48 @@ function paneWidgetSize(webContents: WebContents, entry: BrowserPaneEntry): View
   if (!host || host.isDestroyed()) return null;
   const [width, height] = host.getContentSize();
   return { width, height };
+}
+
+/**
+ * The pane a guest's screenshots are bounded by, or null for a surface that is
+ * not a guest.
+ *
+ * A capture of a `<webview>` guest can hold no more pixels than its widget, and
+ * asking for more is what makes Chromium tile the image (`capture-bounds.ts`).
+ * Both kinds of pane are guests: a docked one and a popped-out one, whose
+ * `<webview>` merely sits alone in its window. A lane is a real window whose
+ * view Chromium CAN grow for a capture, so it gets no bound.
+ *
+ * The widget is the renderer's report, in the host document's CSS pixels,
+ * times the host's own zoom to make it DIP. `displayScale` is the scale factor
+ * of the display the host window is on, which is what Chromium multiplies the
+ * widget by. Before the pane's first report this falls back to the host
+ * window, which overestimates. The refusal in `screenshot.ts` does NOT cover
+ * that window: it checks the image against this same bound, so a request that
+ * fits the host window but not the real pane can still come back tiled. It
+ * lasts until the renderer's first `widgetSize` report.
+ */
+export function guestCaptureSurface(webContents: WebContents, entry: BrowserPaneEntry): GuestCaptureSurface | null {
+  if (entry.kind === 'lane') return null;
+  const widget = paneWidgetSize(webContents, entry);
+  if (!widget) return null;
+  const hostZoom = webContents.hostWebContents?.getZoomFactor() || 1;
+  return {
+    widget: { width: widget.width * hostZoom, height: widget.height * hostZoom },
+    displayScale: displayScaleFor(webContents),
+  };
+}
+
+function displayScaleFor(webContents: WebContents): number {
+  try {
+    const host = BrowserWindow.fromWebContents(webContents.hostWebContents ?? webContents);
+    const display = host && !host.isDestroyed()
+      ? screen.getDisplayMatching(host.getBounds())
+      : screen.getPrimaryDisplay();
+    return display.scaleFactor > 0 ? display.scaleFactor : 1;
+  } catch {
+    return 1;
+  }
 }
 
 /**
@@ -586,6 +635,16 @@ export interface ApplyViewportOutcome {
   mechanism: ViewportMechanism;
   requested: ViewportSize;
   viewport: ViewportSize;
+  /**
+   * The page's `window.devicePixelRatio`, measured after the change, and 0
+   * when the page could not be read.
+   *
+   * Measured rather than the value sent to Chromium, which is a different
+   * number whenever the page is zoomed: a fitted pane is sent
+   * `deviceScaleFactor / zoom` so the page sees the ratio asked for. Echoing the
+   * sent value reported 2.16 to an agent that had asked for 1, and it read that
+   * as its request being ignored.
+   */
   deviceScaleFactor: number;
   zoom: number;
   /**
@@ -662,15 +721,14 @@ export async function applyViewport(
     width: clampDimension(request.width ?? fallback?.width ?? DEFAULT_LANE_WIDTH),
     height: clampDimension(request.height ?? fallback?.height ?? DEFAULT_LANE_HEIGHT),
   };
-  // What the response reports. The emulation branch REPLACES this with the
-  // value it actually sent, which is scaled by the fit: reporting the request
-  // here would have said `deviceScaleFactor: 0` for a call that sent 2.59, and
-  // a number the tool did not use is exactly what the measured-not-echoed rule
-  // exists to keep out of the response.
-  let deviceScaleFactor = request.deviceScaleFactor ?? 0;
+  const requestedPixelRatio =
+    typeof request.deviceScaleFactor === 'number' && request.deviceScaleFactor > 0
+      ? request.deviceScaleFactor
+      : null;
 
   let measured: ViewportSize | null;
-  let note: string | null = null;
+  /** Every sentence the response owes the agent, joined into one `note`. */
+  const notes: string[] = [];
   /** The largest viewport this window can reach, on the window path only. */
   let windowMax: ViewportSize | null = null;
 
@@ -738,20 +796,26 @@ export async function applyViewport(
     // claiming 1920. Zooming out to fit is what makes the number on the chip
     // and the thing on screen the same fact.
     //
-    // Three measured facts make this work, none of them obvious:
+    // Two measured facts make this work:
     //   1. Zoom MULTIPLIES an override: the page lays out at override / zoom,
     //      so a 1920 override at zoom 0.4 measured 4800. The override is
     //      therefore scaled BY the zoom to put 1920 back in `innerWidth`.
-    //   2. That alone shrinks the capture to the override's own size (740x416
-    //      measured), which would hand the agent an unreadable screenshot.
-    //      Setting `deviceScaleFactor` to 1/zoom restores it: the capture came
-    //      back 1920x1079.
-    //   3. `devicePixelRatio` is dsf x zoom, so 1/zoom x zoom lands the page on
-    //      a normal 1.0 display (measured 0.99999993). The page does not
-    //      believe it is on a hidpi screen and picks no different assets.
+    //   2. `devicePixelRatio` is the sent scale factor x zoom, with 0 meaning
+    //      the display's own. So the display's own factor is what is sent by
+    //      default, and the page sees the ratio of any zoomed-out page. An
+    //      explicit ratio is divided by the zoom so the page sees exactly it.
     //
-    // An explicit `zoom` wins, so an agent that wants the crisp 1:1 crop can
-    // ask for `zoom: 1` and get exactly the old behavior.
+    // The default used to send 1/zoom, to keep the capture at the requested
+    // resolution. That is what TILED every screenshot: a guest's capture can
+    // hold no more pixels than its pane, and Chromium fills a larger request by
+    // repeating the pane (`cdp/capture-bounds.ts`). The earlier "capture came
+    // back 1920x1079" checked the decoded size and never the pixels. Measured
+    // since, at display scales 1 to 2: the display's own factor under the fit
+    // captures the whole layout cleanly at the pane's resolution, and looks the
+    // same in the pane while rasterizing (1/zoom)^2 fewer pixels.
+    //
+    // An explicit `zoom` wins, so an agent can still ask for `zoom: 1` and show
+    // the user a 1:1 crop. Its screenshots are still the whole viewport.
     const widget = paneWidgetSize(webContents, entry);
     const zoomFactor =
       typeof request.zoom === 'number'
@@ -762,10 +826,10 @@ export async function applyViewport(
     const applied = await setDeviceMetrics(webContents, {
       width: Math.max(1, Math.round(target.width * zoomFactor)),
       height: Math.max(1, Math.round(target.height * zoomFactor)),
-      // 1/zoom keeps the capture at the requested resolution. An explicitly
-      // requested factor is multiplied through rather than replaced, so
-      // `deviceScaleFactor: 2` still means "twice the pixels" after the fit.
-      deviceScaleFactor: (deviceScaleFactor = (request.deviceScaleFactor ?? 1) / zoomFactor),
+      // The page's ratio is this x zoom, hence the division. A ratio above what
+      // the pane can hold changes which assets the page loads, not how many
+      // pixels a screenshot gets: the capture planner scales those down to fit.
+      deviceScaleFactor: requestedPixelRatio === null ? 0 : requestedPixelRatio / zoomFactor,
     });
     if (!applied) {
       throw new Error(
@@ -787,36 +851,45 @@ export async function applyViewport(
   // response reports it.
   const limits = displayLimits(webContents, mechanism, windowMax);
 
+  // The page's own ratio, measured: the one number that means the same thing
+  // on all three mechanisms, and the one the agent asked about.
+  const pageState = await readPageCaptureState(webContents);
+  const devicePixelRatio = pageState?.devicePixelRatio ?? 0;
+
   // How much of the emulated layout the USER's pane can actually show. Only
   // emulation can produce a partial view: the other two mechanisms move the
-  // real surface, so what is laid out is what is rendered.
-  //
-  // This is a note about the user's screen, NOT about what the agent gets.
-  // Measured on Electron 41: `Page.captureScreenshot` against an emulated
-  // guest returns the FULL emulated surface (1920x1080 out of a 740px-wide
-  // widget), so a screenshot is complete even while the pane shows a third of
-  // it. Saying otherwise would send agents chasing a problem they do not have.
+  // real surface, so what is laid out is what is rendered. This is about the
+  // user's screen, not the agent's screenshots, which always hold the whole
+  // viewport.
   let visibleFraction = 1;
   if (mechanism === 'device-emulation') {
     // The PANE's width, not the window's, for the same reason the fit uses it.
     const paneWidth = paneWidgetSize(webContents, entry)?.width ?? viewport.width;
     visibleFraction = Math.min(1, (paneWidth / zoom) / viewport.width);
     if (visibleFraction < 0.999) {
-      note =
-        `Your screenshots and measurements are complete at ${viewport.width}x${viewport.height}, but the USER's pane ` +
-        `only shows about ${Math.round(visibleFraction * 100)}% of that layout. If they need to watch, ` +
-        'kangentic_browser_pop_out gives a real window at this size.';
+      notes.push(
+        `The USER's pane shows only about ${Math.round(visibleFraction * 100)}% of this layout at zoom ${zoom.toFixed(2)}. ` +
+        'If they need to watch, kangentic_browser_pop_out gives a real window at this size.',
+      );
     }
+    const surface = guestCaptureSurface(webContents, entry);
+    const capture = await describeViewportCapture(webContents, surface, pageState);
+    const captureSentence = captureNoteFor(capture, surface, entry, requestedPixelRatio, devicePixelRatio);
+    if (captureSentence) notes.push(captureSentence);
+  } else if (requestedPixelRatio !== null) {
+    notes.push(
+      '`deviceScaleFactor` was ignored: it applies only to a docked pane. A real window renders at its display\'s own scale factor.',
+    );
   }
   // A position on a surface with no window of its own is not a thing that can
   // happen, and saying so beats dropping it: the agent asked for something,
   // and silence would let it report success for a window that never moved.
-  if (request.position && mechanism !== 'window-resize' && note === null) {
-    note = mechanism === 'device-emulation'
+  if (request.position && mechanism !== 'window-resize') {
+    notes.push(mechanism === 'device-emulation'
       ? `\`position\` was ignored: this pane is docked inside the task window, so it has no position on the display of its own. Call kangentic_browser_pop_out first, then set_viewport { position: "${request.position}" }.`
-      : `\`position\` was ignored: a lane is offscreen, so it has nowhere to be placed.`;
+      : `\`position\` was ignored: a lane is offscreen, so it has nowhere to be placed.`);
   }
-  if (!exact && note === null) {
+  if (!exact) {
     // Compared against the WINDOW's maximum, not the display's.
     //
     // A window's viewport is the work area minus its frame and the pane's own
@@ -828,13 +901,13 @@ export async function applyViewport(
     const beyondWindow =
       limits.maxWindowViewport !== null &&
       (target.width > limits.maxWindowViewport.width || target.height > limits.maxWindowViewport.height);
-    note = beyondWindow && limits.display
+    notes.push(beyondWindow && limits.display
       ? `A window's viewport is its display's work area (${limits.display.width}x${limits.display.height}) minus the window frame and ` +
         `this pane's own toolbars, so the largest viewport a window on this display can have is ` +
         `${limits.maxWindowViewport?.width}x${limits.maxWindowViewport?.height} - which is what you got. That is `
         + '`maxWindowViewport` in this response. For anything larger, kangentic_browser_dock and set_viewport on the docked pane: '
         + 'device emulation is not bounded by a monitor.'
-      : `The surface clamped this request to ${viewport.width}x${viewport.height}. Measurements are against that, not the request.`;
+      : `The surface clamped this request to ${viewport.width}x${viewport.height}. Measurements are against that, not the request.`);
   }
 
   const record: ViewportOverrideRecord = {
@@ -842,7 +915,7 @@ export async function applyViewport(
     mechanism,
     requested: target,
     measured: viewport,
-    deviceScaleFactor,
+    deviceScaleFactor: devicePixelRatio,
     // Carried forward from the existing override rather than re-read, so the
     // zoom a reset restores is the user's, never a fit this feature applied.
     zoomBefore: existing?.zoomBefore ?? zoomBeforeThisCall,
@@ -855,13 +928,54 @@ export async function applyViewport(
     mechanism,
     requested: target,
     viewport,
-    deviceScaleFactor,
+    deviceScaleFactor: devicePixelRatio,
     zoom,
     ...limits,
     exact,
     visibleFraction,
-    note,
+    note: notes.length > 0 ? notes.join(' ') : null,
   };
+}
+
+/**
+ * What a screenshot of this viewport will hold, said once so the agent is not
+ * surprised by the first capture. Null when a screenshot is at least 1:1 and
+ * the page's ratio is not above it.
+ *
+ * Two cases, both caused by the same bound: a guest's capture holds no more
+ * pixels than its pane. A fitted desktop layout therefore captures below 1:1,
+ * and an explicit `deviceScaleFactor` above what the pane can hold still
+ * changes what the page loads, but not how many pixels the capture has.
+ */
+function captureNoteFor(
+  capture: ViewportCaptureDescription | null,
+  surface: GuestCaptureSurface | null,
+  entry: BrowserPaneEntry,
+  requestedPixelRatio: number | null,
+  devicePixelRatio: number,
+): string | null {
+  if (!capture) return null;
+  const sentences: string[] = [];
+  if (capture.pixelsPerCssPixel < BELOW_ONE_TO_ONE) {
+    // The planner's widget, in DIP, so this names the same pane size a
+    // screenshot's own note does when the host is zoomed. Only once the pane
+    // has reported: before that the surface is the host window, not the pane.
+    const pane = surface && entry.widgetSize
+      ? ` this ${Math.round(surface.widget.width)}x${Math.round(surface.widget.height)} pane`
+      : ' this pane';
+    sentences.push(
+      `Screenshots of this viewport come back at ${capture.image.width}x${capture.image.height} ` +
+      `(${capture.pixelsPerCssPixel.toFixed(2)} image px per CSS px), the most${pane} can hold. ` +
+      'kangentic_browser_screenshot_element captures a region at up to 1:1, and kangentic_browser_pop_out gives a real window for 1:1 captures.',
+    );
+  }
+  if (requestedPixelRatio !== null && devicePixelRatio > capture.pixelsPerCssPixel + 0.01) {
+    sentences.push(
+      `The page sees devicePixelRatio ${devicePixelRatio.toFixed(2)} and loads its assets for it, ` +
+      'but a screenshot still holds only the pixels the pane has.',
+    );
+  }
+  return sentences.length > 0 ? sentences.join(' ') : null;
 }
 
 /**
@@ -938,11 +1052,12 @@ export async function clearViewport(
   pushViewportOverride(webContents, null);
 
   const viewport = measured ?? { width: 0, height: 0 };
+  const pageState = await readPageCaptureState(webContents);
   return {
     mechanism,
     requested: viewport,
     viewport,
-    deviceScaleFactor: 0,
+    deviceScaleFactor: pageState?.devicePixelRatio ?? 0,
     zoom: webContents.getZoomFactor(),
     display: displayWorkArea(webContents),
     maxWindowViewport: null,

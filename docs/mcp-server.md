@@ -1488,16 +1488,20 @@ Capture the pane's loaded page and return an inline image plus viewport and scal
 |-----------|------|----------|-------------|
 | `sessionId` | string | No | Target a surface by its handle. |
 | `taskId` | string | No | Target a surface by task. |
-| `fullPage` | boolean | No | Capture the full scrollable page instead of the viewport. Default false. |
+| `fullPage` | boolean | No | Capture the full scrollable page instead of the viewport. Default false. On a pane the page is scaled down to fit the pane's own pixels. |
 | `format` | string | No | `png` or `jpeg`. Default `jpeg`. |
 | `quality` | number | No | JPEG quality 1-100, ignored for png. Defaults to 80 for jpeg. |
 | `maxBytes` | number | No | Soft cap on decoded image bytes; the capture downscales and recompresses to fit. |
+
+The metadata carries `pixelsPerCssPixel`, the number to divide an image coordinate by for the page's CSS one. It is not always `deviceScaleFactor`, the page's own ratio: a capture scaled to fit its pane or a byte budget holds fewer pixels than the page renders at. `note` appears when the pane is the reason a capture is small, and says where to go for detail.
+
+**A pane's screenshot holds no more pixels than the pane has.** That is Chromium, not a setting. A `<webview>` guest cannot grow its view for a capture the way a tab can, and when a capture asks for more pixels than the guest's widget holds, Chromium fills the difference by repeating the widget. The image comes back tiled, the page repeated in a grid of pane-sized blocks. So every capture of a docked or popped-out pane is planned to fit inside `pane width x pane height x display scale`, and a larger request is scaled down rather than tiled: a 1600x1000 viewport in a 740x749 pane on a 100% display comes back 740x463. Should one ever come back larger anyway, the call fails with a `driver-error` naming the pane's size instead of returning the tiled image. An offscreen surface is a real window whose view Chromium can grow, so it is not bounded.
 
 Error modes beyond the shared set: `screenshot-failed` when CDP returns no data. A window that is hidden or fully occluded composites no frames and cannot be detected as such from the main process, so those captures fail after a short bound with a `driver-error` asking for the window to be brought forward. Non-pixel tools keep working against that same backgrounded pane.
 
 ### kangentic_browser_screenshot_element
 
-Capture a screenshot clipped to a single element. Capability tier: `observe`.
+Capture a screenshot clipped to a single element, at up to 1:1 (one image pixel per CSS pixel, or the page's own `devicePixelRatio` when that is higher). The element is re-rendered at that density even when the page is zoomed out to fit a wide viewport, so this is the tool for reading detail in a desktop-width layout on a narrow pane. An element too large for the pane at that density comes back scaled to fit, with a `note`. Capability tier: `observe`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1589,9 +1593,9 @@ Click an element by selector, or a point by coordinates. Capability tier: `inter
 | `selector` | string | No | CSS selector (or `text=` / `aria=` form) to click at its center. |
 | `x` | number | No | X coordinate. Use with `y` instead of `selector`. |
 | `y` | number | No | Y coordinate. |
-| `coordSpace` | string | No | `viewport` (default) or `image`, which maps screenshot pixels back via the device scale factor. |
+| `coordSpace` | string | No | `viewport` (default) or `image`, which maps the pixels of a full-viewport screenshot back through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. A screenshot shrunk to fit `maxBytes` (`scale` below 1) holds fewer pixels, so divide by its own `pixelsPerCssPixel` and pass viewport coordinates instead. |
 
-Pass either `selector` or both `x` and `y`. Returns `{ ok: true }`, plus the mapped `dispatched: { x, y }` on the coordinate path. Error modes: `selector-not-found`, `missing-target` when neither form is supplied, and `coord-mapping-failed` when `coordSpace: "image"` is used but the device scale factor could not be read.
+Pass either `selector` or both `x` and `y`. Returns `{ ok: true }`, plus the mapped `dispatched: { x, y }` on the coordinate path. Error modes: `selector-not-found`, `missing-target` when neither form is supplied, and `coord-mapping-failed` when `coordSpace: "image"` is used but the screenshot density could not be read.
 
 ### kangentic_browser_type
 
@@ -1763,7 +1767,7 @@ So the context-preserving route to any resolution is `set_viewport` on the surfa
 Three measured facts make that work, and none is obvious:
 
 - **Zoom multiplies an override.** A page lays out at override divided by zoom, so a 1920px override at zoom 0.4 produced a 4800px layout. The override is therefore pre-scaled by the zoom, which puts the requested number back in `innerWidth`.
-- **The fit would otherwise shrink your screenshots.** At the fit zoom the emulated surface is only 740x416, and a capture of it is unreadable. `deviceScaleFactor` is raised to 1/zoom to compensate, and the capture came back at 1920x1079. As a bonus `devicePixelRatio` is `deviceScaleFactor x zoom`, so it lands back on 1.0 and the page does not believe it is on a hidpi display.
+- **A screenshot is the pane's pixels, whatever the layout.** A fitted 1600x1000 layout in a 740x749 pane comes back 740x463 on a 100% display, and about 1480x926 at 200%. The override is sent at the display's own scale factor, so the page's `devicePixelRatio` is that factor times the zoom, the same as any page zoomed out that far. The first version sent `deviceScaleFactor = 1/zoom` to keep screenshots at the requested resolution, and that is what made every capture come back tiled: a guest capture cannot hold more pixels than its pane (see `kangentic_browser_screenshot`). The "came back at 1920x1079" that justified it checked the image's decoded size and never its pixels. For detail, `kangentic_browser_screenshot_element` captures a region at up to 1:1 even on a fitted page, and `pop_out` gives a real window for 1:1 captures of everything.
 - **`scale` is deliberately never sent.** Chromium's own fit-to-widget scaling is the one configuration where CDP mouse coordinates stop matching `DOM.getBoxModel`: measured at `scale: 0.385`, a click on a box-model centroid landed on `<html>` instead of the target and still reported success. The zoom-based fit above is what replaces it, and a click still lands under it.
 
 Two smaller behaviours worth knowing:
@@ -1783,12 +1787,12 @@ Set the viewport a Browser surface lays out against, and report the one it actua
 | `taskId` | string | No | Target a surface by task. |
 | `width` | number | No | Viewport width in CSS pixels, 128 to 8192. Omit to keep the current width. |
 | `height` | number | No | Viewport height in CSS pixels, 128 to 8192. Omit to keep the current height. |
-| `deviceScaleFactor` | number | No | Device pixel ratio, 0 to 4. Default 0, meaning keep the display's own. 2 quadruples screenshot bytes and will push a wide capture out to a file. |
-| `zoom` | number | No | Page zoom factor, the same one the pane's zoom pill shows. Omitted, a docked pane is zoomed to fit the requested size. Pass 1 for a 1:1 crop instead. |
+| `deviceScaleFactor` | number | No | The `devicePixelRatio` the page sees, 0 to 4, for testing hidpi assets. Default 0, meaning the display's own, scaled by the zoom like any zoomed page. Docked panes only; a window renders at its display's own factor, and the response says the value was ignored. It changes which assets the page loads, not the screenshot size. Leave it out otherwise: a ratio the display does not have is emulated, and a canvas sized from device pixels can draw blank under it. Measured on the web demo, xterm's WebGL terminals went black at `deviceScaleFactor: 1` on a fitted pane and rendered normally at the default. |
+| `zoom` | number | No | Page zoom factor, the same one the pane's zoom pill shows. Omitted, a docked pane is zoomed to fit the requested size. Pass 1 to show the user a 1:1 crop instead. Screenshots are the whole viewport either way. |
 | `position` | string | No | Where to put a DETACHED window on its display: `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left`, `bottom`, `bottom-right`. With `width` and `height` this is a window snap: half the display width plus `left` docks it to the left half. Ignored with an explanation on a docked pane and on a lane. |
 | `reset` | boolean | No | Drop the override, restore the zoom the fit changed, and return the surface to its natural size. Ignores `width` and `height`. |
 
-Returns `{ mechanism, requested, viewport, deviceScaleFactor, zoom, exact, visibleFraction, note }`. `viewport` is **measured from the page** after the change settles, never the request echoed back, and `exact` is false when the two differ: a window loses its frame and the pane's own chrome to the viewport and is capped by the display, a lane can be clamped, and an override composes with whatever zoom is set. `mechanism` names which of the three paths ran (`device-emulation`, `window-resize`, `lane-resize`), chosen from the surface rather than from an argument.
+Returns `{ mechanism, requested, viewport, deviceScaleFactor, zoom, exact, visibleFraction, note }`. `viewport` is **measured from the page** after the change settles, never the request echoed back, and `exact` is false when the two differ: a window loses its frame and the pane's own chrome to the viewport and is capped by the display, a lane can be clamped, and an override composes with whatever zoom is set. `mechanism` names which of the three paths ran (`device-emulation`, `window-resize`, `lane-resize`), chosen from the surface rather than from an argument. `deviceScaleFactor` is likewise measured: the page's own `devicePixelRatio`, never the factor sent to Chromium, which on a fitted pane is the requested ratio divided by the zoom. On a docked pane, `note` also says what size a screenshot of the viewport will come back at when that is below 1:1.
 
 Behavior worth knowing:
 
