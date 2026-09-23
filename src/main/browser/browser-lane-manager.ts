@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { browserPaneRegistry } from './browser-pane-registry';
 import { browserPartitionForTask } from '../../shared/browser-partition';
 import { syncJarFromIdentity } from './jar-seeder';
+import { applyBrowserUserAgent } from './browser-user-agent';
 
 /**
  * Browser LANES: the OFFSCREEN form of a task's one browser surface.
@@ -350,6 +351,11 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
 
   const guest = window.webContents;
   guest.setFrameRate(LANE_FRAME_RATE);
+  // A lane is not a `<webview>`, so the guest hook in `web-contents-created`
+  // never sees it, and it can open before any pane has set this task's jar in
+  // this run. Without its own call it would present the `Electron/` token that
+  // decision 41 removes from the pane.
+  applyBrowserUserAgent(guest);
 
   const record: LaneRecord = {
     laneId,

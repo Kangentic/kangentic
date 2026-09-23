@@ -94,6 +94,7 @@ import {
   type WebviewPopupPolicy,
 } from './window-open-policy';
 import { installWebviewDownloadPolicy } from './browser/webview-download-policy';
+import { applyBrowserUserAgent } from './browser/browser-user-agent';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -476,6 +477,13 @@ app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler(createExternalWindowOpenHandler((url) => shell.openExternal(url)));
     return;
   }
+
+  // Drop the `Electron/` token from the guest's user agent, which some web
+  // application firewalls reject as a bot (decision 41). This runs at guest
+  // construction, before `did-attach` loads the first `src`, so the first
+  // request already carries it. It also sets the guest's Session, which is how
+  // the popups below inherit it.
+  applyBrowserUserAgent(contents);
 
   // Forward the guest's mouse BACK / FORWARD buttons to the host renderer.
   //
