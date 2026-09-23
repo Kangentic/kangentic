@@ -1,8 +1,7 @@
 /**
  * Per-session latch that fires exactly once when an agent first produces
  * "meaningful" PTY output. Used by SessionManager to lift the shimmer
- * overlay in the renderer and to clear the `resuming` flag on resumed
- * sessions.
+ * overlay in the renderer.
  *
  * What counts as meaningful is adapter-specific. Claude matches the
  * cursor-hide escape (`\x1b[?25l` - see ClaudeAdapter.detectFirstOutput), as
