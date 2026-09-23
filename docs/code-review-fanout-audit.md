@@ -797,6 +797,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #715 | 10f +270 | 63KB, 973 lines | 4 (4) | 6 | 0 | 7 | 30 of 6 pack-carrying | 9 / 5 |
 | #713 | 22f +2290 | 285KB, 3870 lines | 2 (1) | 20 | 0 | 7 | 17 of 6 pack-carrying | 19 / 13 |
 | #717 | 14f +859 plus 2 new files | 180KB, 3263 lines | 8 (4) | 6 | 0 | 7 | 11 of 6 pack-carrying | 24 / 18 |
+| #718 | 11f +312 | 72KB, 1010 lines | 7 (4) | 4 | 0 | 6 | 28 of 5 pack-carrying | 13 / 10 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -854,3 +855,16 @@ the same until the skill sizes calls by bytes. Of the 17 reads beyond the pack, 
 outside the changed set (the capture rig, to learn whether it runs the seed without a recordings
 index) and 13 were the conventions finder's, 9 of them re-reads of pack-carried files to check a
 comment against the code around its hunk.
+
+Row eight has a 2050-line file in the hunk tier (`demo-dataset.ts`) and ran 6 finders, because no
+domain auditor's glob matched. Of the 28 reads beyond the pack, 22 were outside the changed set:
+the renderer files behind the new scene's selectors, the UI mock's dictation methods, rule files,
+and the tests around the moved `selectTier`. Of the other 6, one is a second case for a wider
+`HUNK_CONTEXT_LINES`. The correctness finder read `demo/boot.js` for the line that sets the boot
+veil (523), which a changed helper tests for. It sits 14 lines above the 3-line window of the
+hunk that lifts the veil, so a 20-line window would have carried it. The rest are not about
+width. Two finders read the gap in the partial-tier `transcription-service.ts` to learn whether
+an import the diff left in place was still used, and the use sits over 100 lines from either
+window. One read a whole rule file for its contract, one grepped every `click:` step in
+`scenes.ts`, and one re-read `detect-hardware.ts` for an import line the pack's window already
+showed.
