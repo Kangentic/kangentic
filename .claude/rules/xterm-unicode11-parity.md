@@ -7,6 +7,7 @@ paths:
   - "src/main/pty/virtual-screen.ts"
   - "src/devtools/main/inspection-server.ts"
   - "src/devtools/main/composed-width.ts"
+  - "demo/**/*.ts"
 ---
 # Rule: every terminal parser runs the Unicode 11 width table, in lockstep
 
@@ -46,7 +47,8 @@ disagreeing on a width diverge worse than both being wrong together.
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/xterm-unicode11-activation.test.ts` scans `src/**` (including
-  `src/devtools/`) and fails any file whose `new Terminal(` count exceeds its
+  `src/devtools/`) and `demo/**` (the web build's replay emulator, which ships to visitors) and
+  fails any file whose `new Terminal(` count exceeds its
   `activateUnicode11(` count, verifies the helper switches a real terminal to `'11'`, and
   pins the `wcwidthV11` imports of `virtual-screen.ts` and `composed-width.ts` (the
   composed-width stream parser). Runs in CI via `npm run test:unit`.
