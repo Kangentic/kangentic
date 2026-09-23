@@ -7,7 +7,7 @@ import type {
 } from '../../../shared/types';
 import type { ModelDef, ModelEngineKind } from '../models/model-registry';
 import { defaultModelForTier, getModel, modelLanguages } from '../models/model-registry';
-import { selectTier } from '../hardware/detect-hardware';
+import { selectTier } from '../hardware/select-tier';
 import { SHERPA_HYBRID_INFO, SHERPA_ONLINE_INFO, SHERPA_WHISPER_INFO, REMOTE_OPENAI_INFO } from './engine-infos';
 
 /** Config sentinel for an empty model slot (no live preview / no final pass). */

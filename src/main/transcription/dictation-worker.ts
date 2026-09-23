@@ -43,8 +43,8 @@ export interface EnsureEngineRequest {
   models: ResolvedModel[];
   remote?: DictationRemoteEndpoint;
   /** Warm-engine cap for this request's hardware tier - computed main-side
-   *  (detectHardware/selectTier need the `app` module, which this worker
-   *  does not have) and passed through rather than re-derived here. */
+   *  (the profile comes from detectHardware, which needs the `app` module this
+   *  worker does not have) and passed through rather than re-derived here. */
   warmCap: number;
 }
 export interface CreateSessionMessage extends EnsureEngineRequest {
