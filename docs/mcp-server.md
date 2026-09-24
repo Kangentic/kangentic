@@ -1609,7 +1609,9 @@ Type text into the pane. Capability tier: `interact`.
 | `selector` | string | No | CSS selector to focus before typing. Focus is taken by clicking the element's center. |
 | `clearFirst` | boolean | No | Select-all and delete before typing. Requires `selector`, since it runs as part of focusing. |
 
-Returns `{ ok: true }`. Error mode: `selector-not-found`. With no `selector`, the text goes to whatever the page currently has focused.
+Returns `{ ok: true }`. Error modes: `selector-not-found`, and `pane-not-focused` when the pane does not hold keyboard focus. With no `selector`, the text goes to whatever the page currently has focused, which works only while the pane itself holds keyboard focus. Chromium delivers a key to whatever widget holds focus in the window, and between calls that is usually the user's terminal, so every key is checked first and refused rather than sent there. Keys sent before a refusal were delivered.
+
+A newline in `text` presses Enter carrying `\r`, so it submits a form or starts a new line the way a real Enter does, and a `\r\n` pair counts as one newline. That is how `{selector, text: "query\n"}` types and submits in one call.
 
 ### kangentic_browser_keypress
 
@@ -1620,8 +1622,11 @@ Send a key or chord. Single printable characters are typed. Capability tier: `in
 | `sessionId` | string | No | Target a surface by its handle. |
 | `taskId` | string | No | Target a surface by task. |
 | `keys` | string | Yes | Key or chord, e.g. `Enter`, `Escape`, `Tab`, `Ctrl+Shift+P`, `ArrowDown`. |
+| `selector` | string | No | CSS selector of the element to click before pressing, in the same call, so it holds keyboard focus. An `<iframe>` selector works, since the click lands inside the frame. |
 
-Returns `{ ok: true }`. Error mode: `unknown-key` when the combo cannot be parsed.
+Returns `{ ok: true }`. Error modes: `unknown-key` when the combo cannot be parsed, checked before anything touches the page so a bad combo never costs the `selector`'s click; `selector-not-found`; and `pane-not-focused` when the pane does not hold keyboard focus at the moment the key is sent. That refusal is the common case without a `selector`, because the user's focus returns to their terminal between calls and a key sent then would reach the terminal. An agent's Escape there interrupted the agent that sent it. It can also fire with a `selector`, when focus left the pane after the click.
+
+Enter carries `\r`, so it submits a form or starts a textarea line the way a real Enter does; with Ctrl, Alt, or Meta held it carries none, because that is a shortcut. The navigation keys (PageUp, PageDown, Home, End) reach the page without their browser default action.
 
 ### kangentic_browser_drag
 

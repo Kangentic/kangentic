@@ -38,6 +38,7 @@ import {
   setDialogResponse,
   typeText,
 } from '../../browser/cdp/cdp';
+import { parseKeyCombo } from '../../browser/cdp/key-combo';
 import {
   captureScreenshotWithBudget,
   captureElementClip,
@@ -674,7 +675,7 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_type',
     {
-      description: "Type text into the task's Browser pane. With a selector, the element is focused (clicked) first; clearFirst selects-all and deletes before typing.",
+      description: "Type text into the task's Browser pane. With a selector, the element is focused (clicked) first; clearFirst selects-all and deletes before typing. Without a selector the text goes to whatever the page has focused, and the call fails with pane-not-focused unless the pane itself holds keyboard focus. It usually does not, because the user's focus returns to their terminal between calls. Pass a selector.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         text: z.string().describe('Text to type.'),
@@ -712,20 +713,31 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_keypress',
     {
-      description: "Send ONE key or chord to the task's Browser pane. Single printable characters are typed. Named keys: Enter, Escape, Tab, Backspace, Delete, Space, Home, End, PageUp, PageDown, ArrowUp, ArrowDown, ArrowLeft, ArrowRight - anything else named is refused with unknown-key rather than guessed. Modifiers are joined with +, e.g. Ctrl+a or Ctrl+Shift+P. This takes a SINGLE combo, not a sequence: \"ArrowDown ArrowDown\" is not valid, so call it again for each press. The key is DELIVERED to the page, but the browser default action is not performed: PageDown and End reach a page that handles them itself and do NOT scroll the document. Use kangentic_browser_scroll to scroll.",
+      description: "Send ONE key or chord to the task's Browser pane. Single printable characters are typed. Named keys: Enter, Escape, Tab, Backspace, Delete, Space, Home, End, PageUp, PageDown, ArrowUp, ArrowDown, ArrowLeft, ArrowRight - anything else named is refused with unknown-key rather than guessed. Modifiers are joined with +, e.g. Ctrl+a or Ctrl+Shift+P. This takes a SINGLE combo, not a sequence: \"ArrowDown ArrowDown\" is not valid, so call it again for each press. Pass selector to click the element that should receive the key first, in the same call; an <iframe> selector works too, since the click lands inside the frame. Without a selector the call fails with pane-not-focused unless the pane already holds keyboard focus, which it usually does not, because the user's focus returns to their terminal between calls. Enter carries its text, so it submits a form or starts a new line the way a real Enter does. The navigation keys are DELIVERED to the page without the browser default action: PageDown and End reach a page that handles them itself and do NOT scroll the document. Use kangentic_browser_scroll to scroll.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         keys: z.string().describe('One key or chord, e.g. "Enter", "PageDown", "Ctrl+Shift+P". Not a sequence - one press per call.'),
+        selector: z.string().optional().describe('CSS selector of the element to click before pressing, so it holds keyboard focus.'),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, keys }) => {
+    async ({ sessionId, taskId, keys, selector }) => {
+      // Before the drive, so a typo in `keys` never costs the page a click.
+      if (!parseKeyCombo(keys)) {
+        return errorToolResult({ kind: 'unknown-key', detail: `Could not parse key combo: ${keys}.` });
+      }
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
+        if (typeof selector === 'string') {
+          const focused = await clickAtCenterOfSelector(webContents, selector);
+          if (!focused) return { error: 'selector-not-found' as const };
+        }
         const ok = await dispatchKeypress(webContents, keys);
         return ok ? { ok: true } : { error: 'unknown-key' as const };
       });
       if (result.ok && 'error' in result.data) {
-        return errorToolResult({ kind: 'unknown-key', detail: `Could not parse key combo: ${keys}.` });
+        return result.data.error === 'selector-not-found'
+          ? errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` })
+          : errorToolResult({ kind: 'unknown-key', detail: `Could not parse key combo: ${keys}.` });
       }
       return driverToolResult(result);
     },

@@ -30,6 +30,7 @@ import {
   waitForDialogInterception,
 } from '../../src/main/browser/cdp/cdp';
 import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
+import { KeyboardFocusNotInGuestError } from '../../src/main/browser/cdp/keyboard-focus';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { resetGuestDriveQueuesForTests } from '../../src/main/browser/guest-drive-queue';
 import {
@@ -479,6 +480,19 @@ describe('withGuest - resolution and attach', () => {
       throw new Error('boom');
     });
     expect(result).toMatchObject({ ok: false, error: { kind: 'driver-error', detail: 'boom' } });
+  });
+
+  it('reports a key refused for lack of pane focus as pane-not-focused, naming the selector fix', async () => {
+    // Its own kind, not a driver-error: the page did nothing wrong, and the
+    // agent has one specific fix. A driver-error here reads as "the page
+    // broke" and sends the agent looking in the wrong place.
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    seedGuest(7);
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'interact', config: config() }, async () => {
+      throw new KeyboardFocusNotInGuestError();
+    });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'pane-not-focused' } });
+    expect(result.ok ? '' : result.error.detail).toContain('selector');
   });
 });
 
