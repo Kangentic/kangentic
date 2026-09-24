@@ -119,6 +119,7 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
   // Not every GPU failure arrives here: see `gpu-info-update` below.
   app.on('child-process-gone', (_event, details) => {
     if (details.type !== 'GPU' || details.reason === 'clean-exit') return;
+    // breadcrumb-ok: Electron's child-process-gone reason is a fixed enum, not error text
     console.warn(`[gpu] GPU process gone: ${details.reason} (exit code ${details.exitCode})`);
     writeRecord(options.getProjectRoot(), {
       ts: new Date().toISOString(),

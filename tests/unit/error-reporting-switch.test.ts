@@ -424,6 +424,19 @@ describe('error reporting runtime behavior (module-state gated)', () => {
         'FunctionToString',
       ]);
     });
+
+    it('installs the shared breadcrumb policy as beforeBreadcrumb', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      // Imported after the reset, so it is the same module instance
+      // error-reporting.ts just loaded.
+      const { filterBreadcrumb } = await import('../../src/shared/sentry-breadcrumbs');
+      errorReporting.initErrorReporting();
+
+      const options = mocks.sentryMock.init.mock.calls[0][0] as { beforeBreadcrumb: unknown };
+      // Console stays in the integrations above on purpose: the tagged lines it
+      // records are the triage trail, and this hook is what trims the rest.
+      expect(options.beforeBreadcrumb).toBe(filterBreadcrumb);
+    });
   });
 
   /**

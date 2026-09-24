@@ -229,7 +229,12 @@ function gitTimeoutWithin(timeoutMs: number, deadline: number | undefined): numb
   return Math.max(1_000, Math.min(timeoutMs, deadline - Date.now()));
 }
 
-/** Compact holder summary for the removal's warn-level breadcrumb. */
+/**
+ * Compact holder summary for the removal's warn-level log line. The local log
+ * file keeps it. Sentry never does: `[WORKTREE]` is not a breadcrumb tag
+ * (src/shared/sentry-breadcrumbs.ts), because the line carries the worktree
+ * path and each holder's command line.
+ */
 function formatHolderLog(holders: readonly WorktreeHolder[]): string {
   if (holders.length === 0) return ' holders=none';
   const described = holders

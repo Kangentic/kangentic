@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app, BrowserWindow, ipcMain } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import { autoUpdater, type Logger } from 'electron-updater';
 import { IPC } from '../shared/ipc-channels';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { reportHandledError } from './analytics/error-reporting';
@@ -28,6 +28,29 @@ let readOnlyVolumeNoticeSent = false;
 export function manifestPath(): string {
   return path.join(process.resourcesPath, 'app-update.yml');
 }
+
+function tagUpdaterLine(message: unknown): string {
+  // breadcrumb-ok: electron-updater's own text (versions, feed URLs, cache paths), whose paths the policy redacts
+  return `[electron-updater] ${String(message)}`;
+}
+
+/**
+ * electron-updater's own log lines, which carry the Squirrel and package
+ * manager detail behind most updater failures. Its default logger is the bare
+ * console, whose untagged lines the Sentry breadcrumb policy drops
+ * (src/shared/sentry-breadcrumbs.ts), so this tags them `[electron-updater]`,
+ * which the policy keeps. Debug goes to console.debug, which the policy always
+ * drops: a differential download's blockmap lines still reach the terminal but
+ * no longer fill the breadcrumb ring. Each call reads `console` late so it goes
+ * through whatever wrappers are installed by then. Exported for testing.
+ * @internal
+ */
+export const updaterLogger: Logger = {
+  info: (message?: unknown) => console.log(tagUpdaterLine(message)),
+  warn: (message?: unknown) => console.warn(tagUpdaterLine(message)),
+  error: (message?: unknown) => console.error(tagUpdaterLine(message)),
+  debug: (message: string) => console.debug(tagUpdaterLine(message)),
+};
 
 /**
  * True when the auto-updater manifest is present at its expected location.
@@ -397,7 +420,9 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // throw `No handler registered`, fire one telemetry event so we can
   // catch a recurrence in production, and bail before scheduling.
   if (!manifestExists()) {
-    console.warn(`[UPDATER] Skipping init: ${manifestPath()} not found.`);
+    // No path in the line: it is a breadcrumb, and resourcesPath sits under the
+    // user's home directory on a per-user Windows install.
+    console.warn('[UPDATER] Skipping init: app-update.yml not found in the resources directory.');
     registerNoOpUpdaterHandlers();
     trackEvent('app_error', {
       source: 'updater',
@@ -405,6 +430,8 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     });
     return;
   }
+
+  autoUpdater.logger = updaterLogger;
 
   // We control the download -- don't auto-download on check
   autoUpdater.autoDownload = false;
@@ -451,7 +478,9 @@ export function initUpdater(mainWindow: BrowserWindow): void {
 
   // When download completes, notify the renderer
   autoUpdater.on('update-downloaded', (info) => {
-    console.log('[UPDATER] Update downloaded:', info.version);
+    // In the template, not a second argument: the breadcrumb policy drops
+    // every string argument after the first.
+    console.log(`[UPDATER] Update downloaded: ${info.version}`);
     if (updaterWindow && !updaterWindow.isDestroyed()) {
       updaterWindow.webContents.send(IPC.UPDATE_DOWNLOADED, {
         version: info.version,

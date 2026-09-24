@@ -30,8 +30,9 @@ vi.mock('fs', async () => {
   return { ...actual, existsSync: mocks.existsSyncMock };
 });
 
-import { initUpdater } from '../../src/main/updater';
+import { initUpdater, updaterLogger } from '../../src/main/updater';
 import { IPC } from '../../src/shared/ipc-channels';
+import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
 // Only populated on the full-wiring path (packaged + manifest present), where
 // initUpdater assigns this window as `updaterWindow` and later sends the
@@ -119,6 +120,9 @@ describe('initUpdater manifest guard', () => {
 
     expect(mocks.autoUpdaterMock.autoDownload).toBe(false);
     expect(mocks.autoUpdaterMock.autoInstallOnAppQuit).toBe(true);
+    // The tagged logger, so the Sentry breadcrumb policy keeps the library's
+    // own lines (it drops untagged console output).
+    expect((mocks.autoUpdaterMock as { logger?: unknown }).logger).toBe(updaterLogger);
 
     expect(mocks.trackEventMock).not.toHaveBeenCalled();
   });
@@ -151,6 +155,52 @@ describe('initUpdater manifest guard', () => {
     });
   });
 
+  it('keeps the update version in the breadcrumb, because it is inside the template string', () => {
+    // The Sentry breadcrumb policy (filterBreadcrumb) keeps only the first
+    // string argument of a console line and drops every later string
+    // argument. A two-argument console.log('[UPDATER] Update downloaded:',
+    // info.version) would silently lose the version from the breadcrumb, so
+    // the version has to live inside the tagged template string itself.
+    mocks.existsSyncMock.mockReturnValue(true);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      initUpdater(fakeWindow);
+
+      const updateDownloadedCall = mocks.autoUpdaterMock.on.mock.calls.find(
+        (call) => call[0] === 'update-downloaded',
+      );
+      if (!updateDownloadedCall) throw new Error('update-downloaded handler was not registered');
+      const updateDownloadedHandler = updateDownloadedCall[1] as (info: {
+        version: string;
+        releaseNotes: unknown;
+      }) => void;
+
+      updateDownloadedHandler({
+        version: '9.9.9',
+        releaseNotes: [{ version: '9.9.9', note: 'x' }],
+      });
+
+      const updateDownloadedLogCall = logSpy.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].startsWith('[UPDATER] Update downloaded'),
+      );
+      if (!updateDownloadedLogCall) throw new Error('update-downloaded log line was not printed');
+
+      // Rebuild the console breadcrumb the SDK would record from that spied
+      // call, exactly as filterBreadcrumb receives it in production.
+      const breadcrumb = filterBreadcrumb({
+        category: 'console',
+        level: 'log',
+        message: updateDownloadedLogCall.map(String).join(' '),
+        data: { arguments: updateDownloadedLogCall, logger: 'console' },
+      });
+
+      expect(breadcrumb?.message).toContain('9.9.9');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('registers no-op IPC handlers and skips wiring on unpackaged builds', () => {
     mocks.electronMock.app.isPackaged = false;
 
@@ -166,6 +216,35 @@ describe('initUpdater manifest guard', () => {
     expect(mocks.existsSyncMock).not.toHaveBeenCalled();
     expect(mocks.autoUpdaterMock.on).not.toHaveBeenCalled();
     expect(mocks.trackEventMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * electron-updater logs through `autoUpdater.logger`, which defaults to the bare
+ * console. The Sentry breadcrumb policy (src/shared/sentry-breadcrumbs.ts)
+ * keeps `[electron-updater]` lines and always drops debug, so the tag and the
+ * debug routing are what decide whether a line reaches the breadcrumb trail.
+ */
+describe('updaterLogger', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('tags every level and sends debug to console.debug', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    updaterLogger.info('Checking for update');
+    updaterLogger.warn('Cannot find blockmap');
+    updaterLogger.error(new Error('Squirrel failed'));
+    updaterLogger.debug?.('File has 12 changed blocks');
+
+    expect(logSpy).toHaveBeenCalledWith('[electron-updater] Checking for update');
+    expect(warnSpy).toHaveBeenCalledWith('[electron-updater] Cannot find blockmap');
+    expect(errorSpy).toHaveBeenCalledWith('[electron-updater] Error: Squirrel failed');
+    expect(debugSpy).toHaveBeenCalledWith('[electron-updater] File has 12 changed blocks');
   });
 });
 

@@ -51,6 +51,7 @@ export function ensureSpawnHelperPermissions(): void {
       // Check if file lacks any execute permission (owner, group, or other)
       if ((stat.mode & 0o111) === 0) {
         fs.chmodSync(filePath, stat.mode | 0o755);
+        // breadcrumb-ok: node-pty's install path, which the breadcrumb policy redacts
         console.log(`[APP] Fixed spawn-helper permissions: ${filePath}`);
       }
     } catch (error) {
@@ -58,7 +59,10 @@ export function ensureSpawnHelperPermissions(): void {
       // (only one of build/Release or prebuilds will exist). Warn on other errors.
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
-        console.warn(`[APP] spawn-helper permission fix failed for ${filePath}: ${error}`);
+        // The error rides as its own argument, which the breadcrumb policy
+        // reduces to name and code.
+        // breadcrumb-ok: node-pty's install path, which the breadcrumb policy redacts
+        console.warn(`[APP] spawn-helper permission fix failed for ${filePath}:`, error);
       }
     }
   }

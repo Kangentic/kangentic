@@ -207,15 +207,17 @@ in one Sentry org, one triage surface.
   decision, so the two processes can never disagree.
 - **Scrubbing is the SDK's and Sentry's job, not custom code:** the SDK's default
   `normalizePathsIntegration` rewrites stack-frame paths and URLs relative to the app root (the
-  user's home directory never reaches Sentry for app code), `sendDefaultPii` stays `false`, and
-  Sentry's server-side data scrubbing is on by default. Any further scrubbing rule belongs in the
-  Sentry UI (Advanced Data Scrubbing), not in a `beforeSend` here. There are two exceptions, both
-  data minimization at the source rather than scrubbing rules, the same shape as the
-  component-stack reduction above. The utility worker's stderr tail (below) is free text, not a
-  stack frame, and Node's `Require stack:` lines print absolute install paths under the user's
-  profile, so `src/main/utility-process/stderr-tail.ts` replaces the home directory with `~`
-  before the text goes anywhere. A foreign process's crash loses its dump, breadcrumbs and full
-  module name in `beforeSend` (see "Native crashes in processes that are not ours" below).
+  user's home directory never reaches Sentry through an app stack frame; breadcrumbs are a separate
+  path, below), `sendDefaultPii` stays `false`, and Sentry's server-side data scrubbing is on by
+  default. Any further scrubbing rule belongs in the Sentry UI (Advanced Data Scrubbing), not in a
+  `beforeSend` here. There are three exceptions, all data minimization at the source rather than
+  scrubbing rules, the same shape as the component-stack reduction above. The utility worker's
+  stderr tail (below) is free text, not a stack frame, and Node's `Require stack:` lines print
+  absolute install paths under the user's profile, so `src/main/utility-process/stderr-tail.ts`
+  replaces the home directory with `~` before the text goes anywhere. A foreign process's crash
+  loses its dump, breadcrumbs and full module name in `beforeSend` (see "Native crashes in
+  processes that are not ours" below). And every breadcrumb passes a policy before it is recorded
+  (see "Breadcrumbs are filtered at the source" below).
 - **Filtering is a different concern and does live in code,** in `ignoreErrors`. Scrubbing removes
   data from an event we keep; filtering decides a whole class of event is un-actionable and should
   never become an issue. Four classes are filtered:
@@ -313,6 +315,44 @@ in one Sentry org, one triage surface.
   drops an event.
 - **Errors only:** release-health session tracking (the SDK's `MainProcessSession` integration,
   on by default) is filtered out, and tracing and session replay are never enabled.
+- **Breadcrumbs are filtered at the source, in both processes.** Every event carries the trail
+  of what happened before it: up to 100 breadcrumbs from main and 100 from the renderer. Nothing
+  filtered them, and `normalizePathsIntegration` never touches them, so a sample of 23 production
+  events carried home paths, agent command lines, task titles, column prompt text, branch names,
+  project and file paths inside click selectors, and a Browser pane search URL.
+  `filterBreadcrumb` (`src/shared/sentry-breadcrumbs.ts`) is now the `beforeBreadcrumb` in both
+  processes. It has to be both: main adds a forwarded renderer crumb with `scope.addBreadcrumb`,
+  which never calls main's hook. Dropping a crumb before it is added also keeps it out of the ring;
+  on one event, `[agent-push]` debug lines had evicted every click. By category:
+  - `console`: kept only under a tag in `CONSOLE_BREADCRUMB_TAGS` (`[UPDATER]`,
+    `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`, `[APP]`) or
+    Electron's own `Error occurred in handler for '<channel>'`, and never at debug level. A kept
+    line is rebuilt from its arguments: the tagged string with paths redacted, each Error reduced
+    to its name and code, numbers and booleans. Other arguments and raw stacks go, because git and
+    fs error text can hold a branch named after a task. `tests/unit/sentry-breadcrumbs.test.ts`
+    parses every literal that opens with one of those tags and fails an interpolation that names
+    user content (a title, a branch, a path, an error's text) unless the site carries
+    `// breadcrumb-ok: <reason>`. A tag built at runtime (`[${label}]`) is invisible to that scan;
+    none resolves to an allowlisted tag today.
+  - `ui.click` / `ui.input`: the selector stays, but `title`, `aria-label`, `name` and `alt` lose
+    their values (`[title]`), and `type` keeps its value. A crumb with any other quoted value left
+    is dropped.
+  - `electron`: the lifecycle message and the webContents id stay. A URL stays only when it is the
+    app's own `app:///` page, without its query.
+  - Request crumbs (`http`, `electron.net`, `fetch`, `xhr`): method and status stay. The URL stays
+    only under a Kangentic prefix (our GitHub repository and release assets, Aptabase), without its
+    query. Main's fetch also reaches the board adapters and the webhook automation, whose URLs can
+    name an organization or hold a secret.
+  - Node's `child_process`: the message is path-redacted and `spawnfile` keeps only its file name.
+    Electron's `child-process` is kept whole.
+  - Anything else, `sentry.event` and `navigation` included, is dropped, so a category a new SDK
+    version adds stays out until someone decides otherwise.
+
+  The filter fails closed, the opposite of `beforeSendEvent`: a throw drops the crumb. The
+  `[SHUTDOWN] pty-drain:*` lines pass byte-identical. electron-updater's own lines, which carried
+  the Squirrel and package-manager detail on past updater issues, go through a tagged logger in
+  `src/main/updater.ts`, with its debug output kept out. Events uploaded before this change still
+  carry the unfiltered trail.
 - **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so
   all three error boundaries hand the real `Error` to `captureException` explicitly. Two of them
   also keep the existing Aptabase funnel (`ErrorBoundary` as `boundary: 'root'`,
@@ -618,6 +658,10 @@ in one Sentry org, one triage surface.
 - Task titles, descriptions, or any user-generated content
 - File paths, project names, or code (stack-frame paths are normalized to the app root before
   they leave the machine)
+- Console output in Sentry breadcrumbs, except lines under a short list of diagnostic tags, which
+  are rebuilt without error text and with paths redacted. Click breadcrumbs lose their title and
+  label text, and request breadcrumbs lose any URL that is not Kangentic's own (see "Breadcrumbs
+  are filtered at the source" above)
 - Usernames, emails, or any personally identifiable information
 - Task creation, task start, or mid-board task moves (only done-entry is tracked)
 - Per-feature content: `feature_used` says a feature was touched that day, never what it was
