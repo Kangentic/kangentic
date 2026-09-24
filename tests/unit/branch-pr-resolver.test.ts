@@ -1178,6 +1178,11 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['BLOCKED with an empty rollup', 'BLOCKED', '', [], { contexts: REQUIRED }, 'queued'],
     ['BLOCKED with no rollup key', 'BLOCKED', '', undefined, { contexts: REQUIRED }, 'queued'],
     ['BLOCKED with a required status context not reported', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: ['cla', 'ci/legacy'] }, 'queued'],
+    // The join reads BOTH rollup entry shapes: a legacy commit-status context
+    // (`StatusContext`, keyed by `.context`) counts as present exactly like a
+    // `CheckRun` (keyed by `.name`) does. Without the `StatusContext` arm this
+    // required context would read as missing and the row would flip to `queued`.
+    ['BLOCKED with a required status context reported', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla'), statusContext('SUCCESS', 'ci/legacy')], { contexts: ['cla', 'ci/legacy'] }, 'blocked'],
     ['BLOCKED with a required check present but stale', 'BLOCKED', '', [checkRun('COMPLETED', 'STALE', 'cla')], { contexts: ['cla'] }, 'blocked'],
     ['BLOCKED with every required check present and green', 'BLOCKED', '', REQUIRED.map((name) => checkRun('COMPLETED', 'SUCCESS', name)), { contexts: REQUIRED }, 'blocked'],
     ['BLOCKED with a failed check and a required one missing', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE', 'cla')], { contexts: REQUIRED }, 'blocked'],
@@ -1476,6 +1481,22 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ]);
     const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat');
     expect(result).toMatchObject({ number: 3, state: 'open', mergeReadiness: 'blocked' });
+  });
+
+  /**
+   * `resolveForBranch` is how a just-opened PR is FIRST discovered (auto-link,
+   * `link_pr` with no URL), before any `resolveByNumber` call ever happens for
+   * it. `requiredChecksFor` has to gate and fold on this tier exactly as it
+   * does on `resolveByNumber`'s, or the discovery path keeps reading `blocked`
+   * for a required check CI has not created runs for yet, reproducing the
+   * #479 lag specifically on discovery, where `resolveByNumber`'s own coverage
+   * cannot see it.
+   */
+  it('resolveForBranch folds a required check not yet in the rollup into queued', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([claOnly()]);
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    const result = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main');
+    expect(result?.mergeReadiness).toBe('queued');
   });
 
   it('translates GhUnavailableError into the generic PRResolverUnavailableError', async () => {
