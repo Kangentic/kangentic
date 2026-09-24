@@ -422,6 +422,17 @@ describe('scene registry', () => {
       // pinning the attribute would fail on a reformat of WindowFrame.tsx rather than a rename.
       { marker: 'window-frame-', source: 'src/renderer/window-manager/components/WindowFrame.tsx' },
       { marker: 'xterm-helper-textarea', source: 'src/renderer/utils/terminal-clipboard.ts' },
+      // The view-mode header's X, which a task window shows whenever it shows a terminal. boot.js
+      // clicks it to close a window whose hovered terminal kept the key.
+      { marker: 'task-detail-close', source: 'src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx' },
+      // The one window that does not close on Escape, so boot.js skips its frame.
+      { marker: 'command-terminal-window', source: 'src/renderer/components/command-bar/CommandTerminalWindow.tsx' },
+      // The predicate that decides whether a task window's terminal keeps Escape. boot.js reads the
+      // same one, so a change here must be mirrored there.
+      { marker: "matches(':hover')", source: 'src/renderer/utils/terminal-clipboard.ts' },
+      // How a parked or retained window is marked. boot.js skips an inert frame, which has nothing
+      // left to close.
+      { marker: 'inert={isDormant', source: 'src/renderer/window-manager/components/WindowFrame.tsx' },
     ];
     for (const { marker, source } of markers) {
       const rendererSource = fs.readFileSync(path.join(REPO_ROOT, source), 'utf-8');
@@ -430,6 +441,10 @@ describe('scene registry', () => {
     expect(boot).toContain('[data-dismissable-layer]');
     expect(boot).toContain('[data-testid^="window-frame-"]');
     expect(boot).toContain('xterm-helper-textarea');
+    expect(boot).toContain('[data-testid="task-detail-close"]');
+    expect(boot).toContain('[data-testid="command-terminal-window"]');
+    expect(boot).toContain("matches(':hover')");
+    expect(boot).toContain("hasAttribute('inert')");
     expect(boot, 'the escape message is still posted').toContain('kangentic-demo-escape');
   });
 

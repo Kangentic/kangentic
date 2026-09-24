@@ -339,7 +339,9 @@ npm run test:demo
   `focus`, that element is a real region rather than nothing, an empty box, or the whole frame; a
   `driver` scene is refused by name, `scenes.json` is served and matches the registry, the ready
   message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
-  has nothing of its own to close and stays silent when it does, `embed=1` hides the window
+  has nothing of its own to close and stays silent when it does, a task window takes the first
+  Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the
+  bottom panel's terminal, and after a window parks, `embed=1` hides the window
   controls, `theme=` applies, an unknown
   scene shows the error card, a `state=` blob naming only part of a nested config block is
   refused, the console stays clean, and boot makes no request off the serving

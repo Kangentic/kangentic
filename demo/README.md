@@ -138,8 +138,28 @@ a textarea and it is precisely the case that must post.
 
 A window owns the first Escape, as it does on the desktop: on the `task` and `windows-tiled`
 scenes the visitor presses Escape twice, once to close the window and once to close the host's
-dialog. `tests/unit/scene-registry.test.ts` pins each marker `boot.js` looks for against the
-renderer file that stamps it, so a rename fails there rather than quietly changing what the
+dialog. That holds wherever the pointer is. On the desktop a task window's terminal keeps Escape
+for the agent while the pointer is over it, and a card click leaves the pointer exactly there once
+the window opens. Here the terminal replays a recording with no agent to interrupt, so `boot.js`
+does what the desktop does with the pointer outside: the terminal never gets the key, and the
+window closes through its own X.
+
+Three kinds of open frame are no sign the app will act on the key, so none of them is claimed:
+
+- The Command Terminal has no Escape of its own. Its layer hides on the panel-close combo, the
+  toggle, or a backdrop click. On the `command-terminal` scenes the first Escape is posted and the
+  window stays open.
+- Any frame at all, when the key sits in a terminal outside a task window: the bottom panel's, or
+  a Command Terminal's. xterm stops propagation of the Escape it handles, so the document listener
+  a window closes on never sees it. A visitor reaches this by clicking into the panel's terminal,
+  which light dismiss leaves the window open for.
+- A parked or retained window. A task window closed with a live Browser guest stays mounted at
+  zero opacity so the guest survives, and `WindowFrame` marks it `inert`. It has nothing left to
+  close, so on the `browser` scene the second Escape is posted.
+
+`tests/unit/scene-registry.test.ts` pins each marker `boot.js` looks for against the renderer file
+that stamps it, including the hover test it mirrors from `terminal-clipboard.ts` and the `inert`
+mark on a parked or retained window, so a rename fails there rather than quietly changing what the
 site's figures do.
 
 A `DemoState` (also the shape of every registry entry) is:

@@ -519,29 +519,108 @@
    *  - The xterm helper textarea is EXEMPTED from the focused-text-field guard. It is a textarea,
    *    so the pop-out's rule would return on it, and it is precisely the case that must post.
    *
-   * A task window owns the first Escape, as it does on the desktop: on a scene with one open the
+   * A window owns the first Escape, as it does on the desktop: on a scene with one open the
    * visitor presses Escape twice, once to close the window and once to close the host's dialog.
+   * An open window frame is not always a window that will act on the key, though. Each case below
+   * is handled here rather than in the renderer:
+   *
+   *  - A task window's terminal keeps Escape for the agent while the POINTER is over it
+   *    (`releaseEscapeWhenPointerOutside` in `terminal-clipboard.ts`), so the window never sees
+   *    the key. A card click leaves the pointer exactly there once the window opens. Here the
+   *    terminal replays a recording with no agent to interrupt, so the key would do nothing and
+   *    the visitor could not leave. `closeHoveredTerminalWindow` does what the desktop does with
+   *    the pointer outside: the terminal never gets the key, and the window closes through its
+   *    own guarded close.
+   *  - Any OTHER terminal (the bottom panel's, a Command Terminal's) keeps Escape outright. xterm
+   *    stops propagation of every key it handles (`cancel(event, true)` at the end of its
+   *    `_keyDown`), so the document listener a window closes on never sees it. Measured with a
+   *    task window open and the panel's terminal focused, 0 of 3 presses reached `document`. No
+   *    frame is claimed for that key, so it is posted and the window stays open, as on the
+   *    desktop. A visitor gets there by clicking the panel's terminal, which light dismiss
+   *    deliberately does not treat as a click outside the window.
+   *  - A Command Terminal renders through `WindowFrame` too, but its layer hides on the
+   *    panel-close combo, the toggle, or a backdrop click, never on Escape. Its frame is never
+   *    claimed.
+   *  - A task window closed with a live Browser guest is PARKED, and one kept for a backgrounded
+   *    project is RETAINED. Both stay mounted at zero opacity so the guest survives, and
+   *    `WindowFrame` marks them `inert`. Neither has anything left to close, so neither is claimed.
    */
   function isEscapeTheAppOwns(event) {
     var activeElement = document.activeElement;
-    var isHelperTextarea = activeElement && activeElement.classList && activeElement.classList.contains('xterm-helper-textarea');
+    var isHelperTextarea = isTerminalTextarea(activeElement);
     if (!isHelperTextarea && activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) return true;
-    // An open dialog, context menu, or popover owns this Escape.
-    if (document.querySelector('[data-dismissable-layer]')) return true;
-    // A task-detail or Command Terminal window owns it. Both render through `WindowFrame`, which
-    // stamps this id, so one selector covers both layers. NOT the pop-out's "a
-    // [data-window-layer-root] with children" test: in the MAIN window that host always holds the
-    // overlay wrapper, so a child count is 1 with no window open and the guard would swallow
-    // every Escape (measured on the board scene: one child, zero windows).
-    if (document.querySelector('[data-testid^="window-frame-"]')) return true;
+    if (isOverlayOpen()) return true;
+    // A window that closes on Escape owns it: a task-detail or conversation window, both of which
+    // render through `WindowFrame`, which stamps this id. The comment above says why a terminal
+    // outside a task window, an inert frame, and a Command Terminal frame are no sign of that. NOT
+    // the pop-out's "a [data-window-layer-root] with children" test: in the MAIN window that host
+    // always holds the overlay wrapper, so a child count is 1 with no window open and the guard
+    // would swallow every Escape (measured on the board scene: one child, zero windows).
+    var terminalKeepsKey = isHelperTextarea && !taskWindowOf(activeElement);
+    if (!terminalKeepsKey) {
+      var frames = document.querySelectorAll('[data-testid^="window-frame-"]');
+      for (var index = 0; index < frames.length; index++) {
+        if (frames[index].hasAttribute('inert')) continue;
+        if (frames[index].querySelector('[data-testid="command-terminal-window"]')) continue;
+        return true;
+      }
+    }
     // Monaco's find widget, which preventDefaults the keys it handles.
     var target = event.target instanceof HTMLElement ? event.target : null;
     if (target && target.closest('.find-widget')) return true;
     return false;
   }
 
+  /** Whether an element is xterm's helper textarea, where every keystroke into a terminal lands. */
+  function isTerminalTextarea(element) {
+    return !!(element && element.classList && element.classList.contains('xterm-helper-textarea'));
+  }
+
+  /**
+   * Whether an open dialog, context menu, or popover is in the DOM. One owns any Escape before a
+   * window does, so both paths below ask this one question rather than each keeping a copy.
+   */
+  function isOverlayOpen() {
+    return !!document.querySelector('[data-dismissable-layer]');
+  }
+
+  /** The task window frame an element sits in, told apart by its X; null outside one. */
+  function taskWindowOf(element) {
+    var frame = element.closest('[data-testid^="window-frame-"]');
+    return frame && frame.querySelector('[data-testid="task-detail-close"]') ? frame : null;
+  }
+
+  /**
+   * Close the task window whose terminal is focused AND under the pointer, the one case where the
+   * renderer keeps Escape from the window. Returns true when it closed one and consumed the key.
+   *
+   * Every condition is load-bearing. The hover test is the terminal's own (`el.matches(':hover')`
+   * on the element passed to `terminal.open()`, the `.xterm` element's parent), so with the
+   * pointer anywhere else this steps aside and the desktop path closes the window unaided. That
+   * also keeps it clear of `useWindowDrag`'s Esc-cancels-drag, a later capture listener on this
+   * same `window`: during a title-bar drag the terminal is not hovered. An open overlay still owns
+   * the key first. The close is the frame's own X, which calls the same guarded close Escape does.
+   */
+  function closeHoveredTerminalWindow(event) {
+    var activeElement = document.activeElement;
+    if (!isTerminalTextarea(activeElement)) return false;
+    if (isOverlayOpen()) return false;
+    var xtermElement = activeElement.closest('.xterm');
+    var terminalHost = xtermElement && xtermElement.parentElement;
+    if (!terminalHost || !terminalHost.matches(':hover')) return false;
+    var taskWindow = taskWindowOf(activeElement);
+    if (!taskWindow) return false;
+    var closeButton = taskWindow.querySelector('[data-testid="task-detail-close"]');
+    // The replay must not receive the key, exactly as the agent does not with the pointer outside.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeButton.click();
+    return true;
+  }
+
   window.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') return;
+    if (closeHoveredTerminalWindow(event)) return;
     if (isEscapeTheAppOwns(event)) return;
     notifyParent({ type: 'kangentic-demo-escape', scene: sceneName });
   }, true);

@@ -297,7 +297,7 @@ function useTrackHeadBranch(): void {
 
 /** Layer bridges: ensure the window exists, persist the global layout, hide the
  *  layer when the last terminal is Stopped, keep the branch pills honest, and
- *  bind Escape to hide. Mounted inside the layer's portal. */
+ *  bind the panel-close combo to hide. Mounted inside the layer's portal. */
 function CommandBridges({ onHide }: { onHide: () => void }): null {
   useEnsureCommandWindow();
   useCommandWorkspacePersistence();

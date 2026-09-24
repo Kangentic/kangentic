@@ -499,6 +499,103 @@ test('Escape posts nothing while the app owns it, and the app closes its own sur
   expect(hasEscape(await readWindowMessages()), 'a task window owns the first Escape').toBe(false);
 });
 
+test('Escape in a task window terminal under the pointer closes the window, then the next one posts', async ({ page }) => {
+  // The reported case. A task window's terminal keeps Escape for the agent while the pointer is
+  // over it (terminal-clipboard.ts, `releaseEscapeWhenPointerOutside`), and a card click leaves
+  // the pointer exactly there once the window opens. The web build's terminals replay a recording
+  // with no agent to interrupt, so the key did nothing: the window stayed open and nothing posted.
+  const readMessages = await hostFrame(page, 'task');
+  const frame = page.frameLocator('#demo');
+  const detail = frame.locator('[data-testid="task-detail-titlebar"]');
+  await expect(detail).toBeVisible();
+  const terminal = frame.locator('[data-testid^="window-frame-"] .xterm').first();
+  // Page coordinates: `setContent` gives body a margin, so the iframe is not at 0,0.
+  const box = await terminal.boundingBox();
+  expect(box, 'the task window terminal has a box to hover').not.toBeNull();
+  if (!box) return;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // The predicate the terminal itself reads, so a pointer that missed cannot pass this vacuously.
+  await expect.poll(() => terminal.evaluate((element) => element.parentElement?.matches(':hover') ?? false)).toBe(true);
+  await focusAcrossFrame(frame.locator('[data-testid^="window-frame-"] .xterm-helper-textarea').first());
+
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+  expect(hasEscape(await readMessages()), 'the window takes the first Escape').toBe(false);
+
+  // The focused textarea left with its window. A visitor presses again without clicking, so the
+  // second key must still route into the frame. Read that from inside it rather than assume it.
+  await expect.poll(() => frame.locator('html').evaluate(() => document.hasFocus())).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+});
+
+test('Escape in a Command Terminal posts, since the desktop never closes that window on Escape', async ({ page }) => {
+  // A Command Terminal renders through WindowFrame like a task window, but its layer hides on the
+  // panel-close combo, the toggle, or a backdrop click, never on Escape. An open frame alone is
+  // therefore no sign the app will use the key, and without this the frame never posted at all.
+  const readMessages = await hostFrame(page, 'command-terminal');
+  const frame = page.frameLocator('#demo');
+  const commandWindow = frame.locator('[data-testid="command-terminal-window"]');
+  await expect(commandWindow).toBeVisible();
+  await focusAcrossFrame(commandWindow.locator('.xterm-helper-textarea').first());
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+  await expect(commandWindow, 'the app keeps the window open, as the desktop does').toBeVisible();
+});
+
+test('Escape in a Command Terminal still posts when a header control holds focus, not the terminal', async ({ page }) => {
+  // The test above focuses the terminal's own textarea. For that focus, `terminalKeepsKey` in
+  // isEscapeTheAppOwns skips the frame loop, so the Command Terminal frame skip never runs there.
+  // A control in the window's chrome sends the key through the frame loop, which must pass over
+  // this frame as it does an inert one. The maximize button opens no menu or dialog, and unlike
+  // the tiled-only pop-out button it renders in every window state.
+  const readMessages = await hostFrame(page, 'command-terminal');
+  const frame = page.frameLocator('#demo');
+  const commandWindow = frame.locator('[data-testid="command-terminal-window"]');
+  await expect(commandWindow).toBeVisible();
+  // Pin the isolation the way the rung-1 and rung-3 tests do, so this can only be decided by the
+  // frame loop.
+  await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
+  await focusAcrossFrame(commandWindow.locator('[data-testid="command-bar-maximize"]'));
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+  await expect(commandWindow, 'the app keeps the window open, as the desktop does').toBeVisible();
+});
+
+test('Escape in the bottom panel terminal posts even with a task window open', async ({ page }) => {
+  // xterm stops propagation of every key it handles, so an Escape in a terminal outside the task
+  // window never reaches the document listener the window closes on. A visitor gets here by
+  // clicking into the panel's terminal, which light dismiss deliberately leaves the window open
+  // for. The open window alone used to read as "the app owns this", so nothing ever posted.
+  const readMessages = await hostFrame(page, 'task');
+  const frame = page.frameLocator('#demo');
+  const detail = frame.locator('[data-testid="task-detail-titlebar"]');
+  await expect(detail).toBeVisible();
+  await focusAcrossFrame(frame.locator('[data-testid="terminal-session-pane"] .xterm-helper-textarea').first());
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+  await expect(detail, 'the app keeps the window open, as the desktop does').toBeVisible();
+});
+
+test('a parked task window does not hold Escape once it is closed', async ({ page }) => {
+  // Closing a task window whose Browser pane has a live guest PARKS it: the frame stays mounted,
+  // invisible and inert, so the guest survives a reopen. A parked frame has nothing left to close,
+  // so the next Escape must reach the host rather than being held by a window nobody can see.
+  const readMessages = await hostFrame(page, 'browser');
+  const frame = page.frameLocator('#demo');
+  const windowFrame = frame.locator('[data-testid^="window-frame-"]').first();
+  await expect(windowFrame).toBeVisible();
+  await focusAcrossFrame(windowFrame.locator('.xterm-helper-textarea').first());
+  await page.keyboard.press('Escape');
+  // Parked, not unmounted: without this the case would pass on a window that simply went away.
+  await expect(windowFrame).toHaveAttribute('inert', '');
+  expect(hasEscape(await readMessages()), 'the window takes the first Escape').toBe(false);
+
+  await expect.poll(() => frame.locator('html').evaluate(() => document.hasFocus())).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+});
+
 test('embed=1 hides the OS window controls; without it they render', async ({ page }) => {
   await gotoScene(page, { view: 'board', embed: '1', still: '1' });
   await expect(page.locator('[data-testid="window-controls"]')).toBeHidden();
