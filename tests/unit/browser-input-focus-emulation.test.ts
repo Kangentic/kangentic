@@ -198,11 +198,11 @@ describe('input payloads', () => {
     detachDebugger(guest);
   });
 
-  it('typeText sends a full keyDown/char/keyUp triple per character', async () => {
-    // A bare `char` inserts the text and fires no `keydown`, so any page doing
-    // its work in a keydown handler (React key filtering, search-as-you-type,
-    // per-keystroke validation, editor hotkeys) sees nothing happen. That reads
-    // as "the agent typed and the app ignored it".
+  it('typeText sends a keyDown CARRYING the text, then a keyUp, per character', async () => {
+    // The keyDown fires the page's keydown handlers (React key filtering,
+    // search-as-you-type, per-keystroke validation, editor hotkeys) and inserts
+    // the text only if none of them cancelled it, which is how a real keyboard
+    // behaves.
     const { guest, sent } = fakeGuest();
     attachDebugger(guest);
     sent.length = 0;
@@ -210,34 +210,63 @@ describe('input payloads', () => {
     await typeText(guest, 'a1');
 
     expect(sent.map((entry) => entry.params)).toEqual([
-      { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 },
-      { type: 'char', text: 'a' },
+      { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, text: 'a', unmodifiedText: 'a' },
       { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 },
-      { type: 'keyDown', key: '1', code: 'Digit1', windowsVirtualKeyCode: 49 },
-      { type: 'char', text: '1' },
+      { type: 'keyDown', key: '1', code: 'Digit1', windowsVirtualKeyCode: 49, text: '1', unmodifiedText: '1' },
       { type: 'keyUp', key: '1', code: 'Digit1', windowsVirtualKeyCode: 49 },
     ]);
     expect(sent.every((entry) => entry.method === 'Input.dispatchKeyEvent')).toBe(true);
     detachDebugger(guest);
   });
 
-  it('carries text on the char event ONLY, so nothing is typed twice', () => {
-    // In CDP a keyDown with a non-empty `text` performs the insertion by itself
-    // (that is how Puppeteer types), so carrying `text` on both the keyDown and
-    // the char would insert every character twice. The roles are split
-    // deliberately: keyDown fires handlers, char inserts - which keeps the
-    // insertion path the one that already worked and makes this change
-    // incapable of regressing typing.
+  it('never sends a separate char event, which typed every character twice in xterm', async () => {
+    // The text used to ride a separate `char` after a text-free keyDown.
+    // Measured against a live guest (task #720): xterm.js received every
+    // character twice, a field whose keydown handler cancelled letters received
+    // them anyway, `"query\n"` submitted no form, and `"a\nb"` reached a
+    // textarea as `ab`. Putting the text on the keyDown fixed all four.
     const { guest, sent } = fakeGuest();
     attachDebugger(guest);
     sent.length = 0;
 
-    return typeText(guest, 'ab').then(() => {
-      const withText = sent.filter((entry) => (entry.params as { text?: string }).text !== undefined);
-      expect(withText).toHaveLength(2);
-      expect(withText.every((entry) => (entry.params as { type: string }).type === 'char')).toBe(true);
-      detachDebugger(guest);
-    });
+    await typeText(guest, 'ab\n');
+
+    expect(sent.some((entry) => (entry.params as { type: string }).type === 'char')).toBe(false);
+    detachDebugger(guest);
+  });
+
+  it('typeText sends a newline as Enter carrying \\r, which is what submits a form', async () => {
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await typeText(guest, '\n');
+
+    expect(sent.map((entry) => entry.params)).toEqual([
+      { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' },
+      { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+    ]);
+    detachDebugger(guest);
+  });
+
+  it('typeText normalizes a CRLF line ending to ONE Enter, not two', async () => {
+    // \r\n is a single newline, and the loop must press Enter once for it. A
+    // CRLF line that pressed Enter twice submitted a form twice.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await typeText(guest, 'a\r\nb');
+
+    expect(sent.map((entry) => entry.params)).toEqual([
+      { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, text: 'a', unmodifiedText: 'a' },
+      { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 },
+      { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' },
+      { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+      { type: 'keyDown', key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66, text: 'b', unmodifiedText: 'b' },
+      { type: 'keyUp', key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66 },
+    ]);
+    detachDebugger(guest);
   });
 
   it('typeText still carries a plausible key for a symbol it has no code for', async () => {
@@ -249,9 +278,9 @@ describe('input payloads', () => {
 
     await typeText(guest, '!');
 
-    expect(sent[0].params).toMatchObject({ type: 'keyDown', key: '!' });
+    expect(sent[0].params).toMatchObject({ type: 'keyDown', key: '!', text: '!' });
     expect(sent[0].params).not.toHaveProperty('code');
-    expect(sent[1].params).toMatchObject({ type: 'char', text: '!' });
+    expect(sent[1].params).toMatchObject({ type: 'keyUp', key: '!' });
     detachDebugger(guest);
   });
 
@@ -265,6 +294,7 @@ describe('input payloads', () => {
     expect(ok).toBe(true);
     // Ctrl = 2, Shift = 8.
     expect(sent[0].params).toMatchObject({ type: 'keyDown', key: 'Enter', code: 'Enter', modifiers: 10 });
+    expect(sent[0].params).not.toHaveProperty('text');
     expect(sent[1].params).toMatchObject({ type: 'keyUp', key: 'Enter', code: 'Enter', modifiers: 10 });
     detachDebugger(guest);
   });
@@ -460,9 +490,49 @@ describe('input payloads', () => {
 
     expect(ok).toBe(true);
     expect(sent.map((entry) => entry.params)).toEqual([
-      { type: 'keyDown', key: 'A', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 8 },
-      { type: 'char', text: 'A' },
+      { type: 'keyDown', key: 'A', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 8, text: 'A', unmodifiedText: 'A' },
       { type: 'keyUp', key: 'A', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 8 },
+    ]);
+    detachDebugger(guest);
+  });
+
+  it('dispatchKeypress Enter carries \\r so it submits a form, but a Ctrl+Enter shortcut carries none', async () => {
+    // Without text, Enter reached a form's input and submitted nothing
+    // (measured, task #720). Any modifier other than Shift makes it a shortcut,
+    // which types nothing on a real keyboard either.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await dispatchKeypress(guest, 'Enter');
+    await dispatchKeypress(guest, 'Ctrl+Enter');
+
+    expect(sent[0].params).toMatchObject({ type: 'keyDown', key: 'Enter', text: '\r', unmodifiedText: '\r' });
+    expect(sent[1].params).toMatchObject({ type: 'keyUp', key: 'Enter' });
+    expect(sent[1].params).not.toHaveProperty('text');
+    expect(sent[2].params).toMatchObject({ type: 'keyDown', key: 'Enter', modifiers: 2 });
+    expect(sent[2].params).not.toHaveProperty('text');
+    detachDebugger(guest);
+  });
+
+  it('dispatchKeypress SHIFT+Enter still carries \\r, since Shift is the one modifier that keeps Enter as text', async () => {
+    // Shift+Enter is the soft-newline chord in many editors, not a shortcut,
+    // so it must carry the same \r a bare Enter does (the case above). Any
+    // OTHER modifier turns Enter into a shortcut with no text, which the
+    // Ctrl+Enter case above already pins. The rule (see `producesText` in
+    // cdp.ts) is: a special key that produces text keeps that text only when
+    // no modifier OTHER than Shift is held.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const dispatchedOk = await dispatchKeypress(guest, 'Shift+Enter');
+
+    expect(dispatchedOk).toBe(true);
+    // Shift = 8.
+    expect(sent.map((entry) => entry.params)).toEqual([
+      { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, modifiers: 8, text: '\r', unmodifiedText: '\r' },
+      { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, modifiers: 8 },
     ]);
     detachDebugger(guest);
   });
@@ -476,7 +546,7 @@ describe('input payloads', () => {
 
     await dispatchKeypress(guest, 'Ctrl+a');
 
-    expect(sent.some((entry) => (entry.params as { type: string }).type === 'char')).toBe(false);
+    expect(sent.some((entry) => (entry.params as { text?: string }).text !== undefined)).toBe(false);
     expect(sent.map((entry) => (entry.params as { type: string }).type)).toEqual(['keyDown', 'keyUp']);
     detachDebugger(guest);
   });
@@ -512,7 +582,7 @@ describe('input payloads', () => {
 
     await dispatchKeypress(guest, 'Shift+1');
 
-    expect(sent.some((entry) => (entry.params as { type: string }).type === 'char')).toBe(false);
+    expect(sent.some((entry) => (entry.params as { text?: string }).text !== undefined)).toBe(false);
     detachDebugger(guest);
   });
 
@@ -539,7 +609,7 @@ describe('input payloads', () => {
       sent.length = 0;
       const ok = await dispatchKeypress(guest, combo);
       expect(ok, `${combo} must be a known key`).toBe(true);
-      // A keyDown/keyUp PAIR with no `char`: these are commands, not typing.
+      // A keyDown/keyUp PAIR with no text: these are commands, not typing.
       expect(sent.map((entry) => entry.params)).toEqual([
         { type: 'keyDown', key, code: key, windowsVirtualKeyCode: vk, modifiers: 0 },
         { type: 'keyUp', key, code: key, windowsVirtualKeyCode: vk, modifiers: 0 },
@@ -573,6 +643,27 @@ describe('input payloads', () => {
 
     expect(ok).toBe(false);
     expect(sent).toEqual([]);
+    detachDebugger(guest);
+  });
+
+  it('dispatchKeypress refuses a combo whose key or modifier is an inherited Object.prototype property', async () => {
+    // `SPECIAL_KEY_MAP` and `MODIFIER_FLAGS` are plain objects, so a bare
+    // lookup resolves `SPECIAL_KEY_MAP['constructor']` to the inherited
+    // Object function and accepts `MODIFIER_FLAGS['toString']` as a known
+    // no-op modifier, sending a keyDown with undefined key/code instead of
+    // refusing. The own-property checks in `parseKeyCombo` must reject both.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const constructorAsTargetRefused = await dispatchKeypress(guest, 'constructor');
+    expect(constructorAsTargetRefused).toBe(false);
+    expect(sent).toEqual([]);
+
+    const toStringAsModifierRefused = await dispatchKeypress(guest, 'toString+a');
+    expect(toStringAsModifierRefused).toBe(false);
+    expect(sent).toEqual([]);
+
     detachDebugger(guest);
   });
 });

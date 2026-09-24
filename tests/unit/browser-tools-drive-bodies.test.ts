@@ -72,15 +72,19 @@ const getOuterHtml = vi.fn();
 const scrollBy = vi.fn();
 const selectOptionOnSelector = vi.fn();
 // dispatchMouseEvent and getLayoutMetrics drive the click body's image-space
-// coordinate mapping tested below; every other CDP call in this file stays
-// an untracked inline stub.
+// coordinate mapping tested below.
 const dispatchMouseEvent = vi.fn();
 const getLayoutMetrics = vi.fn();
+// clickAtCenterOfSelector and dispatchKeypress drive the keypress body's
+// click-then-press path tested below. Every other CDP call in this file stays
+// an untracked inline stub.
+const clickAtCenterOfSelector = vi.fn();
+const dispatchKeypress = vi.fn();
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
-  clickAtCenterOfSelector: vi.fn(),
+  clickAtCenterOfSelector: (...args: unknown[]) => clickAtCenterOfSelector(...args),
   dispatchMouseEvent: (...args: unknown[]) => dispatchMouseEvent(...args),
   dispatchKeyEvent: vi.fn(),
-  dispatchKeypress: vi.fn(),
+  dispatchKeypress: (...args: unknown[]) => dispatchKeypress(...args),
   dragFromTo: vi.fn(),
   dropFilesOnSelector: vi.fn(),
   getDialogEntries: vi.fn(() => []),
@@ -223,6 +227,8 @@ async function connect() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clickAtCenterOfSelector.mockReset();
+  dispatchKeypress.mockReset();
   vi.mocked(withGuest).mockImplementation(async (_options, fn) => ({ ok: true, data: await fn(fakeGuest, fakeEntry) }));
 });
 
@@ -498,6 +504,74 @@ describe('kangentic_browser_click: image-space coordinate mapping', () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ error: { kind: 'coord-mapping-failed' } });
     expect(dispatchMouseEvent).not.toHaveBeenCalled();
+    await close();
+  });
+});
+
+describe('kangentic_browser_keypress: an optional selector clicks first, in the same call', () => {
+  // A key goes to whatever holds keyboard focus, and between an agent's calls
+  // that is usually the user's terminal (task #720). The only configuration
+  // that measured clean is the click and the key inside ONE call, which is what
+  // the selector buys. The refusal of an unfocused key lives in `cdp.ts` and is
+  // pinned in `browser-keyboard-focus.test.ts`.
+
+  it('clicks the selector, THEN presses the key', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(true);
+    dispatchKeypress.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_keypress',
+      arguments: { keys: 'Escape', selector: '#demo-frame' },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(clickAtCenterOfSelector).toHaveBeenCalledWith(fakeGuest, '#demo-frame');
+    expect(dispatchKeypress).toHaveBeenCalledWith(fakeGuest, 'Escape');
+    expect(clickAtCenterOfSelector.mock.invocationCallOrder[0])
+      .toBeLessThan(dispatchKeypress.mock.invocationCallOrder[0]);
+    await close();
+  });
+
+  it('presses nothing when the selector matches nothing', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(false);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_keypress',
+      arguments: { keys: 'Escape', selector: '#missing' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('selector-not-found');
+    expect(dispatchKeypress).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('refuses an unparseable combo BEFORE clicking, so a typo in keys costs the page nothing', async () => {
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_keypress',
+      arguments: { keys: 'Hyper+Enter', selector: '#demo-frame' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain('unknown-key');
+    expect(clickAtCenterOfSelector).not.toHaveBeenCalled();
+    expect(withGuest).not.toHaveBeenCalled();
+    await close();
+  });
+
+  it('clicks nothing without a selector', async () => {
+    dispatchKeypress.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_keypress', arguments: { keys: 'Enter' } });
+
+    expect(result.isError).toBeFalsy();
+    expect(clickAtCenterOfSelector).not.toHaveBeenCalled();
+    expect(dispatchKeypress).toHaveBeenCalledWith(fakeGuest, 'Enter');
     await close();
   });
 });

@@ -66,10 +66,26 @@ reveals what that one cannot avoid.
     Kangentic's OWN window (`src/devtools/install.ts`), where a permanently-focused page changes
     `document.hasFocus()` under the app itself.
 
-  The consequence is a KNOWN LIMITATION rather than a bug to fix: `kangentic_browser_type` and
-  `_keypress` WITHOUT a selector only land when the pane already holds focus. The selector forms
-  work because the click and the characters happen inside ONE call, which is the only configuration
+  The consequence: `kangentic_browser_type` and `_keypress` WITHOUT a selector work only while the
+  pane already holds focus, and are REFUSED otherwise (next bullet). The selector forms work
+  because the click and the characters happen inside ONE call, which is the only configuration
   that measured clean. It is recorded in `docs/embedded-browser.md`.
+- **A key the pane would not receive is REFUSED, never sent.** Chromium delivers a CDP key to
+  whatever widget holds focus in the window, not to the guest it was sent to. So between calls,
+  with focus handed back to the user's terminal, a selector-less key goes to that TERMINAL. It is
+  not dropped. An agent's `keypress Escape` interrupted the agent that sent it (task #720).
+  Measured with a standalone probe on Electron 41: the agent's keys arrived at the stand-in terminal
+  as trusted keydowns, and the guest's `before-input-event` fired zero times. That interception path
+  is not involved, and a cross-site iframe changes nothing.
+
+  `dispatchKeyEvent` (`src/main/browser/cdp/cdp.ts`) checks `keyboardFocusIsInHost`
+  (`cdp/keyboard-focus.ts`) before EVERY key event and throws `KeyboardFocusNotInGuestError`
+  instead of sending. `withGuest` reports that as `pane-not-focused`. The check reads
+  `hostWebContents.focusedFrame`, and it runs in the same turn as `sendCommand`, so focus cannot move
+  in between. Keep it at that chokepoint and synchronous. Do not replace it with a renderer probe,
+  which crosses a process boundary. Do not use `guest.isFocused()` or `getFocusedWebContents()`
+  either: the probe showed neither tells the cases apart. The check only READS focus, so it is not
+  a return of the focus acquisition above.
 - **The focus move is SHOWN, not hidden, and it is shown ON THE PAGE.** This is the design, and it
   is what the three failed attempts above were replaced with. While a burst is open the pane takes
   a veil, an accent border, and a static "Agent is driving" label in its bottom-left corner.
@@ -296,7 +312,7 @@ reveals what that one cannot avoid.
 - **The restore happens only AFTER the drive ends, never during it.** The steal does surface as a
   trusted `focusout` on the victim, so an early fire is tempting and was the original design.
   Measured: restoring mid-drive breaks the running tool - `kangentic_browser_type` is a click
-  followed by char events, and the same call produced an EMPTY input after a restore and the full
+  followed by `Input.dispatchKeyEvent` key events, and the same call produced an EMPTY input after a restore and the full
   text without one. Do not reintroduce a `focusout` trigger.
 - **"Focus was already inside the pane" does not cover a text input inside the pane.**
   `shouldArmFocusGuard` skips arming when the user was already working in the pane, because a focus
@@ -431,6 +447,22 @@ reveals what that one cannot avoid.
   `cdp.ts` through a spying fake debugger and pins that `attachDebugger` alone does NOT enable focus
   emulation (the dev-bridge guard), that `ensureFocusEmulation` sends once per session and re-arms
   after a detach, and the exact mouse/key payloads.
+- **Test (unfocused keys):** `tests/unit/browser-keyboard-focus.test.ts` pins `keyboardFocusIsInHost`
+  over host, host-subframe, guest, cross-site-iframe and null focused frames, and fails closed when
+  the frame cannot be read. It then drives the REAL `cdp.ts` through three refusal cases: an Escape
+  with focus in the host sends nothing and throws, a `type` stops at the event where focus leaves
+  the pane, and a bare `dispatchKeyEvent` Backspace is refused. Verified red-green: removing the
+  check from `dispatchKeyEvent` fails all three. A sibling case pins that a click is still sent,
+  since mouse input is hit-tested and is how the pane gets focus. `browser-pane-driver.test.ts` pins the `pane-not-focused` kind, and
+  `browser-tools-drive-bodies.test.ts` pins `keypress`'s click-then-press order. Whether
+  `focusedFrame` still tracks routing is Chromium behavior no unit tier can see, so
+  `tests/e2e/browser-agent-key-focus.spec.ts` drives the real tools against a live guest on CI's
+  Linux: a selector-less key with the terminal focused is refused and reaches neither the host
+  document nor the page, and a selector delivers it to the page. Verified red-green: with the
+  check removed, the agent's key reached the host document. The spec waits for the terminal's
+  replay veil to lift before driving, because an arriving terminal's focus can otherwise land
+  between the click and the first key and turn a valid call into a refusal. **Re-run the probe on
+  an Electron upgrade** anyway, as with gap 2 below, since CI covers Linux and not macOS.
 - **Test (text targets):** `tests/unit/text-target.test.ts` pins the pure half of the
   controlled-input mechanism: which element is eligible (allow-by-default, so enabled and
   text-shaped, never `password`, never xterm's helper textarea, and an explicit `data-no-text-target`

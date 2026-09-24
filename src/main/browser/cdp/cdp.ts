@@ -1,5 +1,7 @@
 import type { WebContents } from 'electron';
 import type { QueryAllResult } from './types';
+import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
+import { MODIFIER_FLAGS, parseKeyCombo } from './key-combo';
 
 /**
  * Wraps `webContents.debugger.attach('1.3')` and exposes typed helpers
@@ -1394,45 +1396,71 @@ export async function dropFilesOnSelector(
 export interface KeyEventOptions {
   type: 'keyDown' | 'keyUp' | 'char' | 'rawKeyDown';
   text?: string;
+  unmodifiedText?: string;
   key?: string;
   code?: string;
   windowsVirtualKeyCode?: number;
   modifiers?: number;
 }
 
+/**
+ * Send one key event, or throw `KeyboardFocusNotInGuestError` without sending
+ * it when keyboard focus is in the guest's host.
+ *
+ * Every key the driver sends passes through here (`typeText`,
+ * `dispatchKeypress`, and the tools' own Backspace), so this is the one place
+ * that stops an agent's key landing in the user's terminal. The check and the
+ * `sendCommand` call run in the same turn with no `await` between them, so
+ * focus cannot move between the answer and the hand-off. Each
+ * event is checked, not just the first, so a user who clicks into their
+ * terminal partway through a `type` stops the rest of the text rather than
+ * receiving it. See `keyboard-focus.ts`.
+ */
 export async function dispatchKeyEvent(
   webContents: WebContents,
   options: KeyEventOptions,
 ): Promise<void> {
+  if (keyboardFocusIsInHost(webContents)) throw new KeyboardFocusNotInGuestError();
   await webContents.debugger.sendCommand('Input.dispatchKeyEvent', options);
 }
 
 /**
  * Type a string, one character at a time, as a real keyboard would.
  *
- * Each character sends `keyDown` / `char` / `keyUp` rather than a bare `char`.
- * The bare `char` alone delivers the text and nothing else, so a page that does
- * ANY of its work in a `keydown` handler never reacts: React inputs that filter
- * or transform keys, search-as-you-type boxes, form libraries that validate per
- * keystroke, and editors with hotkeys. Those pages took the text into the DOM
- * and then behaved as though nothing had been typed, which reads as "the agent
- * typed but the app ignored it".
+ * Each character is a `keyDown` CARRYING its text, then a `keyUp`, which is how
+ * Chromium's own keyboard and Puppeteer deliver a keystroke. The keyDown fires
+ * the page's `keydown` handlers first, so React inputs that filter keys,
+ * search-as-you-type boxes, per-keystroke validation and editor hotkeys all
+ * react, and it inserts the text only if no handler called `preventDefault`.
  *
- * ONLY THE `char` CARRIES `text`, deliberately. In CDP a `keyDown` with a
- * non-empty `text` performs the insertion by itself (it is how Puppeteer types),
- * so carrying `text` on both would insert every character TWICE. Splitting the
- * roles - `keyDown` to fire handlers, `char` to insert - keeps the insertion
- * path exactly the one that has always worked here and adds the missing events
- * around it, so this cannot regress typing that works today.
+ * DO NOT SPLIT THE TEXT ONTO A SEPARATE `char` EVENT. It was split once, as
+ * keyDown (no text) / char (the text) / keyUp, on the reasoning that a keyDown
+ * with text inserts by itself. Measured on Electron 41 against a live guest
+ * (task #720), the split broke three things:
+ *  - the `char` inserted even after a keydown handler cancelled the key, so a
+ *    field that filters keys received them anyway;
+ *  - a page that handles printable keys on keydown got every character TWICE.
+ *    xterm.js does, which covers Kangentic's own terminal;
+ *  - a newline lost its Enter: `"query\n"` submitted no form, and `"a\nb"`
+ *    reached a textarea as `ab`.
+ * Plain inputs, `input` events, contenteditable and non-ASCII text behaved the
+ * same under both encodings.
  *
- * Special keys (Enter, Tab, arrows) still go through `dispatchKeypress`, which
- * owns the virtual-key-code mapping.
+ * A newline is Enter carrying `\r`, the text a real Enter produces. A `\r\n`
+ * pair is one newline, so a CRLF line ending presses Enter once and submits a
+ * form once. Other special keys (Tab, arrows) go through `dispatchKeypress`,
+ * which owns the virtual-key-code mapping.
  */
 export async function typeText(webContents: WebContents, text: string): Promise<void> {
-  for (const character of text) {
+  for (const character of text.replace(/\r\n/g, '\n')) {
     const keyIdentity = printableKeyIdentity(character);
-    await dispatchKeyEvent(webContents, { type: 'keyDown', ...keyIdentity });
-    await dispatchKeyEvent(webContents, { type: 'char', text: character });
+    const insertedText = character === '\n' ? '\r' : character;
+    await dispatchKeyEvent(webContents, {
+      type: 'keyDown',
+      ...keyIdentity,
+      text: insertedText,
+      unmodifiedText: insertedText,
+    });
     await dispatchKeyEvent(webContents, { type: 'keyUp', ...keyIdentity });
   }
 }
@@ -1467,38 +1495,6 @@ function printableKeyIdentity(character: string): {
   return { key: character, windowsVirtualKeyCode: upper.charCodeAt(0) };
 }
 
-const SPECIAL_KEY_MAP: Record<string, { code: string; key: string; vk: number }> = {
-  Enter: { code: 'Enter', key: 'Enter', vk: 13 },
-  Escape: { code: 'Escape', key: 'Escape', vk: 27 },
-  Tab: { code: 'Tab', key: 'Tab', vk: 9 },
-  Backspace: { code: 'Backspace', key: 'Backspace', vk: 8 },
-  ArrowUp: { code: 'ArrowUp', key: 'ArrowUp', vk: 38 },
-  ArrowDown: { code: 'ArrowDown', key: 'ArrowDown', vk: 40 },
-  ArrowLeft: { code: 'ArrowLeft', key: 'ArrowLeft', vk: 37 },
-  ArrowRight: { code: 'ArrowRight', key: 'ArrowRight', vk: 39 },
-  Space: { code: 'Space', key: ' ', vk: 32 },
-  // The page-navigation keys, added after a live agent run hit `unknown-key`
-  // on all of them. They DELIVER the key to the page; they do not perform the
-  // browser's default action. Measured against a live guest: two PageDowns on
-  // a focused document left `scrollY` at 0, and only `scrollBy`'s wheel event
-  // moved it. So these serve a page that handles the keys ITSELF - a grid, a
-  // slide deck, a listbox - and `scrollBy` is what scrolls. Delete rides along
-  // because a form test needs it and its absence was the same oversight.
-  PageUp: { code: 'PageUp', key: 'PageUp', vk: 33 },
-  PageDown: { code: 'PageDown', key: 'PageDown', vk: 34 },
-  End: { code: 'End', key: 'End', vk: 35 },
-  Home: { code: 'Home', key: 'Home', vk: 36 },
-  Delete: { code: 'Delete', key: 'Delete', vk: 46 },
-};
-
-const MODIFIER_FLAGS: Record<string, number> = {
-  Alt: 1,
-  Ctrl: 2,
-  Meta: 4,
-  Shift: 8,
-  Cmd: 4, // alias for Meta
-};
-
 /**
  * Parse a chord like `Ctrl+Shift+P` and dispatch the keyDown / keyUp
  * pair. Single-character segments fall through to `typeText` so
@@ -1508,26 +1504,25 @@ export async function dispatchKeypress(
   webContents: WebContents,
   combo: string,
 ): Promise<boolean> {
-  const parts = combo.split('+').map((part) => part.trim());
-  if (parts.length === 0) return false;
-  const target = parts[parts.length - 1];
-  const modifiers = parts.slice(0, -1);
+  const parsed = parseKeyCombo(combo);
+  if (!parsed) return false;
+  const { target, modifierFlags, special } = parsed;
 
-  let modifierFlags = 0;
-  for (const modifier of modifiers) {
-    const flag = MODIFIER_FLAGS[modifier];
-    if (flag === undefined) return false;
-    modifierFlags |= flag;
-  }
-
-  const special = SPECIAL_KEY_MAP[target];
   if (special) {
+    // A key that produces text carries it on the keyDown, exactly as `typeText`
+    // does, so Enter submits a form and starts a textarea line the way a real
+    // Enter does. Without it Enter reached a form's input and submitted
+    // nothing (measured, task #720). Only Shift keeps the text: any other
+    // modifier makes the press a shortcut, which types nothing on a real
+    // keyboard either.
+    const producesText = special.text !== undefined && (modifierFlags & ~MODIFIER_FLAGS.Shift) === 0;
     await dispatchKeyEvent(webContents, {
       type: 'keyDown',
       key: special.key,
       code: special.code,
       windowsVirtualKeyCode: special.vk,
       modifiers: modifierFlags,
+      ...(producesText ? { text: special.text, unmodifiedText: special.text } : {}),
     });
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
@@ -1573,11 +1568,9 @@ export async function dispatchKeypress(
       code: `Key${upper}`,
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,
+      // On the keyDown, never on a separate `char`: see `typeText`.
+      ...(shiftedText ? { text: shiftedText, unmodifiedText: shiftedText } : {}),
     });
-    if (shiftedText) {
-      // Same split as `typeText`: the keyDown fires handlers, the char inserts.
-      await dispatchKeyEvent(webContents, { type: 'char', text: shiftedText });
-    }
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
       key,
