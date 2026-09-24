@@ -204,12 +204,13 @@ The deb package declares `depends` on Electron's required system libraries (`lib
 
 ## When the GPU process is unusable
 
-Not a Linux problem, despite where it was first seen. Three installs have hit this across
-90 days: DESKTOP-W (a `LOG(FATAL)` browser-process kill on Ubuntu 24.04, via
-`OnProcessLaunchFailed`), DESKTOP-15 (a recovered GPU death on the same box three days later),
-and DESKTOP-18 (the identical `LOG(FATAL)` on Windows 10, via `OnProcessCrashed` with
-`EXCEPTION_BREAKPOINT`, on an Intel UHD 630). The shipped code has never had a platform gate;
-only this section's title did.
+The fatal is not a Linux problem, although one route to it is. DESKTOP-W is a `LOG(FATAL)`
+browser-process kill via `OnProcessLaunchFailed`, seen on three Linux installs: Ubuntu 24.04,
+NixOS and CachyOS. DESKTOP-15 is a recovered GPU death on the Ubuntu box three days later.
+DESKTOP-18 is the identical `LOG(FATAL)` on Windows 10, via `OnProcessCrashed` with
+`EXCEPTION_BREAKPOINT`, on an Intel UHD 630. The shipped code has never had a platform gate. The
+launch-failure route is Linux's in practice, because of how Linux launches the GPU process (see
+"Why a Linux launch failure leaves no trace" below).
 
 DESKTOP-18 is worth reading for its timing rather than its stack. All seven of that install's
 runs died between 8.3 and 12.0 seconds after their own `app_start_time`, so Chromium walked its
@@ -226,57 +227,121 @@ flag that does not work.
 Chromium's own fallback ladder (`content/browser/gpu/gpu_data_manager_impl_private.cc`,
 `GpuDataManagerImplPrivate::InitializeGpuModes`) pushes `DISPLAY_COMPOSITOR` and, if allowed,
 `SOFTWARE_GL` onto `fallback_modes_` **before** checking `--disable-gpu`, and
-`FallBackToNextGpuMode` pops from the back. So the pop order is hardware GL -> `SOFTWARE_GL` ->
-`DISPLAY_COMPOSITOR` -> empty list -> `LOG(FATAL)`
+`FallBackToNextGpuMode` pops from the back. So the full pop order is hardware GL ->
+`SOFTWARE_GL` -> `DISPLAY_COMPOSITOR` -> empty list -> `LOG(FATAL)`
 (`IntentionallyCrashBrowserForUnusableGpuProcess`, whose message - `"GPU process isn't usable.
-Goodbye."` - is exactly what DESKTOP-W's minidump carried). Reaching the fatal means the two
-software-only modes had already been current and had already failed to launch. `--disable-gpu`
-skips straight to `SOFTWARE_GL` in that same list, so on a machine that failed there it reaches the
-identical `LOG(FATAL)`, only faster. The top frame in DESKTOP-W's stack is `OnProcessLaunchFailed`,
-not a crash handler, which points at a process-*launch* failure (sandbox, seccomp/AppArmor, a
-container or hardened kernel, a missing or broken mesa/libva) rather than a driver fault; a launch
-failure is not something a rendering-mode fallback flag can route around. The same conclusion holds
-for DESKTOP-18's crash shape on Windows, for the simpler reason that reaching the fatal at all
-means the software modes had already been current and had already failed.
+Goodbye."` - is exactly what DESKTOP-W's minidump carried). A fallback driven by crashes or launch
+failures goes through `FallBackToNextGpuModeDueToCrash`, which skips `SOFTWARE_GL` unless a feature
+allows it. On Electron 41 that makes the fatal the sixth counted failure: three on hardware, then
+three on `DISPLAY_COMPOSITOR` (measured on Linux, below). Either way the last rung is
+`DISPLAY_COMPOSITOR`, which already runs without the display driver. `--disable-gpu` starts
+Chromium lower in that same list: on `SOFTWARE_GL` where it is allowed, otherwise on
+`DISPLAY_COMPOSITOR`. The Linux measurement below reads exactly like `DISPLAY_COMPOSITOR`, while
+Windows reads like `SOFTWARE_GL`. Either way, a GPU process that cannot even launch reaches the
+identical `LOG(FATAL)`, only faster. A launch failure is not something a rendering-mode flag can
+route around. The same holds for DESKTOP-18's crash shape on Windows, because reaching the fatal at
+all means the rungs below hardware had already been current and had already failed.
+
+### Why a Linux launch failure leaves no trace
+
+On Linux the GPU process is not launched directly. `GpuSandboxedProcessLauncherDelegate::GetZygote`
+forks it from the unsandboxed zygote, so a GPU "launch failure" means
+`ZygoteCommunication::ForkRequest` returned no process. When that zygote is gone, two things happen
+at once:
+
+- The running GPU process's death reads as a normal exit. `GetTerminationStatus` defaults to
+  `TERMINATION_STATUS_NORMAL_TERMINATION` when the zygote cannot answer, and
+  `BrowserChildProcessHostImpl::OnChildDisconnected` drops that status with no crash count and no
+  observer call, so no `child-process-gone` fires.
+- Every relaunch through the dead zygote fails to launch, and Electron forwards no launch failure
+  to JS. `electron_api_app.cc` overrides `BrowserChildProcessCrashed` and
+  `BrowserChildProcessKilled` but not `BrowserChildProcessLaunchFailed`. Chromium also runs the
+  delegate that reaches the fatal before it notifies any observer.
+
+Reproduced in Electron 41.10.7 on Ubuntu 24.04 under WSLg, with `--ignore-gpu-blocklist` so that
+compositing starts on the GPU: SIGKILL the `--type=zygote --no-zygote-sandbox` process, then the GPU
+process. The browser logged `Failed to send GetTerminationStatus message to zygote`, six
+`GPU process launch failed: error_code=1002` inside 2 ms, and the fatal. JS saw no
+`child-process-gone` at all. That is DESKTOP-W's stack, and it is why the 0.43.0 crash left
+`gpu-health.json` empty. All three DESKTOP-W installs sent Sentry nothing but the fatal, 25 s,
+3 min and 4 min into their runs. Why the zygote or its fork failed on those hosts is still unknown.
+A dead zygote and a fork refused at the process limit produce the same stack, so each recorded
+fallback on Linux now carries the answer (below).
+
+What does reach JS is the fallback itself. Falling back to `DISPLAY_COMPOSITOR` calls
+`OnGpuBlocked`, which notifies `gpu-info-update`, and `gpu_compositing` reads `disabled_software`
+from then on. The notify is posted a full GPU launch round trip before the fatal, so the listener
+runs first by queue order, not by a margin of time. In the reproduction, a synchronous write from
+that listener was on disk before the process died, in the same millisecond as the fatal. Killing
+the GPU process alone, with the zygote alive, walks the same ladder by crashes
+instead: six SIGKILLs produced five `child-process-gone` events, the fallback's `gpu-info-update`
+arrived 1 ms after the third, and the sixth kill, the fatal one, was never announced.
+
+### The recovery
 
 The switch that does work is `--in-process-gpu`: it removes the GPU child process entirely, so
 `IntentionallyCrashBrowserForUnusableGpuProcess` is unreachable. It was deferred when DESKTOP-W
 was the only evidence, on the grounds that it trades a GPU hang for an app hang. DESKTOP-18's seven
 dead launches settled that trade: an app that hangs occasionally beats an app that cannot start.
 
-Measured on Electron 41 (Windows), booting a real window with both switches applied:
+Measured on Electron 41, booting a real window with both switches applied:
 
-| | `app.getAppMetrics()` process types | `gpu_compositing` | `webgl` |
-|---|---|---|---|
-| Control | `Browser`, `GPU`, `Tab`, `Utility` | `enabled` | `enabled` |
-| `--disable-gpu --in-process-gpu` | `Browser`, `Tab`, `Utility` | `disabled_software` | `unavailable_software` |
+| | Platform | `app.getAppMetrics()` process types | `gpu_compositing` | `webgl` |
+|---|---|---|---|---|
+| Control | Windows | `Browser`, `GPU`, `Tab`, `Utility` | `enabled` | `enabled` |
+| `--disable-gpu --in-process-gpu` | Windows | `Browser`, `Tab`, `Utility` | `disabled_software` | `unavailable_software` |
+| Control, `--ignore-gpu-blocklist` | Linux (WSLg) | `Browser`, `GPU`, `Utility`, `Tab` | `enabled` | `enabled` |
+| `--disable-gpu --in-process-gpu` | Linux (WSLg) | `Browser`, `Utility`, `Tab` | `disabled_software` | `disabled_off` |
 
-No GPU process is spawned at all, which is the property the whole recovery path rests on. That
-table is a Windows measurement. The switches are Chromium's own and the shipped code has no
-platform gate, so the same behaviour is expected on Linux and macOS, but neither has been
-re-measured, and DESKTOP-W and DESKTOP-15 both came from the Ubuntu box.
-`app.getGPUInfo('complete')` still settles under the switches (1 ms), and still names the adapter,
-so the report loses nothing by running in this mode. `webgl: unavailable_software` is why
-`terminal-webgl.ts` skips its attach entirely rather than retrying on its usual schedule: in this
-mode the context is not blocked, it cannot exist.
+No GPU process is spawned at all, which is the property the whole recovery path rests on. On Linux
+the window still painted: a page capture found all 10,000 pixels of a 100 px animated box. The
+Linux rows come from Ubuntu 24.04 under WSLg, whose GL is Mesa's d3d12 driver rather than a native
+one, and which Chromium blocklists, so the control needed `--ignore-gpu-blocklist` to start on the
+GPU. macOS has not been measured. `app.getGPUInfo('complete')` still settles under the switches
+(1 ms on Windows), and still names the adapter, so the report loses nothing by running in this
+mode. `webgl: unavailable_software` is why `terminal-webgl.ts` skips its attach entirely rather
+than retrying on its usual schedule: in this mode the context is not blocked, it cannot exist.
 
 What ships now, on every platform:
 
 - `src/main/diagnostics/gpu-health.ts` records EVERY GPU `child-process-gone` death, not just a
-  threshold breach, along with the sequence of Chromium GPU modes they died on. The threshold moved
+  threshold breach, along with the Chromium GPU mode each one left behind. That is read after
+  Chromium handled the death, so the death that triggers a fallback already reads the lower rung:
+  three kills record `enabled`, `enabled`, `disabled_software` on both Windows and Linux. The threshold moved
   to report time. The reason is ordering: Chromium calls `GpuProcessHost::RecordProcessCrash` (and
   the `LOG(FATAL)` below it) from the delegate, BEFORE the observer notification Electron emits
   `child-process-gone` from, so the death that kills the app is one JS is never told about.
   Whatever is going to be on disk has to already be there.
+- The same file records the fallback, from `gpu-info-update`: the moment `gpu_compositing` leaves
+  the GPU after this run was seen compositing on it, and each later status change. A launch-failure
+  ladder leaves nothing else (see above), so the record's `lastAt` covers a fallback as well as a
+  death, and the next launch's near-end check counts it as the death that ended the run. A machine
+  that never had GPU compositing normally writes nothing: our own software mode reads exactly like
+  `DISPLAY_COMPOSITOR` from its first update, and a blocklisted driver churns its status at every
+  boot.
+- On Linux, `src/main/diagnostics/linux-gpu-zygote.ts` finds the unsandboxed zygote on the first
+  `gpu-info-update`, while the GPU is healthy, and each recorded fallback carries a `linux` reading:
+  whether that zygote is `alive`, `dead` (gone, a zombie, or its pid reused), or `unknown`, plus the
+  system-wide thread count from `/proc/loadavg` and the soft `Max processes` limit. A dead zygote is
+  never a normal state, so it also lifts the hardware-first rule above: a blocklisted Linux box whose
+  zygote dies is recorded too. Verified with the real modules bundled into the WSLg reproduction: on
+  both a GPU-composited start and a blocklisted one, killing the zygote and then the GPU process
+  wrote a `hardware-fallback` record with `zygote: dead` before the fatal, while killing the GPU
+  process alone recorded `zygote: alive`. Three shapes stay uncovered: a machine that already sits
+  on the last rung, since its fatal comes with no further `gpu-info-update`; a Linux machine that
+  never composited on the GPU and whose zygote is alive but cannot fork, at the process limit for
+  example; and a Windows or macOS machine that never composited on the GPU, where there is no
+  zygote to check. On a kernel without the per-thread `children` files, finding the zygote falls
+  back to one scan of every `/proc` entry, once per run.
 - `src/main/index.ts` decides at MODULE SCOPE, before `app.whenReady()`, whether to start in
   software rendering, because `app.disableHardwareAcceleration()` THROWS once the app is ready
   rather than quietly doing nothing. It engages both that call and `--in-process-gpu`:
   `--in-process-gpu` removes the GPU child, and the `--disable-gpu` the API appends keeps the
   display driver out of the browser process that child's absence would otherwise pull it into.
-  `--in-process-gpu` is set on every platform, unguarded, and has
-  been verified only on Windows. That is deliberate rather than an oversight: the two issues this
-  path exists for are a Windows install and an Ubuntu one, and guarding the switch to the platform
-  it was measured on would weaken the recovery exactly where the Linux report came from.
+  `--in-process-gpu` is set on every platform, unguarded, and has been verified on Windows and on
+  Linux (under WSLg), not on macOS. That is deliberate rather than an oversight: the issues this
+  path exists for came from Windows and Linux installs, and a platform gate would only weaken the
+  recovery somewhere it has not been measured.
 - The downgrade is a real user-visible setting (`graphicsAccelerationEnabled`, Settings > Performance),
   set to `off` once and never back on by us. A one-line callout says Kangentic did it. Nothing
   watches the driver version: we never established what killed the GPU process, so the app claims
