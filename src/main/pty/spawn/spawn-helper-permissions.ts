@@ -2,6 +2,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
+ * Where node-pty's macOS spawn-helper can live, in the order node-pty's own
+ * native loader tries (`build/Release` first, then the prebuilds). Empty when
+ * node-pty cannot be resolved.
+ *
+ * In packaged Electron, node-pty resolves inside app.asar but the native
+ * binaries are extracted to app.asar.unpacked by electron-builder, so the path
+ * is rewritten to the unpacked tree, the only place a binary can be executed.
+ *
+ * Shared by ensureSpawnHelperPermissions below and by shell-launch.ts, which
+ * runs `child_process` shells through the same helper.
+ */
+export function spawnHelperCandidatePaths(): string[] {
+  let nodePtyRoot: string;
+  try {
+    const packageJsonPath = require.resolve('node-pty/package.json');
+    nodePtyRoot = path.dirname(packageJsonPath);
+  } catch {
+    return []; // node-pty not found (shouldn't happen)
+  }
+
+  nodePtyRoot = nodePtyRoot.replace('app.asar', 'app.asar.unpacked');
+
+  return [
+    path.join(nodePtyRoot, 'build', 'Release', 'spawn-helper'),
+    path.join(nodePtyRoot, 'prebuilds', `darwin-${process.arch}`, 'spawn-helper'),
+  ];
+}
+
+/**
  * Ensure node-pty's spawn-helper binary has execute permissions on macOS.
  *
  * node-pty 1.1.0's npm tarball ships spawn-helper with 644 (no +x), and
@@ -16,24 +45,7 @@ import path from 'node:path';
 export function ensureSpawnHelperPermissions(): void {
   if (process.platform !== 'darwin') return;
 
-  let nodePtyRoot: string;
-  try {
-    const packageJsonPath = require.resolve('node-pty/package.json');
-    nodePtyRoot = path.dirname(packageJsonPath);
-  } catch {
-    return; // node-pty not found (shouldn't happen)
-  }
-
-  // In packaged Electron, node-pty resolves inside app.asar but the native
-  // binaries are extracted to app.asar.unpacked by electron-builder.
-  nodePtyRoot = nodePtyRoot.replace('app.asar', 'app.asar.unpacked');
-
-  const candidates = [
-    path.join(nodePtyRoot, 'build', 'Release', 'spawn-helper'),
-    path.join(nodePtyRoot, 'prebuilds', `darwin-${process.arch}`, 'spawn-helper'),
-  ];
-
-  for (const filePath of candidates) {
+  for (const filePath of spawnHelperCandidatePaths()) {
     try {
       const stat = fs.statSync(filePath);
       // Check if file lacks any execute permission (owner, group, or other)

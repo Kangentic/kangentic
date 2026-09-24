@@ -7,12 +7,11 @@ import * as path from 'node:path';
 const mocks = vi.hoisted(() => {
   const setTagSpy = vi.fn();
   const setContextSpy = vi.fn();
-  const trackEventSpy = vi.fn();
   // The mocked install must be native to the HOST, not always Windows.
   // resolveNativeCrashContext derives the install root with node:path, so on
   // CI's Linux runner path.dirname of a backslash path returns '.', every one
   // of our own images then fails the ownership check, and a real crash is
-  // dropped. That is green on Windows and red on CI.
+  // misread as foreign. That is green on Windows and red on CI.
   const executablePath =
     process.platform === 'win32'
       ? 'C:\\Users\\dev\\AppData\\Local\\Programs\\Kangentic\\Kangentic.exe'
@@ -33,7 +32,6 @@ const mocks = vi.hoisted(() => {
     },
     setTagSpy,
     setContextSpy,
-    trackEventSpy,
     sentryMock: {
       init: vi.fn(),
       setUser: vi.fn(),
@@ -58,7 +56,6 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({ app: mocks.electronMock.app }));
 vi.mock('@sentry/electron/main', () => mocks.sentryMock);
-vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: mocks.trackEventSpy }));
 
 import {
   beforeSendEvent,
@@ -69,6 +66,7 @@ import {
 import {
   buildMinidump,
   FFPROBE_MODULES,
+  HEADLESS_SHELL_MODULES,
   LINUX_APP_MODULES,
   MACOS_APP_MODULES,
   WINDOWS_APP_MODULES,
@@ -432,8 +430,9 @@ describe('error reporting runtime behavior (module-state gated)', () => {
    * The native crash class cannot go in ignoreErrors: that matcher reads an
    * event's message and exception value, and a minidump event has neither. What
    * says whether the crash was even ours is in the attached dump, so it is
-   * filtered in beforeSend instead. These cases pin the wiring; the decision
-   * itself is covered in tests/unit/native-crash-event.test.ts.
+   * split in beforeSend instead. These cases pin the wiring; the decision
+   * itself is covered in tests/unit/native-crash-event.test.ts, and the dump
+   * staying off the real envelope in tests/unit/foreign-crash-real-client.test.ts.
    */
   describe('beforeSend, for native crash events', () => {
     type BeforeSend = (
@@ -461,36 +460,44 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       };
     }
 
-    beforeEach(() => {
-      mocks.trackEventSpy.mockClear();
-    });
+    type Attachment = { attachmentType?: string; filename: string };
 
-    it('drops a crash in a process that merely inherited our crash handler, and counts it', async () => {
+    function minidumpCount(hint: { attachments?: Attachment[] }): number {
+      return (hint.attachments ?? []).filter((attachment) => attachment.attachmentType === 'event.minidump').length;
+    }
+
+    it('turns a crash in a process that merely inherited our crash handler into the grouped warning, and keeps its dump off the upload', async () => {
       const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(FFPROBE_MODULES);
 
       const result = beforeSend(
-        { platform: 'native', release: 'Kangentic@0.39.0' },
-        minidumpHint(FFPROBE_MODULES)
+        { level: 'fatal', platform: 'native', release: 'Kangentic@0.39.0' },
+        hint
       );
 
-      expect(result).toBeNull();
-      expect(mocks.trackEventSpy).toHaveBeenCalledWith('foreign_minidump_dropped', {
-        module: 'ffprobe',
+      expect(result).toMatchObject({
+        level: 'warning',
+        message: "Foreign process crash reached Kangentic's crash database",
+        fingerprint: ['foreign-process-crash'],
+        tags: { module: 'ffprobe' },
       });
+      // The SDK builds the envelope from this same hint after beforeSend returns.
+      expect(minidumpCount(hint)).toBe(0);
     });
 
-    it('keeps our own crash and reattributes it to the build that actually crashed', async () => {
+    it('keeps our own crash, and its dump, and reattributes it to the build that actually crashed', async () => {
       const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.38.0' });
 
       const result = beforeSend(
         { platform: 'native', release: 'Kangentic@0.39.0', breadcrumbs: [{ message: 'later run' }] },
-        minidumpHint(OUR_APP_MODULES, { _version: '0.38.0' })
+        hint
       );
 
-      expect(result).not.toBeNull();
       expect(result?.release).toBe('Kangentic@0.38.0');
       expect(result?.breadcrumbs).toBeUndefined();
-      expect(mocks.trackEventSpy).not.toHaveBeenCalled();
+      expect(result?.level).not.toBe('warning');
+      expect(minidumpCount(hint)).toBe(1);
     });
 
     it('leaves a live-reported error alone: it carries no minidump', async () => {
@@ -504,45 +511,65 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       // DESKTOP-J's shape: mechanism generic, its own breadcrumbs, correct tag.
       expect(beforeSend(liveError, {})).toBe(liveError);
       expect(liveError.breadcrumbs).toHaveLength(1);
-      expect(mocks.trackEventSpy).not.toHaveBeenCalled();
     });
 
-    it('keeps the event when the dump cannot be read, so a parser fault cannot delete the stream', async () => {
+    it('keeps the event and its dump when the dump cannot be read, so a parser fault cannot delete the stream', async () => {
       const beforeSend = await initAndGetBeforeSend();
       const event = { platform: 'native', release: 'Kangentic@0.39.0' };
-
-      const result = beforeSend(event, {
+      const hint = {
         attachments: [
           { attachmentType: 'event.minidump', filename: 'crash.dmp', data: Buffer.alloc(20000, 0x5a) },
         ],
-      });
+      };
+
+      const result = beforeSend(event, hint);
 
       expect(result).toBe(event);
-      expect(mocks.trackEventSpy).not.toHaveBeenCalled();
+      expect(minidumpCount(hint)).toBe(1);
     });
 
-    it('finds the minidump among several attachments, including one that carries no attachmentType at all', async () => {
+    it('finds the minidump among several attachments, including one that carries no attachmentType at all, and removes only the dump', async () => {
       // Sentry's other attachment kinds (view-hierarchy, screenshots) do not
       // all carry an attachmentType, and the minidump is not always first in
       // the array. This pins the .find() picking the RIGHT one by type, not
-      // by position or by "has Uint8Array data".
+      // by position or by "has Uint8Array data", and the removal leaving the
+      // others in place.
       const beforeSend = await initAndGetBeforeSend();
+      const hint = {
+        attachments: [
+          { filename: 'view-hierarchy.json', data: new Uint8Array([1, 2, 3]) },
+          { attachmentType: 'event.screenshot', filename: 'screenshot.png', data: new Uint8Array([4, 5, 6]) },
+          { attachmentType: 'event.minidump', filename: 'crash.dmp', data: buildMinidump({ modules: FFPROBE_MODULES }) },
+        ],
+      };
 
-      const result = beforeSend(
-        { platform: 'native', release: 'Kangentic@0.39.0' },
-        {
-          attachments: [
-            { filename: 'view-hierarchy.json', data: new Uint8Array([1, 2, 3]) },
-            { attachmentType: 'event.screenshot', filename: 'screenshot.png', data: new Uint8Array([4, 5, 6]) },
-            { attachmentType: 'event.minidump', filename: 'crash.dmp', data: buildMinidump({ modules: FFPROBE_MODULES }) },
-          ],
-        }
-      );
+      const result = beforeSend({ platform: 'native', release: 'Kangentic@0.39.0' }, hint);
 
-      expect(result).toBeNull();
-      expect(mocks.trackEventSpy).toHaveBeenCalledWith('foreign_minidump_dropped', {
-        module: 'ffprobe',
-      });
+      expect(result).toMatchObject({ level: 'warning', tags: { module: 'ffprobe' } });
+      expect(hint.attachments.map((attachment) => attachment.filename)).toEqual([
+        'view-hierarchy.json',
+        'screenshot.png',
+      ]);
+    });
+
+    it('removes EVERY event.minidump attachment on a foreign crash, not only the one .find() read for identity, and leaves the non-minidump attachment alone', async () => {
+      // filterNativeCrashEvent reads identity from the first dump only, but no
+      // dump may survive a foreign decision. A filter keyed on the single
+      // reference .find() returned would leave the second dump in place.
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = {
+        attachments: [
+          { attachmentType: 'event.minidump', filename: 'crash.dmp', data: buildMinidump({ modules: FFPROBE_MODULES }) },
+          { attachmentType: 'event.minidump', filename: 'crash-2.dmp', data: buildMinidump({ modules: HEADLESS_SHELL_MODULES }) },
+          { attachmentType: 'event.screenshot', filename: 'screenshot.png', data: new Uint8Array([4, 5, 6]) },
+        ],
+      };
+
+      const result = beforeSend({ platform: 'native', release: 'Kangentic@0.39.0' }, hint);
+
+      expect(result).toMatchObject({ level: 'warning', tags: { module: 'ffprobe' } });
+      expect(minidumpCount(hint)).toBe(0);
+      expect(hint.attachments.map((attachment) => attachment.filename)).toEqual(['screenshot.png']);
     });
 
     it('tags a frame-capped stack through the REAL Sentry.init() wiring, not only via a direct import of beforeSendEvent', async () => {

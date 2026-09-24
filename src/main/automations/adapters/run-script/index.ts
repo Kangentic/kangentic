@@ -3,6 +3,7 @@ import { AUTOMATION_MANIFEST, DEFAULT_SCRIPT_TIMEOUT_MINUTES } from '../../../..
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { resolveScriptInvocation } from '../../../pty/spawn/script-invocation';
+import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
 import type { AutomationAdapter, AutomationContext } from '../../shared/automation-adapter';
 import { AutomationTimeoutError } from '../../shared/automation-errors';
 
@@ -104,7 +105,11 @@ function runToCompletion(options: {
   const { exe, args, context, timeoutMs } = options;
 
   return new Promise<number>((resolve, reject) => {
-    const child = spawn(exe, args, {
+    // On macOS this runs the shell through the spawn-helper, so nothing the
+    // script starts holds Crashpad's exception port. The pid stays the shell's,
+    // which the group kill below relies on.
+    const launch = resolveShellLaunch({ file: exe, args });
+    const child = spawn(launch.file, launch.args, {
       cwd: context.cwd,
       env: { ...process.env, ...scriptEnvironment(context) },
       // No shell: the invocation is already `<shell> -c <script>`, and letting

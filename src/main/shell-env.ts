@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { resolveShellLaunch } from './pty/spawn/shell-launch';
 
 const execFileAsync = promisify(execFile);
 
@@ -128,13 +129,20 @@ export async function restoreShellEnv(): Promise<void> {
  * TERM=dumb) so the shell builds its PATH from scratch via rc files.
  * TERM=dumb discourages rc files from emitting color codes or launching
  * prompt frameworks that may hang waiting for a tty.
+ *
+ * On macOS the shell goes through resolveShellLaunch, because startup files
+ * can leave daemons (ssh-agent and the like) running for as long as the
+ * session, and every one would otherwise hold Crashpad's exception port. The
+ * shell path is absolute, so the helper finds it without the PATH this
+ * minimal env leaves out.
  */
 async function readShellPath(shell: string): Promise<PathParseResult> {
   const command = buildShellCommand();
+  const launch = resolveShellLaunch({ file: shell, args: ['-ilc', command] });
 
   const { stdout } = await execFileAsync(
-    shell,
-    ['-ilc', command],
+    launch.file,
+    launch.args,
     {
       timeout: SHELL_TIMEOUT_MS,
       maxBuffer: 10 * 1024 * 1024, // 10 MB - user env can be large (e.g. GH Codespaces secrets, GPG_TTY lists)

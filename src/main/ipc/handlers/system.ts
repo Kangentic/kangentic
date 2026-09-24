@@ -20,6 +20,7 @@ import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
 import { writePastedImage } from '../helpers/clipboard-image';
 import { openPathBounded } from '../helpers/open-path';
+import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
 import type {
   NotificationInput,
   AgentCommand,
@@ -597,9 +598,12 @@ export function registerSystemHandlers(context: IpcContext): void {
       throw new Error(`shell:exec requires a valid cwd directory (got "${cwd}")`);
     }
     console.log(`[shell:exec] command="${command}" cwd="${cwd}"`);
-    const child = spawn(command, [], {
+    // Detached and never killed, so a dev server started here can outlive the
+    // app. resolveShellLaunch keeps it from holding Crashpad's port on macOS.
+    const launch = resolveShellLaunch({ command });
+    const child = spawn(launch.file, launch.args, {
       cwd,
-      shell: true,
+      shell: launch.shell,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,

@@ -7,7 +7,7 @@ the same kill switch (below).
 
 ## What We Collect (Aptabase)
 
-Nineteen event types are tracked, all on critical-path actions only:
+Eighteen event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -27,7 +27,6 @@ Nineteen event types are tracked, all on critical-path actions only:
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
 | `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`), exitCode (see below), phase (`first` / `latched`) |
-| `foreign_minidump_dropped` | A native crash dump reached us from a process that is not ours, and was filtered out before upload (see "Error Reporting" below) | module (the crashing executable's file name, never a path) |
 | `gpu_process_gone` | The GPU process exited abnormally (not a clean exit on quit): at most twice per app run, on the first death and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
@@ -210,16 +209,16 @@ in one Sentry org, one triage surface.
   `normalizePathsIntegration` rewrites stack-frame paths and URLs relative to the app root (the
   user's home directory never reaches Sentry for app code), `sendDefaultPii` stays `false`, and
   Sentry's server-side data scrubbing is on by default. Any further scrubbing rule belongs in the
-  Sentry UI (Advanced Data Scrubbing), not in a `beforeSend` here. The one capture-site exception
-  is the utility worker's stderr tail (below): it is free text, not a stack frame, and Node's
-  `Require stack:` lines print absolute install paths under the user's profile, so
-  `src/main/utility-process/stderr-tail.ts` replaces the home directory with `~` before the text
-  goes anywhere. Same shape as the component-stack reduction above: data minimization at the
-  source, not a scrubbing rule.
-- **Filtering is a different concern and does live in code,** in `ignoreErrors`, plus a `beforeSend`
-  for the one class `ignoreErrors` cannot see (native crashes, below). Scrubbing removes data from an
-  event we keep; filtering decides a whole class of event is un-actionable and should never become an
-  issue. Five classes are filtered:
+  Sentry UI (Advanced Data Scrubbing), not in a `beforeSend` here. There are two exceptions, both
+  data minimization at the source rather than scrubbing rules, the same shape as the
+  component-stack reduction above. The utility worker's stderr tail (below) is free text, not a
+  stack frame, and Node's `Require stack:` lines print absolute install paths under the user's
+  profile, so `src/main/utility-process/stderr-tail.ts` replaces the home directory with `~`
+  before the text goes anywhere. A foreign process's crash loses its dump, breadcrumbs and full
+  module name in `beforeSend` (see "Native crashes in processes that are not ours" below).
+- **Filtering is a different concern and does live in code,** in `ignoreErrors`. Scrubbing removes
+  data from an event we keep; filtering decides a whole class of event is un-actionable and should
+  never become an issue. Four classes are filtered:
   - Benign Windows stdio write artifacts, in two message shapes. Node's `errnoException` reads
     `write EAGAIN` / `write EPIPE` (the dev `npm start` TTY case) and is matched by those two
     string literals; libuv's `uvException` reads `EPIPE: broken pipe, write` (a packaged GUI
@@ -245,38 +244,64 @@ in one Sentry org, one triage surface.
   - `BENIGN_RENDERER_ERRORS` (`src/shared/benign-renderer-errors.ts`) is spread in, so the one
     registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
     must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
-  - **Native crashes in processes that are not ours**, filtered in `beforeSend`
-    (`beforeSendEvent` -> `filterNativeCrashEvent`) rather than in `ignoreErrors`. On macOS a
-    task's mach exception ports are inherited across exec, so a process spawned from a Kangentic
-    PTY writes ITS crashes into our Crashpad database and the SDK uploads them as ours. DESKTOP-K
-    was Homebrew ffmpeg's `ffprobe` failing to start, ten fatal events; DESKTOP-N was a Puppeteer
-    `chrome-headless-shell`;
-    DESKTOP-Q was `/usr/local/share/dotnet/dotnet`, ten more. None loaded a single Kangentic
-    image. DESKTOP-1D was another project's dev Electron Helper, killed mid-launch. It loaded
-    Electron Framework like every Electron app does, but from that project's own
-    `node_modules/electron/dist/Electron.app`. This class cannot go in `ignoreErrors`, which is the
+- **Native crashes in processes that are not ours become one warning, and their dumps never
+  upload.** This happens in `beforeSend` (`beforeSendEvent` -> `filterNativeCrashEvent`), the only
+  hook that can see the minidump attachment. On macOS a task's mach exception ports are inherited
+  across exec, so a process Kangentic starts writes ITS crashes into our Crashpad database and the
+  SDK uploads them as ours. DESKTOP-K was Homebrew ffmpeg's `ffprobe` failing to start, ten fatal
+  events; DESKTOP-N was a Puppeteer `chrome-headless-shell`; DESKTOP-Q was
+  `/usr/local/share/dotnet/dotnet`, ten more. None loaded a single Kangentic image. DESKTOP-1D was
+  another project's dev Electron Helper, killed mid-launch. It loaded Electron Framework like every
+  Electron app does, but from that project's own `node_modules/electron/dist/Electron.app`.
+  - **Telling them apart.** This class cannot go in `ignoreErrors`, which is the
     `eventFiltersIntegration` and matches only an event's message and its exception type and value:
     a minidump event has none of those, so the matcher sees an empty candidate list and does
     nothing. It also cannot key off the SDK's `event.process` tag, because that reads `unknown` for
     real macOS crashes too (DESKTOP-E is one). The discriminator is the dump's own loaded-image
-    list, read from the attachment in `src/main/analytics/native-crash-event.ts`: the event is
-    dropped only when no image sits under the install root, matches the app executable's name, or is
-    the Electron framework inside our own `Kangentic.app` bundle. An unpackaged run checks the
-    install root alone, because its `Electron` executable and `Electron.app` bundle are names every
-    dev Electron app shares. Every uncertain path keeps the event, because a foreign crash that slips
-    through is noise while a real crash dropped by a parser bug is gone. One real crash does drop on
-    purpose: a helper crash from a bundle the user renamed and then moved between the crash and the
-    upload, since nothing left in its image list names us. Each drop increments
-    `foreign_minidump_dropped`, which is the only fleet-wide evidence left once the events stop
-    arriving. PTY children no longer inherit the port at all: the packaged macOS app ships its own
-    node-pty `spawn-helper`, which clears the task's exception ports before exec (see "PTY
-    children and mach exception ports" in `docs/cross-platform.md`). The filter stays as the
+    list, read from the attachment in `src/main/analytics/native-crash-event.ts`: a crash is foreign
+    only when no image sits under the install root, matches the app executable's name, or is the
+    Electron framework inside our own `Kangentic.app` bundle. An unpackaged run checks the install
+    root alone, because its `Electron` executable and `Electron.app` bundle are names every dev
+    Electron app shares. Every uncertain path keeps the event as ours, because a foreign crash that
+    slips through is noise while a real crash misread as foreign loses its dump. One real crash does
+    read as foreign on purpose: a helper crash from a bundle the user renamed and then moved between
+    the crash and the upload, since nothing left in its image list names us.
+  - **What a foreign crash sends.** It is still our defect, since our port leaked, so it is
+    reported rather than dropped: level `warning` with a fixed fingerprint, so every one lands in the
+    single issue "Foreign process crash reached Kangentic's crash database". Its minidump is removed
+    from `hint.attachments` before the SDK builds the envelope, because the dump holds another
+    program's memory. That is the second exception to "scrubbing is Sentry's job", next to the
+    stderr tail, because no Sentry-side rule can scrub a file it has already received.
+    `tests/unit/foreign-crash-real-client.test.ts` pins it against the real client. The event also
+    loses the `event.process` and `exit.reason` tags and the dump's own `crashpad.*` annotations,
+    all of which describe the wrong process, and its breadcrumbs. The SDK records main's console as
+    breadcrumbs and `SHELL_EXEC` logs the command it runs, so the trail could name the very program
+    the `module` tag withholds. It keeps a small `native_crash` context (crash time,
+    whether the dump was found at startup, the uploading version), enough to tell the one-time tail
+    of dumps written before an upgrade from what follows it.
+  - **The `module` tag** names the crashing program only when an installer or a package manager put
+    it where it crashed (`src/main/analytics/reportable-module-name.ts`): system directories,
+    Homebrew, MacPorts, Nix, per-user toolchain directories such as `~/.cargo/bin` and
+    `~/.local/bin`, the browsers Puppeteer and Playwright download, and any `node_modules`. Anything
+    else reads `user-binary`, so the name of a user's own build output never leaves the machine. A
+    bare file name is not enough on its own: 0.43.0 sent the names of one user's project test
+    binaries. One gap is accepted: `cargo install --path .` and `go install ./...` put a user's own
+    binary in `~/.cargo/bin` and `~/go/bin`, and `make install` puts one in `/usr/local`. All stay
+    on the list, because the program behind most of the pre-change baseline lives in one of them.
+  - **Where the port leaks now, and the before-and-after.** PTY children no longer inherit it: the
+    packaged macOS app ships its own node-pty `spawn-helper`, which clears the task's exception
+    ports before exec, and the four `child_process` shell launches (the login-shell probe,
+    shortcuts, `run_script` automations, the post-worktree init script) run through it too (see
+    "PTY children and mach exception ports" in `docs/cross-platform.md`). This check stays as the
     backstop for older builds, for an unpackaged run with error reporting switched on (`npm start`
-    keeps node-pty's stock helper), and for processes started outside a PTY. Before that change the
-    counter stood at 33 events over 0.41.0 to 0.43.0, all macOS, 27 of them from one command-line
-    tool. On a release with the change, expect a one-time tail from dumps written before the upgrade
-    and uploaded at its first launch, then only the non-PTY residue.
-- **Tagging shares that hook, and runs before the filter.** `beforeSend` is `beforeSendEvent`,
+    keeps node-pty's stock helper), and for anything else started outside those paths. Earlier
+    builds dropped these events and counted them as the Aptabase event `foreign_minidump_dropped`
+    instead, with a bare-basename `module`. That counter is the "before": 33 events over 0.41.0 to
+    0.43.0, all macOS, 27 of them from one command-line tool. The Sentry issue is the "after", so
+    the comparison crosses from Aptabase to Sentry once. On a release with the change, expect a
+    one-time tail from dumps written before the upgrade and uploaded at its first launch
+    (`native_crash.crash_time` separates it), then only the residue.
+- **Tagging shares that hook, and runs before the split.** `beforeSend` is `beforeSendEvent`,
   which tags and then delegates to `filterNativeCrashEvent`. `tagTruncatedStack` sets
   `stack_truncated: 'true'` on any event whose parsed stack sits exactly on the SDK's 50-frame
   cap. The parser reads a V8 stack innermost-first and stops there, so a capped event has lost its
@@ -559,14 +584,14 @@ in one Sentry org, one triage surface.
   `child-process-gone` in the session that is still running: they build the event fresh, so its
   breadcrumbs and app context really are the crashed session's and correcting them would delete a
   good trail. Those two are also the only paths that stamp an `exit.reason` tag, which is what the
-  correction is gated on. The ownership filter above stays unconditional, since a live crash event
+  correction is gated on. The ownership check above stays unconditional, since a live crash event
   can still pick up a stray foreign dump sitting in the same directory. What the dump itself says
-  lands in a `native_crash` context on every kept event whose dump PARSED: crash time, crashed
+  lands in a `native_crash` context on every event of ours whose dump PARSED: crash time, crashed
   version, uploading version, the main module's file name, the module count, whether the dump was
   found at startup, and which corrections fired. A dump the reader cannot parse keeps its event
   untouched and carries no context block, so the absence of one is itself a signal when triaging.
   Note the SDK decrements its 10-minidumps-per-session budget at capture time, before `beforeSend`
-  runs, so dropped foreign dumps still consume it.
+  runs, so foreign dumps consume it too, even though their dumps never upload.
 - **Native debug files** ride the same gate: the Windows release build (`scripts/build.js`) also
   uploads node-pty's shipped Windows PDBs (`node_modules/node-pty/prebuilds/win32-*/`) as Sentry
   debug files, so a native crash inside `conpty.node` symbolicates server-side to function and
@@ -669,7 +694,7 @@ Sentry). `KANGENTIC_ERROR_REPORTING` controls Sentry alone:
 | `KANGENTIC_TELEMETRY` | `0` or `false` | ALL telemetry disabled: analytics and error reporting (opt-out) |
 | `KANGENTIC_TELEMETRY` | `1` or `true` | Telemetry enabled, even in dev builds (for local debugging) |
 | `KANGENTIC_TELEMETRY` | *(unset)* | Enabled in production only (default) |
-| `KANGENTIC_ERROR_REPORTING` | `0` or `false` | Error reporting disabled; analytics unaffected, except `foreign_minidump_dropped`, which fires from the Sentry `beforeSend` hook and so never installs |
+| `KANGENTIC_ERROR_REPORTING` | `0` or `false` | Error reporting disabled; analytics unaffected |
 | `KANGENTIC_ERROR_REPORTING` | `1` or `true` | Error reporting enabled, even in dev builds (unless `KANGENTIC_TELEMETRY=0`) |
 | `KANGENTIC_ERROR_REPORTING` | *(unset)* | Inherits the `KANGENTIC_TELEMETRY` behavior |
 | `KANGENTIC_APTABASE_APP_KEY` | an Aptabase app key | Replaces the production key; an `A-DEV-*` key routes every event to `http://localhost:3000` (see "Local verification") |

@@ -10,6 +10,17 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
+const { helperCandidatesMock } = vi.hoisted(() => ({
+  helperCandidatesMock: vi.fn((): string[] => []),
+}));
+// No spawn-helper unless a test hands one in. Most cases below force darwin,
+// node-pty ships darwin helpers in its tarball, and on Windows an execute check
+// passes for any file that exists, so the real lookup would wrap the shell
+// locally and not on CI.
+vi.mock('../../src/main/pty/spawn/spawn-helper-permissions', () => ({
+  spawnHelperCandidatePaths: helperCandidatesMock,
+}));
+
 import { execFile } from 'node:child_process';
 import {
   mergePathSegments,
@@ -142,6 +153,7 @@ describe('restoreShellEnv', () => {
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform });
+    helperCandidatesMock.mockReturnValue([]);
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
     if (originalShell === undefined) delete process.env.SHELL;
@@ -283,5 +295,36 @@ describe('restoreShellEnv', () => {
     const call = vi.mocked(execFile).mock.calls[0];
     expect(call[0]).toBe('/opt/homebrew/bin/fish');
     expect(process.env.PATH).toBe('/usr/bin:/bin:/Users/dev/.cargo/bin:/opt/homebrew/bin');
+  });
+
+  it('runs the login shell through the spawn-helper on macOS, so daemons its startup files leave behind do not hold Crashpad\'s port', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    // Any file this process can execute stands in for the helper: execFile is
+    // mocked, and the lookup only checks that the candidate is executable.
+    helperCandidatesMock.mockReturnValue([process.execPath]);
+    mockExecFileStdout(buildEnvDump('/opt/homebrew/bin'));
+
+    await restoreShellEnv();
+
+    const call = vi.mocked(execFile).mock.calls[0];
+    expect(call[0]).toBe(process.execPath);
+    expect(call[1]?.slice(0, 3)).toEqual(['', '/bin/zsh', '-ilc']);
+    expect(call[1]?.[3]).toContain('/usr/bin/env');
+    // The minimal env reaches the helper untouched; the absolute shell path is
+    // what lets it exec without PATH.
+    const execFileOptions = call[2] as { env: Record<string, string> };
+    expect(execFileOptions.env).toEqual({ DISABLE_AUTO_UPDATE: 'true', TERM: 'dumb' });
+    expect(process.env.PATH).toBe('/usr/bin:/bin:/opt/homebrew/bin');
+  });
+
+  it('does not look for the spawn-helper on Linux', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    helperCandidatesMock.mockReturnValue([process.execPath]);
+    mockExecFileStdout(buildEnvDump('/usr/local/bin'));
+
+    await restoreShellEnv();
+
+    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('/bin/zsh');
+    expect(helperCandidatesMock).not.toHaveBeenCalled();
   });
 });

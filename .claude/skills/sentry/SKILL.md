@@ -162,8 +162,9 @@ Reading a native event, in order of what trips people up:
   (`src/main/analytics/native-crash-event.ts`) writes one from the dump itself: `crash_time`,
   `crashed_version`, `uploaded_by_version`, `main_module`, `module_count`, `found_at_startup`, and
   whether the release or the app context was corrected. Absence means one of two things: the event
-  predates that filter, or its dump could not be parsed and was therefore kept untouched. Either
-  way the two traps below still apply to it in full.
+  predates that check, or its dump could not be parsed and was therefore kept untouched. Either
+  way the two traps below still apply to it in full. The foreign-crash warning (below) carries a
+  shorter one: `crash_time`, `uploaded_by_version`, `found_at_startup`.
 - **On an Electron OOM (`exit.reason: oom`, `mechanism: minidump`), read
   `contexts.chromium_stability_report.system_memory_state` before anything else.** It carries
   `system_commit_limit` and `system_commit_remaining` - the Windows commit charge, not physical
@@ -200,22 +201,36 @@ Reading a native event, in order of what trips people up:
   are the uploading launch's, wholly or partly; on a corrected one they are removed rather than
   left to mislead. Breadcrumbs on an event tagged `exit.reason` are trustworthy: that tag marks
   the two SDK paths that report a crash the running session watched happen.
-- **A crash in a process Kangentic merely spawned no longer arrives at all.** On macOS, mach
-  exception ports are inherited across exec, so an agent shelling out to ffmpeg, a headless
-  browser, or a dotnet tool used to file its crashes as ours. Four sources have been seen:
-  DESKTOP-K (Homebrew ffmpeg's `ffprobe`), DESKTOP-N (a Puppeteer `chrome-headless-shell`),
-  DESKTOP-Q (`/usr/local/share/dotnet/dotnet`, ten events), and DESKTOP-1D (another project's dev
-  Electron Helper). One filter covers all four, since it keys off whether the dump loaded a
-  Kangentic image rather than off any binary's name. DESKTOP-1D got through an earlier version of
-  it that counted any `Electron Framework` image as ours. Every Electron app loads that framework,
-  so it now counts only inside our own `Kangentic.app` bundle. Task #604 tracks DESKTOP-Q, though
-  no commit names it. Those are dropped before upload now and counted as
-  Aptabase `foreign_minidump_dropped` instead. If a native issue looks like someone else's binary,
-  check that counter rather than expecting a Sentry issue. On builds that ship Kangentic's own
-  node-pty `spawn-helper`, PTY children never inherit the port, so the counter falls to builds
-  from before that change, unpackaged runs with error reporting switched on (`npm start` keeps
-  node-pty's stock helper), and processes started outside a PTY. "PTY children and mach
-  exception ports" in `docs/cross-platform.md` lists those paths.
+- **A crash in a process Kangentic merely spawned arrives as one warning issue, never as a
+  fatal.** On macOS, mach exception ports are inherited across exec, so an agent shelling out to
+  ffmpeg, a headless browser, or a dotnet tool used to file its crashes as ours. Four sources have
+  been seen: DESKTOP-K (Homebrew ffmpeg's `ffprobe`), DESKTOP-N (a Puppeteer
+  `chrome-headless-shell`), DESKTOP-Q (`/usr/local/share/dotnet/dotnet`, ten events), and
+  DESKTOP-1D (another project's dev Electron Helper). One check covers all four, since it keys off
+  whether the dump loaded a Kangentic image rather than off any binary's name. DESKTOP-1D got
+  through an earlier version of it that counted any `Electron Framework` image as ours. Every
+  Electron app loads that framework, so it now counts only inside our own `Kangentic.app` bundle.
+  Task #604 tracks DESKTOP-Q, though no commit names it. Every such crash now groups into the
+  single issue "Foreign process crash reached Kangentic's crash database" (level `warning`, fixed
+  fingerprint), with no minidump attached and so no stack. It shows up in the triage query below.
+  Break it down by the `module` tag and by release: `module` is the crashing program's file name,
+  or `user-binary` when it is not in an installer or package-manager directory. Its
+  `native_crash.crash_time` separates dumps written before an upgrade from ones after it. Builds
+  before that change dropped these and counted the Aptabase event `foreign_minidump_dropped`
+  instead, so an older release's residue lives there.
+- **Residue on a release with the exception-port reset points at a launch path it does not
+  cover.** PTY children and the four shell launches (`resolveShellLaunch` in
+  `src/main/pty/spawn/shell-launch.ts`) start with no exception port on a packaged build. An
+  unpackaged run with error reporting switched on keeps node-pty's stock helper, so its events
+  (`environment: development`) are not residue. "PTY children and mach exception ports" in
+  `docs/cross-platform.md` lists what is covered. Two known paths still inherit it. The headless auto-name agent runs (`src/main/agent/shared/auto-name.ts`) run agent
+  hooks, so a `module` that is a hook tool, or anything else an agent's hooks start, most likely
+  comes from there. The shell-launch docstring says how to route an agent binary through the
+  helper without losing ENOENT. Git runs repository hooks (husky, lefthook, a `post-checkout` on
+  `git worktree add`), and git is launched as a plain binary, so a `module` that looks like hook
+  tooling in a JS repo points at git's spawns. The fingerprint keeps all of it in one issue, but
+  every event still counts against quota: one user produced 18 in a single release before the
+  reset. If the issue spikes, set a rate limit on it in Sentry rather than sampling client-side.
 - **Scope persists with a 500 ms write throttle**, so on any event the last half-second of
   breadcrumbs before the crash is missing. An entire quit sequence fits in that gap.
 
