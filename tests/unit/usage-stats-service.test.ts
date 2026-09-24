@@ -101,7 +101,12 @@ interface FixtureGroup {
 
 function makeGroup(overrides: Partial<FixtureGroup> = {}): FixtureGroup {
   return {
-    bucketStartMs: Math.floor((Date.now() - 30 * 60_000) / TURN_GROUP_MS) * TURN_GROUP_MS,
+    // The bucket holding "now", for the reason makeRow gives: the fake reader keeps a group only
+    // when its bucket starts at or after the period's cutoff, so a fixed offset fell before local
+    // midnight for the first half hour of every day and a 'today' read saw no tokens (it failed
+    // CI at 00:22 UTC). Local midnight sits on this grid, since every UTC offset is a multiple
+    // of 15 minutes, so the bucket that holds "now" always starts inside today.
+    bucketStartMs: Math.floor(Date.now() / TURN_GROUP_MS) * TURN_GROUP_MS,
     sessionId: 'session-1',
     inputTokens: 50,
     outputTokens: 25,
