@@ -562,6 +562,28 @@ test('Escape in a Command Terminal still posts when a header control holds focus
   await expect(commandWindow, 'the app keeps the window open, as the desktop does').toBeVisible();
 });
 
+test('Escape in a Command Terminal under the pointer still posts and leaves the window open', async ({ page }) => {
+  // The other hovered case is a task window's terminal. A Command Terminal frame has no
+  // `task-detail-close`, so `taskWindowOf` returns null and closeHoveredTerminalWindow must decline
+  // rather than call `.querySelector` on it. Neither Command Terminal test above moves the pointer,
+  // so both stop at the hover check and a missing guard would still read as covered.
+  const readMessages = await hostFrame(page, 'command-terminal');
+  const frame = page.frameLocator('#demo');
+  const commandWindow = frame.locator('[data-testid="command-terminal-window"]');
+  await expect(commandWindow).toBeVisible();
+  const terminal = commandWindow.locator('.xterm').first();
+  const box = await terminal.boundingBox();
+  expect(box, 'the Command Terminal terminal has a box to hover').not.toBeNull();
+  if (!box) return;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // The predicate the terminal itself reads, so a pointer that missed cannot pass this vacuously.
+  await expect.poll(() => terminal.evaluate((element) => element.parentElement?.matches(':hover') ?? false)).toBe(true);
+  await focusAcrossFrame(commandWindow.locator('.xterm-helper-textarea').first());
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
+  await expect(commandWindow, 'the app keeps the window open, as the desktop does').toBeVisible();
+});
+
 test('Escape in the bottom panel terminal posts even with a task window open', async ({ page }) => {
   // xterm stops propagation of every key it handles, so an Escape in a terminal outside the task
   // window never reaches the document listener the window closes on. A visitor gets here by
