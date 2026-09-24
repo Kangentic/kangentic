@@ -17,7 +17,13 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
 
-test.describe.configure({ mode: 'parallel' });
+// Every test here boots a full app instance inside its own body: launchWithState()
+// polls Vite, launches Chromium, loads the page, and waits up to 15000ms for the
+// app, and the board-mount waitFor after it allows another 15000ms. The ui
+// project's default 15000ms test budget cannot hold even one of those, so on a
+// loaded machine it fired on a blank page before the app had painted. See the
+// same reasoning in task-detail-archived-no-resume.spec.ts.
+test.describe.configure({ mode: 'parallel', timeout: 30_000 });
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -1093,12 +1099,6 @@ test.describe('usage dashboard', () => {
   // purpose) - the same shape the real popOut:changed IPC push delivers - so the
   // AppLayout/TitleBar wiring is proven without a real second BrowserWindow.
   test('title-bar button focuses the detached stats window instead of opening the in-app overlay', async () => {
-    // launchWithState() boots a full app instance inside the test body (Vite
-    // fetch poll, chromium.launch, goto+load, board mount) before the
-    // waitFor below even starts, and that single waitFor's own 15000ms budget
-    // already equals the project's default per-test timeout - see the same
-    // reasoning in task-detail-archived-no-resume.spec.ts.
-    test.setTimeout(30_000);
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1132,10 +1132,6 @@ test.describe('usage dashboard', () => {
   });
 
   test('the pop-out engine reporting the stats surface as detached closes an already-open in-app overlay', async () => {
-    // See the sibling pop-out test above: launchWithState() boots a full app
-    // instance inside the test body, and this test does an extra
-    // openDashboard() on top of the immediate 15000ms waitFor.
-    test.setTimeout(30_000);
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1161,10 +1157,6 @@ test.describe('usage dashboard', () => {
   // is a separate button from the title-bar trigger above, and is untested
   // elsewhere: it is the actual mechanism a user clicks to detach a surface.
   test('the surface header pop-out button opens the detached stats window', async () => {
-    // Same shape as the two pop-out tests above: a full app boot inside the
-    // test body plus an openDashboard(), under the same immediate 15000ms
-    // waitFor that alone equals the project's default per-test timeout.
-    test.setTimeout(30_000);
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
