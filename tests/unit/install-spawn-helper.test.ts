@@ -418,6 +418,32 @@ describe('CLI entry point (node build/install-spawn-helper.js)', () => {
       expect(result.stderr).toMatch(/runs on macOS only/);
     },
   );
+
+  // runChildProcessCheck itself carries no platform guard, so this reaches the
+  // same control-spawn failure on every OS: neither path exists, so its first
+  // spawnSync (the control child) fails with ENOENT before the helper path is
+  // ever touched. This pins the CLI wiring `verifyChildProcessLaunch` depends
+  // on: argv is sliced in [helperPath, probePath] order, the thrown message
+  // reaches stderr, and the catch calls `process.exit(1)` rather than letting
+  // Node exit 0 after only printing the error.
+  it('exits 1 and names the missing probe path when --child-process-check runs against files that do not exist', () => {
+    const scriptPath = path.join(REPO_ROOT, 'build', 'install-spawn-helper.js');
+    const missingHelper = path.join(os.tmpdir(), 'install-spawn-helper-test-missing-helper');
+    const missingProbe = path.join(os.tmpdir(), 'install-spawn-helper-test-missing-probe');
+
+    const result = spawnSync(
+      process.execPath,
+      [scriptPath, CHILD_PROCESS_CHECK_FLAG, missingHelper, missingProbe],
+      { encoding: 'utf8' },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/cannot observe inheritance/);
+    // The control spawn targets the probe, so its ENOENT names that path.
+    expect(result.stderr).toContain(missingProbe);
+    // The check throws before ever spawning the helper argument.
+    expect(result.stderr).not.toContain(missingHelper);
+  });
 });
 
 describe('signWithHardenedRuntime', () => {
