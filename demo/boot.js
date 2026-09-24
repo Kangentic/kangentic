@@ -362,8 +362,10 @@
 
   if (still) {
     // Zero durations, never `animation: none`, on the general rules: the overlay-* classes
-    // unmount on animationend, which still fires at 0s and never at none. The activity marks
-    // are infinite loops with no listener, so those can stop outright.
+    // unmount on animationend, which fires at 0s on nearly every close and never at none.
+    // useOverlayPhase's fallback timer covers the few it drops, but at none every close would
+    // wait on it. The activity marks are infinite loops with no listener, so those can stop
+    // outright.
     injectStyle(
       '*, *::before, *::after {' +
       ' animation-duration: 0s !important; animation-delay: 0s !important;' +
