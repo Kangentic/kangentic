@@ -112,6 +112,25 @@ describe('resolveNativeCrashContext: macOS install root derivation', () => {
   });
 });
 
+describe('resolveNativeCrashContext: a packaged run', () => {
+  it('keeps a helper crash from a moved Kangentic.app, on the executable name the real resolver derives from app.getPath(\'exe\')', () => {
+    // No module sits under the install root, so this keeps only through the
+    // bundle fallback, which needs the executable name the resolver derives
+    // on a packaged run. Every other test here keeps on the install root or
+    // runs unpackaged, so without this one a resolver that blanked the name
+    // on every run would still pass, and a real relocated crash would drop.
+    setPlatform('darwin');
+
+    expect(
+      filterDump([
+        '/Users/dev/Downloads/Kangentic.app/Contents/Frameworks/Kangentic Helper (GPU).app/Contents/MacOS/Kangentic Helper (GPU)',
+        '/Users/dev/Downloads/Kangentic.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+        '/usr/lib/dyld',
+      ])
+    ).not.toBeNull();
+  });
+});
+
 /**
  * In `npm start` the executable is `Electron` inside `Electron.app`. Every dev
  * Electron app shares both names, so matching on them would keep any dev
