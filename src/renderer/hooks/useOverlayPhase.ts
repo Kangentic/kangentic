@@ -1,19 +1,40 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { getIsHmrReload } from '../utils/hmr-flag';
 
 /**
  * Shared open/close motion for every in-app overlay (dialogs, panels, popovers,
- * context menus, the command bar, the search palette). Replaces the hand-rolled
- * `entering | visible | exiting` phase machine that BaseDialog, CommandBarOverlay,
- * SearchPalette, SettingsPanelShell, and OverlayPopover each used to duplicate.
+ * context menus, the command bar, the search palette, task and conversation
+ * windows). Replaces the hand-rolled `entering | visible | exiting` phase machine
+ * that BaseDialog, CommandBarOverlay, SearchPalette, SettingsPanelShell, and
+ * OverlayPopover each used to duplicate.
  *
  * The overlay stays mounted through its exit animation: a close gesture calls
  * `requestClose()` (phase -> exiting); when the content element's exit animation
- * finishes, `onAnimationEnd` fires `onClose()` so the parent can unmount.
+ * finishes, `onAnimationEnd` fires `onClose()` so the parent can unmount. If that
+ * `animationend` never arrives, `EXIT_FALLBACK_MS` closes it anyway.
  *
  * Timing/easing live entirely in the CSS token classes (see `index.css` overlay
- * motion tokens), so nothing here carries a duration - tweak the feel there.
+ * motion tokens), so nothing here carries an animation duration - tweak the feel
+ * there. The one number here is the fallback's deadline.
  */
+
+/**
+ * How long an exit waits for its own `animationend` before calling `onClose()`
+ * anyway. It sits above the longest exit any variant plays (150ms,
+ * `--overlay-exit-duration` and `--panel-exit-duration` in `index.css`), with
+ * headroom for a loaded frame. If the timer does win the race, the tail of the
+ * fade is cut short. That is the whole cost.
+ *
+ * The event is not guaranteed. With animation durations forced to 0s (Settings >
+ * Performance > Animations off, which `.no-motion` applies, and the web demo's
+ * still mode), Chromium dropped it on 1 to 3 percent of closes. That was
+ * measured on the web build over several hundred closes, in a top-level page as
+ * well as an iframe, with frames still being produced. A hidden window stalls it
+ * as well. Without this fallback the overlay stayed mounted, and every later
+ * close gesture was a no-op because `requestClose()` does nothing once the phase
+ * is `exiting`.
+ */
+const EXIT_FALLBACK_MS = 300;
 
 export type OverlayVariant = 'dialog' | 'popover' | 'panel' | 'command-bar';
 export type OverlayPhaseName = 'entering' | 'visible' | 'exiting';
@@ -100,6 +121,16 @@ export function useOverlayPhase(
    */
   const closeRequestedRef = useRef(false);
 
+  /**
+   * Set once an exit has called `onClose()`. The animation end and the fallback
+   * timer can both fire for one exit, and a caller whose close is not idempotent
+   * must see it once. Cleared wherever the phase leaves `exiting`, which is only
+   * `reset` and `markVisible`. A window parked by its close stays mounted in
+   * `exiting` until `markVisible`, and a second `requestClose` there is a no-op,
+   * so the flag must outlive the exit that set it.
+   */
+  const exitFinishedRef = useRef(false);
+
   const requestClose = useCallback(() => {
     closeRequestedRef.current = true;
     setPhase((currentPhase) => (currentPhase === 'exiting' ? currentPhase : 'exiting'));
@@ -107,27 +138,46 @@ export function useOverlayPhase(
 
   const reset = useCallback(() => {
     closeRequestedRef.current = false;
+    exitFinishedRef.current = false;
     setPhase('entering');
   }, []);
 
   const markVisible = useCallback(() => {
     closeRequestedRef.current = false;
+    exitFinishedRef.current = false;
     setPhase('visible');
   }, []);
+
+  const finishExit = useCallback(() => {
+    if (exitFinishedRef.current) return;
+    exitFinishedRef.current = true;
+    onClose();
+  }, [onClose]);
+
+  // An Effect Event, so the timer below keys on the phase alone. A parent that
+  // passes a fresh `onClose` every render would otherwise restart the deadline on
+  // each re-render, and a busy app could push it back indefinitely.
+  const onExitFallback = useEffectEvent(() => finishExit());
+
+  useEffect(() => {
+    if (phase !== 'exiting') return;
+    const fallback = setTimeout(() => onExitFallback(), EXIT_FALLBACK_MS);
+    return () => clearTimeout(fallback);
+  }, [phase]);
 
   const onAnimationEnd = useCallback(
     (event: React.AnimationEvent) => {
       // Ignore animations bubbling up from descendants of the content element.
       if (event.target !== event.currentTarget) return;
-      // The exit branch is deliberately checked FIRST and is never gated on the
-      // flag: it is the only path to `onClose()`, so skipping it would strand
-      // the overlay mounted forever - stuck the opposite way.
-      if (phase === 'exiting') onClose();
+      // The exit branch is deliberately checked FIRST and is never gated on
+      // `closeRequestedRef`: it is the usual path to `onClose()`, and skipping
+      // it would leave the close to the fallback timer for no reason.
+      if (phase === 'exiting') finishExit();
       // A close already asked for wins over the entrance finishing. Leaving the
       // phase alone lets the pending `'exiting'` commit and play its exit.
       else if (phase === 'entering' && !closeRequestedRef.current) setPhase('visible');
     },
-    [phase, onClose],
+    [phase, finishExit],
   );
 
   const backdropClassName =

@@ -47,8 +47,9 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   // middle-click all end here after the exit animation), so the layer's
   // park-or-drop policy is asked exactly once, against LIVE store state: a
   // session that ended or a pane that closed during the fade drops instead of
-  // parking. Idempotent, because the animation end and the fallback timer below
-  // can both fire.
+  // parking. `useOverlayPhase` calls it once per exit, whether the animation end
+  // or its own fallback timer (for an `animationend` that never arrives) gets
+  // there first. The guards stay for a window the store already removed or parked.
   const finishClose = useCallback(() => {
     const current = layerStore.getState().windows[managedWindow.id];
     if (!current || current.parked) return;
@@ -56,25 +57,16 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
     else closeWindow(current.id);
   }, [layerStore, layer, parkWindow, closeWindow, managedWindow.id]);
 
-  const { requestClose, contentClassName, onAnimationEnd, isExiting, markVisible } = useOverlayPhase(
+  const { requestClose, contentClassName, onAnimationEnd, markVisible } = useOverlayPhase(
     finishClose,
     { variant: 'dialog', skipEnterOnHmr: true, skipEnter: managedWindow.skipEnterAnimation ?? false },
   );
 
-  // Fallback: if the exit animation's `animationend` never fires (animations
-  // disabled, the frame re-rendered/re-focused mid-close, etc.), force the
-  // removal so a window can never get stuck in the exiting state.
-  useEffect(() => {
-    if (!isExiting) return;
-    const fallback = setTimeout(finishClose, 300);
-    return () => clearTimeout(fallback);
-  }, [isExiting, finishClose]);
-
   // A park leaves the overlay phase at `exiting` (its exit already played).
   // Settle it to `visible` now, under the inline `opacity: 0` below so nothing
   // flashes, so the un-park paints flat (a terminal-hosting window never
-  // animates in - see useTaskDetailWindowBridge) and `isExiting` flipping false
-  // clears the fallback timer.
+  // animates in - see useTaskDetailWindowBridge) and the next close runs a
+  // fresh exit.
   useEffect(() => {
     if (isParked) markVisible();
   }, [isParked, markVisible]);

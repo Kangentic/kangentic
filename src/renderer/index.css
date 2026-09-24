@@ -735,7 +735,9 @@
 
 /* Disable all CSS keyframe animations when user opts out via Appearance settings.
    Zero the duration but keep the animation (never `animation: none`): the overlay
-   phase machine unmounts on `animationend`, which still fires at 0s in Chromium. */
+   phase machine unmounts on `animationend`, which Chromium fires at 0s on nearly
+   every close. It drops it on a few percent, and `useOverlayPhase`'s fallback
+   timer closes those. With `animation: none` every close would wait on that timer. */
 .no-motion *,
 .no-motion *::before,
 .no-motion *::after {
@@ -789,7 +791,8 @@
 
   /* Overlay open/close: collapse to instant but keep the animation so the
      `animationend` that unmounts the overlay still fires. Never `animation:
-     none` here - that would leave a closing dialog mounted forever. */
+     none` here: every close would then wait out `useOverlayPhase`'s fallback
+     timer instead of ending at once. */
   .overlay-backdrop-in, .overlay-backdrop-out,
   .overlay-content-in, .overlay-content-out,
   .overlay-panel-in, .overlay-panel-out,
