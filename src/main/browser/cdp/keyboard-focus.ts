@@ -46,8 +46,15 @@ export function keyboardFocusIsInHost(webContents: WebContents): boolean {
   try {
     const focusedFrame = host.focusedFrame;
     if (!focusedFrame) return false;
-    const topFrame = focusedFrame.top ?? focusedFrame;
-    return topFrame.frameTreeNodeId === host.mainFrame.frameTreeNodeId;
+    // Walk `parent` to the root rather than trusting `top`. Electron documents
+    // `parent` as null exactly at the top of a frame hierarchy and says nothing
+    // about when `top` is null, and a null `top` on a host subframe would have
+    // compared the subframe itself, read "not in host", and sent the key: the
+    // unsafe direction. A guest's main frame has no parent here (measured in
+    // the same probe), so a guest frame never walks up into the host.
+    let rootFrame = focusedFrame;
+    while (rootFrame.parent) rootFrame = rootFrame.parent;
+    return rootFrame.frameTreeNodeId === host.mainFrame.frameTreeNodeId;
   } catch {
     // Cannot tell where the key would go, so treat it as the unsafe answer: a
     // key that is not sent is recoverable, a key sent into a terminal is not.
