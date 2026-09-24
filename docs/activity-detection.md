@@ -656,9 +656,9 @@ interface ActivityEngineOptions {
 
 Plumbed through `SessionManagerOptions.activityEngineOptions` for tests.
 
-### Per-project setting
+### Global setting
 
-`developer.activityDebugOverlay: boolean` - enables the debug overlay for the current project. Default false.
+`developer.activityDebugOverlay: boolean` - enables the debug overlay for every project on this install. Global-only, with no per-project override. Default false.
 
 ### Environment variables
 

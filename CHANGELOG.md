@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.43.2] - 2026-09-24
+
+### Fixes
+- Keep breadcrumbs from carrying paths, commands, and task titles to Sentry (e27f5eb6)
+- Track foreign crashes in Sentry and reset exception ports for shell launches (5a2a0853)
+- Close an overlay whose exit animationend never arrives (8c52d869)
+- Let Escape leave the embedded demo from a task window terminal (d691fa10)
+- Re-poll a PR while its checks are in flight so the pill settles in seconds (ab5959eb)
+- Reset mach exception ports for PTY children on macOS (f402aae6)
+- Record the GPU fallback a launch-failure ladder leaves behind (216216b2)
+- Drop foreign Electron crashes the minidump filter kept (30409171)
+- Find the focused frame's root by walking parent, not top (16a87d89)
+- Refuse agent keys the pane would not receive, and put typed text on the keyDown (55c65dab)
+
+### Other
+- Align the foreign-crash and triage notes with the breadcrumb policy (53e43c3e)
+- Pin that the spawn-helper warn passes its error as its own argument (3a5530f2)
+- Say a foreign crash with an unreadable dump still arrives as a fatal (b8302dc2)
+- Pin the --child-process-check CLI branch's exit code (8f5aa430)
+- Prove a child_process shell launch through the spawn-helper on macOS (6c0c13c4)
+- Record the #728 review pack in the fan-out audit (e93099c0)
+- Wait for the collapsed pane to detach before re-expanding (8f07a646)
+- Cover Escape in a hovered Command Terminal (1a788bf7)
+- Record the demo Escape review in the per-review ledger (bebd7729)
+- Correct what a not-yet-reported required check reads and costs (df1627e5)
+- Pin three unguarded paths of the in-flight re-poll and queued rule (161416df)
+- Record the task 727 review in the fan-out audit log (3482da05)
+- Name the dev-run case the native crash filter still backstops (8dc1164f)
+- Pin the self-test's hardened-runtime signature and failure exit (5842ab53)
+- Pin the unavailable compositing branch and the report message arms (87b1fa28)
+- Pin the packaged arm of the crash filter's executable name (797c09dd)
+- Record the #724 review pack in the fan-out audit (f3ec3c2e)
+- Record the #720 review in the fan-out audit log (d3c0797b)
+- Stop naming char events in the focus-guard comment (900af07a)
+
 ## [v0.43.1] - 2026-09-23
 
 ### Features
