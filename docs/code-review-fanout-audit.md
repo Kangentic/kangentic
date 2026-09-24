@@ -802,6 +802,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #724 | 7f +218 | 48KB, 873 lines | 7 (6) | 0 | 0 | 6 | 2 of 5 pack-carrying | 7 / 5 |
 | task 727, pre-PR | 13f +964 | 133KB, 1859 lines | 3 (3) | 10 | 0 | 7 | 1 of 6 pack-carrying | 10 / 7 |
 | #723 | 9f +210 | 32KB, 459 lines | 3 (2) | 6 | 0 | 8 | 28 of 7 pack-carrying | 12 / 9 |
+| #728 | 15f +576 plus 8 new files | 176KB, 3359 lines | 16 (7) | 7 | 0 | 8 | 10 of 7 pack-carrying | 11 / 7 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -903,3 +904,17 @@ The rest were a rule file read whole for its contract, a grep of the spec for an
 and a dash scan over the changed files. It ran 8 finders because a comment-only edit under
 `src/renderer/utils/` gated `hmr-parity` and a `path.join` context line gated `platform-guard`.
 Neither found anything.
+
+The #728 row hit the Read tool's output cap again, like row six, but for one finder only. The
+IPC auditor's first 2000-line call failed on the 25,000-token limit, so it read three targeted
+windows and skipped the analytics sections as off its checklist. The other finders reported
+loading the pack in the two calls the skill sizes. Of the 10 reads beyond the pack, 5 were outside
+the changed set: the correctness finder's removed-surface greps and a failed Glob for node-pty's
+helper source, and the conventions finder's pass over the `trackEvent` call sites and the installed
+Sentry minidump integration. Four were the conventions finder re-reading pack-carried files to
+quote exact lines. The last is a `HUNK_CONTEXT_LINES` case. The IPC auditor read `system.ts` lines
+575-629 for the `SHELL_EXEC` input guard, which sits just above the 3-line window of the changed
+spawn. The driver refuted four of the 11 candidates, each for a stated reason:
+- A fail-open ordering case had no SDK-shaped trigger.
+- Two platform nits changed no behavior.
+- One coverage hole was on code the diff moved without changing.
