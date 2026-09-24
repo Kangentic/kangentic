@@ -18,7 +18,7 @@
  * THE RESTORE HAPPENS ONLY AFTER THE DRIVE ENDS, NEVER DURING IT. Measured on
  * Electron 41 against a live guest: taking focus back mid-drive silently BREAKS
  * the tool that is running. `kangentic_browser_type` is a click followed by
- * `Input.dispatchKeyEvent` char events, and once focus is pulled out of the guest
+ * `Input.dispatchKeyEvent` key events, and once focus is pulled out of the guest
  * the guest's own focused element loses it too, so every character lands nowhere.
  * The measurement was unambiguous - the same type call produced an empty input
  * after a restore and the full text without one. So an "early fire" on `focusout`
