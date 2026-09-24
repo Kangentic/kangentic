@@ -800,6 +800,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #718 | 11f +312 | 72KB, 1010 lines | 7 (4) | 4 | 0 | 6 | 28 of 5 pack-carrying | 13 / 10 |
 | #720 | 9f +284 plus 4 new files | 116KB, 1782 lines | 8 (4) | 5 | 0 | 7 | 12 of 6 pack-carrying | 15 / 13 |
 | #724 | 7f +218 | 48KB, 873 lines | 7 (6) | 0 | 0 | 6 | 2 of 5 pack-carrying | 7 / 5 |
+| task 727, pre-PR | 13f +964 | 133KB, 1859 lines | 3 (3) | 10 | 0 | 7 | 1 of 6 pack-carrying | 10 / 7 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -877,3 +878,14 @@ the changed set: `electron-builder.yml`, to learn how the macOS bundle and execu
 derived, and a repo-wide grep for a renamed constant. No finder re-read a file the pack carried.
 Three of the seven candidates were one issue, raised by three dimensions, so the kept count is
 the dedup, not a refutation.
+
+The task 727 row reviewed uncommitted work before any PR existed, so it is keyed by task. Its
+pack was 133KB, past the Read tool's output cap at 2000 lines, so the finders loaded it in three
+620-line calls. Five of the six pack-carrying finders read nothing else. The sixth,
+`platform-guard`, read two gaps in the hunk-tier `gh-client.ts`: the `execFileAsync` binding near
+the top of the file and the sibling `gh` methods, to compare the new call's argv against them.
+Both sit far outside any hunk, so this is not a case for a wider `HUNK_CONTEXT_LINES`. The driver
+refuted 3 of the 10 findings: a `Promise.all` that would have broken the `gh` queue's concurrency
+cap, and two coverage holes, one already pinned by an existing test and one that changed no
+output. It also found one that no finder raised. A timer-driven re-poll inherits the arming
+caller's `force` flag, and a comment claimed otherwise.
