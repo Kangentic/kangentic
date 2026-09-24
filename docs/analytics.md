@@ -271,7 +271,8 @@ in one Sentry org, one triage surface.
     arriving. PTY children no longer inherit the port at all: the packaged macOS app ships its own
     node-pty `spawn-helper`, which clears the task's exception ports before exec (see "PTY
     children and mach exception ports" in `docs/cross-platform.md`). The filter stays as the
-    backstop for older builds and for processes started outside a PTY. Before that change the
+    backstop for older builds, for an unpackaged run with error reporting switched on (`npm start`
+    keeps node-pty's stock helper), and for processes started outside a PTY. Before that change the
     counter stood at 33 events over 0.41.0 to 0.43.0, all macOS, 27 of them from one command-line
     tool. On a release with the change, expect a one-time tail from dumps written before the upgrade
     and uploaded at its first launch, then only the non-PTY residue.

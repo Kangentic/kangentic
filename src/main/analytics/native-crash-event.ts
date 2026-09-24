@@ -20,7 +20,9 @@ import type { ErrorEvent } from '@sentry/electron/main';
  *    `node_modules/electron/dist/Electron.app`. The packaged app now clears
  *    those ports in node-pty's spawn-helper before exec
  *    (build/spawn-helper/spawn-helper.c), so this filter is the backstop for
- *    older builds and for processes started outside a PTY.
+ *    older builds, for an unpackaged run with error reporting switched on
+ *    (`npm start` keeps node-pty's stock helper), and for processes started
+ *    outside a PTY.
  * 2. A dump uploaded after an upgrade wears the UPLOADING build's release tag and
  *    scope. DESKTOP-M crashed on 0.38.0 and is filed under 0.39.0, with
  *    breadcrumbs from a launch 21 minutes after the crash.

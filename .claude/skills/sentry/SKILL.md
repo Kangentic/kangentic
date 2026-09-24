@@ -213,7 +213,8 @@ Reading a native event, in order of what trips people up:
   Aptabase `foreign_minidump_dropped` instead. If a native issue looks like someone else's binary,
   check that counter rather than expecting a Sentry issue. On builds that ship Kangentic's own
   node-pty `spawn-helper`, PTY children never inherit the port, so the counter falls to builds
-  from before that change plus processes started outside a PTY. "PTY children and mach
+  from before that change, unpackaged runs with error reporting switched on (`npm start` keeps
+  node-pty's stock helper), and processes started outside a PTY. "PTY children and mach
   exception ports" in `docs/cross-platform.md` lists those paths.
 - **Scope persists with a 500 ms write throttle**, so on any event the last half-second of
   breadcrumbs before the crash is missing. An entire quit sequence fits in that gap.
