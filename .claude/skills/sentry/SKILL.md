@@ -201,8 +201,9 @@ Reading a native event, in order of what trips people up:
   are the uploading launch's, wholly or partly; on a corrected one they are removed rather than
   left to mislead. Breadcrumbs on an event tagged `exit.reason` are trustworthy: that tag marks
   the two SDK paths that report a crash the running session watched happen.
-- **A crash in a process Kangentic merely spawned arrives as one warning issue, never as a
-  fatal.** On macOS, mach exception ports are inherited across exec, so an agent shelling out to
+- **A crash in a process Kangentic merely spawned arrives as one warning issue rather than a
+  fatal, unless its dump could not be parsed.** The check fails open, so such a dump stays a
+  fatal with its minidump attached, and it carries no `native_crash` context. On macOS, mach exception ports are inherited across exec, so an agent shelling out to
   ffmpeg, a headless browser, or a dotnet tool used to file its crashes as ours. Four sources have
   been seen: DESKTOP-K (Homebrew ffmpeg's `ffprobe`), DESKTOP-N (a Puppeteer
   `chrome-headless-shell`), DESKTOP-Q (`/usr/local/share/dotnet/dotnet`, ten events), and
@@ -210,8 +211,8 @@ Reading a native event, in order of what trips people up:
   whether the dump loaded a Kangentic image rather than off any binary's name. DESKTOP-1D got
   through an earlier version of it that counted any `Electron Framework` image as ours. Every
   Electron app loads that framework, so it now counts only inside our own `Kangentic.app` bundle.
-  Task #604 tracks DESKTOP-Q, though no commit names it. Every such crash now groups into the
-  single issue "Foreign process crash reached Kangentic's crash database" (level `warning`, fixed
+  Task #604 tracks DESKTOP-Q, though no commit names it. Every such crash the check identifies
+  now groups into the single issue "Foreign process crash reached Kangentic's crash database" (level `warning`, fixed
   fingerprint), with no minidump attached and so no stack. It shows up in the triage query below.
   Break it down by the `module` tag and by release: `module` is the crashing program's file name,
   or `user-binary` when it is not in an installer or package-manager directory. Its
