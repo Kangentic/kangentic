@@ -798,6 +798,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #713 | 22f +2290 | 285KB, 3870 lines | 2 (1) | 20 | 0 | 7 | 17 of 6 pack-carrying | 19 / 13 |
 | #717 | 14f +859 plus 2 new files | 180KB, 3263 lines | 8 (4) | 6 | 0 | 7 | 11 of 6 pack-carrying | 24 / 18 |
 | #718 | 11f +312 | 72KB, 1010 lines | 7 (4) | 4 | 0 | 6 | 28 of 5 pack-carrying | 13 / 10 |
+| #720 | 9f +284 plus 4 new files | 116KB, 1782 lines | 8 (4) | 5 | 0 | 7 | 12 of 6 pack-carrying | 15 / 13 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
