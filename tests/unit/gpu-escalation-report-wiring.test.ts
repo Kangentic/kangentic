@@ -377,6 +377,46 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     ).toContain('modeChanges: pendingGpuEscalation.modeChanges');
   });
 
+  it('binds each report message to its OWN arm of the count > 0 ternary, not the other one', () => {
+    // The test above checks that both message strings and `count > 0` exist
+    // somewhere in the block, independently. That stays green even if the two
+    // ternary arms are swapped: a crash loop would then report under the
+    // fallback-only message and a launch-failure fallback under the
+    // crash-loop message, which is the exact misgrouping this branch exists
+    // to prevent (a crash-loop issue and a launch-failure issue need
+    // different triage). This test pins the ORDER instead: the crash-loop
+    // template must sit between the ternary's `?` and `:`, and the
+    // fallback-only string after the `:`.
+    const tryBlock = escalationReportTryBlock();
+
+    const conditionIndex = tryBlock.indexOf('pendingGpuEscalation.count > 0');
+    expect(conditionIndex, 'the branch must still test pendingGpuEscalation.count > 0').toBeGreaterThan(-1);
+
+    const questionMarkIndex = tryBlock.indexOf('?', conditionIndex);
+    expect(questionMarkIndex, 'the count > 0 test must be the condition of a ternary').toBeGreaterThan(-1);
+
+    const colonIndex = tryBlock.indexOf(':', questionMarkIndex);
+    expect(colonIndex, 'the ternary must have an else arm').toBeGreaterThan(-1);
+
+    const crashLoopMessageIndex = tryBlock.indexOf('`GPU process exited repeatedly');
+    const fallbackMessageIndex = tryBlock.indexOf("'GPU left hardware acceleration with no GPU process exit reported'");
+    expect(crashLoopMessageIndex, 'the crash-loop template literal must still exist').toBeGreaterThan(-1);
+    expect(fallbackMessageIndex, 'the fallback-only string literal must still exist').toBeGreaterThan(-1);
+
+    expect(
+      crashLoopMessageIndex,
+      "the crash-loop template ('GPU process exited repeatedly...') must be the THEN arm: it has to sit after the ternary's own ?, not before it",
+    ).toBeGreaterThan(questionMarkIndex);
+    expect(
+      crashLoopMessageIndex,
+      "the crash-loop template must sit before the ternary's :, i.e. it is the THEN arm, not the ELSE arm",
+    ).toBeLessThan(colonIndex);
+    expect(
+      fallbackMessageIndex,
+      "the fallback-only string ('GPU left hardware acceleration...') must be the ELSE arm: it has to sit after the ternary's :, not before it",
+    ).toBeGreaterThan(colonIndex);
+  });
+
   it("sources previousRunExit from previousRunProps.lastRunExit with an 'unknown' fallback, the exact field name and sentinel that already drifted once (commit cf620796)", () => {
     const tryBlock = escalationReportTryBlock();
 

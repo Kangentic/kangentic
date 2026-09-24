@@ -448,6 +448,27 @@ describe('recordGpuModeObservation (the fallback a launch-failure ladder leaves)
     expect(fs.existsSync(escalationPath)).toBe(false);
   });
 
+  it('records a fallback whose compositing reads "unavailable_*", not only "disabled_*"', () => {
+    // isDegradedCompositing's own doc comment calls this "software or no
+    // compositing", and BLOCKLISTED_STATUS above already proves unavailable_*
+    // is a real value Chromium reports for gpu_compositing (measured on
+    // Linux). This machine had hardware, then compositing went fully
+    // unavailable rather than falling back to software - a transition the
+    // "disabled" prefix alone would silently drop.
+    const clock = makeClock();
+    observe(clock, HARDWARE_STATUS);
+    expect(fs.existsSync(escalationPath)).toBe(false);
+
+    const unavailableStatus = { ...DISPLAY_COMPOSITOR_STATUS, gpu_compositing: 'unavailable_software' };
+    clock.advance(1_000);
+    observe(clock, unavailableStatus);
+
+    const record = readPendingGpuEscalation(escalationPath);
+    expect(record?.modeChanges).toHaveLength(1);
+    expect(record?.modeChanges[0]?.compositing).toBe('unavailable_software');
+    expect(record?.featureStatus.gpu_compositing).toBe('unavailable_software');
+  });
+
   it('writes nothing while compositing stays on the GPU, however often the update fires', () => {
     // gpu-info-update fires on every GPU process restart, and on a healthy
     // machine each one re-reads hardware.
