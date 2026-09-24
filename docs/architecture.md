@@ -544,20 +544,20 @@ Overridable via `KANGENTIC_DATA_DIR` env var.
 
 Stores the project list. Tables:
 
-- **projects** -- id, name, path, github_url, default_agent, last_opened, created_at
+- **projects** -- id, name, path, github_url, default_agent, default_model, default_effort, group_id, position, last_opened, created_at
 - **global_config** -- key/value store for app-wide settings
-- **project_groups** -- sidebar grouping for projects. Fields: id, name, position, collapsed
+- **project_groups** -- sidebar grouping for projects. Fields: id, name, position, is_collapsed
 
 ### Per-Project DB (`<configDir>/projects/<projectId>.db`)
 
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
-- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
+- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at, description (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
 - **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
 - **column_automations** -- What runs when a task enters or leaves a column. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, plus the legacy `spawn_agent`), trigger (`enter`/`exit`), position, enabled, config_json, created_at, updated_at. One list per column, numbered per trigger, with names unique per column
 - **automation_runs** -- One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at. Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept
 - **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [database.md](database.md)
-- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
+- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
 - **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
 - **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.

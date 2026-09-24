@@ -779,6 +779,7 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `config:getProjectByPath` | Get project-level overrides by project path |
 | `config:setProjectByPath` | Update project-level overrides by project path; resolves `{ persisted }` |
 | `config:syncDefaultToProjects` | Sync changed default values to all existing projects (deep merge) |
+| `config:changed` | Event: fanned to every window (main and open pop-outs) after any `config:set` is applied; subscribers re-fetch via `config:get`, so theme and settings stay in sync across windows |
 | `config:writeFailed` | Event: a synchronous write to config or another small per-machine/per-project state file failed (data directory unwritable); carries the message to toast, naming the cause where the errno gives one, at most once per failing source until a later write to that source succeeds |
 | `boardConfig:exists` | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |

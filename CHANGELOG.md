@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.43.1] - 2026-09-23
+
+### Features
+- Show dictation switched on in Settings and listening in a text field (f89b90ec)
+- Replay the recorded resume boot and hold a paused session's view (0e802fb1)
+- Add a session-resume scene and resume paused sessions in place (2af5ad63)
+- Shoot the posters in Roboto and carry each poster's focus rect (5bc28859)
+- Make the Browser scene's guest page read as a website (517de769)
+
+### Fixes
+- Stop pane screenshots tiling under a viewport override (48f16042)
+- Keep a resumed session marked resuming after its first output (4ca7490d)
+- Fill every terminal pane at any grid instead of letterboxing (f64f9629)
+- Give All columns its widths, and seed the column scenes with a real ladder (b55f25a8)
+- Drop the Electron token from the Browser pane user agent (7c94e67a)
+- Give a signed-out agent a full-width row (b57fb385)
+
+### Other
+- Give every in-test app boot in the dashboard spec a 30s budget (9b7830aa)
+- Keep the turn-group fixture inside today after midnight (3e79b84d)
+- Pin buildDictationInfo and primaryModel directly (9a538769)
+- Name the right hunk in the #718 ledger row (e3d74dde)
+- Pin the demo's boot veil and silent push-to-talk release (6328570e)
+- Correct viewport screenshot claims found at merge (67204ed8)
+- Pin the pane surface the screenshot and click paths pass (a5826232)
+- Drop the resuming label from the drained-bytes comment (f8853031)
+- Pin the demo boot contracts and name the mock's project rule (ac8665d9)
+- Cover emulator disposal and the conform decline timer (c257c830)
+- Record this review pack in the fan-out audit (41d73011)
+- Scan demo/ for xterm Unicode 11 activation (82245fda)
+- Pin the colgroup and the default-agent permission label (0ae5234f)
+- Correct the #715 ledger row's read count and context finding (cd58a971)
+- Record the column-seed review in the per-review ledger (16862825)
+- Drop the any cast from the lane manager's fake window (d93ad94a)
+- Say the poster verify refuses a stray PNG, not any stray file (623088ae)
+- Cover an extra-key focus sidecar and a pre-read focus map (bc26e5db)
+- Record the poster focus review in the per-review ledger (a5a6822a)
+- Hold every guest page to the README's three constraints (480a317a)
+- Record the welcome-screen review in the per-review ledger (421e6c8c)
+- Point Planning and Code Review at Opus 5.5 (2dccf278)
+
 ## [v0.43.0] - 2026-09-22
 
 ### Features
