@@ -32,6 +32,7 @@ const {
   verifyPackagedSpawnHelpers,
   findDarwinSpawnHelpers,
   runSelfTest,
+  signWithHardenedRuntime,
   MINIMUM_MACOS_VERSION,
   SPAWN_HELPER_SOURCE,
   EXCEPTION_PORT_PROBE_SOURCE,
@@ -393,6 +394,73 @@ describe('CLI entry point (node build/install-spawn-helper.js)', () => {
     const result = spawnSync(process.execPath, [scriptPath], { encoding: 'utf8' });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('usage: node build/install-spawn-helper.js --self-test');
+  });
+
+  // Off darwin, runSelfTest's own platform guard rejects immediately (pinned
+  // above), which is what makes this reachable without macOS. It proves the
+  // OTHER half of the CLI wiring: without `process.exit(1)` in the rejection
+  // branch, node would drain the event loop and exit 0 after only printing the
+  // error, so a self-test failure on the real macOS workflow would still read
+  // as a green run.
+  it.runIf(process.platform !== 'darwin')(
+    'exits 1 and prints the failure when --self-test rejects',
+    () => {
+      const scriptPath = path.join(REPO_ROOT, 'build', 'install-spawn-helper.js');
+      const result = spawnSync(process.execPath, [scriptPath, '--self-test'], { encoding: 'utf8' });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/runs on macOS only/);
+    },
+  );
+});
+
+describe('signWithHardenedRuntime', () => {
+  it('ad-hoc signs with hardened runtime and the entitlements electron-builder.yml names for the app', () => {
+    const { spawn, calls } = makeSpawn({ contract: () => '' });
+    const helperPath = path.join(os.tmpdir(), 'install-spawn-helper-test-fake-helper');
+
+    signWithHardenedRuntime({ helperPath, spawn });
+
+    expect(calls).toHaveLength(1);
+    const [call] = calls;
+    expect(call.file).toBe('codesign');
+    expect(call.args).toEqual([
+      '--force',
+      '--sign',
+      '-',
+      '--options',
+      'runtime',
+      '--entitlements',
+      expect.any(String),
+      helperPath,
+    ]);
+
+    const entitlementsPath = call.args[call.args.indexOf('--entitlements') + 1];
+    expect(fs.existsSync(entitlementsPath)).toBe(true);
+    // path.relative, not a hardcoded backslash join: avoids a Windows
+    // drive-letter case mismatch between fileURLToPath (REPO_ROOT) and
+    // __dirname (the module's own path), and reads the same on POSIX.
+    const relativeEntitlementsPath = path.relative(REPO_ROOT, entitlementsPath).replace(/\\/g, '/');
+    expect(relativeEntitlementsPath).toBe('build/entitlements.plist');
+
+    // The expected value comes from electron-builder.yml, not from re-deriving
+    // install-spawn-helper.js's own path.join call: the app's real signing
+    // config is the contract this function exists to match on the self-test.
+    const builderConfig = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const entitlementsMatch = builderConfig.match(/^\s*entitlements:\s*(\S+)/m);
+    const entitlementsInheritMatch = builderConfig.match(/^\s*entitlementsInherit:\s*(\S+)/m);
+    expect(entitlementsMatch?.[1]).toBe(relativeEntitlementsPath);
+    expect(entitlementsInheritMatch?.[1]).toBe(relativeEntitlementsPath);
+  });
+
+  it("throws with codesign's stderr when signing fails", () => {
+    const { spawn } = makeSpawn({
+      contract: () => {
+        throw makeSpawnError({ status: 1, stderr: 'codesign: code object is not signed at all' });
+      },
+    });
+    expect(() => signWithHardenedRuntime({ helperPath: '/tmp/fake-helper', spawn })).toThrow(
+      /Could not ad-hoc sign \/tmp\/fake-helper with hardened runtime\.\ncodesign: code object is not signed at all/,
+    );
   });
 });
 
