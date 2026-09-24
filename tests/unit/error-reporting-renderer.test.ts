@@ -22,6 +22,7 @@ vi.mock('@sentry/electron/renderer', () => ({
 }));
 
 import { initRendererErrorReporting, reportBoundaryError } from '../../src/renderer/error-reporting';
+import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
 describe('initRendererErrorReporting', () => {
   afterEach(() => {
@@ -35,6 +36,16 @@ describe('initRendererErrorReporting', () => {
     initRendererErrorReporting();
 
     expect(mocks.init).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the shared breadcrumb policy, since main never filters renderer crumbs', () => {
+    // Main adds forwarded renderer crumbs with scope.addBreadcrumb, which skips
+    // main's beforeBreadcrumb, so this is the only place they are filtered.
+    vi.stubGlobal('window', { electronAPI: { analytics: { errorReportingEnabled: true } } });
+
+    initRendererErrorReporting();
+
+    expect(mocks.init).toHaveBeenCalledWith({ beforeBreadcrumb: filterBreadcrumb });
   });
 
   it('does not call init() when errorReportingEnabled is false', () => {

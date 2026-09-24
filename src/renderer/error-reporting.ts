@@ -1,4 +1,5 @@
 import { init as sentryInit, captureException } from '@sentry/electron/renderer';
+import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
 
 /**
  * Renderer half of Sentry error reporting. The renderer SDK has NO network
@@ -11,13 +12,16 @@ import { init as sentryInit, captureException } from '@sentry/electron/renderer'
  * preload reads from additionalArguments that mirrors main's single decision
  * (KANGENTIC_TELEMETRY / KANGENTIC_ERROR_REPORTING / packaged, plus a DSN
  * actually being configured) - so the renderer can never initialize when main
- * did not. Options stay empty per the SDK docs: renderer config is inherited
- * from the main process.
+ * did not. Everything else is inherited from the main process, per the SDK
+ * docs, except `beforeBreadcrumb`. Main receives renderer crumbs through the
+ * SDK's scope forwarding and adds them with `scope.addBreadcrumb`
+ * (@sentry/electron/esm/main/ipc.js, handleScope), which never calls main's
+ * hook. So the renderer runs the shared policy itself, before it forwards.
  */
 export function initRendererErrorReporting(): void {
   if (!window.electronAPI?.analytics?.errorReportingEnabled) return;
   try {
-    sentryInit();
+    sentryInit({ beforeBreadcrumb: filterBreadcrumb });
   } catch (error) {
     console.error('[ANALYTICS] Failed to initialize renderer error reporting:', error);
   }

@@ -54,6 +54,7 @@ function runCleanupStep(name: string, step: () => void): void {
   try {
     step();
   } catch (error) {
+    // breadcrumb-ok: a step name is a string literal at every syncShutdownCleanup call site
     console.error(`[SHUTDOWN] cleanup:step-failed ${name}`, error);
   }
 }

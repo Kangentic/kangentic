@@ -90,6 +90,14 @@ issue = affected installs).
 - **Environment tag** separates `development` (forced-on dev/preview runs) from `production`
   (packaged installs). Do not chase dev-only test events (`Kangentic telemetry verification:` is
   the preview rig's own test error).
+- **The breadcrumb trail is filtered on the machine.** On a release carrying
+  `src/shared/sentry-breadcrumbs.ts`, console crumbs appear only under its allowlisted tags
+  (`[UPDATER]`, `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`,
+  `[APP]`), an Error argument shows as its name and code only, click selectors read `[title]`
+  without a value, and request crumbs keep a URL only when it is Kangentic's own. So a missing
+  untagged line (`[WORKTREE]`, `[spawnAgent]`) is not evidence it was never logged: the user's
+  `.kangentic/logs` holds the main process's warn and error lines of every tag. Older events still
+  carry the unfiltered trail.
 - **Exactly 50 frames means the stack is TRUNCATED, not complete.** The SDK caps a parsed stack
   at 50 (`STACKTRACE_FRAME_LIMIT` in `@sentry/core`, and `Error.stackTraceLimit = 50` set by
   `@sentry/browser`'s globalHandlers integration). It reads a V8 stack innermost-first and stops

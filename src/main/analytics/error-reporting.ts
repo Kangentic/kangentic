@@ -10,6 +10,7 @@ import {
   readMinidumpIdentity,
   type NativeCrashContext,
 } from './native-crash-event';
+import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -271,10 +272,15 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  *
  * SCRUBBING is deliberately Sentry's job, not ours: the SDK's default
  * normalizePathsIntegration rewrites stack-frame paths and URLs relative to
- * the app root (so the user's home directory never reaches Sentry for app
- * code), sendDefaultPii stays false, and Sentry's server-side data scrubbing
- * is on by default. Any further scrubbing rule belongs in the Sentry UI
- * (Advanced Data Scrubbing), not in a custom beforeSend here.
+ * the app root (so the user's home directory never reaches Sentry through an
+ * app stack frame), sendDefaultPii stays false, and Sentry's server-side data
+ * scrubbing is on by default. Any further scrubbing rule belongs in the Sentry
+ * UI (Advanced Data Scrubbing), not in a custom beforeSend here.
+ *
+ * BREADCRUMBS are an exception to that stance, filtered on the machine by
+ * `beforeBreadcrumb` (src/shared/sentry-breadcrumbs.ts). normalizePathsIntegration never touches
+ * them, and no server-side rule can recognize a task title or a column prompt
+ * inside a console line, so the policy runs before a crumb enters the ring.
  *
  * FILTERING is a separate concern and does live here, in `ignoreErrors`:
  * deciding that a whole class of event is un-actionable and should never become
@@ -383,6 +389,10 @@ export function initErrorReporting(): void {
         // so main's event processors run on them.
         ...BENIGN_RENDERER_ERRORS,
       ],
+      // Drops or rewrites every breadcrumb main records, before it takes a
+      // slot in the ring (src/shared/sentry-breadcrumbs.ts). Renderer crumbs
+      // skip this hook, so the renderer installs the same policy itself.
+      beforeBreadcrumb: filterBreadcrumb,
     });
     active = true;
   } catch (error) {

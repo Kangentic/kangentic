@@ -269,8 +269,16 @@ initAnalytics();
 // Initialize Sentry error reporting beside it (also pre-ready: the SDK wires
 // its renderer IPC/protocol transport during init). Gated by the same
 // KANGENTIC_TELEMETRY superset kill switch plus KANGENTIC_ERROR_REPORTING;
-// scrubbing and event hygiene are the SDK's and Sentry's job, not ours
-// (see analytics/error-reporting.ts).
+// scrubbing and event hygiene are the SDK's and Sentry's job, not ours, except
+// for breadcrumbs (see analytics/error-reporting.ts).
+//
+// It must stay AFTER installDiagnostics() above. The SDK wraps whatever
+// console.* is at init, so running second makes it the outer wrapper, which
+// sees each caller's own arguments. The log mirror hands the function it wraps
+// a `[HH:MM:SS] [projectName]`-prefixed first argument, so in the other order
+// no console line would start with an allowlisted breadcrumb tag, and every
+// console breadcrumb would silently drop. tests/unit/sentry-breadcrumbs.test.ts
+// pins the order.
 initErrorReporting();
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
