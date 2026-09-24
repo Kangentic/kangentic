@@ -364,8 +364,9 @@ export function enableTerminalClipboard(
     // - pointer outside the terminal: decline the key (return false) so it
     //   bubbles to the dialog and closes it. The agent does not receive Escape.
     // - pointer over the terminal: keep Escape for the agent's TUI and
-    //   stopPropagation so the dialog's document listener does not also close it
-    //   (xterm does not stop propagation on its own).
+    //   stopPropagation so the dialog's document listener does not also close it.
+    //   xterm stops it as well, since its key map marks Escape `cancel`, so this
+    //   call states the contract here rather than relying on that detail.
     if (releaseEscapeWhenPointerOutside && event.key === 'Escape') {
       if (!el.matches(':hover')) return false;
       event.stopPropagation();

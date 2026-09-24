@@ -236,8 +236,12 @@ three things staying in step, and each is enforced rather than remembered.
   windows take each session's tiled recording and fill their panes, that a fitted floating window
   takes exactly its recording's columns at device scale 1, 1.25, and 2 and in a launch whose
   scrollbars reserve a gutter, that a window built one cell narrower than its fitted width (one
-  column short on any font) keeps the configured type with nothing held, and that a card opened
-  in that launch at 100 percent fills its window. Runs as the `demo` job in `.github/workflows/ci.yml`
+  column short on any font) keeps the configured type with nothing held, that a card opened
+  in that launch at 100 percent fills its window, and that Escape posts `kangentic-demo-escape`
+  only when the app has nothing of its own to close. A dialog, a task window, and a focused text
+  field each keep the first press. A task window whose terminal is under the pointer still closes
+  on it. A parked window, a Command Terminal, and a terminal outside every task window keep no
+  press, so the first press posts. Runs as the `demo` job in `.github/workflows/ci.yml`
   and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.
