@@ -34,17 +34,21 @@ import {
 
 interface FakeFrame {
   frameTreeNodeId: number;
+  parent: FakeFrame | null;
   top: FakeFrame | null;
 }
 
-function frame(frameTreeNodeId: number, top: FakeFrame | null = null): FakeFrame {
-  const created: FakeFrame = { frameTreeNodeId, top };
-  if (!top) created.top = created;
+/** A frame under `parent`, with `top` set the way Electron normally reports it. */
+function frame(frameTreeNodeId: number, parent: FakeFrame | null = null): FakeFrame {
+  const created: FakeFrame = { frameTreeNodeId, parent, top: null };
+  created.top = parent ? parent.top : created;
   return created;
 }
 
 const hostMain = frame(1);
 const hostSubframe = frame(2, hostMain);
+// A guest's main frame has NO parent as seen through the host's focusedFrame:
+// measured in the probe, so a guest frame never walks up into the host.
 const guestMain = frame(10);
 const guestCrossSiteIframe = frame(11, guestMain);
 
@@ -75,6 +79,14 @@ describe('keyboardFocusIsInHost', () => {
 
   it('is true for a frame INSIDE the host document, not only its main frame', () => {
     expect(keyboardFocusIsInHost(guestWithHost({ current: hostSubframe }))).toBe(true);
+  });
+
+  it('is still true for a host subframe whose `top` reads null, since the check walks `parent`', () => {
+    // Electron types `WebFrameMain.top` as nullable without saying when. Trusting
+    // it (`top ?? focusedFrame`) would compare the subframe itself here, read
+    // "not in host", and SEND the key: the unsafe direction.
+    const hostSubframeWithoutTop: FakeFrame = { frameTreeNodeId: 3, parent: hostMain, top: null };
+    expect(keyboardFocusIsInHost(guestWithHost({ current: hostSubframeWithoutTop }))).toBe(true);
   });
 
   it('is false while the guest page holds focus', () => {
