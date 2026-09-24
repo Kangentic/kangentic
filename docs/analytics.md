@@ -268,7 +268,13 @@ in one Sentry org, one triage surface.
     purpose: a helper crash from a bundle the user renamed and then moved between the crash and the
     upload, since nothing left in its image list names us. Each drop increments
     `foreign_minidump_dropped`, which is the only fleet-wide evidence left once the events stop
-    arriving, and the before-and-after number for resetting the exception ports at spawn.
+    arriving. PTY children no longer inherit the port at all: the packaged macOS app ships its own
+    node-pty `spawn-helper`, which clears the task's exception ports before exec (see "PTY
+    children and mach exception ports" in `docs/cross-platform.md`). The filter stays as the
+    backstop for older builds and for processes started outside a PTY. Before that change the
+    counter stood at 33 events over 0.41.0 to 0.43.0, all macOS, 27 of them from one command-line
+    tool. On a release with the change, expect a one-time tail from dumps written before the upgrade
+    and uploaded at its first launch, then only the non-PTY residue.
 - **Tagging shares that hook, and runs before the filter.** `beforeSend` is `beforeSendEvent`,
   which tags and then delegates to `filterNativeCrashEvent`. `tagTruncatedStack` sets
   `stack_truncated: 'true'` on any event whose parsed stack sits exactly on the SDK's 50-frame

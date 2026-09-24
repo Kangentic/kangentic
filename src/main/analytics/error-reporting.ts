@@ -191,11 +191,12 @@ export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): Erro
     if (decision.action === 'keep') return decision.event;
 
     // Counted, not reported, the same split as a transient updater failure or a
-    // recoverable utility crash. Once this filter ships, DESKTOP-K stops growing
-    // and this counter is the only fleet-wide evidence left that foreign
-    // processes are still writing into our crash database, which is what the
-    // mach-exception-port follow-up needs a before and after number for. The
-    // module name is a basename, so it carries no path and no home directory.
+    // recoverable utility crash. This counter is the only fleet-wide evidence
+    // left that foreign processes are still writing into our crash database.
+    // PTY children stopped inheriting the port once the packaged app shipped its
+    // own node-pty spawn-helper (build/spawn-helper/spawn-helper.c), so what it
+    // counts on those builds is the non-PTY residue. The module name is a
+    // basename, so it carries no path and no home directory.
     trackEvent('foreign_minidump_dropped', { module: decision.mainModule });
     return null;
   } catch {

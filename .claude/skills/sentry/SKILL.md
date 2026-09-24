@@ -211,7 +211,10 @@ Reading a native event, in order of what trips people up:
   so it now counts only inside our own `Kangentic.app` bundle. Task #604 tracks DESKTOP-Q, though
   no commit names it. Those are dropped before upload now and counted as
   Aptabase `foreign_minidump_dropped` instead. If a native issue looks like someone else's binary,
-  check that counter rather than expecting a Sentry issue.
+  check that counter rather than expecting a Sentry issue. On builds that ship Kangentic's own
+  node-pty `spawn-helper`, PTY children never inherit the port, so the counter falls to builds
+  from before that change plus processes started outside a PTY. "PTY children and mach
+  exception ports" in `docs/cross-platform.md` lists those paths.
 - **Scope persists with a 500 ms write throttle**, so on any event the last half-second of
   breadcrumbs before the crash is missing. An entire quit sequence fits in that gap.
 

@@ -29,6 +29,11 @@
  * `import()`) for every test so its top-level `require()` calls re-run
  * against whichever fake is installed for that test.
  *
+ * build/install-spawn-helper.js is faked the same way. The real one compiles
+ * C with xcrun on darwin, and its own suite (tests/unit/install-spawn-helper.test.ts)
+ * covers what it does; this file pins only that afterPack.js calls it with the
+ * computed `unpackedRoot` and propagates its failure.
+ *
  * Tier: Unit.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -38,6 +43,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const ELECTRON_FUSES_RESOLVED_PATH = require.resolve('@electron/fuses');
 const VERIFY_UNPACKED_WORKER_RESOLVED_PATH = require.resolve('../../build/verify-unpacked-worker.js');
+const INSTALL_SPAWN_HELPER_RESOLVED_PATH = require.resolve('../../build/install-spawn-helper.js');
 
 interface FakeFlipFusesCall {
   electronBinaryPath: string;
@@ -161,6 +167,47 @@ function installFakeVerifyUnpackedWorker(throwError?: Error): {
   };
 }
 
+interface FakeInstallSpawnHelperCall {
+  unpackedRoot: string;
+  platform: string;
+}
+
+/** Installs a fake `installSpawnHelper` at build/install-spawn-helper.js's
+ *  real resolved path. The real one compiles C with xcrun on darwin, which no
+ *  test here can do. `throwError` makes the fake throw, so a caller can prove
+ *  afterPack.js propagates a failed spawn-helper gate. */
+function installFakeInstallSpawnHelper(throwError?: Error): {
+  calls: FakeInstallSpawnHelperCall[];
+  restore: () => void;
+} {
+  const calls: FakeInstallSpawnHelperCall[] = [];
+  const fakeModule = {
+    installSpawnHelper: ({ unpackedRoot, platform }: FakeInstallSpawnHelperCall): void => {
+      calls.push({ unpackedRoot, platform });
+      if (throwError) throw throwError;
+    },
+  };
+
+  const originalCacheEntry = require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH];
+  require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH] = {
+    id: INSTALL_SPAWN_HELPER_RESOLVED_PATH,
+    filename: INSTALL_SPAWN_HELPER_RESOLVED_PATH,
+    loaded: true,
+    exports: fakeModule,
+  } as unknown as NodeJS.Module;
+
+  return {
+    calls,
+    restore: () => {
+      if (originalCacheEntry) {
+        require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH] = originalCacheEntry;
+      } else {
+        delete require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH];
+      }
+    },
+  };
+}
+
 /** afterPack.js's own default export, typed to only what these tests call. */
 type AfterPackFunction = (context: FakeAfterPackContext) => Promise<void>;
 
@@ -183,6 +230,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
   it('on darwin, points at <Product>.app/Contents/Resources/app.asar.unpacked - not the lowercase resources/ dir Windows and Linux use', async () => {
     const fakeFuses = installFakeElectronFuses();
     const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
       const appOutDir = path.join('afterpack-fake-out', 'mac-out');
@@ -201,17 +249,21 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
       ]);
+      // The spawn-helper replacement targets the same tree on the same platform.
+      expect(fakeSpawnHelper.calls).toEqual([{ unpackedRoot, platform: 'darwin' }]);
       // Both verifiers passed, so packaging must still proceed to flipFuses.
       expect(fakeFuses.calls).toHaveLength(1);
     } finally {
       fakeFuses.restore();
       fakeVerify.restore();
+      fakeSpawnHelper.restore();
     }
   });
 
   it('on win32, points directly at appOutDir/resources/app.asar.unpacked - no .app/Contents wrapper', async () => {
     const fakeFuses = installFakeElectronFuses();
     const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
       const appOutDir = path.join('afterpack-fake-out', 'win-out');
@@ -222,10 +274,36 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
       ]);
+      // Called on every platform so it can log that it does not apply; the
+      // platform it receives is what makes it a no-op off darwin.
+      expect(fakeSpawnHelper.calls).toEqual([{ unpackedRoot, platform: 'win32' }]);
       expect(fakeFuses.calls).toHaveLength(1);
     } finally {
       fakeFuses.restore();
       fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  it('propagates a failed spawn-helper gate and never reaches flipFuses, so a mac build whose terminals would leak crash ports cannot ship', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const spawnHelperError = new Error('[spawn-helper] failed the exception-port gate');
+    const fakeSpawnHelper = installFakeInstallSpawnHelper(spawnHelperError);
+    try {
+      const afterPack = await importAfterPack();
+      const appOutDir = path.join('afterpack-fake-out', 'mac-out-broken');
+
+      await expect(afterPack(buildFakeContext({ platform: 'darwin', appOutDir }))).rejects.toBe(
+        spawnHelperError,
+      );
+
+      expect(fakeSpawnHelper.calls).toHaveLength(1);
+      expect(fakeFuses.calls).toEqual([]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
     }
   });
 
@@ -235,6 +313,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       '[afterPack] @huggingface/transformers does not load from the unpacked tree',
     );
     const fakeVerify = installFakeVerifyUnpackedWorker(verificationError);
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
     try {
       const afterPack = await importAfterPack();
       const appOutDir = path.join('afterpack-fake-out', 'win-out-broken');
@@ -250,6 +329,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
     } finally {
       fakeFuses.restore();
       fakeVerify.restore();
+      fakeSpawnHelper.restore();
     }
   });
 });
