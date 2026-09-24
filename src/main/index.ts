@@ -318,10 +318,12 @@ for (const arg of process.argv) {
  * the GpuDataManager, and it throws if called once the app is ready, which is
  * the other half of why this sits at module scope.
  *
- * Verified on Windows in Electron 41: with both set, getAppMetrics() reports
- * no GPU process at all. NOT verified on macOS or Linux, and no test tier
- * reaches this branch on any platform (see the NODE_ENV note below), so CI
- * being green is not evidence about the switches themselves.
+ * Verified in Electron 41 on Windows and on Linux (Ubuntu 24.04 under WSLg,
+ * whose GL is Mesa's d3d12 driver rather than a native one): with both set,
+ * getAppMetrics() reports no GPU process at all, and the window still paints.
+ * NOT verified on macOS, and no test tier reaches this branch on any platform
+ * (see the NODE_ENV note below), so CI being green is not evidence about the
+ * switches themselves.
  *
  * Cost on a launch that will never need any of this: one `readFileSync` that
  * ENOENTs. `windowConfigManager.load()` caches, and every launch loads config
@@ -2041,10 +2043,16 @@ app.whenReady().then(async () => {
       // death that the run then survived is DESKTOP-15's shape, and #665
       // filtered it deliberately; it is still consumed above rather than
       // left to accumulate.
+      //
+      // A record with no deaths at all is a fallback that no GPU exit ever
+      // announced: a launch-failure ladder (DESKTOP-W), which Electron never
+      // reports to JS. Its own message keeps it out of the crash-loop issue,
+      // because the two shapes need different triage.
+      const gpuReportMessage = pendingGpuEscalation.count > 0
+        ? `GPU process exited repeatedly (reason ${pendingGpuEscalation.reason}, exit code ${pendingGpuEscalation.exitCode ?? 'unknown'})`
+        : 'GPU left hardware acceleration with no GPU process exit reported';
       if (shouldReportEscalation(pendingGpuEscalation, gpuReportContext)) reportHandledError(
-        new Error(
-          `GPU process exited repeatedly (reason ${pendingGpuEscalation.reason}, exit code ${pendingGpuEscalation.exitCode ?? 'unknown'})`
-        ),
+        new Error(gpuReportMessage),
         {
           source: 'gpu_process',
           reason: pendingGpuEscalation.reason,
@@ -2057,8 +2065,8 @@ app.whenReady().then(async () => {
         // (DESKTOP-W's shape); 'clean' or 'failsafe' means Chromium
         // recovered on its own (DESKTOP-15's). TWO feature-status reads,
         // deliberately not one: featureStatusAtEscalation is what Chromium's
-        // GPU mode was AT THE DEATH that produced this record (captured back
-        // when it was written); featureStatusOnReport is what it is on THIS
+        // GPU mode was at the record's latest write, a death or a fallback
+        // (captured back then); featureStatusOnReport is what it is on THIS
         // boot, which may already differ (a machine that recovers on its own,
         // or one still stuck) - reporting only the live read would silently
         // claim to describe the failure while actually describing whatever
@@ -2075,10 +2083,15 @@ app.whenReady().then(async () => {
             featureStatusOnReport: app.getGPUFeatureStatus(),
             previousRunExit: previousRunProps.lastRunExit ?? 'unknown',
             // The SEQUENCE, which is the thing a single end-state snapshot
-            // could never say: which rung of Chromium's fallback ladder was
-            // current at each death. This is what the next occurrence needs
-            // for anyone to name a cause.
+            // could never say: how Chromium walked its fallback ladder. Each
+            // entry names the rung its death left behind, so the death that
+            // triggered a fallback already reads the lower one. This is what
+            // the next occurrence needs for anyone to name a cause.
             deaths: pendingGpuEscalation.deaths,
+            // Each step down the ladder that Chromium announced, which on a
+            // launch-failure ladder is the only trace of the incident. On
+            // Linux each step carries whether the GPU's zygote was alive.
+            modeChanges: pendingGpuEscalation.modeChanges,
             gpuInfoOnReport: summarizeGpuInfo(gpuInfoOnReport),
             killedTheLastRun,
             softwareRenderingEngaged: graphicsMode.engagedNow,

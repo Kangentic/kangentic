@@ -5,7 +5,8 @@ import { IPC } from '../../shared/ipc-channels';
 import type { CrashRecord } from '../../shared/types';
 import { resolveCrashRecord } from './source-map-resolver';
 import { isBenignStreamWriteError } from './benign-stream-error';
-import { recordGpuProcessGone } from './gpu-health';
+import { recordGpuModeObservation, recordGpuProcessGone } from './gpu-health';
+import { createLinuxGpuZygoteProbe } from './linux-gpu-zygote';
 import { getLastHostMemorySample } from './host-memory';
 import { PATHS } from '../config/paths';
 
@@ -113,8 +114,9 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
   });
 
   // The GPU process is not a webContents, so it has no per-window event; the
-  // app-level `child-process-gone` is the only place its death is visible.
+  // app-level `child-process-gone` is where a crash or kill of it is visible.
   // Chromium relaunches it on its own, so this is a record, not a recovery.
+  // Not every GPU failure arrives here: see `gpu-info-update` below.
   app.on('child-process-gone', (_event, details) => {
     if (details.type !== 'GPU' || details.reason === 'clean-exit') return;
     console.warn(`[gpu] GPU process gone: ${details.reason} (exit code ${details.exitCode})`);
@@ -129,14 +131,34 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
       versions: getVersions(),
     });
     // Counts repeated deaths across the whole run (not gated on a project
-    // being open, unlike the local record above) and writes a durable
-    // escalation once they cross the threshold - see gpu-health.ts.
-    // getFeatureStatus is only READ by that module once it is actually about
-    // to write, so this closure costs nothing on the deaths before a latch.
+    // being open, unlike the local record above) and rewrites the durable
+    // escalation record on every death - see gpu-health.ts.
     recordGpuProcessGone(options.gpuHealthFilePath, details.reason, details.exitCode, app.getVersion(), {
       // gpu-health.ts stays Electron-free (matches run-uptime.ts), so it
       // takes a plain record rather than Electron's GPUFeatureStatus type.
       getFeatureStatus: () => ({ ...app.getGPUFeatureStatus() }),
+    });
+  });
+
+  // A GPU process that fails to LAUNCH never reaches `child-process-gone`
+  // (Electron does not forward Chromium's launch-failed notification), and
+  // on Linux neither does one whose zygote died with it. What Chromium does
+  // announce is the fallback to its last rung, as a `gpu-info-update`, before
+  // the fatal that follows it (DESKTOP-W). gpu-health.ts writes only when
+  // compositing leaves the GPU, so the update that fires on every normal GPU
+  // restart costs one status read and no write.
+  //
+  // On Linux the fallback also records whether the GPU's zygote was alive
+  // (linux-gpu-zygote.ts). The zygote is found on the first update, which
+  // arrives while the GPU is still initializing and healthy, because once the
+  // zygote is dead there is nothing left to find. After that, discover()
+  // returns at once.
+  const linuxZygoteProbe = process.platform === 'linux' ? createLinuxGpuZygoteProbe(process.pid) : null;
+  app.on('gpu-info-update', () => {
+    linuxZygoteProbe?.discover();
+    recordGpuModeObservation(options.gpuHealthFilePath, app.getVersion(), {
+      getFeatureStatus: () => ({ ...app.getGPUFeatureStatus() }),
+      readLinuxProcessSnapshot: linuxZygoteProbe ? () => linuxZygoteProbe.snapshot() : undefined,
     });
   });
 

@@ -21,6 +21,10 @@ import type { CrashRecord } from '../../src/shared/types';
 const ipcHandlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
 const appListeners = new Map<string, (...args: unknown[]) => unknown>();
 const recordGpuProcessGoneMock = vi.fn();
+const recordGpuModeObservationMock = vi.fn();
+const probeDiscoverMock = vi.fn();
+const probeSnapshotMock = vi.fn(() => ({ zygote: 'dead', schedulingEntities: 891, maxUserProcesses: '123561' }));
+const createLinuxGpuZygoteProbeMock = vi.fn(() => ({ discover: probeDiscoverMock, snapshot: probeSnapshotMock }));
 
 vi.mock('electron', () => ({
   app: {
@@ -43,7 +47,27 @@ vi.mock('electron', () => ({
 // listener calls it with the right arguments and for the right reasons.
 vi.mock('../../src/main/diagnostics/gpu-health', () => ({
   recordGpuProcessGone: recordGpuProcessGoneMock,
+  recordGpuModeObservation: recordGpuModeObservationMock,
 }));
+
+// linux-gpu-zygote.ts has its own suite; here only the wiring matters, and
+// the real probe would read this machine's /proc on a Linux CI runner.
+vi.mock('../../src/main/diagnostics/linux-gpu-zygote', () => ({
+  createLinuxGpuZygoteProbe: createLinuxGpuZygoteProbeMock,
+}));
+
+/** crash-capture.ts decides on the probe from process.platform when it is
+ *  started, so each test pins the platform it means rather than inheriting
+ *  the runner's (Windows locally, Linux on CI). */
+async function withPlatform(platform: NodeJS.Platform, run: () => Promise<void>): Promise<void> {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: platform });
+  try {
+    await run();
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
+}
 
 let tempDirectory: string;
 let gpuHealthFilePath: string;
@@ -54,6 +78,10 @@ beforeEach(() => {
   ipcHandlers.clear();
   appListeners.clear();
   recordGpuProcessGoneMock.mockClear();
+  recordGpuModeObservationMock.mockClear();
+  probeDiscoverMock.mockClear();
+  probeSnapshotMock.mockClear();
+  createLinuxGpuZygoteProbeMock.mockClear();
   vi.resetModules();
 });
 
@@ -204,10 +232,12 @@ describe('crash-capture', () => {
     }
   });
 
-  it('counts a GPU launch-failed death the same way as a crash (the DESKTOP-W shape)', async () => {
-    // The reason that actually killed the browser process in DESKTOP-W: a
-    // launch failure, not a crash. It must flow through the same two paths
-    // as any other non-clean-exit GPU death.
+  it('counts a launch-failed reason the same way as a crash, if one ever arrives', async () => {
+    // Electron 41 never emits child-process-gone for a launch failure (it
+    // does not override BrowserChildProcessLaunchFailed), so DESKTOP-W's
+    // ladder never reaches this handler; gpu-info-update below is what does.
+    // Should a later Electron forward it, it must flow through the same two
+    // paths as any other non-clean-exit GPU death.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
@@ -229,5 +259,67 @@ describe('crash-capture', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('feeds every gpu-info-update to gpu-health.ts, the one signal a GPU launch-failure ladder leaves (DESKTOP-W)', async () => {
+    // A GPU process that fails to launch never reaches child-process-gone,
+    // and on Linux neither does one whose zygote died with it. Chromium's
+    // fallback to its last rung does emit gpu-info-update before the fatal,
+    // so this listener is what puts the incident on disk at all.
+    await withPlatform('win32', async () => {
+      const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
+      const { app } = await import('electron');
+      startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
+
+      const handler = appListeners.get('gpu-info-update');
+      expect(handler, 'crash-capture must subscribe to gpu-info-update').toBeDefined();
+
+      handler!();
+      expect(recordGpuModeObservationMock).toHaveBeenCalledTimes(1);
+      expect(recordGpuModeObservationMock).toHaveBeenCalledWith(
+        gpuHealthFilePath, '1.2.3', { getFeatureStatus: expect.any(Function), readLinuxProcessSnapshot: undefined },
+      );
+      // No local crash record: a fallback is not a death, and this event also
+      // fires on every healthy GPU restart.
+      expect(fs.existsSync(path.join(tempDirectory, '.kangentic'))).toBe(false);
+      // Off Linux there is no zygote to look for.
+      expect(createLinuxGpuZygoteProbeMock).not.toHaveBeenCalled();
+
+      // A LIVE reader, not a value captured when the event fired: the fallback
+      // is a change of status, and gpu-health.ts has to read the current one.
+      const passedGetFeatureStatus = recordGpuModeObservationMock.mock.calls[0]![2].getFeatureStatus;
+      vi.mocked(app.getGPUFeatureStatus).mockReturnValueOnce({ gpu_compositing: 'disabled_software' } as Electron.GPUFeatureStatus);
+      expect(passedGetFeatureStatus()).toEqual({ gpu_compositing: 'disabled_software' });
+    });
+  });
+
+  it('on Linux, looks for the GPU zygote on every update and hands gpu-health.ts a live reading of it', async () => {
+    // The zygote has to be found while the GPU is healthy: the fallback that
+    // needs the reading comes after the zygote may already be dead. Calling
+    // discover() on every update (it is idempotent) is what guarantees the
+    // first, healthy update does the finding.
+    await withPlatform('linux', async () => {
+      const { startCrashCapture } = await import('../../src/main/diagnostics/crash-capture');
+      startCrashCapture({ getProjectRoot: () => tempDirectory, gpuHealthFilePath });
+
+      expect(createLinuxGpuZygoteProbeMock).toHaveBeenCalledTimes(1);
+      expect(createLinuxGpuZygoteProbeMock).toHaveBeenCalledWith(process.pid);
+
+      const handler = appListeners.get('gpu-info-update');
+      handler!();
+      handler!();
+      expect(probeDiscoverMock).toHaveBeenCalledTimes(2);
+      // Discovery runs before gpu-health.ts reads, on the same update.
+      expect(probeDiscoverMock.mock.invocationCallOrder[0]).toBeLessThan(
+        recordGpuModeObservationMock.mock.invocationCallOrder[0]!,
+      );
+
+      // The reading is taken when gpu-health.ts asks for it, not when the
+      // update fired.
+      expect(probeSnapshotMock).not.toHaveBeenCalled();
+      const passedReader = recordGpuModeObservationMock.mock.calls[0]![2].readLinuxProcessSnapshot;
+      expect(passedReader()).toEqual({ zygote: 'dead', schedulingEntities: 891, maxUserProcesses: '123561' });
+      expect(probeSnapshotMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

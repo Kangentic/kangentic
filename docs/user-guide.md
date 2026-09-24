@@ -802,10 +802,11 @@ Sessions paused manually by the user (via the pause button in the task detail di
 ## Graphics failures
 
 Chromium renders the app through a separate graphics process. Rarely, that process fails over and
-over. When it
+over, or cannot be started again. When it
 exhausts every fallback it has, Chromium shuts the whole app down on purpose. There is no crash
-dialog and no warning: the window simply disappears, and it usually does so within seconds of
-launching, so the app can look like it will not start at all.
+dialog and no warning: the window simply disappears. On some machines it happens within seconds of
+launching, so the app can look like it will not start at all. On others, so far only Linux, it
+happens a few minutes into a normal session.
 
 Kangentic recovers itself. The next launch starts without graphics acceleration, which removes the
 graphics process entirely and takes that shutdown off the table. You get a toast saying so, and
@@ -821,13 +822,14 @@ What to expect while it is off:
   back on in Settings > Performance and restart. If the failure returns, the next launch turns it
   off again.
 
-Kangentic does not diagnose the cause, and deliberately does not guess at one. Across the installs
-seen so far the app itself was never doing anything unusual at the time, and the failures started
-seconds into boot before any agent or terminal existed. A display driver is the usual culprit for
-this class of failure, so updating yours is the first thing worth trying, but the app has no way to
-confirm that from the inside and will not claim it did. If it keeps happening, the local crash
-records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the useful thing to
-attach to a bug report.
+Kangentic does not diagnose the cause, and deliberately does not guess at one. On the installs that
+failed at boot, the failures started seconds in, before any agent or terminal existed. A display
+driver is the usual culprit for that shape, so updating yours is the first thing worth trying, but
+the app has no way to confirm that from the inside and will not claim it did. If it keeps happening,
+the local crash records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the
+useful thing to attach to a bug report. When the graphics process could not be started at all,
+there is no such record: Chromium never reports a failed start to the app, and only the fallback
+itself is recorded.
 
 Unrelated, despite the similar name: **Model acceleration** in Settings > Memory controls where the
 semantic search model runs, not app rendering. The two are independent.

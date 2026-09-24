@@ -75,7 +75,9 @@ from the first (see "Error Reporting" below), because the death that actually ki
 JS never hears about: Chromium calls `RecordProcessCrash`, and the `LOG(FATAL)` under it, from the
 delegate rather than from the observer notification Electron emits `child-process-gone` from. Live
 reporting is impossible here for the same reason - the browser process is gone before an async
-Sentry POST queued at that moment could transmit.
+Sentry POST queued at that moment could transmit. A GPU fallback that the tracker records from
+`gpu-info-update` ticks no Aptabase event, because it is not a death. So a launch-failure ladder,
+which produces no `child-process-gone` at all, leaves this count at zero.
 
 The curated `feature` vocabulary is `ANALYTICS_FEATURES` in `src/main/analytics/usage.ts`:
 `command_terminal`, `worktree_session`, `board_profile`, `popout_window`, `browser_pane`,
@@ -236,10 +238,10 @@ in one Sentry org, one triage surface.
     `'GPU' process exited with 'abnormal-exit'` only, not every reason. A lone GPU death Chromium
     recovers from on its own (DESKTOP-15) is the same un-attributable noise as a utility exit, and
     Kangentic's own GPU health tracker now reports a repeated one (see "A GPU health escalation is
-    reported once" below). `'launch-failed'` is deliberately left unfiltered as a backstop: Chromium
-    can walk several GPU launch failures before giving up
-    (`GpuDataManagerImplPrivate::FallBackToNextGpuMode`), and the self-report cannot be verified to
-    fire when the LAST one ends in `LOG(FATAL)` killing the process first (DESKTOP-W) - see below.
+    reported once" below). `'launch-failed'` is left unfiltered, but it is not a backstop: the
+    integration rides `child-process-gone`, which Electron 41 never emits for a launch failure
+    (it overrides no `BrowserChildProcessLaunchFailed`). DESKTOP-W's launch-failure ladder is caught
+    by the GPU health tracker's fallback record instead - see below.
   - `BENIGN_RENDERER_ERRORS` (`src/shared/benign-renderer-errors.ts`) is spread in, so the one
     registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
     must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
@@ -336,9 +338,10 @@ in one Sentry org, one triage surface.
   `UtilityRestartPolicy` counts a worker's, but cannot report live: the failure sequence this exists
   for can end in Chromium calling `LOG(FATAL)` (`IntentionallyCrashBrowserForUnusableGpuProcess`),
   which kills the whole process before an async Sentry POST queued at that moment would ever
-  transmit - the reason a 90-day search never turned up a single `'GPU' process exited with
-  'launch-failed'` event despite the SDK capturing that reason by default. EVERY death writes the
-  durable record at `<configDir>/gpu-health.json`, from the first - not just a threshold breach.
+  transmit. (A 90-day search never turned up a `'GPU' process exited with 'launch-failed'` event
+  for a different reason: Electron never emits `child-process-gone` for a launch failure at all.)
+  EVERY death writes the durable record at `<configDir>/gpu-health.json`, from the first - not
+  just a threshold breach.
   The ordering is why: Chromium calls `GpuProcessHost::RecordProcessCrash` (and the `LOG(FATAL)`
   under it) from the delegate, BEFORE the observer notification Electron emits
   `child-process-gone` from, so the death that actually kills the app is one JS never hears about.
@@ -346,8 +349,22 @@ in one Sentry org, one triage surface.
   DESKTOP-18's seven 8-to-12-second launches would have done. Each write carries
   `app.getGPUFeatureStatus()` AT THAT MOMENT plus a bounded `deaths` sequence (20 entries, middle
   trimmed, first and last kept) recording the reason, exit code, GPU mode and timestamp of each
-  death in order - the sequence is the only thing that can say WHICH rung of Chromium's ladder
-  failed, where a single end-state snapshot cannot. `src/main/index.ts` reads the record once `app.whenReady()`
+  death in order - the sequence is the only thing that can show how Chromium walked its ladder,
+  where a single end-state snapshot cannot. Each entry's mode is read after Chromium handled that
+  death, so it names the rung the death left behind: the death that triggers a fallback already
+  reads the lower rung. The FALLBACK writes too, from
+  `gpu-info-update`: once this run has been seen compositing on the GPU, the moment
+  `gpu_compositing` leaves it, and each later status change, appends to a bounded `modeChanges`
+  list (8 entries) and moves the record's `lastAt`. That is DESKTOP-W's only trace. Its deaths
+  were launch failures, which Electron never forwards to JS, and on Linux the running GPU
+  process's death through a dead zygote reads as a normal exit that fires nothing either (see
+  "When the GPU process is unusable" in [cross-platform.md](cross-platform.md)). A fallback-only
+  record has `count: 0` and `reason: 'hardware-fallback'`. On Linux each fallback entry also
+  carries a `linux` block from `src/main/diagnostics/linux-gpu-zygote.ts`: the GPU zygote's state
+  (`alive`, `dead`, `unknown`), the system-wide thread count, and the soft process limit. A dead
+  zygote and a fork refused at the limit produce the same DESKTOP-W stack, and this block is what
+  tells them apart. A dead zygote also records a fallback on a machine that never composited on the
+  GPU. `src/main/index.ts` reads the record once `app.whenReady()`
   resolves on the FOLLOWING launch, skips it if `isEscalationFromCurrentRun` says THIS run wrote it
   (the writer is installed at module scope and the reader runs after `createWindow` and an `await`,
   so a GPU crash-looping from startup writes into that gap; consuming it there would burn the
@@ -357,25 +374,37 @@ in one Sentry org, one triage surface.
   carrying it forward to a later launch that might have reporting on; the local crash JSONs and the
   `gpu_process_gone` Aptabase count exist either way). The clear is a compare-and-clear against the
   `lastAt` that was reported, because a crash loop can write a FRESH record between the read and the
-  clear and an unconditional unlink would take it. Not every pending record earns an issue:
+  clear and an unconditional unlink would take it. The reverse race is not guarded: the writers are
+  installed at module scope and each write rebuilds the file from this run's state alone, so a
+  boot-time death or fallback on THIS run can overwrite the previous run's record before the report
+  block reads it. A VM or broken-GL machine that falls back at every boot makes that common. The
+  recovery decision is safe, because it reads the record at module scope before any GPU process
+  exists, and the software mode it engages never writes. What can be lost is the report of something
+  the previous run survived: a fallback, or a crash loop that reached the report threshold. Not
+  every pending record earns an issue:
   `shouldReportEscalation` reports on `count >= 3`, OR when the previous run ended `abrupt` AND the
-  last death sits within 90s of that run's last known sign of life (`run-uptime.ts`'s `at`
-  checkpoint). The second arm needs both halves - `abrupt` alone means only that no exit was
-  recorded, which covers a renderer OOM, a task-manager kill and a power loss, and pairing it with
-  "the GPU died once at some point" would blame graphics for a death it had nothing to do with.
-  When it does report, `src/main/index.ts` calls `reportHandledError` with tags
+  record's `lastAt` (the last death or fallback) sits within 90s of that run's last known sign of
+  life (`run-uptime.ts`'s `at` checkpoint). The second arm needs both halves - `abrupt` alone means
+  only that no exit was recorded, which covers a renderer OOM, a task-manager kill and a power loss,
+  and pairing it with "the GPU died once at some point" would blame graphics for a death it had
+  nothing to do with. A fallback the run survived is not reported: VMs and broken-GL machines can
+  fall back at every boot. When it does report, `src/main/index.ts` calls `reportHandledError` with
+  the message `GPU process exited repeatedly (...)`, or `GPU left hardware acceleration with no GPU
+  process exit reported` for a fallback-only record, which groups the launch-failure shape as its
+  own issue. It carries tags
   `source: gpu_process`, `reason`, `exitCode`, `crashCount`, and a `gpu_process` context carrying
   `reason`, `exitCode`, `count`, `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
   produced the escalation, not the one reporting it - the same build-attribution concern the native
   crash correction below exists for), `featureStatusAtEscalation`, `featureStatusOnReport`, and
   `previousRunExit`. The last three are deliberately three separate facts, not one:
-  `featureStatusAtEscalation` is what Chromium's GPU mode was AT THE DEATH that produced the record
-  (the one fact neither DESKTOP-W nor DESKTOP-15 could say); `featureStatusOnReport` is what it is on
+  `featureStatusAtEscalation` is what Chromium's GPU mode was at the record's LATEST WRITE, a death
+  or a fallback (the one fact neither DESKTOP-W nor DESKTOP-15 could say); `featureStatusOnReport` is what it is on
   THIS boot, read live, which may already differ (a machine can recover on its own between launches);
   and `previousRunExit` is the previous run's `run-uptime.ts` exit kind (`abrupt` means that run ended
   in a process kill, the DESKTOP-W shape; `clean` or `failsafe` means Chromium recovered on its own,
   the DESKTOP-15 shape; `unknown` on a first launch or a wiped config dir), so the two failure shapes
   are distinguishable on arrival. The context also carries `deaths` (the sequence above),
+  `modeChanges` (the fallback steps above),
   `gpuInfoOnReport` (`app.getGPUInfo('complete')`, the one call of it in this path, naming the
   machine's actual graphics stack), `killedTheLastRun`, and `softwareRenderingEngaged`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When

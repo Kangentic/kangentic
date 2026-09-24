@@ -356,6 +356,27 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     ).not.toContain('escalatedInVersion: app.getVersion()');
   });
 
+  it('reports a fallback-only record (no GPU death at all, the DESKTOP-W launch-failure shape) under its own message, with its mode changes', () => {
+    const tryBlock = escalationReportTryBlock();
+
+    expect(
+      tryBlock,
+      'the report must branch on pendingGpuEscalation.count > 0. A launch-failure ladder records a fallback with count 0, and "GPU process exited repeatedly (reason hardware-fallback, exit code unknown)" would both misdescribe it and group it into the crash-loop issue, which needs different triage',
+    ).toContain('pendingGpuEscalation.count > 0');
+    expect(
+      tryBlock,
+      'the count-0 branch must carry its own message, so Sentry groups the launch-failure shape as a separate issue',
+    ).toContain("'GPU left hardware acceleration with no GPU process exit reported'");
+    expect(
+      tryBlock,
+      'the reported Error must be built from the branched message, not a second inline literal that could ignore the branch',
+    ).toContain('new Error(gpuReportMessage)');
+    expect(
+      tryBlock,
+      'the gpu_process context must carry modeChanges: on a launch-failure ladder it is the only trace of the incident',
+    ).toContain('modeChanges: pendingGpuEscalation.modeChanges');
+  });
+
   it("sources previousRunExit from previousRunProps.lastRunExit with an 'unknown' fallback, the exact field name and sentinel that already drifted once (commit cf620796)", () => {
     const tryBlock = escalationReportTryBlock();
 
