@@ -801,6 +801,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #720 | 9f +284 plus 4 new files | 116KB, 1782 lines | 8 (4) | 5 | 0 | 7 | 12 of 6 pack-carrying | 15 / 13 |
 | #724 | 7f +218 | 48KB, 873 lines | 7 (6) | 0 | 0 | 6 | 2 of 5 pack-carrying | 7 / 5 |
 | task 727, pre-PR | 13f +964 | 133KB, 1859 lines | 3 (3) | 10 | 0 | 7 | 1 of 6 pack-carrying | 10 / 7 |
+| #723 | 9f +210 | 32KB, 459 lines | 3 (2) | 6 | 0 | 8 | 28 of 7 pack-carrying | 12 / 9 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -872,7 +873,7 @@ window. One read a whole rule file for its contract, one grepped every `click:` 
 `scenes.ts`, and one re-read `detect-hardware.ts` for an import line the pack's window already
 showed.
 
-Row nine is small and all partial tier, like row three, so it says nothing about
+Row ten is small and all partial tier, like row three, so it says nothing about
 `HUNK_CONTEXT_LINES`. Both reads beyond the pack were the correctness finder's and fell outside
 the changed set: `electron-builder.yml`, to learn how the macOS bundle and executable names are
 derived, and a repo-wide grep for a renamed constant. No finder re-read a file the pack carried.
@@ -889,3 +890,16 @@ refuted 3 of the 10 findings: a `Promise.all` that would have broken the `gh` qu
 cap, and two coverage holes, one already pinned by an existing test and one that changed no
 output. It also found one that no finder raised. A timer-driven re-poll inherits the arming
 caller's `force` flag, and a comment claimed otherwise.
+
+The #723 row has one behavioral file, `demo/boot.js`, and it keys on DOM markers the renderer
+stamps. So 22 of its 28 reads beyond the pack went outside the changed set: the files that stamp
+each marker, xterm's own source for whether it stops an Escape, the keybinding registry, the scene
+registry, and rule files. Of the other 6, one is a third case for a wider `HUNK_CONTEXT_LINES`.
+The correctness finder read `CommandTerminalLayer.tsx` for its `panel.close` binding (309), 6
+lines past the 3-line window of the comment hunk that describes it. Two were gap reads no width
+closes. The spec's `hostFrame` and `focusAcrossFrame` helpers sit 67 to 93 lines above the
+partial tier's window, and `enableTerminalClipboard`'s signature sits 29 lines above its hunk's.
+The rest were a rule file read whole for its contract, a grep of the spec for an unchanged test,
+and a dash scan over the changed files. It ran 8 finders because a comment-only edit under
+`src/renderer/utils/` gated `hmr-parity` and a `path.join` context line gated `platform-guard`.
+Neither found anything.
