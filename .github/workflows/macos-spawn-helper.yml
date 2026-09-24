@@ -4,8 +4,10 @@ name: macOS spawn-helper
 # (build/spawn-helper/spawn-helper.c) on real macOS and proves it, both unsigned
 # and ad-hoc signed with hardened runtime (the kernel flag the release's
 # Developer ID signature sets): a child exec'd through it has no inherited mach
-# exception port, the cwd and exec contract holds, and a real node-pty session
-# runs through it with a controlling tty. See build/install-spawn-helper.js.
+# exception port, the cwd and exec contract holds, a real node-pty session
+# runs through it with a controlling tty, and a child_process shell launch
+# shaped like src/main/pty/spawn/shell-launch.ts's (stdin a pipe) starts with no
+# port while a control launch sees one. See build/install-spawn-helper.js.
 #
 # Without this job the C code would first compile on the macOS leg of the
 # release matrix. The same gates run there too (build/afterPack.js on the

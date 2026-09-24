@@ -1,4 +1,4 @@
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -24,7 +24,8 @@ const path = require('path');
  * .claude/rules/release-gates-fail-loudly.md, and log which way they went on
  * every platform. `node build/install-spawn-helper.js --self-test` is the PR-time
  * check (.github/workflows/macos-spawn-helper.yml): it also runs a real node-pty
- * session through the helper.
+ * session through the helper, and a `child_process` shell launch the way
+ * src/main/pty/spawn/shell-launch.ts builds one.
  *
  * Linux and Windows need none of this. Crashpad installs in-process there, and
  * exec resets it.
@@ -50,6 +51,23 @@ const PROBE_EXIT_MEANINGS = {
 };
 
 const CHILD_OPTIONS = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] };
+
+/** What `exception-port-probe check` exits with when it sees a task exception port. */
+const PROBE_PORT_PRESENT_EXIT = 10;
+
+/** The argument that runs this script as the child_process check, under `with-port`. */
+const CHILD_PROCESS_CHECK_FLAG = '--child-process-check';
+
+/** What the child_process check prints when it passes. The parent looks for it. */
+const CHILD_PROCESS_CHECK_PASSED =
+  'child_process launch through the helper: the control child inherited the port, the shell launched through the helper did not';
+
+/**
+ * The command the check runs through the helper. It prints the shell's pid, then
+ * execs the probe (passed as `$0`) in `check` mode, so the probe's verdict is the
+ * exit code and the pid is the one child_process returned.
+ */
+const CHILD_PROCESS_CHECK_SCRIPT = 'echo "pid:$$"; exec "$0" check';
 
 function describeFailure(error) {
   const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
@@ -270,6 +288,95 @@ async function runNodePtySmoke({ helperPath, log }) {
 }
 
 /**
+ * The child_process half of the self-test, run as `node install-spawn-helper.js
+ * --child-process-check <helper> <probe>` under `exception-port-probe with-port`,
+ * so this Node process holds a live inherited exception port the way
+ * Kangentic's main process holds Crashpad's. Throws with the reason, or returns
+ * CHILD_PROCESS_CHECK_PASSED.
+ *
+ * 1. Control: `<probe> check` launched straight from child_process must exit 10,
+ *    so the check can see a port passed on through Node's own spawn. Without it
+ *    a pass could mean nothing was ever inherited.
+ * 2. The launch src/main/pty/spawn/shell-launch.ts builds on macOS for a command
+ *    string, `[helper, '', '/bin/sh', '-c', command]`, with stdin a pipe. The
+ *    helper calls ttyname() on stdin and must shrug off the failure. The probe
+ *    run inside that shell must see no port (exit 0), and the shell's own pid
+ *    must be the pid child_process reports, since a process-group kill and the
+ *    pid SHELL_EXEC returns both rely on the helper exec'ing in place.
+ */
+function runChildProcessCheck({ helperPath, probePath, spawn = spawnSync }) {
+  const control = spawn(probePath, ['check'], { encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+  if (control.status !== PROBE_PORT_PRESENT_EXIT) {
+    throw new Error(
+      `[spawn-helper] child_process check: the control child exited ${control.status}, not ${PROBE_PORT_PRESENT_EXIT}, ` +
+        'so no exception port reached it through child_process and this check cannot observe inheritance.\n' +
+        String(control.stderr || control.error || '').trim(),
+    );
+  }
+
+  const launched = spawn(helperPath, ['', '/bin/sh', '-c', CHILD_PROCESS_CHECK_SCRIPT, probePath], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 60_000,
+  });
+  const launchOutput = `${String(launched.stdout || '').trim()}\n${String(launched.stderr || '').trim()}`.trim();
+  if (launched.error) {
+    throw new Error(`[spawn-helper] child_process check: could not launch ${helperPath}: ${launched.error.message}`);
+  }
+  if (launched.status === PROBE_PORT_PRESENT_EXIT) {
+    throw new Error(
+      '[spawn-helper] child_process check: a shell launched through the helper still had an exception port.\n' +
+        launchOutput,
+    );
+  }
+  if (launched.status !== 0) {
+    throw new Error(
+      `[spawn-helper] child_process check: the shell launched through the helper exited ${launched.status}.\n${launchOutput}`,
+    );
+  }
+  if (!String(launched.stdout || '').split(/\r?\n/).includes(`pid:${launched.pid}`)) {
+    throw new Error(
+      `[spawn-helper] child_process check: the shell did not report pid ${launched.pid}, the one child_process returned, ` +
+        `so the helper did not exec it in place.\n${launchOutput}`,
+    );
+  }
+  return CHILD_PROCESS_CHECK_PASSED;
+}
+
+/**
+ * Runs runChildProcessCheck against the helper at `helperPath`: compiles the
+ * probe, then runs this script under `exception-port-probe with-port` and
+ * requires the check's pass line. Throws otherwise.
+ */
+function verifyChildProcessLaunch({ helperPath, spawn = execFileSync, log = console.log }) {
+  const workDirectory = makeWorkDirectory('kangentic-spawn-helper-child-process-');
+  try {
+    const probePath = path.join(workDirectory, 'exception-port-probe');
+    // Host arch only: the probe runs here and never ships.
+    compile({ sourcePath: EXCEPTION_PORT_PROBE_SOURCE, outputPath: probePath, arches: [], spawn });
+
+    let output;
+    try {
+      output = spawn(
+        probePath,
+        ['with-port', process.execPath, __filename, CHILD_PROCESS_CHECK_FLAG, helperPath, probePath],
+        { ...CHILD_OPTIONS, timeout: 120_000 },
+      );
+    } catch (error) {
+      throw new Error(`[spawn-helper] ${helperPath} failed the child_process launch check.\n${describeFailure(error)}`);
+    }
+    if (!String(output).includes(CHILD_PROCESS_CHECK_PASSED)) {
+      throw new Error(
+        `[spawn-helper] ${helperPath}: the child_process launch check exited 0 without its pass line. Output:\n${String(output).trim()}`,
+      );
+    }
+    log(`[spawn-helper] ${CHILD_PROCESS_CHECK_PASSED}`);
+  } finally {
+    fs.rmSync(workDirectory, { recursive: true, force: true });
+  }
+}
+
+/**
  * Ad-hoc signs the helper with hardened runtime and the app's entitlements.
  * That sets the same kernel flag (CS_RUNTIME) Developer ID signing does, with
  * no certificate, so the self-test sees the helper as the release ships it.
@@ -290,7 +397,8 @@ function signWithHardenedRuntime({ helperPath, spawn = execFileSync }) {
 /**
  * The PR-time check. Runs the same sequence as a release build: the afterPack
  * gate on the unsigned helper, then the afterSign gate once it carries hardened
- * runtime, then a real node-pty session through the signed one.
+ * runtime, then a real node-pty session and a `child_process` shell launch
+ * through the signed one.
  */
 async function runSelfTest({ log = console.log } = {}) {
   if (process.platform !== 'darwin') {
@@ -309,12 +417,16 @@ async function runSelfTest({ log = console.log } = {}) {
     verifySpawnHelper({ helperPath, log });
 
     await runNodePtySmoke({ helperPath, log });
+    verifyChildProcessLaunch({ helperPath, log });
   } finally {
     fs.rmSync(workDirectory, { recursive: true, force: true });
   }
 }
 
 module.exports = {
+  CHILD_PROCESS_CHECK_FLAG,
+  CHILD_PROCESS_CHECK_PASSED,
+  CHILD_PROCESS_CHECK_SCRIPT,
   EXCEPTION_PORT_PROBE_SOURCE,
   MINIMUM_MACOS_VERSION,
   PROBE_EXIT_MEANINGS,
@@ -323,14 +435,27 @@ module.exports = {
   compileSpawnHelper,
   findDarwinSpawnHelpers,
   installSpawnHelper,
+  runChildProcessCheck,
   runSelfTest,
   signWithHardenedRuntime,
+  verifyChildProcessLaunch,
   verifyPackagedSpawnHelpers,
   verifySpawnHelper,
 };
 
 if (require.main === module) {
-  if (process.argv.includes('--self-test')) {
+  const childProcessCheckIndex = process.argv.indexOf(CHILD_PROCESS_CHECK_FLAG);
+  if (childProcessCheckIndex !== -1) {
+    // Run by verifyChildProcessLaunch under `exception-port-probe with-port`.
+    const [helperPath, probePath] = process.argv.slice(childProcessCheckIndex + 1);
+    try {
+      console.log(runChildProcessCheck({ helperPath, probePath }));
+      process.exit(0);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  } else if (process.argv.includes('--self-test')) {
     // Exit explicitly: node-pty can keep the event loop alive after its child is gone.
     runSelfTest().then(
       () => {

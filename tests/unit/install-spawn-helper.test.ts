@@ -26,10 +26,14 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+import { resolveShellLaunch } from '../../src/main/pty/spawn/shell-launch';
+
 const require = createRequire(import.meta.url);
 const {
   installSpawnHelper,
   verifyPackagedSpawnHelpers,
+  verifyChildProcessLaunch,
+  runChildProcessCheck,
   findDarwinSpawnHelpers,
   runSelfTest,
   signWithHardenedRuntime,
@@ -37,6 +41,9 @@ const {
   SPAWN_HELPER_SOURCE,
   EXCEPTION_PORT_PROBE_SOURCE,
   PROBE_EXIT_MEANINGS,
+  CHILD_PROCESS_CHECK_FLAG,
+  CHILD_PROCESS_CHECK_PASSED,
+  CHILD_PROCESS_CHECK_SCRIPT,
 } = require('../../build/install-spawn-helper.js');
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -493,5 +500,178 @@ describe('PROBE_EXIT_MEANINGS parity with exception-port-probe.c', () => {
   it('contains the harness success line verbatim, so the tests fake the exact line the probe prints', () => {
     const probeSource = fs.readFileSync(EXCEPTION_PORT_PROBE_SOURCE, 'utf8');
     expect(probeSource).toContain(HARNESS_SUCCESS_LINE);
+  });
+
+  it('keeps a `with-port` mode, which the child_process launch check runs Node under', () => {
+    const probeSource = fs.readFileSync(EXCEPTION_PORT_PROBE_SOURCE, 'utf8');
+    expect(probeSource).toMatch(/strcmp\(argv\[1\], "with-port"\) == 0/);
+  });
+});
+
+/**
+ * The child_process half of the self-test. The real run needs macOS (the probe
+ * is Mach code), so these pin the wiring with a fake spawnSync: what runs, with
+ * which argv and stdio, and that every way it can go wrong throws.
+ */
+describe('runChildProcessCheck (runs inside Node under the probe)', () => {
+  const HELPER = '/tmp/kangentic-test/spawn-helper';
+  const PROBE = '/tmp/kangentic-test/exception-port-probe';
+
+  interface FakeSpawnResult {
+    status: number | null;
+    pid?: number;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  }
+
+  function makeSpawnSync(results: { control: FakeSpawnResult; launch?: FakeSpawnResult }) {
+    return vi.fn((file: string, args: string[], _options: { stdio: unknown }) => {
+      if (file === PROBE && args[0] === 'check') return results.control;
+      if (file === HELPER && results.launch) return results.launch;
+      throw new Error(`unexpected spawn: ${file} ${args.join(' ')}`);
+    });
+  }
+
+  it('passes when the control sees the port and the shell launched through the helper does not, under its own pid', () => {
+    const spawn = makeSpawnSync({
+      control: { status: 10 },
+      launch: { status: 0, pid: 4242, stdout: 'pid:4242\n' },
+    });
+
+    expect(runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn })).toBe(CHILD_PROCESS_CHECK_PASSED);
+
+    const launchCall = spawn.mock.calls.find(([file]) => file === HELPER);
+    expect(launchCall?.[1]).toEqual(['', '/bin/sh', '-c', CHILD_PROCESS_CHECK_SCRIPT, PROBE]);
+    // A pipe on stdin is the case under test: the helper's ttyname() fails on it.
+    expect(launchCall?.[2].stdio).toEqual(['pipe', 'pipe', 'pipe']);
+  });
+
+  it('launches exactly what resolveShellLaunch builds on macOS for a command string', () => {
+    const spawn = makeSpawnSync({
+      control: { status: 10 },
+      launch: { status: 0, pid: 7, stdout: 'pid:7\n' },
+    });
+    runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn });
+    const launchCall = spawn.mock.calls.find(([file]) => file === HELPER);
+
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    try {
+      const production = resolveShellLaunch({ command: CHILD_PROCESS_CHECK_SCRIPT }, () => HELPER);
+      // The check passes the probe as `$0` after the command; everything before it
+      // is the production launch.
+      expect({ file: launchCall?.[0], args: launchCall?.[1].slice(0, 4) }).toEqual({
+        file: production.file,
+        args: production.args,
+      });
+    } finally {
+      if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+    }
+  });
+
+  it('throws without launching anything when the control child saw no port, since the check would prove nothing', () => {
+    const spawn = makeSpawnSync({ control: { status: 0 } });
+
+    expect(() => runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn })).toThrow(
+      /control child exited 0, not 10[\s\S]*cannot observe inheritance/,
+    );
+    expect(spawn.mock.calls.some(([file]) => file === HELPER)).toBe(false);
+  });
+
+  it('throws when the shell launched through the helper still has an exception port', () => {
+    const spawn = makeSpawnSync({ control: { status: 10 }, launch: { status: 10, pid: 5, stdout: 'pid:5\n' } });
+
+    expect(() => runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn })).toThrow(
+      /a shell launched through the helper still had an exception port/,
+    );
+  });
+
+  it('throws when the launch exits with anything else', () => {
+    const spawn = makeSpawnSync({ control: { status: 10 }, launch: { status: 1, pid: 5, stderr: 'sh: boom' } });
+
+    expect(() => runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn })).toThrow(
+      /exited 1\.[\s\S]*sh: boom/,
+    );
+  });
+
+  it('throws when the shell reports a pid other than the one child_process returned', () => {
+    const spawn = makeSpawnSync({ control: { status: 10 }, launch: { status: 0, pid: 5, stdout: 'pid:6\n' } });
+
+    expect(() => runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn })).toThrow(
+      /did not report pid 5[\s\S]*did not exec it in place/,
+    );
+  });
+
+  it('throws when the helper cannot be launched at all', () => {
+    const spawn = makeSpawnSync({
+      control: { status: 10 },
+      launch: { status: null, error: Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }) },
+    });
+
+    expect(() => runChildProcessCheck({ helperPath: HELPER, probePath: PROBE, spawn })).toThrow(
+      /could not launch .*spawn-helper: spawn EACCES/,
+    );
+  });
+});
+
+describe('verifyChildProcessLaunch (the self-test step)', () => {
+  const HELPER = path.join(os.tmpdir(), 'install-spawn-helper-test-helper');
+
+  function makeProbeSpawn(probeRun: (args: string[]) => string) {
+    const calls: SpawnCall[] = [];
+    const spawn = vi.fn((file: string, args: string[]) => {
+      calls.push({ file, args });
+      if (file === 'xcrun') {
+        const outputPath = args[args.indexOf('-o') + 1];
+        fs.writeFileSync(outputPath, 'compiled probe');
+        return '';
+      }
+      return probeRun(args);
+    });
+    return { spawn, calls };
+  }
+
+  it('compiles the probe for the host and runs this script under `with-port` against the helper', () => {
+    const { spawn, calls } = makeProbeSpawn(() => `${CHILD_PROCESS_CHECK_PASSED}\n`);
+    const log = vi.fn();
+
+    verifyChildProcessLaunch({ helperPath: HELPER, spawn, log });
+
+    const probeCompile = calls.find((call) => call.file === 'xcrun');
+    expect(probeCompile?.args).toContain(EXCEPTION_PORT_PROBE_SOURCE);
+    expect(probeCompile?.args).not.toContain('-arch');
+
+    const probeRun = calls.find((call) => path.basename(call.file) === 'exception-port-probe');
+    const probePath = probeCompile?.args[probeCompile.args.indexOf('-o') + 1];
+    expect(probeRun?.args).toEqual([
+      'with-port',
+      process.execPath,
+      path.join(REPO_ROOT, 'build', 'install-spawn-helper.js'),
+      CHILD_PROCESS_CHECK_FLAG,
+      HELPER,
+      probePath,
+    ]);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(CHILD_PROCESS_CHECK_PASSED));
+    // The probe's work directory is gone afterwards.
+    expect(fs.existsSync(path.dirname(probePath as string))).toBe(false);
+  });
+
+  it("throws with the check's own message when it fails", () => {
+    const { spawn } = makeProbeSpawn(() => {
+      throw makeSpawnError({ status: 1, stderr: 'child_process check: a shell launched through the helper still had an exception port.' });
+    });
+
+    expect(() => verifyChildProcessLaunch({ helperPath: HELPER, spawn, log: vi.fn() })).toThrow(
+      /failed the child_process launch check\.[\s\S]*still had an exception port/,
+    );
+  });
+
+  it('throws when the run exits 0 without the pass line, rather than reading silence as a pass', () => {
+    const { spawn } = makeProbeSpawn(() => 'something else entirely\n');
+
+    expect(() => verifyChildProcessLaunch({ helperPath: HELPER, spawn, log: vi.fn() })).toThrow(
+      /exited 0 without its pass line/,
+    );
   });
 });
