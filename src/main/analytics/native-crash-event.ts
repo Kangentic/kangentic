@@ -17,7 +17,10 @@ import type { ErrorEvent } from '@sentry/electron/main';
  *    DESKTOP-Q is `/usr/local/share/dotnet/dotnet`. None loaded a single
  *    Kangentic image. DESKTOP-1D is another project's dev Electron Helper,
  *    whose Electron images all sat under that project's own
- *    `node_modules/electron/dist/Electron.app`.
+ *    `node_modules/electron/dist/Electron.app`. The packaged app now clears
+ *    those ports in node-pty's spawn-helper before exec
+ *    (build/spawn-helper/spawn-helper.c), so this filter is the backstop for
+ *    older builds and for processes started outside a PTY.
  * 2. A dump uploaded after an upgrade wears the UPLOADING build's release tag and
  *    scope. DESKTOP-M crashed on 0.38.0 and is filed under 0.39.0, with
  *    breadcrumbs from a launch 21 minutes after the crash.

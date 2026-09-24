@@ -7,7 +7,9 @@ import path from 'node:path';
  * node-pty 1.1.0's npm tarball ships spawn-helper with 644 (no +x), and
  * Electron's asar unpacking may also strip execute bits. This is a runtime
  * safety net for dev mode and edge cases where permissions get stripped
- * post-install. The primary fix is in build/afterPack.js for packaged builds.
+ * post-install. Packaged builds do not need it: build/afterPack.js replaces the
+ * helper with Kangentic's own build (build/install-spawn-helper.js) and writes
+ * it 755. Dev mode still runs node-pty's stock helper, which is why this stays.
  *
  * Credit to eriksaulnier (PR #4) for identifying the runtime fix approach.
  */

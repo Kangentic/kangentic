@@ -1,0 +1,66 @@
+name: macOS spawn-helper
+
+# Compiles Kangentic's build of node-pty's macOS spawn-helper
+# (build/spawn-helper/spawn-helper.c) on real macOS and proves it, both unsigned
+# and ad-hoc signed with hardened runtime (the kernel flag the release's
+# Developer ID signature sets): a child exec'd through it has no inherited mach
+# exception port, the cwd and exec contract holds, and a real node-pty session
+# runs through it with a controlling tty. See build/install-spawn-helper.js.
+#
+# Without this job the C code would first compile on the macOS leg of the
+# release matrix. The same gates run there too (build/afterPack.js on the
+# unsigned app, build/afterSign.js on the signed one), but a failure at that
+# point costs a release.
+#
+# Path-filtered, and deliberately NOT a required check: ci.yml runs at its
+# 21-job concurrency ceiling (see the note at the top of that file), and this
+# only has something to say when the helper, its gates, or node-pty change.
+# package-lock.json is in the filter because a node-pty bump is the change most
+# likely to break the helper's contract.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'build/spawn-helper/**'
+      - 'build/install-spawn-helper.js'
+      - 'build/afterPack.js'
+      - 'build/afterSign.js'
+      - 'package-lock.json'
+      - '.github/workflows/macos-spawn-helper.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'build/spawn-helper/**'
+      - 'build/install-spawn-helper.js'
+      - 'build/afterPack.js'
+      - 'build/afterSign.js'
+      - 'package-lock.json'
+      - '.github/workflows/macos-spawn-helper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-spawn-helper-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-test:
+    name: macOS spawn-helper self-test
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # --ignore-scripts: the self-test needs node-pty's shipped prebuilds only,
+      # not the better-sqlite3 rebuild that postinstall runs for Electron.
+      - name: Install dependencies (npm ci)
+        run: npm ci --ignore-scripts
+      - name: Compile and verify the spawn-helper
+        run: node build/install-spawn-helper.js --self-test

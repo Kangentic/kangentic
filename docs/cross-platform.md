@@ -130,7 +130,7 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 | Module | Build Strategy | Packaging |
 |--------|---------------|-----------|
 | better-sqlite3 | Rebuilt against Electron headers via `scripts/rebuild-native.js` | Included via `files` in `electron-builder.yml`, C++ source excluded |
-| node-pty | Prebuilt NAPI binaries, no rebuild needed | Included via `files`, prebuilds unpacked from asar via `asarUnpack` |
+| node-pty | Prebuilt NAPI binaries, no rebuild needed, except the macOS `spawn-helper`, which is compiled from `build/spawn-helper/spawn-helper.c` at package time (see macOS Code Signing below) | Included via `files`, prebuilds unpacked from asar via `asarUnpack` |
 | sherpa-onnx-node | Prebuilt platform-specific binaries (no rebuild needed) | Included via `files` (`sherpa-onnx-node/**` plus the `sherpa-onnx-*/**` platform packages), unpacked from asar via `asarUnpack: node_modules/sherpa-onnx-*/**` (the voice dictation engine, which runs in its own `kangentic-dictation` utilityProcess - see `.claude/rules/dictation-out-of-process.md` / DESKTOP-X) |
 | font-list | Shells out to `fc-list` (Linux) / a PowerShell script (Windows) / a bundled binary (macOS); no rebuild needed | Included via `files` (`font-list/**`), unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process` (Terminal Font Family picker) |
 | sqlite-vec | Loadable SQLite extension shipped as per-platform binary packages; no rebuild needed | Included via `files` (`sqlite-vec/**` plus the `sqlite-vec-*/**` platform packages), unpacked via `asarUnpack` because SQLite's dlopen cannot read a loadable extension inside an asar archive (conversation-memory retrieval) |
@@ -197,6 +197,21 @@ Windows resolves taskbar icons by matching the running window's AppUserModelID (
 ## macOS Code Signing
 
 macOS builds use hardened runtime with `build/entitlements.plist` providing JIT, unsigned executable memory, and dyld environment variable entitlements (required by node-pty). Notarization uses `notarytool` via electron-builder, gated on the `APPLE_ID` and `APPLE_APP_SPECIFIC_PASSWORD` environment variables.
+
+### PTY children and mach exception ports
+
+node-pty never execs a terminal's program itself on macOS. It posix_spawns `prebuilds/darwin-<arch>/spawn-helper`, which attaches the tty, changes directory, and execs the target. Mach exception ports survive both steps. Once `@sentry/electron` starts Electron's `crashReporter`, Crashpad owns Kangentic's task-level crash port, so every process an agent started from a terminal inherited it. Their crashes landed in our crash database: an ffprobe, a headless Chrome, a dotnet, another project's Electron (Sentry DESKTOP-K, -N, -Q, -1D). Linux and Windows are not affected, because Crashpad installs in-process there and exec resets it.
+
+`build/spawn-helper/spawn-helper.c` is upstream's helper plus one `task_set_exception_ports(mach_task_self(), EXC_MASK_ALL | EXC_MASK_CRASH, MACH_PORT_NULL, ...)` call before `execvp`, fenced by `kangentic:` markers. `EXC_MASK_ALL` alone is not enough. xnu leaves `EXC_MASK_CRASH` out of it, and Crashpad installs its task port for `EXC_CRASH` and `EXC_RESOURCE`. The probe's `check` mode reads the same widened mask for the same reason. With no task-level port, a crash falls through to the host-level ReportCrash, as it would for a program started from Terminal.app. The return value is ignored, so a refusal leaves the child exactly as before rather than failing the spawn. Kangentic's own renderer, GPU, and utility processes are launched by Chromium, not node-pty, and still report to Crashpad.
+
+`build/install-spawn-helper.js` does the work at package time and fails the build rather than skipping:
+
+- `build/afterPack.js` compiles a universal (arm64 + x86_64) helper for `mac.minimumSystemVersion`, copies it over every `darwin-*/spawn-helper` in the unpacked tree, and gates it. `build/spawn-helper/exception-port-probe.c` gives itself an `EXC_CRASH` port, checks that a control child inherits it, then checks that a child exec'd through the helper has none. A `/bin/pwd -P` run through the helper proves the cwd and exec contract.
+- `build/afterSign.js` runs the same gate on the signed helper before notarization, since hardened runtime is the one thing signing adds. electron-builder calls that hook only when it signed, so an unsigned local `npm run package` gets the afterPack gate alone.
+- `.github/workflows/macos-spawn-helper.yml` runs `node build/install-spawn-helper.js --self-test` on `macos-latest` when the helper, its gates, or `package-lock.json` change. It runs both gates, the second after ad-hoc signing the helper with hardened runtime (the same kernel flag Developer ID signing sets). It then runs a real node-pty session through the signed helper, checking cwd and the controlling tty. It is path-filtered and not a required check.
+- `tests/unit/spawn-helper-upstream-parity.test.ts` runs on Linux CI. It fails when the installed node-pty's `spawn-helper.cc`, its helper path, or its `[helper, cwd, file, ...args]` layout drifts from what our helper assumes.
+
+Two gaps remain on purpose. `npm start` uses node-pty's stock helper. That is harmless by default, because an unpackaged run leaves Sentry off and there is no Crashpad port to inherit. It stops being harmless once a switch turns Sentry on: `KANGENTIC_ERROR_REPORTING=1`, or `KANGENTIC_TELEMETRY=1` with `KANGENTIC_ERROR_REPORTING` left unset (`resolveErrorReportingEnabled` in `src/main/analytics/error-reporting.ts`). `child_process` spawns do not go through the helper: `SHELL_EXEC` shortcuts, run-script automations, the post-worktree init script, headless agent runs, and the login-shell env probe. `foreign_minidump_dropped` on a release with this change measures that residue. If it stays above the pre-upgrade tail, the four paths that launch a shell (shortcuts, run-script, the init script, and the login-shell probe) can reuse the helper as `spawn(helper, ['', shell, '-c', command])`.
 
 ## Linux System Dependencies
 

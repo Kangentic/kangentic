@@ -462,7 +462,7 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 
 Native modules:
 - `better-sqlite3` - rebuilt against Electron headers via `scripts/rebuild-native.js`
-- `node-pty` - uses prebuilt NAPI binaries, no rebuild needed
+- `node-pty` - uses prebuilt NAPI binaries, no rebuild needed. The one exception is its macOS `spawn-helper`: `build/afterPack.js` compiles Kangentic's own (`build/spawn-helper/spawn-helper.c`, via `build/install-spawn-helper.js`) over the prebuilt one. It clears the inherited mach exception ports before exec, and the afterPack and afterSign gates prove that on the built binary. A macOS package build therefore needs Xcode or the Command Line Tools installed
 - `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation, running in its own `kangentic-dictation` utilityProcess worker - see DESKTOP-X in `.claude/rules/dictation-out-of-process.md`; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
 - `font-list` - shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
 - `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (conversation-memory retrieval; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar)
