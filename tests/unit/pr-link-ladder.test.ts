@@ -2111,6 +2111,42 @@ describe('linkPRForTask in-flight verdict re-poll', () => {
       logSpy.mockRestore();
     }
   });
+
+  it('a rejecting in-flight re-poll clears the chain so the next arm starts a fresh streak', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const streakStarts = () => logSpy.mock.calls.filter((args) => String(args[0]).includes('re-polling every')).length;
+      conn.byNumber = withReadiness(10, 'running');
+      const task = linkedTask({ pr_merge_readiness: 'blocked' });
+      const getByIdSpy = vi.fn((): Task | undefined => task);
+      const baseDeps = depsFor(task, { repollInFlightVerdict: true });
+      const deps = { ...baseDeps, tasks: { ...(baseDeps.tasks as object), getById: getByIdSpy } as never };
+      await linkPRForTask(task.id, deps);
+      expect(streakStarts()).toBe(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      // The re-poll's own lookup fails (a DB error, not a deletion or CI
+      // settling). The rejection is caught inside `scheduleInFlightVerdictRepoll`'s
+      // own `.catch`, so this never surfaces as an unhandled rejection (vitest
+      // would fail the test if it did).
+      getByIdSpy.mockImplementationOnce(() => { throw new Error('boom'); });
+      await vi.advanceTimersByTimeAsync(REPOLL_MS);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      // Red-green: without `clearInFlightVerdictRepoll(taskId)` inside that
+      // `.catch`, the stale entry (timer: null, exhausted: false, its ORIGINAL
+      // startedAt) is reused here rather than dropped, so this re-arm reuses it
+      // silently instead of starting (and logging) a fresh streak.
+      await linkPRForTask(task.id, deps);
+      expect(streakStarts()).toBe(2);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 /**
