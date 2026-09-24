@@ -20,7 +20,7 @@ import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
-import { prResolveOptionsFromGitConfig } from '../pr/pr-linking';
+import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../pr/pr-linking';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -74,6 +74,14 @@ export function buildCommandContextForProject(
         return prResolveOptionsFromGitConfig(ipcContext.configManager.getEffectiveConfig(projectPath).git);
       } catch {
         return {};
+      }
+    },
+    // Same binding, failure posture, and shared mapping as the resolve options.
+    getPrRepollInFlight: () => {
+      try {
+        return prRepollInFlightFromGitConfig(ipcContext.configManager.getEffectiveConfig(projectPath).git);
+      } catch {
+        return false;
       }
     },
     // Explicit path, not the active project: a cross-project tool call must

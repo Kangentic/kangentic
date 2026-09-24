@@ -79,8 +79,9 @@ export const prRefreshScheduler = {
       activeTimer = null;
     }
     activeProjectId = null;
-    // The linker's merge-verdict re-polls belong to the project that was being
-    // swept; a switch-back's on-open sweep asks afresh.
+    // The linker's merge-verdict re-polls (the unknown holds and the in-flight
+    // chains) belong to the project that was being swept; a switch-back's
+    // on-open sweep asks afresh and re-arms any chain that still applies.
     cancelPendingVerdictRepolls();
   },
 };

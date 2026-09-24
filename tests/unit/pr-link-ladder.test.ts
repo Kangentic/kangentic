@@ -140,7 +140,7 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   };
 });
 
-import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls, prResolveOptionsFromGitConfig } from '../../src/main/pr/pr-linking';
+import { linkPRForTask, linkPR, autoLinkPRForTask, recordPushedBranchForSession, cancelPendingVerdictRepolls, prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../../src/main/pr/pr-linking';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -263,6 +263,8 @@ function depsFor(
      * lookup excludes it.
      */
     siblings?: Task[];
+    /** Off unless a test opts in, so no pre-existing timer count sees the in-flight chain. */
+    repollInFlightVerdict?: boolean;
   } = {},
 ) {
   const update = opts.updateSpy ?? vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
@@ -281,6 +283,7 @@ function depsFor(
     bypassThrottle: opts.bypassThrottle,
     preserveLinkOnNotFound: opts.preserveLinkOnNotFound,
     defaultBaseBranch: opts.defaultBaseBranch,
+    repollInFlightVerdict: opts.repollInFlightVerdict,
   };
 }
 
@@ -1478,6 +1481,38 @@ describe('linkPR (IPC wrapper): resolve options reach every readiness-capable ti
       vi.useRealTimers();
     }
   });
+
+  it.each([
+    [undefined, false],
+    [{}, false],
+    [{ prRefreshIntervalMinutes: null }, false],
+    [{ prRefreshIntervalMinutes: 0 }, false],
+    [{ prRefreshIntervalMinutes: -1 }, false],
+    [{ prRefreshIntervalMinutes: 5 }, true],
+  ] as Array<[Record<string, unknown> | undefined, boolean]>)(
+    'prRepollInFlightFromGitConfig(%j) is %s',
+    (gitConfig, expected) => {
+      expect(prRepollInFlightFromGitConfig(gitConfig as never)).toBe(expected);
+    },
+  );
+
+  it('arms the in-flight re-poll only when background PR refresh is on', async () => {
+    vi.useFakeTimers();
+    try {
+      conn.byNumber = { ...resolved(7), mergeReadiness: 'running' };
+      // "Auto-refresh PRs: Off" promises no background polling.
+      const offTask = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
+      await linkPR(contextFor(offTask, { prRefreshIntervalMinutes: null }), { projectId: 'proj-1', taskId: offTask.id, force: true });
+      expect(vi.getTimerCount()).toBe(0);
+
+      const onTask = unstartedTask({ pr_number: 7, pr_url: 'u7', pr_state: 'open' });
+      await linkPR(contextFor(onTask, { prRefreshIntervalMinutes: 5 }), { projectId: 'proj-1', taskId: onTask.id, force: true });
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      cancelPendingVerdictRepolls();
+      vi.useRealTimers();
+    }
+  });
 });
 
 /**
@@ -1785,6 +1820,296 @@ describe('linkPRForTask merge readiness', () => {
     conn.byNumber = withReadiness(10, 'blocked');
     await vi.advanceTimersByTimeAsync(5_000);
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'blocked' }));
+  });
+});
+
+/**
+ * The in-flight re-poll. `queued` / `running` write straight through, and then
+ * the linker re-asks every 30 s until CI settles, instead of leaving the card on
+ * `running` until the next sweep (the #720 report: 2m47s after the last check,
+ * about 5 min without an incidental prompt). Bounded by a 30 min budget that
+ * stays spent until the verdict leaves the in-flight states.
+ */
+describe('linkPRForTask in-flight verdict re-poll', () => {
+  const REPOLL_MS = 30_000;
+  const withReadiness = (number: number, mergeReadiness: string, state = 'open') =>
+    ({ ...resolved(number, state), mergeReadiness });
+  const linkedTask = (overrides: NonAnchorOverrides = {}) =>
+    reclaimedWorktreeTask({ branch: 'slug' }, { pr_number: 10, pr_url: 'u10', pr_state: 'open', ...overrides });
+  const numberResolves = () => conn.calls.filter((call) => call === 'byNumber').length;
+
+  beforeEach(() => {
+    cancelPendingVerdictRepolls();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cancelPendingVerdictRepolls();
+    vi.useRealTimers();
+  });
+
+  it.each(['running', 'queued'])('re-polls an open PR at %s and writes the settled verdict', async (inFlight) => {
+    conn.byNumber = withReadiness(10, inFlight);
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    const deps = depsFor(task, { repollInFlightVerdict: true });
+
+    const first = await linkPRForTask(task.id, deps);
+    expect(first.status).toBe('linked');
+    expect(task.pr_merge_readiness).toBe(inFlight);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Still in flight at the first re-poll: nothing new to write, the chain continues.
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(numberResolves()).toBe(2);
+    expect(task.pr_merge_readiness).toBe(inFlight);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // CI settled before the next one.
+    conn.byNumber = withReadiness(10, 'ready');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(task.pr_merge_readiness).toBe('ready');
+    expect(deps.onLinked).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('arms nothing for a draft, a terminal PR, or deps without the flag', async () => {
+    // A draft: the chip does not render readiness there.
+    conn.byNumber = withReadiness(10, 'running', 'draft');
+    const draftTask = linkedTask({ pr_state: 'draft' });
+    await linkPRForTask(draftTask.id, depsFor(draftTask, { repollInFlightVerdict: true }));
+    expect(draftTask.pr_merge_readiness).toBe('running');
+    expect(vi.getTimerCount()).toBe(0);
+
+    // A merged PR whose preserved verdict is still `running`: it never changes again.
+    conn.byNumber = resolved(10, 'merged');
+    const mergedTask = linkedTask({ pr_merge_readiness: 'running' });
+    await linkPRForTask(mergedTask.id, depsFor(mergedTask, { repollInFlightVerdict: true }));
+    expect(mergedTask.pr_state).toBe('merged');
+    expect(mergedTask.pr_merge_readiness).toBe('running');
+    expect(vi.getTimerCount()).toBe(0);
+
+    // The flag absent (background PR refresh off, or a one-shot link-time resolve).
+    conn.byNumber = withReadiness(10, 'running');
+    const flaglessTask = linkedTask();
+    await linkPRForTask(flaglessTask.id, depsFor(flaglessTask));
+    expect(flaglessTask.pr_merge_readiness).toBe('running');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rides through GitHub\'s recompute between running and ready without writing unknown', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'running' });
+    const updateSpy = vi.fn((patch: Partial<Task>) => { Object.assign(task, patch); return { ...task }; });
+    await linkPRForTask(task.id, depsFor(task, { updateSpy, repollInFlightVerdict: true }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The checks settle and GitHub answers UNKNOWN while it recomputes: the
+    // unknown hold takes over (its 5 s re-poll) and nothing is written.
+    conn.byNumber = withReadiness(10, 'unknown');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(task.pr_merge_readiness).toBe('running');
+    expect(vi.getTimerCount()).toBe(1);
+
+    conn.byNumber = withReadiness(10, 'ready');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_merge_readiness: 'ready' }));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops once the budget is spent, stays stopped for a still-running sweep, and restarts after CI settles', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    const deps = depsFor(task, { repollInFlightVerdict: true });
+    await linkPRForTask(task.id, deps);
+
+    // One resolve up front, then one per 30 s until the re-poll landing at
+    // the 30 min mark finds the budget spent and arms nothing.
+    for (let tick = 0; tick < 60; tick += 1) await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(numberResolves()).toBe(61);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // A PR stuck `queued` with no runner must not get a fresh chain every sweep.
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // A settled answer ends the streak, so the next CI run gets its own chain.
+    conn.byNumber = withReadiness(10, 'ready');
+    await linkPRForTask(task.id, deps);
+    conn.byNumber = withReadiness(10, 'running');
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('an unknown hold mid-chain keeps the streak and its budget', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    await linkPRForTask(task.id, depsFor(task, { repollInFlightVerdict: true }));
+    for (let tick = 0; tick < 59; tick += 1) await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // At the 30 min mark GitHub is recomputing: the hold takes the next step.
+    conn.byNumber = withReadiness(10, 'unknown');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    // It answers `running` again (a check re-ran). The streak began 30 min
+    // ago, so its budget is spent and nothing re-arms. Red-green: a hold that
+    // cleared the in-flight entry would start a fresh 30 min chain here.
+    conn.byNumber = withReadiness(10, 'running');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(task.pr_merge_readiness).toBe('running');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a resolve landing mid-chain adds no timer and does not move the next re-poll', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    const deps = depsFor(task, { repollInFlightVerdict: true });
+    await linkPRForTask(task.id, deps);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(numberResolves()).toBe(2);
+
+    // The re-poll still fires 30 s after the FIRST arm, not the second resolve.
+    await vi.advanceTimersByTimeAsync(REPOLL_MS - 10_000);
+    expect(numberResolves()).toBe(3);
+  });
+
+  it('keeps re-polling through a transient resolver error, since the stored verdict still says running', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    await linkPRForTask(task.id, depsFor(task, { repollInFlightVerdict: true }));
+
+    conn.byNumber = new PRResolverTransientError('gh timed out');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(task.pr_merge_readiness).toBe('running');
+    expect(vi.getTimerCount()).toBe(1);
+
+    conn.byNumber = withReadiness(10, 'ready');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(task.pr_merge_readiness).toBe('ready');
+  });
+
+  /**
+   * The re-poll timer drops `getScrollback`, so a degraded resolve on this
+   * timer keeps the stored link instead of scraping the terminal the chain was
+   * armed with. The chain re-resolves a PR the row already names; the scrape
+   * would read text captured up to 30 minutes earlier.
+   */
+  it('does not scrape scrollback on the in-flight re-poll', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    // Terminal text naming a different PR than the one this chain tracks.
+    const getScrollback = vi.fn(() =>
+      'Opened pull request #77: https://github.com/example-org/example-repo/pull/77\n');
+    conn.detect = { url: 'https://github.com/example-org/example-repo/pull/77', number: 77 };
+    const deps = { ...depsFor(task, { repollInFlightVerdict: true }), getScrollback };
+
+    const first = await linkPRForTask(task.id, deps);
+    expect(first.status).toBe('linked');
+    expect(getScrollback).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+
+    conn.byNumber = new PRResolverTransientError('gh timed out');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+
+    expect(getScrollback).not.toHaveBeenCalled();
+    expect(task.pr_number).toBe(10);
+    expect(task.pr_url).toBe('u10');
+  });
+
+  it('a coalesced resolve re-arms a cancelled chain from the stored row', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    const deps = depsFor(task, { repollInFlightVerdict: true, force: false });
+    await linkPRForTask(task.id, deps);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // A project switch or a config change cancels every chain, and the
+    // on-open sweep lands inside the 60 s window the last resolve stamped. It
+    // coalesces (no resolver call), but the chain must come back: otherwise
+    // the card waits a whole sweep interval again.
+    cancelPendingVerdictRepolls();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('unchanged');
+    expect(numberResolves()).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    conn.byNumber = withReadiness(10, 'ready');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(task.pr_merge_readiness).toBe('ready');
+  });
+
+  it('announces a re-poll\'s write on onRepollLinked, not on the caller\'s own onLinked', async () => {
+    // `link_pr` announces the agent's call as "Task updated by agent". The
+    // CI-settled flip minutes later is the app's reconcile and goes out quietly.
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    const onRepollLinked = vi.fn();
+    const deps = { ...depsFor(task, { repollInFlightVerdict: true }), onRepollLinked };
+    await linkPRForTask(task.id, deps);
+    expect(deps.onLinked).toHaveBeenCalledTimes(1);
+
+    conn.byNumber = withReadiness(10, 'ready');
+    await vi.advanceTimersByTimeAsync(REPOLL_MS);
+    expect(task.pr_merge_readiness).toBe('ready');
+    expect(deps.onLinked).toHaveBeenCalledTimes(1);
+    expect(onRepollLinked).toHaveBeenCalledTimes(1);
+  });
+
+  it('the unknown hold\'s re-poll announces on onRepollLinked too', async () => {
+    conn.byNumber = withReadiness(10, 'unknown');
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const onRepollLinked = vi.fn();
+    const deps = { ...depsFor(task), onRepollLinked };
+    await linkPRForTask(task.id, deps);
+
+    conn.byNumber = withReadiness(10, 'blocked');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(task.pr_merge_readiness).toBe('blocked');
+    expect(deps.onLinked).not.toHaveBeenCalled();
+    expect(onRepollLinked).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelPendingVerdictRepolls drops a scheduled in-flight re-poll', async () => {
+    conn.byNumber = withReadiness(10, 'running');
+    const task = linkedTask({ pr_merge_readiness: 'blocked' });
+    await linkPRForTask(task.id, depsFor(task, { repollInFlightVerdict: true }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    cancelPendingVerdictRepolls();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(REPOLL_MS * 2);
+    expect(numberResolves()).toBe(1);
+  });
+
+  it('a task deleted mid-chain drops its entry, so the next in-flight answer starts a fresh streak', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const streakStarts = () => logSpy.mock.calls.filter((args) => String(args[0]).includes('re-polling every')).length;
+      conn.byNumber = withReadiness(10, 'running');
+      const task = linkedTask({ pr_merge_readiness: 'blocked' });
+      const getByIdSpy = vi.fn((): Task | undefined => task);
+      const baseDeps = depsFor(task, { repollInFlightVerdict: true });
+      const deps = { ...baseDeps, tasks: { ...(baseDeps.tasks as object), getById: getByIdSpy } as never };
+      await linkPRForTask(task.id, deps);
+      expect(streakStarts()).toBe(1);
+
+      getByIdSpy.mockImplementationOnce(() => undefined);
+      await vi.advanceTimersByTimeAsync(REPOLL_MS);
+      expect(vi.getTimerCount()).toBe(0);
+
+      // Red-green: without the clear in the `!task` branch, the stale entry is
+      // reused and no new streak is announced.
+      await linkPRForTask(task.id, deps);
+      expect(streakStarts()).toBe(2);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
 

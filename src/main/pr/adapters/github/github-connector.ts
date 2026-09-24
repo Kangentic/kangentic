@@ -96,7 +96,8 @@ function mapState(item: GhPrListItem): PRState {
  * report it. The check rollup splits them (see `classifyRollup`), and a check
  * in flight wins over a required review on purpose, so the chip tracks CI while
  * it runs and flips to `blocked` when only the review remains. A failed check
- * never yields to a running one. BEHIND takes the same branch, for the reason
+ * never yields to a running one, and a required check the rollup does not
+ * carry yet reads `queued` (`requiredContextMissing`). BEHIND takes the same branch, for the reason
  * `isBypassClearableMergeState` gives: it is the value GitHub reports INSTEAD
  * of BLOCKED once the base moves, so reading the rollup for one and not the
  * other would make the chip flip on a merge somebody else did.
@@ -111,11 +112,20 @@ function mapState(item: GhPrListItem): PRState {
  * never fold. Azure DevOps has no counterpart: its bypass is a
  * security-namespace permission, out of scope.
  */
-function mapMergeReadiness(item: GhPrListItem, bypass: GhMergeBypass | null): PRMergeReadiness | undefined {
+function mapMergeReadiness(
+  item: GhPrListItem,
+  bypass: GhMergeBypass | null,
+  requiredContexts: string[] | null,
+): PRMergeReadiness | undefined {
   if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
   if (isBypassClearableMergeState(item.mergeStateStatus)) {
     const rollup = classifyRollup(item.statusCheckRollup);
     if (rollup === 'running' || rollup === 'queued') return rollup;
+    // A required check the rollup does not carry at all is one GitHub is
+    // still waiting on (see `requiredContextMissing`), so the PR is queued on
+    // CI, not blocked by it. A failure still wins: nothing that has not run
+    // can unblock a check that already failed.
+    if (rollup !== 'failed' && requiredContextMissing(item.statusCheckRollup, requiredContexts)) return 'queued';
     return bypassClearsTheBlock(item, bypass) ? 'ready' : 'blocked';
   }
   const verdict = mapMergeStateStatus(item.mergeStateStatus) ?? mapMergeable(item.mergeable);
@@ -214,6 +224,38 @@ function requiredChecksReported(
 }
 
 /**
+ * Whether a context the base branch requires is absent from the rollup
+ * entirely, in any state. That is how a just-opened PR looks while CI is
+ * starting: its fast CLA workflow is green and CI's workflow has not created
+ * its runs yet, so the rollup holds one check and GitHub reports BLOCKED. On
+ * the sweep's cadence the card read `blocked` for minutes, and a verdict that
+ * is not in flight never starts the linker's 30 s re-poll, so a CI run that
+ * finished inside one sweep interval left the card up to a whole interval
+ * behind. Reporting `queued` here is also the honest label: GitHub's own page
+ * shows the check as "Expected, waiting for status to be reported".
+ *
+ * The join is by name, and it is the join GitHub itself makes: a required
+ * context is satisfied only by a check run or status with that name. So a
+ * context missing here is one GitHub is waiting on too. A required check that
+ * never reports (a path-filtered workflow, a check only a merge queue runs)
+ * therefore reads `queued` for as long as GitHub reads it as expected; the
+ * linker's re-poll budget bounds what that costs. `null` (no readable rule) is
+ * never missing anything, which keeps a ruleset repo on the verdict it had.
+ */
+function requiredContextMissing(
+  rollup: GhStatusCheckRollupItem[] | undefined,
+  requiredContexts: string[] | null,
+): boolean {
+  if (requiredContexts === null || requiredContexts.length === 0) return false;
+  const present = new Set<string>();
+  for (const item of rollup ?? []) {
+    if (item.__typename === 'CheckRun') present.add(item.name);
+    else if (item.__typename === 'StatusContext') present.add(item.context);
+  }
+  return requiredContexts.some((context) => !present.has(context));
+}
+
+/**
  * Names of the rollup entries that individually PASSED. Every caller reaches
  * this only for a `passing` rollup, where that is every entry, but reading per
  * entry keeps the comparison above correct if that gate is ever loosened.
@@ -272,9 +314,11 @@ const PASSING_CHECK_RUN_CONCLUSIONS: ReadonlySet<GhCheckRunConclusion> = new Set
  * about to start", not "no checks".
  *
  * A heuristic, because `gh` carries no `isRequired` on the rollup: a BLOCKED
- * PR whose only unfinished checks are optional reads `running` too, and a
- * required check not yet in the rollup reads `blocked` for one sweep. Both
- * correct themselves on the next resolve. `passing` is the class that heuristic
+ * PR whose only unfinished checks are optional reads `running` too, which
+ * corrects itself on the next resolve. A required check not yet in the rollup
+ * is caught separately, against the branch's required list
+ * (`requiredContextMissing`), and reads `queued`; only a branch with no
+ * readable rule (rulesets) still reads `blocked` there until CI reports. `passing` is the class that heuristic
  * would make dangerous - a fast workflow can be green before a slower one has
  * created its runs at all - so the bypass fold does not trust it alone and
  * compares against the branch's required contexts (`requiredChecksReported`).
@@ -361,6 +405,63 @@ async function bypassFor(
 }
 
 /**
+ * Required-context lists per repo and base branch. Protection rules change
+ * rarely and the list is per BRANCH, so one answer serves every PR on that
+ * base: without the cache, every sweep would spend a GraphQL call per
+ * BLOCKED-and-settled PR, and the linker's in-flight re-poll one per 30 s.
+ * Keyed by the PR's repo URL, not the cwd, so a task's worktree and the main
+ * checkout share an entry. A failed read is not cached, so the next resolve
+ * asks again. Bounded, evicting the oldest entry.
+ */
+const REQUIRED_CHECKS_TTL_MS = 10 * 60_000;
+const MAX_REQUIRED_CHECKS_ENTRIES = 32;
+const requiredChecksByBase = new Map<string, { contexts: string[] | null; fetchedAt: number }>();
+
+/** Drop every cached required-context list. Tests only: the cache is module-level. */
+export function resetRequiredChecksCacheForTests(): void {
+  requiredChecksByBase.clear();
+}
+
+/**
+ * Whether the required-context list can change this item's verdict: an open,
+ * non-draft PR in a merge state the rollup decides (`isBypassClearableMergeState`)
+ * whose rollup has not already answered. A failed check keeps `blocked`, and an
+ * in-flight one already reads `running` / `queued`, so neither spends a call.
+ */
+function needsRequiredChecks(item: GhPrListItem): boolean {
+  if (item.state !== 'OPEN' || item.isDraft || !item.baseRefName) return false;
+  if (!isBypassClearableMergeState(item.mergeStateStatus)) return false;
+  const rollup = classifyRollup(item.statusCheckRollup);
+  return rollup === 'passing' || rollup === 'inconclusive';
+}
+
+/**
+ * The base branch's required contexts for `item`, from the cache or one
+ * `resolveRequiredStatusChecks` call, or null when the read is not warranted,
+ * failed, or found no readable rule. Called INSIDE the caller's `viaGh` slot,
+ * never through a nested `add`, for the deadlock reason `bypassFor` gives.
+ */
+async function requiredChecksFor(item: GhPrListItem, repoCwd: string): Promise<string[] | null> {
+  if (!needsRequiredChecks(item)) return null;
+  const repoKey = item.url.replace(/\/pull\/\d+$/, '') || repoCwd;
+  const cacheKey = `${repoKey}\n${item.baseRefName}`;
+  const now = Date.now();
+  const cached = requiredChecksByBase.get(cacheKey);
+  if (cached && now - cached.fetchedAt < REQUIRED_CHECKS_TTL_MS) return cached.contexts;
+  const answer = await ghImporter.resolveRequiredStatusChecks(repoCwd, item.baseRefName);
+  if (answer === null) return null;
+  // Drop this key's expired entry first, so it does not count against the
+  // bound and evict an unrelated base, and so the refresh lands newest.
+  requiredChecksByBase.delete(cacheKey);
+  if (requiredChecksByBase.size >= MAX_REQUIRED_CHECKS_ENTRIES) {
+    const oldest = requiredChecksByBase.keys().next();
+    if (!oldest.done) requiredChecksByBase.delete(oldest.value);
+  }
+  requiredChecksByBase.set(cacheKey, { contexts: answer.contexts, fetchedAt: now });
+  return answer.contexts;
+}
+
+/**
  * The un-folded meaning of each state, and only that: `mapMergeReadiness` sends
  * both of `isBypassClearableMergeState`'s values through the check rollup before
  * this switch runs, so neither reaches it from either caller.
@@ -396,11 +497,12 @@ function mapMergeable(mergeable: GhMergeable | undefined): PRMergeReadiness {
 
 /**
  * Project a raw gh PR item into the platform-agnostic ResolvedPR shape.
- * `bypass` is the answer `bypassFor` gave for THIS item; the commit tier
- * passes null, since its items carry no mergeability at all.
+ * `bypass` and `requiredContexts` are what `bypassFor` and `requiredChecksFor`
+ * answered for THIS item; the commit tier passes null for both, since its
+ * items carry no mergeability at all.
  */
-function toResolvedPR(item: GhPrListItem, bypass: GhMergeBypass | null): ResolvedPR {
-  const mergeReadiness = mapMergeReadiness(item, bypass);
+function toResolvedPR(item: GhPrListItem, bypass: GhMergeBypass | null, requiredContexts: string[] | null): ResolvedPR {
+  const mergeReadiness = mapMergeReadiness(item, bypass, requiredContexts);
   return {
     url: item.url,
     number: item.number,
@@ -604,7 +706,7 @@ export const gitHubPRConnector: PRConnector = {
       if (!best) return null;
       // The bypass is probed for the ONE chosen candidate, after
       // disambiguation, so a branch shared by several PRs costs one call.
-      return toResolvedPR(best, await bypassFor(best, repoCwd, options));
+      return toResolvedPR(best, await bypassFor(best, repoCwd, options), await requiredChecksFor(best, repoCwd));
     });
   },
 
@@ -616,7 +718,7 @@ export const gitHubPRConnector: PRConnector = {
       // (which drop fork PRs because a fork can share a branch name or commit), trusting a
       // fork PR here is safe - the caller already named the exact PR.
       if (!item) return null;
-      return toResolvedPR(item, await bypassFor(item, repoCwd, options));
+      return toResolvedPR(item, await bypassFor(item, repoCwd, options), await requiredChecksFor(item, repoCwd));
     });
   },
 
@@ -644,7 +746,7 @@ export const gitHubPRConnector: PRConnector = {
       const best = disambiguate(survivors, { branchHint });
       // No bypass probe: these items carry no mergeability fields (the REST
       // commit-pulls payload), so the verdict is omitted whatever the setting.
-      return best ? toResolvedPR(best, null) : null;
+      return best ? toResolvedPR(best, null, null) : null;
     });
   },
 };

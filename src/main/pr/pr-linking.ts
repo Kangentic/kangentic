@@ -72,6 +72,31 @@ const PENDING_VERDICT_RETRY_DELAYS_MS: readonly number[] = [5_000, 20_000];
 const pendingVerdictRepolls = new Map<string, { attempt: number; timer: NodeJS.Timeout | null }>();
 
 /**
+ * Re-poll for an IN-FLIGHT verdict. `queued` and `running` are answers, so they
+ * write straight through, but they are answers that expire: the next one is
+ * `ready` or `blocked`, and it arrives when CI finishes, not when the sweep
+ * next ticks. Left to the sweep, a card read `running` for up to a whole
+ * `git.prRefreshIntervalMinutes` after its last check completed, and an agent
+ * going idle right after CI could not rescue it, because the sweep's own
+ * resolve seconds earlier had stamped the 60s coalesce (measured on #720:
+ * 2m47s of lag, about 5 min without an incidental prompt).
+ *
+ * So while an open PR's PERSISTED verdict is in flight, the linker re-asks
+ * every `IN_FLIGHT_VERDICT_REPOLL_MS`. One timer per task, `unref()`'d, and
+ * cleared with the pending-verdict re-polls. The streak is bounded by
+ * `IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS` from its first in-flight answer, and the
+ * bound is sticky: a spent streak stays spent until the verdict leaves the
+ * in-flight states, so a PR stuck `queued` with no runner does not restart a
+ * fresh chain on every sweep. Separate state from `pendingVerdictRepolls` on
+ * purpose: GitHub's real sequence is `running`, a brief `UNKNOWN` recompute,
+ * then `ready`, and the unknown hold that covers the middle step reads its own
+ * attempt count and its own pending timer.
+ */
+const IN_FLIGHT_VERDICT_REPOLL_MS = 30_000;
+const IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS = 30 * 60_000;
+const inFlightVerdictRepolls = new Map<string, { startedAt: number; timer: NodeJS.Timeout | null; exhausted: boolean }>();
+
+/**
  * A verdict worth holding through a transient `unknown`. `queued` / `running`
  * count: a blocking check in flight is a real answer, and its next real answer
  * is `ready` or `blocked`, not `unknown`.
@@ -102,7 +127,7 @@ function schedulePendingVerdictRepoll(taskId: string, deps: PRLinkDeps): void {
     // A rejection never reaches the clear at the end of `linkPRForTask`, so
     // drop the entry here: an orphaned `{ attempt, timer: null }` would carry
     // a half-spent budget into the next hold for this task.
-    void linkPRForTask(taskId, { ...deps, force: true }).catch((error) => {
+    void linkPRForTask(taskId, repollDeps(deps, { force: true })).catch((error) => {
       clearPendingVerdictRepoll(taskId);
       console.error(`[pr-linking] merge-readiness re-poll failed for task ${taskId.slice(0, 8)}:`, error);
     });
@@ -118,9 +143,82 @@ function clearPendingVerdictRepoll(taskId: string): void {
   pendingVerdictRepolls.delete(taskId);
 }
 
-/** Drop every pending merge-verdict re-poll (project switch, delete, shutdown). */
+/**
+ * Whether this row should have an in-flight chain: the caller opted in, the PR
+ * is open (a draft's chip does not render readiness, a terminal PR never
+ * changes), and its stored verdict waits on CI. Read off the PERSISTED row, so
+ * a degraded resolve that kept the stored verdict keeps re-asking and a
+ * confident-not-found clear ends the chain.
+ */
+function wantsInFlightVerdictRepoll(task: Task, deps: PRLinkDeps): boolean {
+  return deps.repollInFlightVerdict === true
+    && task.pr_state === 'open'
+    && (task.pr_merge_readiness === 'running' || task.pr_merge_readiness === 'queued');
+}
+
+function scheduleInFlightVerdictRepoll(task: Task, deps: PRLinkDeps): void {
+  const taskId = task.id;
+  let entry = inFlightVerdictRepolls.get(taskId);
+  // One in flight is enough, and a spent streak stays spent: a sweep landing
+  // mid-chain must neither add a timer nor restart the budget.
+  if (entry?.timer || entry?.exhausted) return;
+  const now = Date.now();
+  if (!entry) {
+    entry = { startedAt: now, timer: null, exhausted: false };
+    inFlightVerdictRepolls.set(taskId, entry);
+    console.log(`[pr-linking] PR #${task.pr_number} checks in flight for "${task.title}": re-polling every ${IN_FLIGHT_VERDICT_REPOLL_MS / 1000}s`);
+  }
+  if (now - entry.startedAt >= IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS) {
+    entry.exhausted = true;
+    console.log(`[pr-linking] PR #${task.pr_number} checks still in flight for "${task.title}" after ${IN_FLIGHT_VERDICT_REPOLL_BUDGET_MS / 60_000} min: leaving it to the sweep`);
+    return;
+  }
+  const timer = setTimeout(() => {
+    const current = inFlightVerdictRepolls.get(taskId);
+    if (current) current.timer = null;
+    // Adds `bypassThrottle` to skip the 60s coalesce the previous resolve just
+    // stamped. The arming caller's own flags carry through: a chain armed by
+    // `link_pr` re-polls with `force`, and one armed by a link-time resolve
+    // with `force` and `preserveLinkOnNotFound`. A terminal row never reaches
+    // this timer, since the resolve that writes one clears the chain. The scrollback is
+    // dropped so a long chain does not hold a stale string alive; this
+    // resolves a PR the row already names. Like the pending-verdict re-poll, a rejection
+    // never reaches the scheduling decision in `linkPRForTask`, so drop the
+    // entry here.
+    void linkPRForTask(taskId, repollDeps(deps, { bypassThrottle: true, getScrollback: undefined })).catch((error) => {
+      clearInFlightVerdictRepoll(taskId);
+      console.error(`[pr-linking] in-flight re-poll failed for task ${taskId.slice(0, 8)}:`, error);
+    });
+  }, IN_FLIGHT_VERDICT_REPOLL_MS);
+  timer.unref();
+  entry.timer = timer;
+}
+
+/**
+ * The deps a timer-driven re-poll resolves with: the scheduling caller's, with
+ * `overrides` applied and `onLinked` swapped for `onRepollLinked` when the
+ * caller gave one. A re-poll is the app reconciling on its own clock, so a
+ * caller whose `onLinked` announces an agent's own write (`link_pr`) must not
+ * have that announcement repeated minutes later when CI settles.
+ */
+function repollDeps(deps: PRLinkDeps, overrides: Partial<PRLinkDeps>): PRLinkDeps {
+  return { ...deps, ...overrides, onLinked: deps.onRepollLinked ?? deps.onLinked };
+}
+
+function clearInFlightVerdictRepoll(taskId: string): void {
+  const entry = inFlightVerdictRepolls.get(taskId);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  inFlightVerdictRepolls.delete(taskId);
+}
+
+/**
+ * Drop every pending merge-verdict re-poll, both the unknown holds and the
+ * in-flight chains (project switch, delete, shutdown).
+ */
 export function cancelPendingVerdictRepolls(): void {
   for (const taskId of [...pendingVerdictRepolls.keys()]) clearPendingVerdictRepoll(taskId);
+  for (const taskId of [...inFlightVerdictRepolls.keys()]) clearInFlightVerdictRepoll(taskId);
 }
 
 export interface PRLinkDeps {
@@ -175,6 +273,24 @@ export interface PRLinkDeps {
    * (kebab refresh, MCP link_pr) leaves this unset so it can still clear.
    */
   preserveLinkOnNotFound?: boolean;
+  /**
+   * Re-poll an open PR whose persisted verdict is `queued` or `running` (see
+   * `IN_FLIGHT_VERDICT_REPOLL_MS`). Absent means off. `linkPR` sets it from
+   * the project's `git.prRefreshIntervalMinutes`, so a project with background
+   * PR refresh switched off gets no background polling from this either. The
+   * MCP command context reads the same setting through
+   * `prRepollInFlightFromGitConfig`, so an agent's own link write arms the
+   * chain too: during `/pull-request` the agent waits on CI inside one turn,
+   * so no idle arrives to arm it, and the next sweep can be minutes away.
+   */
+  repollInFlightVerdict?: boolean;
+  /**
+   * Notification for a write a timer-driven re-poll makes, in place of
+   * `onLinked`. Absent means `onLinked`. Set by a caller whose `onLinked` is
+   * the loud "Task updated by agent" channel (`link_pr`), so the CI-settled
+   * flip minutes later goes out on the quiet one.
+   */
+  onRepollLinked?: (task: Task) => void;
 }
 
 /**
@@ -481,6 +597,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       // runs, so the entry it left behind is dropped here rather than lingering
       // until the next project switch clears every re-poll at once.
       clearPendingVerdictRepoll(taskId);
+      clearInFlightVerdictRepoll(taskId);
       return { status: 'no-anchor', task: null };
     }
 
@@ -493,6 +610,12 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       }
       const last = lastResolveAt.get(taskId);
       if (!deps.bypassThrottle && last != null && Date.now() - last < RESOLVE_TTL_MS) {
+        // Coalesced, but the in-flight chain is still armed from the stored
+        // row. A project switch or a config change cancels every chain, and
+        // the on-open sweep that should re-arm it lands inside the window the
+        // last re-poll stamped; without this the card waits a whole sweep
+        // interval again. A pending timer or a spent budget makes it a no-op.
+        if (wantsInFlightVerdictRepoll(task, deps)) scheduleInFlightVerdictRepoll(task, deps);
         return { status: 'unchanged', task };
       }
     }
@@ -646,7 +769,9 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     //    is spent does `unknown` land. A terminal PR is never held: the chip
     //    does not render readiness there, and GitHub never recomputes it.
     //  - Everything else writes, including `unknown` over null, so "asked, no
-    //    verdict yet" is recorded and distinguishable from never checked.
+    //    verdict yet" is recorded and distinguishable from never checked. An
+    //    in-flight `queued` / `running` writes too, and then re-polls on its own
+    //    timer until CI settles (see `IN_FLIGHT_VERDICT_REPOLL_MS`).
     const samePr = next != null && next.url === task.pr_url && next.number === task.pr_number;
     const holdsPendingVerdict = next != null
       && next.mergeReadiness === 'unknown'
@@ -705,10 +830,21 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     }
     // A held verdict re-asks on a timer; any other outcome (a determined
     // verdict, a preserve, a clear, a miss) ends the hold and drops the budget.
+    //
+    // The in-flight chain is left untouched while a hold runs: GitHub answers
+    // `running`, then `UNKNOWN` for a few seconds while it recomputes, then
+    // `ready`, and the hold covering the middle step must neither end the
+    // streak nor restart its budget. Otherwise the chain follows the persisted
+    // row (see `wantsInFlightVerdictRepoll`).
     if (holdsPendingVerdict) {
       schedulePendingVerdictRepoll(taskId, deps);
     } else {
       clearPendingVerdictRepoll(taskId);
+      if (wantsInFlightVerdictRepoll(updatedTask, deps)) {
+        scheduleInFlightVerdictRepoll(updatedTask, deps);
+      } else {
+        clearInFlightVerdictRepoll(taskId);
+      }
     }
     if (prChanged && next) {
       const readinessNote = nextMergeReadiness ? `, merge ${nextMergeReadiness}` : '';
@@ -747,10 +883,12 @@ interface LinkPROptions {
   preserveLinkOnNotFound?: boolean;
 }
 
-/** The two per-project settings the linker reads from config, off one effective-config read. */
+/** The per-project settings the linker reads from config, off one effective-config read. */
 interface ProjectLinkSettings {
   defaultBaseBranch: string | undefined;
   resolveOptions: PRResolveOptions;
+  /** Background PR refresh is on (`git.prRefreshIntervalMinutes` > 0); see `PRLinkDeps.repollInFlightVerdict`. */
+  repollInFlightVerdict: boolean;
 }
 
 /**
@@ -775,19 +913,20 @@ interface ProjectLinkSettings {
  * with nothing after the prefix.
  *
  * An unreadable config leaves the linker on its 'main' fallback with every
- * option off; it never fails the resolve.
+ * option off, the in-flight re-poll included; it never fails the resolve.
  */
 function resolveProjectLinkSettings(context: IpcContext, projectPath: string | null): ProjectLinkSettings {
-  if (!projectPath) return { defaultBaseBranch: undefined, resolveOptions: {} };
+  if (!projectPath) return { defaultBaseBranch: undefined, resolveOptions: {}, repollInFlightVerdict: false };
   try {
     const gitConfig = context.configManager.getEffectiveConfig(projectPath).git;
     return {
       defaultBaseBranch: context.boardConfigManager.getDefaultBaseBranchForPath(projectPath)
         || gitConfig?.defaultBaseBranch,
       resolveOptions: prResolveOptionsFromGitConfig(gitConfig),
+      repollInFlightVerdict: prRepollInFlightFromGitConfig(gitConfig),
     };
   } catch {
-    return { defaultBaseBranch: undefined, resolveOptions: {} };
+    return { defaultBaseBranch: undefined, resolveOptions: {}, repollInFlightVerdict: false };
   }
 }
 
@@ -814,6 +953,17 @@ export function prResolveOptionsFromGitConfig(gitConfig: AppConfig['git'] | unde
     evaluateBranchPolicies: gitConfig?.prEvaluateBranchPolicies === true,
     bypassCountsAsReady: gitConfig?.prBypassCountsAsReady === true,
   };
+}
+
+/**
+ * Whether a project's config lets the linker re-poll an in-flight verdict
+ * (`PRLinkDeps.repollInFlightVerdict`): background PR refresh is on. The ONE
+ * mapping, shared with the MCP command context for the same reason
+ * `prResolveOptionsFromGitConfig` is shared.
+ */
+export function prRepollInFlightFromGitConfig(gitConfig: AppConfig['git'] | undefined): boolean {
+  const refreshIntervalMinutes = gitConfig?.prRefreshIntervalMinutes;
+  return refreshIntervalMinutes != null && refreshIntervalMinutes > 0;
 }
 
 /**
@@ -895,13 +1045,14 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
   if (!task) return { status: 'no-anchor', task: null };
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
-  const { defaultBaseBranch, resolveOptions } = resolveProjectLinkSettings(context, projectPath);
+  const { defaultBaseBranch, resolveOptions, repollInFlightVerdict } = resolveProjectLinkSettings(context, projectPath);
 
   return linkPRForTask(task.id, {
     tasks,
     projectPath,
     defaultBaseBranch,
     resolveOptions,
+    repollInFlightVerdict,
     force: options.force,
     bypassThrottle: options.bypassThrottle,
     preserveLinkOnNotFound: options.preserveLinkOnNotFound,

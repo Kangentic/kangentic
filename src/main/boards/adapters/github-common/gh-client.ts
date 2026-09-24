@@ -175,6 +175,26 @@ export interface GhMergeBypass {
   requiredStatusCheckContexts: string[] | null;
 }
 
+/**
+ * The status checks a BRANCH's classic protection requires, keyed by branch
+ * rather than by PR, so the connector can cache one answer per base branch.
+ * The same field `MERGE_BYPASS_QUERY` reads off `baseRef`, and for the same
+ * reason (`branchProtectionRule`, never the viewer-relative `refUpdateRule`).
+ * Measured live: a protected branch answers its context list, an unprotected
+ * one `branchProtectionRule: null`, a missing ref `ref: null`.
+ */
+const REQUIRED_STATUS_CHECKS_QUERY =
+  'query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){branchProtectionRule{requiredStatusCheckContexts}}}}';
+
+/** The GraphQL envelope `resolveRequiredStatusChecks` reads; every level may be absent or null. */
+interface GhRequiredStatusChecksRaw {
+  data?: {
+    repository?: {
+      ref?: { branchProtectionRule?: { requiredStatusCheckContexts?: unknown } | null } | null;
+    } | null;
+  } | null;
+}
+
 /** The GraphQL envelope `resolveMergeBypass` reads; every level may be absent or null. */
 interface GhMergeBypassRaw {
   data?: {
@@ -210,7 +230,8 @@ function readRequiredContexts(value: unknown): string[] | null {
  * that varies per PR cannot grow it without limit.
  */
 const bypassProbeWarningsShown = new Set<string>();
-const MAX_BYPASS_PROBE_WARNINGS = 32;
+/** The most distinct causes each once-per-cause warning set remembers. */
+const MAX_WARNING_CAUSES_SHOWN = 32;
 
 /**
  * The one line that names WHY a `gh` call failed. An execFile rejection's
@@ -227,14 +248,38 @@ function describeGhFailure(error: unknown): string {
   return message.split('\n')[0];
 }
 
-function warnBypassProbeOnce(prNumber: number, message: string): void {
-  if (bypassProbeWarningsShown.has(message)) return;
-  if (bypassProbeWarningsShown.size >= MAX_BYPASS_PROBE_WARNINGS) {
-    const oldest = bypassProbeWarningsShown.values().next().value;
-    if (oldest !== undefined) bypassProbeWarningsShown.delete(oldest);
+/**
+ * Print `warning` the first time `cause` enters `shown`. Bounded at
+ * `MAX_WARNING_CAUSES_SHOWN`, evicting the oldest cause, so a message that
+ * varies per call cannot grow the set without limit.
+ */
+function warnOncePerCause(shown: Set<string>, cause: string, warning: string): void {
+  if (shown.has(cause)) return;
+  if (shown.size >= MAX_WARNING_CAUSES_SHOWN) {
+    const oldest = shown.values().next().value;
+    if (oldest !== undefined) shown.delete(oldest);
   }
-  bypassProbeWarningsShown.add(message);
-  console.warn(`[github] merge bypass probe failed for PR #${prNumber}, merge readiness stays blocked: ${message}`);
+  shown.add(cause);
+  console.warn(warning);
+}
+
+/** Once-per-cause warning for the required-checks read, bounded like the bypass one. */
+const requiredChecksWarningsShown = new Set<string>();
+
+function warnRequiredChecksOnce(baseRefName: string, message: string): void {
+  warnOncePerCause(
+    requiredChecksWarningsShown,
+    message,
+    `[github] required status checks read failed for base "${baseRefName}", merge readiness keeps GitHub's own verdict: ${message}`,
+  );
+}
+
+function warnBypassProbeOnce(prNumber: number, message: string): void {
+  warnOncePerCause(
+    bypassProbeWarningsShown,
+    message,
+    `[github] merge bypass probe failed for PR #${prNumber}, merge readiness stays blocked: ${message}`,
+  );
 }
 
 /**
@@ -511,6 +556,45 @@ export class GitHubImporter {
       };
     } catch (error: unknown) {
       warnBypassProbeOnce(prNumber, describeGhFailure(error));
+      return null;
+    }
+  }
+
+  /**
+   * The status checks `baseRefName`'s classic protection requires, from the
+   * repo at `cwd`. `{ contexts: null }` is a real answer meaning "no readable
+   * rule" (an unprotected branch, a repo on rulesets, a ref that does not
+   * exist); `null` is a failure (gh missing, unauthenticated, transient, an
+   * unreadable payload). Never throws, for the reason `resolveMergeBypass`
+   * gives: it enriches a resolve that already succeeded. The cause is warned
+   * once per distinct message.
+   */
+  async resolveRequiredStatusChecks(cwd: string, baseRefName: string): Promise<{ contexts: string[] | null } | null> {
+    // Embedded verbatim in the `-F ref=` argument; an empty or option-shaped
+    // name is never a real branch.
+    if (!baseRefName || baseRefName.startsWith('-')) return null;
+    const ghPath = await this.detect();
+    if (!ghPath) return null;
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        [
+          'api', 'graphql',
+          '-F', 'owner={owner}',
+          '-F', 'name={repo}',
+          '-f', `ref=refs/heads/${baseRefName}`,
+          '-f', `query=${REQUIRED_STATUS_CHECKS_QUERY}`,
+        ],
+        { cwd, timeout: COMMAND_TIMEOUT },
+      );
+      const parsed = JSON.parse(stdout) as GhRequiredStatusChecksRaw | null;
+      const repository = parsed?.data?.repository;
+      // No repository object at all is an answer this code cannot read, not
+      // "no rule": a rule-less branch still carries `repository`.
+      if (repository == null) return null;
+      return { contexts: readRequiredContexts(repository.ref?.branchProtectionRule?.requiredStatusCheckContexts) };
+    } catch (error: unknown) {
+      warnRequiredChecksOnce(baseRefName, describeGhFailure(error));
       return null;
     }
   }

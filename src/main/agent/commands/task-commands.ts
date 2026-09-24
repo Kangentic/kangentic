@@ -135,6 +135,9 @@ function scheduleLinkTimeResolve(
     projectPath: context.getProjectPath(),
     defaultBaseBranch: context.getDefaultBaseBranch?.(),
     resolveOptions: context.getPrResolveOptions?.(),
+    // `/pull-request` links its PR here and then waits on CI inside one turn,
+    // so no idle arrives to start the in-flight re-poll; this write has to.
+    repollInFlightVerdict: context.getPrRepollInFlight?.(),
     force: true,
     preserveLinkOnNotFound: true,
     onLinked: (linked) => context.onTaskPrLinkChanged?.(linked),
@@ -679,8 +682,12 @@ export const handleLinkPr: CommandHandler = async (
       projectPath: context.getProjectPath(),
       defaultBaseBranch: context.getDefaultBaseBranch?.(),
       resolveOptions: context.getPrResolveOptions?.(),
+      repollInFlightVerdict: context.getPrRepollInFlight?.(),
       force: true,
       onLinked: (linked) => context.onTaskUpdated(linked),
+      // The agent's call is announced above; a re-poll flipping the verdict
+      // when CI settles is the app's own reconcile and goes out quietly.
+      onRepollLinked: context.onTaskPrLinkChanged,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

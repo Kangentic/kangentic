@@ -786,6 +786,49 @@ describe('context.getPrResolveOptions() forwarding to linkPRForTask', () => {
 });
 
 // ---------------------------------------------------------------------------
+// context.getPrRepollInFlight() forwarding. Both call sites have to start the
+// linker's in-flight re-poll: during `/pull-request` the agent links its PR and
+// then waits on CI inside one turn, so no idle arrives to start it. `link_pr`
+// also hands the quiet channel as `onRepollLinked`, so the CI-settled flip is
+// not announced as the agent's own update.
+// ---------------------------------------------------------------------------
+
+describe('context.getPrRepollInFlight() forwarding to linkPRForTask', () => {
+  it('scheduleLinkTimeResolve (create/update link-time resolve) forwards it', async () => {
+    const context = makeContext({ getPrRepollInFlight: vi.fn(() => true) });
+
+    handleUpdateTask(updateTaskParams({ prUrl: REVIEWED_PR_URL }), context);
+    await flushLinkTimeResolve();
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ repollInFlightVerdict: true }),
+    );
+  });
+
+  it('handleLinkPr forwards it and re-polls on the quiet channel', async () => {
+    const onTaskPrLinkChanged = vi.fn();
+    const context = makeContext({ getPrRepollInFlight: vi.fn(() => true), onTaskPrLinkChanged });
+
+    await handleLinkPr({ taskId: 'task-uuid-1' }, context);
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ repollInFlightVerdict: true, onRepollLinked: onTaskPrLinkChanged }),
+    );
+  });
+
+  it('leaves the flag undefined when the context has no getPrRepollInFlight', async () => {
+    await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(mockLinkPRForTask).toHaveBeenCalledWith(
+      'task-uuid-1',
+      expect.objectContaining({ repollInFlightVerdict: undefined }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // handleLinkPr: refusing a base-branch `branch` argument
 //
 // recordPushedBranchForSession (pr-linking.ts) already refuses a captured
