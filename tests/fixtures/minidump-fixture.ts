@@ -181,6 +181,18 @@ export const HEADLESS_SHELL_MODULES = [
 ];
 
 /**
+ * DESKTOP-1D: another project's dev Electron Helper, killed mid-launch and
+ * caught by our inherited exception ports. It loads `Electron Framework` like
+ * every Electron app does, but from that project's own `node_modules`, never
+ * from `Kangentic.app`.
+ */
+export const FOREIGN_ELECTRON_HELPER_MODULES = [
+  '/Users/dev/other-project/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper',
+  '/Users/dev/other-project/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+  '/usr/lib/dyld',
+];
+
+/**
  * DESKTOP-E: a real Kangentic crash on macOS. Its crashpad annotations are empty
  * and the SDK tags it `event.process: unknown`, exactly like the two above,
  * which is why that tag cannot be the discriminator.

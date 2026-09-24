@@ -202,11 +202,14 @@ Reading a native event, in order of what trips people up:
   the two SDK paths that report a crash the running session watched happen.
 - **A crash in a process Kangentic merely spawned no longer arrives at all.** On macOS, mach
   exception ports are inherited across exec, so an agent shelling out to ffmpeg, a headless
-  browser, or a dotnet tool used to file its crashes as ours. Three sources have been seen:
-  DESKTOP-K (Homebrew ffmpeg's `ffprobe`), DESKTOP-N (a Puppeteer `chrome-headless-shell`), and
-  DESKTOP-Q (`/usr/local/share/dotnet/dotnet`, ten events). One filter covers all three, since it
-  keys off whether the dump loaded a Kangentic image rather than off any binary's name. Task #604
-  tracks DESKTOP-Q, though no commit names it. Those are dropped before upload now and counted as
+  browser, or a dotnet tool used to file its crashes as ours. Four sources have been seen:
+  DESKTOP-K (Homebrew ffmpeg's `ffprobe`), DESKTOP-N (a Puppeteer `chrome-headless-shell`),
+  DESKTOP-Q (`/usr/local/share/dotnet/dotnet`, ten events), and DESKTOP-1D (another project's dev
+  Electron Helper). One filter covers all four, since it keys off whether the dump loaded a
+  Kangentic image rather than off any binary's name. DESKTOP-1D got through an earlier version of
+  it that counted any `Electron Framework` image as ours. Every Electron app loads that framework,
+  so it now counts only inside our own `Kangentic.app` bundle. Task #604 tracks DESKTOP-Q, though
+  no commit names it. Those are dropped before upload now and counted as
   Aptabase `foreign_minidump_dropped` instead. If a native issue looks like someone else's binary,
   check that counter rather than expecting a Sentry issue.
 - **Scope persists with a 500 ms write throttle**, so on any event the last half-second of

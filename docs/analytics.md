@@ -250,15 +250,21 @@ in one Sentry org, one triage surface.
     was Homebrew ffmpeg's `ffprobe` failing to start, ten fatal events; DESKTOP-N was a Puppeteer
     `chrome-headless-shell`;
     DESKTOP-Q was `/usr/local/share/dotnet/dotnet`, ten more. None loaded a single Kangentic
-    image. This class cannot go in `ignoreErrors`, which is the
+    image. DESKTOP-1D was another project's dev Electron Helper, killed mid-launch. It loaded
+    Electron Framework like every Electron app does, but from that project's own
+    `node_modules/electron/dist/Electron.app`. This class cannot go in `ignoreErrors`, which is the
     `eventFiltersIntegration` and matches only an event's message and its exception type and value:
     a minidump event has none of those, so the matcher sees an empty candidate list and does
     nothing. It also cannot key off the SDK's `event.process` tag, because that reads `unknown` for
     real macOS crashes too (DESKTOP-E is one). The discriminator is the dump's own loaded-image
     list, read from the attachment in `src/main/analytics/native-crash-event.ts`: the event is
     dropped only when no image sits under the install root, matches the app executable's name, or is
-    the Electron framework. Every uncertain path keeps the event, because a foreign crash that slips
-    through is noise while a real crash dropped by a parser bug is gone. Each drop increments
+    the Electron framework inside our own `Kangentic.app` bundle. An unpackaged run checks the
+    install root alone, because its `Electron` executable and `Electron.app` bundle are names every
+    dev Electron app shares. Every uncertain path keeps the event, because a foreign crash that slips
+    through is noise while a real crash dropped by a parser bug is gone. One real crash does drop on
+    purpose: a helper crash from a bundle the user renamed and then moved between the crash and the
+    upload, since nothing left in its image list names us. Each drop increments
     `foreign_minidump_dropped`, which is the only fleet-wide evidence left once the events stop
     arriving, and the before-and-after number for resetting the exception ports at spawn.
 - **Tagging shares that hook, and runs before the filter.** `beforeSend` is `beforeSendEvent`,

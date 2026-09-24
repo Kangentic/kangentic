@@ -15,7 +15,9 @@ import type { ErrorEvent } from '@sentry/electron/main';
  *    and we report them as ours. DESKTOP-K is Homebrew ffmpeg's `ffprobe`
  *    failing to start; DESKTOP-N is a Puppeteer `chrome-headless-shell`;
  *    DESKTOP-Q is `/usr/local/share/dotnet/dotnet`. None loaded a single
- *    Kangentic image.
+ *    Kangentic image. DESKTOP-1D is another project's dev Electron Helper,
+ *    whose Electron images all sat under that project's own
+ *    `node_modules/electron/dist/Electron.app`.
  * 2. A dump uploaded after an upgrade wears the UPLOADING build's release tag and
  *    scope. DESKTOP-M crashed on 0.38.0 and is filed under 0.39.0, with
  *    breadcrumbs from a launch 21 minutes after the crash.
@@ -101,10 +103,11 @@ const MAX_STRING_LENGTH = 1024 * 100;
 const CRASHED_VERSION_ANNOTATION = '_version';
 
 /**
- * The macOS framework bundle. Present in every real Kangentic dump on that
- * platform and in no foreign process's image list.
+ * Where the macOS framework sits inside an app bundle. Every Electron app loads
+ * it, so on its own it identifies nobody (DESKTOP-1D). It is ours only under
+ * our own `<name>.app/`.
  */
-const ELECTRON_FRAMEWORK_MODULE = 'Electron Framework';
+const ELECTRON_FRAMEWORK_IN_BUNDLE = '/Contents/Frameworks/Electron Framework.framework/';
 
 /**
  * The header's `time_date_stamp` has one-second resolution and truncates down,
@@ -137,7 +140,10 @@ export type MinidumpIdentity =
 export interface NativeCrashContext {
   /** The directory every image of a healthy install sits under. */
   installRoot: string;
-  /** The app executable's file name, with extension. */
+  /**
+   * The app executable's file name, with extension. Empty switches off both
+   * relocation fallbacks in isOurModule, which is what an unpackaged run passes.
+   */
   appExecutableName: string;
   /** The version of the build doing the uploading, which is not the crashed one. */
   appVersion: string;
@@ -383,7 +389,21 @@ function isOurModule(modulePath: string, context: NativeCrashContext): boolean {
     return true;
   }
 
-  return modulePath.includes(ELECTRON_FRAMEWORK_MODULE);
+  // The same relocation case for a helper process, whose basename is
+  // `Kangentic Helper (GPU)` and never the main executable's. electron-builder
+  // names the bundle and the executable from one `productName`, so our bundle
+  // is `<executable>.app`. The leading `/` keeps the match on a segment
+  // boundary, the same way isUnderPathRoot does. On Windows and Linux the
+  // derived name (`Kangentic.exe.app`, `kangentic.app`) never appears in a
+  // real path, so this needs no platform branch. It reads the raw path, not
+  // comparablePath, for the same reason. A bundle only exists on macOS, where
+  // caseInsensitivePaths is false. An unpackaged run passes an empty
+  // executable name, because `Electron.app` would match every dev Electron
+  // app; see resolveNativeCrashContext. The cost is a bundle the user renamed
+  // and then moved between the crash and the upload. Its helper crashes now
+  // drop. A bundle renamed in place still keeps them through the install root.
+  if (context.appExecutableName.length === 0) return false;
+  return modulePath.includes(`/${context.appExecutableName}.app${ELECTRON_FRAMEWORK_IN_BUNDLE}`);
 }
 
 /**

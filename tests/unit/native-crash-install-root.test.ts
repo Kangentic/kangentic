@@ -19,19 +19,35 @@ import type { ErrorEvent, EventHint } from '@sentry/electron/main';
  * mocks `node:path` to `path.posix` (what a real macOS host provides) in
  * addition to mutating `process.platform`, in its own file so the posix mock
  * cannot affect any neighboring test's real path handling.
+ *
+ * The same darwin setup also drives the unpackaged `npm start` case, where the
+ * resolver blanks the executable name so a dev run trusts the install root
+ * alone.
  */
 vi.mock('node:path', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:path')>();
   return { default: actual.posix };
 });
 
+/** Mutable so a test can switch the mocked app to an unpackaged `npm start` run. */
+const electronState = vi.hoisted(() => ({
+  isPackaged: true,
+  executablePath: '/Applications/Kangentic.app/Contents/MacOS/Kangentic',
+}));
+
+// Read from the hoisted state rather than repeating the literal. vi.hoisted
+// runs before any other top-level const, so its factory cannot reference one.
+const PACKAGED_EXECUTABLE = electronState.executablePath;
+const DEV_EXECUTABLE =
+  '/Users/dev/code/kangentic/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron';
+
 vi.mock('electron', () => ({
   app: {
-    isPackaged: true,
+    get isPackaged() {
+      return electronState.isPackaged;
+    },
     getPath: (name: string) =>
-      name === 'exe'
-        ? '/Applications/Kangentic.app/Contents/MacOS/Kangentic'
-        : '/Users/dev/Library/Application Support/kangentic',
+      name === 'exe' ? electronState.executablePath : '/Users/dev/Library/Application Support/kangentic',
     getVersion: () => '0.39.0',
   },
 }));
@@ -51,8 +67,8 @@ import { buildMinidump } from '../fixtures/minidump-fixture';
 /**
  * Under the install root's Resources/ subtree, not MacOS/. Deliberately the
  * ONLY module in the dump, with a basename ('pty.node') that does not match
- * the app executable ('Kangentic') and no 'Electron Framework' substring, so
- * this can only keep via the installRoot path-prefix match. If the darwin
+ * the app executable ('Kangentic') and is not our bundle's Electron Framework,
+ * so this can only keep via the installRoot path-prefix match. If the darwin
  * derivation regressed to the executable's own directory
  * (Contents/MacOS/, same as every other platform), this module would fall
  * outside the install root on every guard and the crash would be dropped as
@@ -65,29 +81,85 @@ function setPlatform(platform: string): void {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
 }
 
+function filterDump(modules: string[]): ErrorEvent | null {
+  return filterNativeCrashEvent(
+    { platform: 'native', release: 'Kangentic@0.39.0' } as ErrorEvent,
+    {
+      attachments: [
+        {
+          attachmentType: 'event.minidump',
+          filename: 'crash.dmp',
+          data: buildMinidump({ modules }),
+        },
+      ],
+    } as EventHint
+  );
+}
+
+const originalPlatform = process.platform;
+
+afterEach(() => {
+  setPlatform(originalPlatform);
+  electronState.isPackaged = true;
+  electronState.executablePath = PACKAGED_EXECUTABLE;
+});
+
 describe('resolveNativeCrashContext: macOS install root derivation', () => {
-  const originalPlatform = process.platform;
-
-  afterEach(() => {
-    setPlatform(originalPlatform);
-  });
-
   it('keeps a crash whose only module sits under Contents/, one level above the executable\'s own MacOS/ directory', () => {
     setPlatform('darwin');
 
-    const result = filterNativeCrashEvent(
-      { platform: 'native', release: 'Kangentic@0.39.0' } as ErrorEvent,
-      {
-        attachments: [
-          {
-            attachmentType: 'event.minidump',
-            filename: 'crash.dmp',
-            data: buildMinidump({ modules: [SOLO_PTY_MODULE] }),
-          },
-        ],
-      } as EventHint
-    );
+    expect(filterDump([SOLO_PTY_MODULE])).not.toBeNull();
+  });
+});
 
-    expect(result).not.toBeNull();
+/**
+ * In `npm start` the executable is `Electron` inside `Electron.app`. Every dev
+ * Electron app shares both names, so matching on them would keep any dev
+ * Electron app's crash as ours. An unpackaged run must trust the install root
+ * alone.
+ */
+describe('resolveNativeCrashContext: an unpackaged dev run', () => {
+  const OTHER_PROJECT_ELECTRON = '/Users/dev/other-project/node_modules/electron/dist/Electron.app/Contents';
+
+  function useDevRun(): void {
+    setPlatform('darwin');
+    electronState.isPackaged = false;
+    electronState.executablePath = DEV_EXECUTABLE;
+  }
+
+  it('keeps a crash from the checkout\'s own dev Electron', () => {
+    useDevRun();
+
+    expect(
+      filterDump([
+        '/Users/dev/code/kangentic/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)',
+        '/Users/dev/code/kangentic/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+        '/usr/lib/dyld',
+      ])
+    ).not.toBeNull();
+  });
+
+  it('drops another project\'s dev Electron main process, whose executable is also named Electron', () => {
+    useDevRun();
+
+    expect(
+      filterDump([
+        `${OTHER_PROJECT_ELECTRON}/MacOS/Electron`,
+        `${OTHER_PROJECT_ELECTRON}/Frameworks/Electron Framework.framework/Versions/A/Electron Framework`,
+        '/usr/lib/dyld',
+      ])
+    ).toBeNull();
+  });
+
+  it('drops another project\'s dev Electron Helper, whose framework sits in a bundle also named Electron.app (DESKTOP-1D)', () => {
+    useDevRun();
+
+    expect(
+      filterDump([
+        `${OTHER_PROJECT_ELECTRON}/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper`,
+        `${OTHER_PROJECT_ELECTRON}/Frameworks/Electron Framework.framework/Versions/A/Electron Framework`,
+        '/usr/lib/dyld',
+      ])
+    ).toBeNull();
   });
 });
