@@ -34,6 +34,14 @@ export interface CommandContext {
    */
   getPrResolveOptions?: () => PRResolveOptions;
   /**
+   * Whether this project's background PR refresh is on, which is what lets
+   * the linker re-poll a PR whose checks are in flight
+   * (`PRLinkDeps.repollInFlightVerdict`). Bound to the request's project like
+   * `getPrResolveOptions`. Optional so a test context can omit it; absent reads
+   * as off.
+   */
+  getPrRepollInFlight?: () => boolean;
+  /**
    * This project's Board Profiles, read from `kangentic.json`. Profiles are
    * config-only (no DB table), so `getProjectDb` cannot reach them.
    *

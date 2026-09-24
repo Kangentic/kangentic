@@ -104,7 +104,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { GitHubImporter, GhUnavailableError, GhTransientError } from '../../src/main/boards/adapters/github-common/gh-client';
-import { gitHubPRConnector } from '../../src/main/pr/adapters/github/github-connector';
+import { gitHubPRConnector, resetRequiredChecksCacheForTests } from '../../src/main/pr/adapters/github/github-connector';
 import { resolvePRForBranch, resolvePRByNumber, resolvePRByCommit, PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { PRResolveOptions } from '../../src/main/pr/pr-registry';
 
@@ -525,7 +525,7 @@ describe('GitHubImporter.resolveMergeBypass', () => {
   });
 
   /**
-   * `bypassProbeWarningsShown` is bounded at MAX_BYPASS_PROBE_WARNINGS (32) with
+   * `bypassProbeWarningsShown` is bounded at MAX_WARNING_CAUSES_SHOWN (32) with
    * oldest-first eviction, and the test above only proves same-cause dedupe (two
    * calls, one cause, one warning) - nothing drives the Set past 32 distinct
    * causes, so the eviction branch itself has never run in this suite.
@@ -540,7 +540,7 @@ describe('GitHubImporter.resolveMergeBypass', () => {
    * test's own oldest entry, and re-triggering that first cause is what proves
    * eviction really happened rather than the bound being decorative. Reverting
    * the bound to an unbounded Set (or dropping the eviction inside
-   * `warnBypassProbeOnce`) fails the final assertion: the re-triggered first
+   * `warnOncePerCause`) fails the final assertion: the re-triggered first
    * cause would still be in the Set and would stay silent instead of warning a
    * 34th time.
    */
@@ -599,6 +599,79 @@ describe('GitHubImporter.resolveMergeBypass', () => {
   it.each([0, -1, 1.5, Number.NaN])('rejects PR number %s before spawning anything', async (prNumber) => {
     state.ghStdout = answer(true);
     await expect(new GitHubImporter().resolveMergeBypass('/repo', prNumber)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+});
+
+/**
+ * The per-BRANCH required-checks read the connector caches, so a just-opened PR
+ * whose CI has not created its runs reads `queued` instead of `blocked`. The
+ * three literal stdouts are what `gh api graphql` printed against this repo:
+ * `main` (protected), a feature branch (unprotected), and a ref that does not
+ * exist.
+ */
+describe('GitHubImporter.resolveRequiredStatusChecks', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.lastArgs = [];
+    state.lastCwd = undefined;
+  });
+
+  it('asks GraphQL for the branch rule by qualified ref name, from the repo cwd', async () => {
+    state.ghStdout = '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusCheckContexts":'
+      + '["cla","Unit tests (Vitest)","UI tests (Playwright)","E2E tests (Electron)","Lint, Typecheck, Build"]}}}}}';
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toEqual({
+      contexts: ['cla', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)', 'Lint, Typecheck, Build'],
+    });
+    expect(state.lastArgs.slice(0, 8)).toEqual([
+      'api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-f', 'ref=refs/heads/main',
+    ]);
+    expect(state.lastArgs[8]).toBe('-f');
+    expect(state.lastArgs[9]).toContain('ref(qualifiedName:$ref){branchProtectionRule{requiredStatusCheckContexts}}');
+    expect(state.lastArgs[9]).not.toContain('refUpdateRule');
+    expect(state.lastCwd).toBe('/repo');
+  });
+
+  it.each([
+    ['an unprotected branch', '{"data":{"repository":{"ref":{"branchProtectionRule":null}}}}'],
+    ['a ref that does not exist', '{"data":{"repository":{"ref":null}}}'],
+    ['a list carrying a non-string', '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusCheckContexts":["cla",7]}}}}}'],
+  ])('answers "no readable rule" for %s', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toEqual({ contexts: null });
+  });
+
+  it('reads a protected branch that requires no checks as an empty list', async () => {
+    state.ghStdout = '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusCheckContexts":[]}}}}}';
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toEqual({ contexts: [] });
+  });
+
+  it.each([
+    ['a null repository', '{"data":{"repository":null}}'],
+    ['an envelope with no data', '{"errors":[{"message":"Could not resolve"}]}'],
+    ['an empty stdout', ''],
+  ])('fails (null, not "no rule") for %s', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', 'main')).resolves.toBeNull();
+  });
+
+  it('returns null and never throws when gh fails, warning once per cause', async () => {
+    const warn = vi.mocked(console.warn);
+    state.ghError = Object.assign(new Error('Command failed: gh api graphql'), {
+      stderr: 'gh: REQUIRED-CHECKS-TEST-CAUSE (HTTP 502)\n',
+    });
+    const importer = new GitHubImporter();
+    await expect(importer.resolveRequiredStatusChecks('/repo', 'main')).resolves.toBeNull();
+    await expect(importer.resolveRequiredStatusChecks('/repo', 'develop')).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('REQUIRED-CHECKS-TEST-CAUSE');
+  });
+
+  it.each(['', '-oops'])('rejects base name %j before spawning anything', async (baseRefName) => {
+    await expect(new GitHubImporter().resolveRequiredStatusChecks('/repo', baseRefName)).resolves.toBeNull();
     expect(state.lastArgs).toEqual([]);
   });
 });
@@ -669,6 +742,14 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     vi.restoreAllMocks();
     gitRefs.containment.clear();
     gitRefs.isShaContainedInRef.mockClear();
+    // Module-level and keyed by repo + base, which every `pr()` shares.
+    resetRequiredChecksCacheForTests();
+    // Default: the required-checks read fails, so it never parses whatever
+    // `state.ghStdout` an earlier test left behind. Under this default the
+    // older rows here that name "a required context missing from the rollup"
+    // and expect `blocked` describe a list that could not be read. With a
+    // readable list the same PRs read `queued` (see the rows that stub it).
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
   });
 
   it('resolveByNumber maps the gh item to a ResolvedPR', async () => {
@@ -1058,22 +1139,177 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
    * started. `classifyRollup` calls that `passing` and cannot do better -
    * GitHub omits an expected-but-unreported required check from the rollup
    * entirely - so without the comparison this folds to `ready` with no CI run.
+   *
+   * With the branch's required list readable it is also not `blocked`: the
+   * card read that for minutes on #479 while CI was only starting, and a
+   * verdict that is not in flight never starts the linker's 30 s re-poll. It
+   * reads `queued`. Without the list (the read failed, or rulesets) it keeps
+   * GitHub's own `blocked`, and neither ever folds.
    */
+  const REQUIRED = ['cla', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)', 'Lint, Typecheck, Build'];
+  const claOnly = () => pr({
+    number: 395,
+    mergeStateStatus: 'BLOCKED',
+    mergeable: 'MERGEABLE',
+    reviewDecision: 'REVIEW_REQUIRED',
+    statusCheckRollup: [checkRun('COMPLETED', 'SUCCESS', 'cla')],
+  });
+
   it('never folds a PR whose CLA check is green while CI has not created its runs', async () => {
-    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
-      pr({
-        number: 395,
-        mergeStateStatus: 'BLOCKED',
-        mergeable: 'MERGEABLE',
-        reviewDecision: 'REVIEW_REQUIRED',
-        statusCheckRollup: [checkRun('COMPLETED', 'SUCCESS', 'cla')],
-      }),
-    );
-    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
-      canBypass(['cla', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)', 'Lint, Typecheck, Build']),
-    );
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(claOnly());
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass(REQUIRED));
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 395, BYPASS_ON);
+    expect(result?.mergeReadiness).toBe('queued');
+  });
+
+  it('keeps GitHub\'s blocked for that PR when the required list cannot be read', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(claOnly());
+    vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass(REQUIRED));
+    vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
     const result = await gitHubPRConnector.resolveByNumber!('/r', 395, BYPASS_ON);
     expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  it.each([
+    // [label, mergeStateStatus, reviewDecision, rollup, required-checks answer, expected]
+    ['BLOCKED with CI not started (CLA only)', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: REQUIRED }, 'queued'],
+    ['BEHIND with CI not started (CLA only)', 'BEHIND', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: REQUIRED }, 'queued'],
+    ['BLOCKED with an empty rollup', 'BLOCKED', '', [], { contexts: REQUIRED }, 'queued'],
+    ['BLOCKED with no rollup key', 'BLOCKED', '', undefined, { contexts: REQUIRED }, 'queued'],
+    ['BLOCKED with a required status context not reported', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: ['cla', 'ci/legacy'] }, 'queued'],
+    ['BLOCKED with a required check present but stale', 'BLOCKED', '', [checkRun('COMPLETED', 'STALE', 'cla')], { contexts: ['cla'] }, 'blocked'],
+    ['BLOCKED with every required check present and green', 'BLOCKED', '', REQUIRED.map((name) => checkRun('COMPLETED', 'SUCCESS', name)), { contexts: REQUIRED }, 'blocked'],
+    ['BLOCKED with a failed check and a required one missing', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE', 'cla')], { contexts: REQUIRED }, 'blocked'],
+    ['BLOCKED with no readable rule', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: null }, 'blocked'],
+    ['BLOCKED on a branch that requires no checks', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: [] }, 'blocked'],
+    ['BLOCKED when the read failed', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], null, 'blocked'],
+    // Outside the BLOCKED / BEHIND branch the list is never consulted.
+    ['CLEAN with a required review and a required check missing', 'CLEAN', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: REQUIRED }, 'blocked'],
+  ] as Array<[string, string, string, unknown[] | undefined, { contexts: string[] | null } | null, string]>)(
+    'resolveByNumber reads %s by the required list',
+    async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, requiredAnswer, expected) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+        pr({
+          number: 7,
+          mergeStateStatus,
+          mergeable: 'MERGEABLE',
+          reviewDecision,
+          ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
+        }),
+      );
+      vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(requiredAnswer);
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(result?.mergeReadiness).toBe(expected);
+    },
+  );
+
+  it.each([
+    ['the PR is a draft', pr({ number: 7, isDraft: true, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [] })],
+    ['the PR is merged', pr({ number: 7, state: 'MERGED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [] })],
+    ['a check is running', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [checkRun('IN_PROGRESS')] })],
+    ['a check is queued', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [checkRun('QUEUED')] })],
+    ['a check failed', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [checkRun('COMPLETED', 'FAILURE')] })],
+    ['the PR is clean', pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', statusCheckRollup: [] })],
+    ['the branch conflicts', pr({ number: 7, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [] })],
+    ['the item carries no mergeability', pr({ number: 7 })],
+  ] as Array<[string, GhPrListItem]>)('never reads the required checks when %s', async (_label, item) => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item);
+    const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    await gitHubPRConnector.resolveByNumber!('/r', 7);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('resolveByCommit never reads the required checks', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 2, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', statusCheckRollup: [] }),
+    ]);
+    const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+    await gitHubPRConnector.resolveByCommit!('/r', 'sha');
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  describe('the required-checks cache', () => {
+    const settled = (number: number, baseRefName = 'main') => pr({
+      number,
+      url: `https://github.com/owner/repo/pull/${number}`,
+      baseRefName,
+      mergeStateStatus: 'BLOCKED',
+      mergeable: 'MERGEABLE',
+      statusCheckRollup: [checkRun('COMPLETED', 'SUCCESS', 'cla')],
+    });
+
+    it('reads once per repo and base, shared across PRs and across cwds', async () => {
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+      byNumber.mockResolvedValue(settled(7));
+      await gitHubPRConnector.resolveByNumber!('/repo', 7);
+      byNumber.mockResolvedValue(settled(8));
+      const second = await gitHubPRConnector.resolveByNumber!('/worktrees/other-task', 8);
+      expect(second?.mergeReadiness).toBe('queued');
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledWith('/repo', 'main');
+
+      byNumber.mockResolvedValue(settled(9, 'develop'));
+      await gitHubPRConnector.resolveByNumber!('/repo', 9);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(read).toHaveBeenLastCalledWith('/repo', 'develop');
+    });
+
+    it('does not cache a failed read', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(settled(7));
+      const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
+      await gitHubPRConnector.resolveByNumber!('/r', 7);
+      await gitHubPRConnector.resolveByNumber!('/r', 7);
+      expect(read).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads again once the entry is ten minutes old', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(settled(7));
+        const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+        await gitHubPRConnector.resolveByNumber!('/r', 7);
+        vi.advanceTimersByTime(10 * 60_000 - 1);
+        await gitHubPRConnector.resolveByNumber!('/r', 7);
+        expect(read).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1);
+        await gitHubPRConnector.resolveByNumber!('/r', 7);
+        expect(read).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    /**
+     * The cache is bounded at MAX_REQUIRED_CHECKS_ENTRIES (32) and evicts in
+     * insertion order. Filling it with 33 distinct bases on one repo evicts the
+     * first one inserted, so re-reading that base spends a fresh call while the
+     * newest base still hits. An unbounded cache fails the final assertion.
+     */
+    it('evicts the oldest-inserted base once 33 distinct bases have been read', async () => {
+      resetRequiredChecksCacheForTests();
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
+      const totalDistinctBases = 33;
+      for (let baseIndex = 0; baseIndex < totalDistinctBases; baseIndex += 1) {
+        byNumber.mockResolvedValue(settled(baseIndex, `base-${baseIndex}`));
+        await gitHubPRConnector.resolveByNumber!('/r', baseIndex);
+      }
+      expect(read).toHaveBeenCalledTimes(totalDistinctBases);
+
+      // The 33rd (most recently inserted) key is still cached: no fresh read.
+      const mostRecentBaseIndex = totalDistinctBases - 1;
+      byNumber.mockResolvedValue(settled(mostRecentBaseIndex, `base-${mostRecentBaseIndex}`));
+      await gitHubPRConnector.resolveByNumber!('/r', mostRecentBaseIndex);
+      expect(read).toHaveBeenCalledTimes(totalDistinctBases);
+
+      // The first (oldest) key was evicted to make room for the 33rd: reading
+      // it again spends a fresh call.
+      byNumber.mockResolvedValue(settled(0, 'base-0'));
+      await gitHubPRConnector.resolveByNumber!('/r', 0);
+      expect(read).toHaveBeenCalledTimes(totalDistinctBases + 1);
+    });
   });
 
   /**

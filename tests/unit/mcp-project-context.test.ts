@@ -361,6 +361,26 @@ describe('buildCommandContextForProject - getPrResolveOptions', () => {
     expect(() => context!.getPrResolveOptions!()).not.toThrow();
     expect(context!.getPrResolveOptions!()).toEqual({});
   });
+
+  // The in-flight re-poll flag rides the same binding: an agent's own link
+  // write has to start the 30 s re-poll, since during `/pull-request` it waits
+  // on CI inside one turn and no idle arrives to start it.
+  it.each([
+    [{ prRefreshIntervalMinutes: 5 }, true],
+    [{ prRefreshIntervalMinutes: null }, false],
+    [{}, false],
+  ] as Array<[Record<string, unknown>, boolean]>)('getPrRepollInFlight reads %j as %s from the target project path', (gitConfig, expected) => {
+    const { ipcContext, getEffectiveConfig } = makeOptionsContext(gitConfig);
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrRepollInFlight!()).toBe(expected);
+    expect(getEffectiveConfig).toHaveBeenCalledWith(PROJECT_PATH);
+  });
+
+  it('getPrRepollInFlight reads off instead of throwing when the config is unreadable', () => {
+    const { ipcContext } = makeOptionsContext(() => { throw new Error('config unreadable'); });
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context!.getPrRepollInFlight!()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
