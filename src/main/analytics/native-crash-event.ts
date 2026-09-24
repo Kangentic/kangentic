@@ -451,9 +451,12 @@ function startedAfterCrash(appStartTime: unknown, crashTime: Date | undefined): 
  * `exit.reason` tags (the SDK sends every dump in the folder with the tags of
  * whichever of our own processes triggered the scan, so on a foreign dump both
  * describe the wrong process), the dump's own Crashpad annotations, which the
- * SDK read out of that process's memory, and the breadcrumbs. The SDK records
- * main's console as breadcrumbs, and `SHELL_EXEC` logs the command it runs, so
- * the trail can name exactly the program the `module` tag withholds. The module
+ * SDK read out of that process's memory, and the breadcrumbs. The breadcrumb
+ * policy (src/shared/sentry-breadcrumbs.ts) keeps the `SHELL_EXEC` command line
+ * out of the trail, but Node's child_process breadcrumb still carries the
+ * spawned file's name, and a dump found at startup can carry an older build's
+ * unfiltered trail, so either can name exactly the program the `module` tag
+ * withholds. The module
  * name itself goes through reportableModuleName, so a user's own binary is
  * never named.
  */

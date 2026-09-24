@@ -93,7 +93,8 @@ issue = affected installs).
 - **The breadcrumb trail is filtered on the machine.** On a release carrying
   `src/shared/sentry-breadcrumbs.ts`, console crumbs appear only under its allowlisted tags
   (`[UPDATER]`, `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`,
-  `[APP]`), an Error argument shows as its name and code only, click selectors read `[title]`
+  `[APP]`) plus Electron's own `Error occurred in handler for '<channel>'` line, an Error argument
+  shows as its name and code only, click selectors read `[title]`
   without a value, and request crumbs keep a URL only when it is Kangentic's own. So a missing
   untagged line (`[WORKTREE]`, `[spawnAgent]`) is not evidence it was never logged: the user's
   `.kangentic/logs` holds the main process's warn and error lines of every tag. Older events still
