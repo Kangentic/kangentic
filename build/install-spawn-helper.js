@@ -324,6 +324,7 @@ module.exports = {
   findDarwinSpawnHelpers,
   installSpawnHelper,
   runSelfTest,
+  signWithHardenedRuntime,
   verifyPackagedSpawnHelpers,
   verifySpawnHelper,
 };
