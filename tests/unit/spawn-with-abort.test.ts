@@ -11,11 +11,20 @@
  * no process is spawned.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+const { spawnMock, helperCandidatesMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+  helperCandidatesMock: vi.fn((): string[] => []),
+}));
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
+// No spawn-helper unless a test hands one in. node-pty ships darwin helpers in
+// its tarball, and on Windows an execute check passes for any file that
+// exists, so the real lookup would find one locally and none on CI.
+vi.mock('../../src/main/pty/spawn/spawn-helper-permissions', () => ({
+  spawnHelperCandidatePaths: helperCandidatesMock,
+}));
 
 import { spawnWithAbort } from '../../src/main/git/spawn-with-abort';
 
@@ -87,5 +96,54 @@ describe('spawnWithAbort env option', () => {
 
     await pending;
     expect(spawnOptions()).not.toHaveProperty('env');
+  });
+});
+
+/**
+ * The init script can start anything, so on macOS it runs through node-pty's
+ * spawn-helper, which clears Crashpad's inherited exception port before exec
+ * (src/main/pty/spawn/shell-launch.ts). git itself does not.
+ */
+describe('spawnWithAbort on macOS', () => {
+  const originalPlatform = process.platform;
+  // Any file this process can execute stands in for the helper here: nothing
+  // is spawned, and the lookup only checks that the candidate is executable.
+  const HELPER = process.execPath;
+
+  beforeEach(() => {
+    spawnMock.mockReset();
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    helperCandidatesMock.mockReturnValue([HELPER]);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    helperCandidatesMock.mockReturnValue([]);
+  });
+
+  it('runs the init script through the helper as `/bin/sh -c`, keeping its cwd and options', async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const pending = spawnWithAbort(SHELL_TARGET, { timeoutMs: 1_000 });
+    child.emit('close', 0, null);
+
+    await pending;
+    expect(spawnMock).toHaveBeenCalledWith(
+      HELPER,
+      ['', '/bin/sh', '-c', 'npm install'],
+      expect.objectContaining({ cwd: '/mock/repo', shell: false, stdio: ['ignore', 'pipe', 'pipe'] }),
+    );
+  });
+
+  it('leaves a git binary spawn alone', async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000 });
+    child.emit('close', 0, null);
+
+    await pending;
+    expect(spawnMock).toHaveBeenCalledWith('git', ['fetch', '--all'], expect.objectContaining({ shell: false }));
   });
 });

@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnOptions } from 'node:child_process';
+import { resolveShellLaunch } from '../pty/spawn/shell-launch';
 
 /**
  * Per-stream cap on captured stdout/stderr. A verbose child (e.g. an
@@ -105,9 +106,18 @@ export function spawnWithAbort(
       reject(error);
     };
 
-    const child = args === undefined
-      ? spawn(command, { cwd, shell: true, windowsHide: true, signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'], ...envOption })
-      : spawn(command, [...args], { cwd, windowsHide: true, signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'], ...envOption });
+    // A command string is the post-worktree init script, which can start
+    // anything, so on macOS it runs through the spawn-helper and keeps nothing
+    // it starts on Crashpad's exception port (see shell-launch.ts). A binary
+    // spawn (git) is left alone.
+    const launch = args === undefined
+      ? resolveShellLaunch({ command })
+      : { file: command, args: [...args], shell: false };
+    const spawnOptions: SpawnOptions = { cwd, shell: launch.shell, windowsHide: true, signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'], ...envOption };
+    // A shell-string launch keeps its args-free form (no DEP0190).
+    const child = launch.shell
+      ? spawn(launch.file, spawnOptions)
+      : spawn(launch.file, launch.args, spawnOptions);
 
     let stdout = '';
     let stderr = '';

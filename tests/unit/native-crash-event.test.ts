@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
 import {
   correctNativeCrashEvent,
+  FOREIGN_CRASH_FINGERPRINT,
+  FOREIGN_CRASH_MESSAGE,
   readMinidumpIdentity,
   type NativeCrashContext,
 } from '../../src/main/analytics/native-crash-event';
@@ -146,28 +148,28 @@ describe('readMinidumpIdentity', () => {
 });
 
 describe('correctNativeCrashEvent: crashes that are not ours', () => {
-  it('drops an ffprobe crash that inherited our crash handler', () => {
+  it('reads as foreign an ffprobe crash that inherited our crash handler', () => {
     const identity = readMinidumpIdentity(
       buildMinidump({ modules: FFPROBE_MODULES, simpleAnnotations: { _version: '0.38.0' } })
     );
     const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
 
-    expect(decision.action).toBe('drop');
-    if (decision.action !== 'drop') return;
+    expect(decision.action).toBe('foreign');
+    if (decision.action !== 'foreign') return;
     // A basename, never a path: the full one carries the crashing user's home.
-    expect(decision.mainModule).toBe('ffprobe');
+    expect(decision.event.tags?.module).toBe('ffprobe');
   });
 
-  it('drops a headless browser crash', () => {
+  it('reads as foreign a headless browser crash', () => {
     const identity = readMinidumpIdentity(buildMinidump({ modules: HEADLESS_SHELL_MODULES }));
     const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
 
-    expect(decision.action).toBe('drop');
-    if (decision.action !== 'drop') return;
-    expect(decision.mainModule).toBe('chrome-headless-shell');
+    expect(decision.action).toBe('foreign');
+    if (decision.action !== 'foreign') return;
+    expect(decision.event.tags?.module).toBe('chrome-headless-shell');
   });
 
-  it('drops another Electron app\'s helper crash, which loads Electron Framework from its own bundle (DESKTOP-1D)', () => {
+  it('reads as foreign another Electron app\'s helper crash, which loads Electron Framework from its own bundle (DESKTOP-1D)', () => {
     // Every Electron app loads Electron Framework, so the framework alone says
     // nothing about whose crash this is. Here it sits under another project's
     // dev Electron.app, and Crashpad still stamped our _productName on the dump.
@@ -179,9 +181,9 @@ describe('correctNativeCrashEvent: crashes that are not ours', () => {
     );
     const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
 
-    expect(decision.action).toBe('drop');
-    if (decision.action !== 'drop') return;
-    expect(decision.mainModule).toBe('Electron Helper');
+    expect(decision.action).toBe('foreign');
+    if (decision.action !== 'foreign') return;
+    expect(decision.event.tags?.module).toBe('Electron Helper');
   });
 
   it('keeps a real macOS crash, which carries the same event.process tag as the two above', () => {
@@ -234,12 +236,89 @@ describe('correctNativeCrashEvent: crashes that are not ours', () => {
   });
 });
 
+describe('correctNativeCrashEvent: the foreign crash warning', () => {
+  function foreignWarning(event: ErrorEvent, modules: string[] = FFPROBE_MODULES): ErrorEvent {
+    const identity = readMinidumpIdentity(
+      buildMinidump({
+        modules,
+        simpleAnnotations: { _productName: 'SomeoneElse', _version: '9.9.9' },
+        timeDateStamp: CRASH_TIME_STAMP,
+      })
+    );
+    const decision = correctNativeCrashEvent(event, identity, MACOS_CONTEXT);
+    expect(decision.action).toBe('foreign');
+    return decision.event;
+  }
+
+  it('becomes one grouped warning rather than a fatal', () => {
+    const event = foreignWarning(nativeEvent());
+
+    expect(event.level).toBe('warning');
+    expect(event.message).toBe(FOREIGN_CRASH_MESSAGE);
+    expect(event.fingerprint).toEqual(FOREIGN_CRASH_FINGERPRINT);
+    expect(event.tags?.module).toBe('ffprobe');
+  });
+
+  it('drops the tags and exception that describe some other process, and the dump\'s own Crashpad annotations', () => {
+    const event = foreignWarning(
+      nativeEvent({
+        tags: { 'event.environment': 'native', 'event.process': 'utility', 'exit.reason': 'crashed' },
+        exception: { values: [{ type: 'OutOfMemoryError', value: 'Renderer reached heap limit' }] },
+        contexts: {
+          electron: { details: { type: 'Utility' }, 'crashpad.prod': 'SomeoneElse', 'crashpad.ver': '9.9.9' },
+        },
+      })
+    );
+
+    expect(event.tags).toEqual({ 'event.environment': 'native', module: 'ffprobe' });
+    expect(event.exception).toBeUndefined();
+    expect(event.contexts?.electron).toEqual({ details: { type: 'Utility' } });
+  });
+
+  it('carries when the crash happened and whether it was found at startup, but never the other program\'s version', () => {
+    const startupFound = foreignWarning(nativeEvent());
+    const liveFound = foreignWarning(
+      nativeEvent({ tags: { 'event.environment': 'native', 'exit.reason': 'crashed' } })
+    );
+
+    expect(startupFound.contexts?.native_crash).toEqual({
+      crash_time: CRASH_TIME,
+      uploaded_by_version: '0.39.0',
+      found_at_startup: true,
+    });
+    expect(liveFound.contexts?.native_crash).toMatchObject({ found_at_startup: false });
+  });
+
+  it('names a user\'s own build output as user-binary, never by its file name, and carries no trail that could', () => {
+    // The SDK records main's console as breadcrumbs, and SHELL_EXEC logs the
+    // command it runs. On a live-found dump that trail is this session's, so it
+    // can name the very binary the module tag withholds.
+    const event = foreignWarning(
+      nativeEvent({
+        tags: { 'event.environment': 'native', 'exit.reason': 'crashed' },
+        breadcrumbs: [
+          {
+            category: 'console',
+            message: '[shell:exec] command="./target/debug/deps/secret_project-0123456789abcdef" cwd="/Users/dev/work/secret-project"',
+            timestamp: 1,
+          },
+        ],
+      }),
+      ['/Users/dev/work/secret-project/target/debug/deps/secret_project-0123456789abcdef', '/usr/lib/dyld']
+    );
+
+    expect(event.tags?.module).toBe('user-binary');
+    expect(event.breadcrumbs).toBeUndefined();
+    expect(JSON.stringify(event)).not.toContain('secret');
+  });
+});
+
 describe('correctNativeCrashEvent: isOurModule boundaries', () => {
-  it('drops a sibling install whose path is a bare string prefix of ours but not a real subdirectory', () => {
+  it('reads as foreign a sibling install whose path is a bare string prefix of ours but not a real subdirectory', () => {
     // A bare `startsWith` would read this as ours: '...\Programs\Kangentic' is a
     // string prefix of '...\Programs\KangenticBeta\...'. Neither module name
     // here matches the executable basename or is our bundle's Electron
-    // Framework, so this only drops if the path-root check enforces a segment
+    // Framework, so this only reads as foreign if the path-root check enforces a segment
     // boundary.
     const identity = readMinidumpIdentity(
       buildMinidump({
@@ -251,7 +330,7 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     );
     const decision = correctNativeCrashEvent(nativeEvent(), identity, WINDOWS_CONTEXT);
 
-    expect(decision.action).toBe('drop');
+    expect(decision.action).toBe('foreign');
   });
 
   it('keeps a module that is a genuine subdirectory of the install root', () => {
@@ -287,7 +366,7 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     expect(decision.action).toBe('keep');
   });
 
-  it('drops a bundle whose name only ends in ours', () => {
+  it('reads as foreign a bundle whose name only ends in ours', () => {
     // 'NotKangentic.app' ends in 'Kangentic.app', so the bundle match must
     // start at a path-segment boundary or this reads as ours.
     const identity = readMinidumpIdentity(
@@ -301,7 +380,7 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     );
     const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
 
-    expect(decision.action).toBe('drop');
+    expect(decision.action).toBe('foreign');
   });
 
   it('keeps a crash from a Kangentic dev run, whose images sit under the checkout\'s own Electron.app', () => {
@@ -329,7 +408,7 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     expect(decision.action).toBe('keep');
   });
 
-  it('drops a crash when the executable name is empty, which must match nothing rather than the bare bundle pattern /.app/', () => {
+  it('reads a crash as foreign when the executable name is empty, which must match nothing rather than the bare bundle pattern /.app/', () => {
     // The empty-name early return in isOurModule exists so an unpackaged run's
     // blank appExecutableName cannot fall through to the bundle-relocation
     // fallback, which would otherwise degrade to the literal substring
@@ -353,7 +432,7 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     );
     const decision = correctNativeCrashEvent(nativeEvent(), identity, emptyExecutableNameContext);
 
-    expect(decision.action).toBe('drop');
+    expect(decision.action).toBe('foreign');
   });
 
   it('matches a Windows install path case-insensitively', () => {
@@ -377,11 +456,11 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     expect(decision.action).toBe('keep');
   });
 
-  it('drops a foreign crash on Linux, the platform CI runs the unit tier on', () => {
+  it('reads an ffprobe crash as foreign on Linux, the platform CI runs the unit tier on', () => {
     const identity = readMinidumpIdentity(buildMinidump({ modules: FFPROBE_MODULES }));
     const decision = correctNativeCrashEvent(nativeEvent(), identity, LINUX_CONTEXT);
 
-    expect(decision.action).toBe('drop');
+    expect(decision.action).toBe('foreign');
   });
 
   it('does not recognize a long-path-prefixed module as being under the install root', () => {
@@ -389,7 +468,7 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     // entry always matches first, so no existing test exercises this path alone.
     // The '\\?\' prefix defeats the install-root `startsWith`, the basename
     // 'conpty.node' does not match the app executable, and it is not our
-    // bundle's Electron Framework, so the module drops. This pins the
+    // bundle's Electron Framework, so the module reads as foreign. This pins the
     // CURRENT behavior; it is not a fix.
     const identity = readMinidumpIdentity(
       buildMinidump({
@@ -400,9 +479,9 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     );
     const decision = correctNativeCrashEvent(nativeEvent(), identity, WINDOWS_CONTEXT);
 
-    expect(decision.action).toBe('drop');
-    if (decision.action !== 'drop') return;
-    expect(decision.mainModule).toBe('conpty.node');
+    expect(decision.action).toBe('foreign');
+    if (decision.action !== 'foreign') return;
+    expect(decision.event.tags?.module).toBe('conpty.node');
   });
 });
 
@@ -629,7 +708,7 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
       MACOS_CONTEXT
     );
 
-    expect(decision.action).toBe('drop');
+    expect(decision.action).toBe('foreign');
   });
 
   it('drops the breadcrumbs on every kept startup-found event, corrected or not', () => {

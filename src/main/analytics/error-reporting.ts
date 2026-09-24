@@ -5,7 +5,6 @@ import type { ErrorEvent, EventHint } from '@sentry/electron/main';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
 import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
 import type { HostMemorySample } from '../../shared/types';
-import { trackEvent } from './analytics';
 import {
   correctNativeCrashEvent,
   readMinidumpIdentity,
@@ -169,17 +168,27 @@ function resolveNativeCrashContext(): NativeCrashContext {
 }
 
 /**
- * The `beforeSend` body, for native crash events only: it drops a crash that
- * happened in a process that is not ours, and corrects the release tag and scope
- * of one that is. Everything else passes through untouched, including renderer
- * events (the SDK re-captures those through main's client, so they reach this
- * hook too).
+ * The `beforeSend` body, for native crash events only. A crash in a process that
+ * is not ours becomes one grouped warning with its dump removed; a crash that is
+ * ours gets its release tag and scope corrected. Everything else passes through
+ * untouched, including renderer events (the SDK re-captures those through
+ * main's client, so they reach this hook too).
+ *
+ * A foreign crash still reaches Sentry because it is still our defect: our
+ * Crashpad port leaked into a process we started (see native-crash-event.ts).
+ * Its dump never does. It holds another program's memory, and the SDK builds
+ * the envelope from `hint.attachments` only after this hook returns, reading the
+ * same hint object (`sendEvent` in @sentry/core's client), so removing the dump
+ * here is what keeps it on the machine.
+ * tests/unit/foreign-crash-real-client.test.ts pins that against the real client.
  *
  * The whole thing fails OPEN. A `beforeSend` that throws makes the SDK drop the
  * event, so a bug in the minidump reader would silently delete every native
  * crash rather than one. Any doubt at all and the event goes through unchanged.
+ * Failing open keeps the dump, so the foreign rewrite and the removal below must
+ * never throw: they are plain property writes and an array filter.
  */
-export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): ErrorEvent {
   try {
     const minidump = hint.attachments?.find(
       (attachment) => attachment.attachmentType === MINIDUMP_ATTACHMENT_TYPE
@@ -188,17 +197,14 @@ export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): Erro
 
     const identity = readMinidumpIdentity(minidump.data);
     const decision = correctNativeCrashEvent(event, identity, resolveNativeCrashContext());
-    if (decision.action === 'keep') return decision.event;
-
-    // Counted, not reported, the same split as a transient updater failure or a
-    // recoverable utility crash. This counter is the only fleet-wide evidence
-    // left that foreign processes are still writing into our crash database.
-    // PTY children stopped inheriting the port once the packaged app shipped its
-    // own node-pty spawn-helper (build/spawn-helper/spawn-helper.c), so what it
-    // counts on those builds is the non-PTY residue. The module name is a
-    // basename, so it carries no path and no home directory.
-    trackEvent('foreign_minidump_dropped', { module: decision.mainModule });
-    return null;
+    if (decision.action === 'foreign') {
+      // Every dump, not only the one read above, and nothing else: a renderer's
+      // scope attachments ride in the same array.
+      hint.attachments = hint.attachments?.filter(
+        (attachment) => attachment.attachmentType !== MINIDUMP_ATTACHMENT_TYPE
+      );
+    }
+    return decision.event;
   } catch {
     return event;
   }
@@ -243,13 +249,13 @@ export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
 
 /**
  * The actual `beforeSend`. Tags a frame-capped stack, then runs the native
- * crash filter, which is the only hook that can drop an event.
+ * crash split. Neither ever drops an event.
  *
  * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
  * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
  * be able to delete telemetry.
  */
-export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent {
   try {
     tagTruncatedStack(event);
   } catch {
@@ -275,21 +281,22 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * an issue is a product judgement about our own code, not a data-privacy rule.
  * See the annotated entries below.
  *
- * NATIVE CRASH EVENTS are the one FILTERING exception to "filtering lives in
- * `ignoreErrors`", and to the no-beforeSend stance above. `ignoreErrors` is the
- * `eventFiltersIntegration`, which matches only an event's message and its
- * exception type and value. A minidump event has none of those, so the matcher
- * sees an empty candidate list and the filter is a no-op on it. The thing that
- * says whether the crash was even ours lives in the attached dump, not on the
- * event, and Sentry derives the stack and the image list from that dump only
- * AFTER upload. So this one class is filtered in `beforeSend`
+ * NATIVE CRASH EVENTS are the one exception to the no-beforeSend stance above.
+ * `ignoreErrors` is the `eventFiltersIntegration`, which matches only an event's
+ * message and its exception type and value. A minidump event has none of those,
+ * so the matcher sees an empty candidate list and the filter is a no-op on it.
+ * The thing that says whether the crash was even ours lives in the attached
+ * dump, not on the event, and Sentry derives the stack and the image list from
+ * that dump only AFTER upload. So this one class is split in `beforeSend`
  * (filterNativeCrashEvent, reached through beforeSendEvent, above), which is the
- * only hook that can see the attachment. It is still filtering, not scrubbing:
- * the scrubbing stance is unchanged.
+ * only hook that can see the attachment. A foreign crash becomes one grouped
+ * warning, and its dump is removed from the upload. That removal is an exception
+ * to the scrubbing stance, the same kind as the stderr tail's home directory
+ * becoming `~`: the dump is another program's memory, and no Sentry-side rule
+ * can scrub a file it has already received.
  *
- * `beforeSend` does one other thing, and it is not filtering: beforeSendEvent
- * also TAGS a frame-capped stack (tagTruncatedStack, above). That is annotation
- * on an event we keep, so it drops nothing and leaves both stances intact.
+ * `beforeSend` does one other thing: beforeSendEvent also TAGS a frame-capped
+ * stack (tagTruncatedStack, above). That is annotation on an event we keep.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -316,9 +323,9 @@ export function initErrorReporting(): void {
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
         ),
-      // Tags a frame-capped stack, then filters native crash events; see the
-      // NATIVE CRASH EVENTS note above for why that one class cannot go in
-      // ignoreErrors below.
+      // Tags a frame-capped stack, then splits native crash events into ours
+      // and foreign ones; see the NATIVE CRASH EVENTS note above for why that
+      // one class cannot go in ignoreErrors below.
       beforeSend: beforeSendEvent,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data
