@@ -799,6 +799,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | #717 | 14f +859 plus 2 new files | 180KB, 3263 lines | 8 (4) | 6 | 0 | 7 | 11 of 6 pack-carrying | 24 / 18 |
 | #718 | 11f +312 | 72KB, 1010 lines | 7 (4) | 4 | 0 | 6 | 28 of 5 pack-carrying | 13 / 10 |
 | #720 | 9f +284 plus 4 new files | 116KB, 1782 lines | 8 (4) | 5 | 0 | 7 | 12 of 6 pack-carrying | 15 / 13 |
+| #724 | 7f +218 | 48KB, 873 lines | 7 (6) | 0 | 0 | 6 | 2 of 5 pack-carrying | 7 / 5 |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -869,3 +870,10 @@ an import the diff left in place was still used, and the use sits over 100 lines
 window. One read a whole rule file for its contract, one grepped every `click:` step in
 `scenes.ts`, and one re-read `detect-hardware.ts` for an import line the pack's window already
 showed.
+
+Row nine is small and all partial tier, like row three, so it says nothing about
+`HUNK_CONTEXT_LINES`. Both reads beyond the pack were the correctness finder's and fell outside
+the changed set: `electron-builder.yml`, to learn how the macOS bundle and executable names are
+derived, and a repo-wide grep for a renamed constant. No finder re-read a file the pack carried.
+Three of the seven candidates were one issue, raised by three dimensions, so the kept count is
+the dedup, not a refutation.
