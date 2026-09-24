@@ -8,6 +8,7 @@ import {
 import {
   buildMinidump,
   FFPROBE_MODULES,
+  FOREIGN_ELECTRON_HELPER_MODULES,
   HEADLESS_SHELL_MODULES,
   LINUX_APP_MODULES,
   MACOS_APP_MODULES,
@@ -166,6 +167,23 @@ describe('correctNativeCrashEvent: crashes that are not ours', () => {
     expect(decision.mainModule).toBe('chrome-headless-shell');
   });
 
+  it('drops another Electron app\'s helper crash, which loads Electron Framework from its own bundle (DESKTOP-1D)', () => {
+    // Every Electron app loads Electron Framework, so the framework alone says
+    // nothing about whose crash this is. Here it sits under another project's
+    // dev Electron.app, and Crashpad still stamped our _productName on the dump.
+    const identity = readMinidumpIdentity(
+      buildMinidump({
+        modules: FOREIGN_ELECTRON_HELPER_MODULES,
+        simpleAnnotations: { _productName: 'Kangentic', _version: '0.42.0' },
+      })
+    );
+    const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
+
+    expect(decision.action).toBe('drop');
+    if (decision.action !== 'drop') return;
+    expect(decision.mainModule).toBe('Electron Helper');
+  });
+
   it('keeps a real macOS crash, which carries the same event.process tag as the two above', () => {
     const identity = readMinidumpIdentity(
       buildMinidump({ modules: MACOS_APP_MODULES, simpleAnnotations: {} })
@@ -220,8 +238,9 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
   it('drops a sibling install whose path is a bare string prefix of ours but not a real subdirectory', () => {
     // A bare `startsWith` would read this as ours: '...\Programs\Kangentic' is a
     // string prefix of '...\Programs\KangenticBeta\...'. Neither module name
-    // here matches the executable basename or carries 'Electron Framework', so
-    // this only drops if the path-root check enforces a segment boundary.
+    // here matches the executable basename or is our bundle's Electron
+    // Framework, so this only drops if the path-root check enforces a segment
+    // boundary.
     const identity = readMinidumpIdentity(
       buildMinidump({
         modules: [
@@ -248,12 +267,12 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     expect(decision.action).toBe('keep');
   });
 
-  it('keeps a crash whose only match is the Electron Framework substring', () => {
-    // Every other fixture that carries 'Electron Framework' also carries our own
-    // executable, which short-circuits the `.some()` first. This is our own
-    // GPU helper process running from a relocated copy of the app, outside the
-    // configured install root and with a basename that does not match the main
-    // executable, so only the substring branch fires.
+  it('keeps a helper crash from a moved Kangentic.app, on its bundle\'s Electron Framework alone', () => {
+    // MACOS_APP_MODULES also carries our own executable, which short-circuits
+    // the `.some()` first. This is our own GPU helper process running from a
+    // relocated copy of the app, outside the configured install root and with a
+    // basename that does not match the main executable, so only the
+    // framework-inside-our-bundle branch fires.
     const identity = readMinidumpIdentity(
       buildMinidump({
         modules: [
@@ -266,6 +285,75 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
 
     expect(decision.action).toBe('keep');
+  });
+
+  it('drops a bundle whose name only ends in ours', () => {
+    // 'NotKangentic.app' ends in 'Kangentic.app', so the bundle match must
+    // start at a path-segment boundary or this reads as ours.
+    const identity = readMinidumpIdentity(
+      buildMinidump({
+        modules: [
+          '/Users/dev/Downloads/NotKangentic.app/Contents/Frameworks/NotKangentic Helper.app/Contents/MacOS/NotKangentic Helper',
+          '/Users/dev/Downloads/NotKangentic.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+          '/usr/lib/dyld',
+        ],
+      })
+    );
+    const decision = correctNativeCrashEvent(nativeEvent(), identity, MACOS_CONTEXT);
+
+    expect(decision.action).toBe('drop');
+  });
+
+  it('keeps a crash from a Kangentic dev run, whose images sit under the checkout\'s own Electron.app', () => {
+    // In `npm start` the executable is the checkout's dev Electron, and
+    // resolveNativeCrashContext goes up from Contents/MacOS/ to Contents/. It
+    // also blanks the executable name, which switches off both relocation
+    // fallbacks, so this keeps on the install-root prefix alone.
+    const devContext: NativeCrashContext = {
+      installRoot: '/Users/dev/code/kangentic/node_modules/electron/dist/Electron.app/Contents',
+      appExecutableName: '',
+      appVersion: '0.42.0',
+      caseInsensitivePaths: false,
+    };
+    const identity = readMinidumpIdentity(
+      buildMinidump({
+        modules: [
+          '/Users/dev/code/kangentic/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)',
+          '/Users/dev/code/kangentic/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+          '/usr/lib/dyld',
+        ],
+      })
+    );
+    const decision = correctNativeCrashEvent(nativeEvent(), identity, devContext);
+
+    expect(decision.action).toBe('keep');
+  });
+
+  it('drops a crash when the executable name is empty, which must match nothing rather than the bare bundle pattern /.app/', () => {
+    // The empty-name early return in isOurModule exists so an unpackaged run's
+    // blank appExecutableName cannot fall through to the bundle-relocation
+    // fallback, which would otherwise degrade to the literal substring
+    // '/.app/Contents/Frameworks/Electron Framework.framework/' and match any
+    // directory that happens to be named '.app', not just our own bundle.
+    // installRoot is unrelated to these modules, so only the relocation
+    // fallbacks are in play here.
+    const emptyExecutableNameContext: NativeCrashContext = {
+      installRoot: '/Applications/Kangentic.app/Contents',
+      appExecutableName: '',
+      appVersion: '0.42.0',
+      caseInsensitivePaths: false,
+    };
+    const identity = readMinidumpIdentity(
+      buildMinidump({
+        modules: [
+          '/Users/dev/other-project/.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+          '/usr/lib/dyld',
+        ],
+      })
+    );
+    const decision = correctNativeCrashEvent(nativeEvent(), identity, emptyExecutableNameContext);
+
+    expect(decision.action).toBe('drop');
   });
 
   it('matches a Windows install path case-insensitively', () => {
@@ -300,8 +388,8 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
     // WINDOWS_APP_MODULES carries this same path, but its unprefixed executable
     // entry always matches first, so no existing test exercises this path alone.
     // The '\\?\' prefix defeats the install-root `startsWith`, the basename
-    // 'conpty.node' does not match the app executable, and there is no
-    // 'Electron Framework' substring, so the module drops. This pins the
+    // 'conpty.node' does not match the app executable, and it is not our
+    // bundle's Electron Framework, so the module drops. This pins the
     // CURRENT behavior; it is not a fix.
     const identity = readMinidumpIdentity(
       buildMinidump({

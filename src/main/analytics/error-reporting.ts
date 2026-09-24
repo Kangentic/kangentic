@@ -157,7 +157,12 @@ function resolveNativeCrashContext(): NativeCrashContext {
       process.platform === 'darwin'
         ? path.resolve(path.dirname(executablePath), '..')
         : path.dirname(executablePath),
-    appExecutableName: path.basename(executablePath),
+    // Unpackaged, the executable is `Electron` inside `Electron.app`. Every dev
+    // Electron app shares both names, so matching on them would keep any dev
+    // Electron app's crash (DESKTOP-1D's class). Blank, it switches off both
+    // relocation fallbacks and leaves the install root, which covers the
+    // checkout's own dev Electron, as the only test.
+    appExecutableName: app.isPackaged ? path.basename(executablePath) : '',
     appVersion: app.getVersion(),
     caseInsensitivePaths: process.platform === 'win32',
   };
