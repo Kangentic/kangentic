@@ -276,9 +276,11 @@ in one Sentry org, one triage surface.
     stderr tail, because no Sentry-side rule can scrub a file it has already received.
     `tests/unit/foreign-crash-real-client.test.ts` pins it against the real client. The event also
     loses the `event.process` and `exit.reason` tags and the dump's own `crashpad.*` annotations,
-    all of which describe the wrong process, and its breadcrumbs. The SDK records main's console as
-    breadcrumbs and `SHELL_EXEC` logs the command it runs, so the trail could name the very program
-    the `module` tag withholds. It keeps a small `native_crash` context (crash time,
+    all of which describe the wrong process, and its breadcrumbs. The breadcrumb policy (below)
+    keeps the `SHELL_EXEC` command line out of the trail, but Node's `child_process` breadcrumb
+    still carries the spawned file's name, and a dump found at startup can carry an older build's
+    unfiltered trail, so either could name the very program the `module` tag withholds. It keeps a
+    small `native_crash` context (crash time,
     whether the dump was found at startup, the uploading version), enough to tell the one-time tail
     of dumps written before an upgrade from what follows it.
   - **The `module` tag** names the crashing program only when an installer or a package manager put
@@ -328,8 +330,9 @@ in one Sentry org, one triage surface.
     `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`, `[APP]`) or
     Electron's own `Error occurred in handler for '<channel>'`, and never at debug level. A kept
     line is rebuilt from its arguments: the tagged string with paths redacted, each Error reduced
-    to its name and code, numbers and booleans. Other arguments and raw stacks go, because git and
-    fs error text can hold a branch named after a task. `tests/unit/sentry-breadcrumbs.test.ts`
+    to its name and code, numbers and booleans. A name that is not an identifier reads `Error`, and
+    a code is kept only when it is an upper-case constant (`ENOENT`) or an integer. Other arguments
+    and raw stacks go, because git and fs error text can hold a branch named after a task. `tests/unit/sentry-breadcrumbs.test.ts`
     parses every literal that opens with one of those tags and fails an interpolation that names
     user content (a title, a branch, a path, an error's text) unless the site carries
     `// breadcrumb-ok: <reason>`. A tag built at runtime (`[${label}]`) is invisible to that scan;
